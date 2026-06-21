@@ -316,45 +316,60 @@ export async function safeFetch(
     // vetted IP (custom Deno HttpClient connecting by IP with correct SNI/cert
     // verification). Deferred to PR2 when the fetcher runs live and can be
     // tested end-to-end. See PR #1 review (codex P1).
+    // One deadline per hop covering BOTH the fetch AND the body read. The
+    // finally clears it on every exit (redirect `continue`, terminal return,
+    // or throw); the next hop installs a fresh controller/timer. Clearing only
+    // around the fetch (as before) would leave readCapped unbounded, so a
+    // server that streams headers fast then trickles the body could hang past
+    // timeoutMs.
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    let res: Response;
     try {
-      res = await fetchImpl(current, {
+      const res = await fetchImpl(current, {
         method: opts.method ?? 'GET',
         headers: baseHeaders,
         redirect: 'manual', // we follow manually so we can re-check each hop
         signal: controller.signal,
       });
+
+      // Handle redirects ourselves so each Location is re-validated.
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers.get('location');
+        if (!location) {
+          throw new SsrfError(`Redirect ${res.status} without Location header`);
+        }
+        if (hop === maxRedirects) {
+          throw new SsrfError(`Too many redirects (> ${maxRedirects})`);
+        }
+        // Resolve relative redirects against the current URL, then loop — the
+        // top of the loop re-runs assertSafeUrl + DNS checks on the new target.
+        current = new URL(location, current).toString();
+        continue;
+      }
+
+      const body = await readCapped(res, maxBytes, controller.signal);
+      return { status: res.status, headers: res.headers, url: current, body };
     } finally {
       clearTimeout(timer);
     }
-
-    // Handle redirects ourselves so each Location is re-validated.
-    if (res.status >= 300 && res.status < 400) {
-      const location = res.headers.get('location');
-      if (!location) {
-        throw new SsrfError(`Redirect ${res.status} without Location header`);
-      }
-      if (hop === maxRedirects) {
-        throw new SsrfError(`Too many redirects (> ${maxRedirects})`);
-      }
-      // Resolve relative redirects against the current URL, then loop — the
-      // top of the loop re-runs assertSafeUrl + DNS checks on the new target.
-      current = new URL(location, current).toString();
-      continue;
-    }
-
-    const body = await readCapped(res, maxBytes);
-    return { status: res.status, headers: res.headers, url: current, body };
   }
 
   // Unreachable: the loop either returns or throws.
   throw new SsrfError('Redirect handling exhausted');
 }
 
-/** Read a response body, aborting if it exceeds `maxBytes`. */
-async function readCapped(res: Response, maxBytes: number): Promise<Uint8Array> {
+/**
+ * Read a response body, aborting if it exceeds `maxBytes` or if `signal` fires
+ * (the shared per-request deadline). Each `reader.read()` is raced against the
+ * abort so the read is bounded even when the underlying body stream does not
+ * itself honor the signal — otherwise a trickled/never-ending body would
+ * outlive the caller's `timeoutMs`.
+ */
+async function readCapped(
+  res: Response,
+  maxBytes: number,
+  signal: AbortSignal,
+): Promise<Uint8Array> {
   // Fast path: a trustworthy Content-Length over the cap → reject early.
   const len = res.headers.get('content-length');
   if (len && Number(len) > maxBytes) {
@@ -370,20 +385,35 @@ async function readCapped(res: Response, maxBytes: number): Promise<Uint8Array> 
   }
 
   const reader = res.body.getReader();
+
+  // A promise that rejects the moment the deadline fires.
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(new SsrfError('Timed out reading response body'));
+    if (signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  });
+
   const chunks: Uint8Array[] = [];
   let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) {
-      total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel();
-        throw new SsrfError(`Response exceeded ${maxBytes} bytes`);
+  try {
+    for (;;) {
+      const { done, value } = await Promise.race([reader.read(), aborted]);
+      if (done) break;
+      if (value) {
+        total += value.byteLength;
+        if (total > maxBytes) {
+          throw new SsrfError(`Response exceeded ${maxBytes} bytes`);
+        }
+        chunks.push(value);
       }
-      chunks.push(value);
     }
+  } finally {
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+    // Release the stream (no-op if already drained; cancels a trickling body).
+    reader.cancel().catch(() => {});
   }
+
   const out = new Uint8Array(total);
   let off = 0;
   for (const c of chunks) {

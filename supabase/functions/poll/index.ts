@@ -27,13 +27,21 @@ const MIN_INTERVAL_S = 15 * 60; //  15 min — politeness floor for healthy feed
 const MAX_INTERVAL_S = 6 * 60 * 60; // 6 h — backoff ceiling (SPEC.md)
 const CIRCUIT_BREAKER_FAILS = 8; // park the feed after N consecutive failures
 
-Deno.serve(async (_req: Request) => {
+Deno.serve(async (req: Request) => {
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+  // Cron-only: this endpoint polls with the service role (RLS bypass), so it
+  // must reject anyone who isn't the scheduler. The pg_cron job sends the
+  // service-role key as a Bearer token (see SETUP.md); require it before we
+  // ever touch the service client, otherwise any holder of a valid project JWT
+  // could trigger service-role polling and hammer publishers / run up cost.
+  if ((req.headers.get('Authorization') ?? '') !== `Bearer ${serviceKey}`) {
+    return json({ error: 'Unauthorized' }, 401);
+  }
+
   // Service-role client — the poller writes shared feeds/items and BYPASSES
   // RLS. The service key is a server-only secret (never shipped to clients).
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-  );
+  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, serviceKey);
 
   // Select feeds due for a poll that have >= 1 subscriber. Doing the
   // subscriber check keeps poll cost proportional to *subscribed distinct
@@ -157,6 +165,11 @@ async function scheduleNext(
       fetch_interval_s: interval,
       error_count: 0,
       last_error: null,
+      // Stamp the successful check (incl. a 304 Not Modified) so feed-health
+      // metadata reflects that the poller IS reaching the feed; otherwise a
+      // feed that always 304s would look never-fetched. The failure path uses
+      // recordFailure() and does not call this.
+      ...(opts.ok ? { last_fetched_at: new Date().toISOString() } : {}),
     })
     .eq('id', feed.id);
 }

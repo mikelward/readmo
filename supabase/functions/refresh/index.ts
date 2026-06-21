@@ -50,26 +50,40 @@ Deno.serve(async (req: Request) => {
   if (error) return json({ error: error.message }, 400);
 
   let refreshed = 0;
+  let debounced = 0;
   for (const { feed_id } of subs ?? []) {
-    // TODO(deploy): debounce on feeds.last_fetched_at < now() - DEBOUNCE_S.
     try {
-      await refreshOne(service, feed_id);
-      refreshed++;
+      // refreshOne enforces the DEBOUNCE_S throttle and reports whether it
+      // actually hit the publisher, so spamming refresh doesn't inflate counts.
+      if (await refreshOne(service, feed_id)) refreshed++;
+      else debounced++;
     } catch {
       /* per-feed isolation: one bad feed doesn't fail the request */
     }
   }
 
-  return json({ refreshed, debounceSeconds: DEBOUNCE_S });
+  return json({ refreshed, debounced, debounceSeconds: DEBOUNCE_S });
 });
 
-async function refreshOne(service: any, feedId: string): Promise<void> {
+/** Refresh one feed. Returns true if it actually fetched, false if skipped by
+ * the debounce (or the feed no longer exists). */
+async function refreshOne(service: any, feedId: string): Promise<boolean> {
   const { data: feed } = await service
     .from('feeds')
-    .select('id, url, secret_url')
+    .select('id, url, secret_url, last_fetched_at')
     .eq('id', feedId)
     .single();
-  if (!feed) return;
+  if (!feed) return false;
+
+  // Server-side debounce: skip a feed fetched within the last DEBOUNCE_S so a
+  // user spamming pull-to-refresh / add-feed can't bypass the throttle and
+  // hammer the publisher. (The cron poller has its own schedule.)
+  if (
+    feed.last_fetched_at &&
+    Date.now() - Date.parse(feed.last_fetched_at) < DEBOUNCE_S * 1000
+  ) {
+    return false;
+  }
 
   const res = await safeFetch(feed.secret_url ?? feed.url, {
     headers: { 'User-Agent': USER_AGENT },
@@ -103,6 +117,7 @@ async function refreshOne(service: any, feedId: string): Promise<void> {
     .from('feeds')
     .update({ last_fetched_at: new Date().toISOString() })
     .eq('id', feed.id);
+  return true;
 }
 
 function json(body: unknown, status = 200): Response {
