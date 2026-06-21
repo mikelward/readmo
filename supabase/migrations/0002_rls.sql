@@ -132,14 +132,24 @@ create policy items_select on public.items
 -- hand every co-subscriber (and any permanent-state reader) the secret, which
 -- the spec forbids ("keep secret/tokenized feed URLs server-only"). Clients
 -- only ever need display-safe metadata (`site_url`, `title`, health). Defense:
---   1. Revoke column-level SELECT on url + secret_url from client roles.
+--   1. Revoke TABLE-level SELECT, then grant SELECT only on the safe columns.
 --   2. Expose a display-safe view `feeds_public` that omits both fetch URLs.
--- The service role (poller) retains full table access and reads both columns.
+-- The service role (poller) bypasses grants/RLS and reads everything.
 -- ===========================================================================
 
--- 1. Revoke the secret columns from the client-facing roles. (They keep access
---    to the display-safe columns via the table's RLS SELECT policy above.)
-revoke select (secret_url, url) on public.feeds from anon, authenticated;
+-- 1. Restrict client SELECT to the display-safe columns. A column-level REVOKE
+--    alone is NOT enough: Supabase's public schema grants TABLE-level SELECT to
+--    anon/authenticated by default, and a column REVOKE does not override an
+--    existing table grant — the client could still `select url from feeds`. So
+--    revoke the whole-table SELECT first, then grant back only the safe
+--    columns. url + secret_url (the fetch URLs, possibly tokenized) are never
+--    granted, so clients cannot read them even by querying the table directly.
+revoke select on public.feeds from anon, authenticated;
+grant select (
+  id, site_url, title,
+  last_fetched_at, next_fetch_at, fetch_interval_s,
+  error_count, last_error, created_at
+) on public.feeds to anon, authenticated;
 -- Defensive: clients never write feeds, so revoke write entirely.
 revoke insert, update, delete on public.feeds from anon, authenticated;
 revoke insert, update, delete on public.items from anon, authenticated;

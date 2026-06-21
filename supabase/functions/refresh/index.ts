@@ -91,7 +91,13 @@ async function refreshOne(service: any, feedId: string): Promise<void> {
     content_hash: it.guid,
   }));
   if (rows.length > 0) {
-    await service.from('items').upsert(rows, { onConflict: 'feed_id,guid' });
+    // PostgREST resolves with { error } rather than throwing, so a rejected
+    // upsert must be surfaced — otherwise refreshOne resolves "successfully"
+    // and the caller reports a refresh that stored nothing.
+    const { error: upsertError } = await service
+      .from('items')
+      .upsert(rows, { onConflict: 'feed_id,guid' });
+    if (upsertError) throw new Error(`item upsert failed: ${upsertError.message}`);
   }
   await service
     .from('feeds')

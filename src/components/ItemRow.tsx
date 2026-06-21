@@ -89,11 +89,15 @@ export function ItemRow({
     const items: ItemRowMenuItem[] = [];
     if (pinned) {
       items.push({ key: 'unpin', label: 'Unpin', onSelect: handleTogglePin });
-    } else {
+    } else if (!hidden) {
+      // Pin is suppressed on hidden rows: pinning would clear `hidden` and
+      // reintroduce the item, bypassing the hide-shields-pin rule (SPEC.md
+      // *Shields*). Same reason swipe-left is blocked on a hidden row.
       items.push({ key: 'pin', label: 'Pin', onSelect: handlePin });
     }
-    // Hide is suppressed on pinned rows (same rule as swipe-right).
-    if (!pinned) {
+    // Hide is suppressed on pinned rows (same rule as swipe-right) and on
+    // already-hidden rows (nothing to do).
+    if (!pinned && !hidden) {
       items.push({ key: 'hide', label: 'Hide', onSelect: handleHide });
     }
     if (opened) {
@@ -109,6 +113,7 @@ export function ItemRow({
     return items;
   }, [
     pinned,
+    hidden,
     opened,
     onShare,
     handlePin,

@@ -91,4 +91,24 @@ describe('ItemRow', () => {
     expect(within(menu).getByTestId('item-row-menu-pin')).toBeInTheDocument();
     expect(within(menu).getByTestId('item-row-menu-hide')).toBeInTheDocument();
   });
+
+  it('suppresses Pin and Hide in the menu on a hidden row', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    source.stateStore.set('item-1', 'hidden', true);
+    renderWithProviders(
+      <ItemRow feedItem={FEED_ITEM} enableSwipe={false} onShare={() => {}} />,
+      { source },
+    );
+    const body = screen.getByTestId('item-title');
+    body.focus();
+    await user.keyboard(' ');
+    const menu = await screen.findByTestId('item-row-menu');
+    // Pinning a hidden row would clear `hidden` and reintroduce the item —
+    // suppressed per the hide-shields-pin rule.
+    expect(within(menu).queryByTestId('item-row-menu-pin')).toBeNull();
+    expect(within(menu).queryByTestId('item-row-menu-hide')).toBeNull();
+    // Share is still available.
+    expect(within(menu).getByTestId('item-row-menu-share')).toBeInTheDocument();
+  });
 });

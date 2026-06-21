@@ -78,7 +78,14 @@ export function SettingsPage() {
           }}
         >
           <input
-            type="url"
+            // type="text" (not "url") so the browser doesn't reject a bare
+            // site name like "example.com" before submit — discovery prepends
+            // https:// itself. inputMode hints a URL keyboard on mobile.
+            type="text"
+            inputMode="url"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
             className="search-input"
             placeholder="Site or feed URL"
             value={feedUrl}
