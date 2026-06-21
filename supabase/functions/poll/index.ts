@@ -49,7 +49,13 @@ Deno.serve(async (_req: Request) => {
 
   let processed = 0;
   for (const feed of feeds ?? []) {
-    // TODO(deploy): skip feeds with zero subscribers (EXISTS on subscriptions).
+    // TODO(PR2, P2 — subscriber filter): the SELECT above must also require
+    // EXISTS (subscriptions for this feed). Without it, feeds keep being polled
+    // after their last subscriber leaves — for abandoned private/tokenized
+    // feeds the server keeps calling the publisher and retaining content no one
+    // can read, and poll cost scales with all feeds ever added instead of the
+    // distinct *subscribed* feeds the spec promises. Move the join into the
+    // query (or a SQL view) when this goes live. See PR #1 review (codex P2).
     try {
       await pollOne(supabase, feed);
       processed++;
@@ -118,7 +124,15 @@ async function pollOne(supabase: any, feed: any): Promise<void> {
   }));
   if (rows.length > 0) {
     // ON CONFLICT (feed_id, guid) DO UPDATE — Supabase upsert.
-    await supabase.from('items').upsert(rows, { onConflict: 'feed_id,guid' });
+    // TODO(PR2, P2 — check the result): PostgREST resolves with `{ error }`
+    // rather than throwing, so a rejected upsert would otherwise fall through
+    // to scheduleNext({ ok: true }) and clear the feed's error state while no
+    // items were stored — a feed reported healthy but silently empty.
+    // Destructure { error } and throw so the catch records the failure.
+    const { error: upsertError } = await supabase
+      .from('items')
+      .upsert(rows, { onConflict: 'feed_id,guid' });
+    if (upsertError) throw new Error(`item upsert failed: ${upsertError.message}`);
   }
 
   await scheduleNext(supabase, feed, { ok: true, interval: feed.fetch_interval_s });
