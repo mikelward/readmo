@@ -1,0 +1,57 @@
+.signin {
+  min-height: calc(100vh - var(--rm-header-h));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.signin__card {
+  max-width: 380px;
+  text-align: center;
+}
+
+.signin__brand {
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--rm-accent);
+}
+
+.signin__tagline {
+  color: var(--rm-meta);
+  margin: 12px 0 24px;
+  line-height: 1.5;
+}
+
+.signin__buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.signin__btn {
+  width: 100%;
+  padding: 14px;
+  min-height: var(--rm-tap);
+  border: 1px solid var(--rm-border-strong);
+  border-radius: var(--rm-radius);
+  background: var(--rm-bg-card);
+  color: var(--rm-text);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .signin__btn:hover {
+    border-color: var(--rm-accent);
+  }
+}
+
+.signin__privacy {
+  font-size: 0.78rem;
+  color: var(--rm-meta);
+  margin-top: 20px;
+  line-height: 1.5;
+}

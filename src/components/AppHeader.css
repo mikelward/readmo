@@ -1,0 +1,63 @@
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  height: var(--rm-header-h);
+  background: var(--rm-bg-card);
+  border-bottom: 1px solid var(--rm-border);
+  padding-top: env(safe-area-inset-top);
+}
+
+.app-header__inner {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: var(--rm-header-h);
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 8px;
+}
+
+.app-header__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--rm-tap);
+  height: var(--rm-tap);
+  border: none;
+  background: none;
+  color: var(--rm-text);
+  border-radius: 999px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+@media (hover: hover) {
+  .app-header__icon-btn:hover {
+    background: var(--rm-bg);
+  }
+}
+
+.app-header__brand {
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--rm-accent);
+  text-decoration: none;
+  padding: 0 6px;
+}
+
+.app-header__spacer {
+  flex: 1 1 auto;
+}
+
+.app-header__offline-pill {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #fff;
+  background: var(--rm-meta);
+  border-radius: 999px;
+  padding: 4px 10px;
+  text-decoration: none;
+  margin-right: 4px;
+}

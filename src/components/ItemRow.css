@@ -1,0 +1,157 @@
+/* Item row — the core list unit. At most three tap zones (two shipped): the
+ * stretched body link, the right-side icon button, and a reserved middle slot
+ * (unused). 44x44 touch floor, >=12px gap to the right button. */
+
+.item-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 12px;
+  min-height: 72px;
+  background: var(--rm-bg-card);
+  border-bottom: 1px solid var(--rm-border);
+  /* Let the row translate horizontally over its swipe hints. */
+  z-index: 1;
+  touch-action: pan-y;
+}
+
+.item-row--dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.item-row__body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: inherit;
+  text-decoration: none;
+  /* The stretched link fills the row's left zone. */
+  align-self: stretch;
+  justify-content: center;
+}
+
+@media (hover: hover) {
+  .item-row__body:hover {
+    text-decoration: none;
+  }
+  .item-row__body:hover .item-row__title-text {
+    color: var(--rm-accent);
+  }
+}
+
+.item-row__title-text {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--rm-text);
+  /* Wrap to at most two lines. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Opened/read titles fade: lighter color + lighter weight (SPEC.md *Visual
+ * design*). */
+.item-row--opened .item-row__title-text {
+  color: var(--rm-read);
+  font-weight: 500;
+}
+
+.item-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--rm-meta);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.item-row__favicon {
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+
+/* Right-side icon button (Pin/Unpin, or a library inverse action). */
+.pin-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--rm-tap);
+  height: var(--rm-tap);
+  border: none;
+  background: none;
+  color: var(--rm-meta);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+@media (pointer: fine) {
+  /* A precise cursor doesn't need a fingertip target (SPEC.md). */
+  .pin-btn {
+    width: 36px;
+    height: 36px;
+  }
+}
+
+.pin-btn--active {
+  color: var(--rm-accent);
+}
+
+.pin-btn__icon {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+}
+
+.pin-btn__icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+@media (hover: hover) {
+  .pin-btn:hover {
+    background: var(--rm-bg);
+    color: var(--rm-text);
+  }
+  .pin-btn--active:hover {
+    color: var(--rm-accent-strong);
+  }
+}
+
+.pin-btn:active {
+  background: var(--rm-border);
+}
+
+/* Swipe-reveal hints sit behind the row and are exposed as it translates. */
+.item-row__swipe-hint {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #fff;
+  z-index: 0;
+}
+
+.item-row__swipe-hint--left {
+  left: 0;
+  justify-content: flex-start;
+  background: var(--rm-hide-bg);
+}
+
+.item-row__swipe-hint--right {
+  right: 0;
+  justify-content: flex-end;
+  background: var(--rm-pin-bg);
+}

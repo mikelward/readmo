@@ -1,0 +1,58 @@
+.list-toolbar {
+  position: sticky;
+  top: var(--rm-header-h);
+  z-index: 10;
+  background: var(--rm-bg);
+  border-bottom: 1px solid var(--rm-border);
+}
+
+.list-toolbar__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  min-height: 44px;
+}
+
+.list-toolbar__right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.list-toolbar__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--rm-tap);
+  height: var(--rm-tap);
+  border: none;
+  background: none;
+  color: var(--rm-meta);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+@media (pointer: fine) {
+  .list-toolbar__button {
+    width: 36px;
+    height: 36px;
+  }
+}
+
+.list-toolbar__button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .list-toolbar__button:not(:disabled):hover {
+    background: var(--rm-bg-card);
+    color: var(--rm-text);
+  }
+}
+
+.list-toolbar__button:not(:disabled):active {
+  background: var(--rm-border);
+}

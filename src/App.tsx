@@ -1,0 +1,71 @@
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import type { ReactNode } from 'react';
+import { AppHeader } from './components/AppHeader';
+import { ScrollToTop } from './components/ScrollToTop';
+import { BackToTopButton } from './components/BackToTopButton';
+import { KeyboardShortcutsOverlay } from './components/KeyboardShortcutsOverlay';
+import { FeedBarProvider } from './components/FeedBarContext';
+import { useAuth } from './hooks/useAuth';
+import { HomePage, FolderPage, FeedPage } from './pages/FeedPages';
+import {
+  PinnedPage,
+  FavoritesPage,
+  DonePage,
+  HiddenPage,
+  OpenedPage,
+} from './pages/LibraryPages';
+import { ItemPage } from './pages/ItemPage';
+import { SearchPage } from './pages/SearchPage';
+import { SettingsPage } from './pages/SettingsPage';
+import { OfflinePage } from './pages/OfflinePage';
+import { SignInPage } from './pages/SignInPage';
+import { NotFoundPage } from './pages/NotFoundPage';
+
+/** Signed-in gate. First launch with no session routes to /signin; deep links
+ * round-trip through sign-in and then land on the target (SPEC.md *Auth*). */
+function RequireAuth({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  const location = useLocation();
+  if (!user) {
+    return <Navigate to="/signin" replace state={{ from: location }} />;
+  }
+  return <>{children}</>;
+}
+
+export default function App() {
+  return (
+    <FeedBarProvider>
+      <ScrollToTop />
+      <AppHeader />
+      <main className="app-main">
+        <Routes>
+          <Route path="/signin" element={<SignInPage />} />
+          <Route
+            path="/*"
+            element={
+              <RequireAuth>
+                <Routes>
+                  <Route path="/" element={<HomePage />} />
+                  <Route path="/folder/:name" element={<FolderPage />} />
+                  <Route path="/feed/:feedId" element={<FeedPage />} />
+                  <Route path="/pinned" element={<PinnedPage />} />
+                  <Route path="/favorites" element={<FavoritesPage />} />
+                  <Route path="/done" element={<DonePage />} />
+                  <Route path="/hidden" element={<HiddenPage />} />
+                  <Route path="/opened" element={<OpenedPage />} />
+                  <Route path="/offline" element={<OfflinePage />} />
+                  <Route path="/item/:id" element={<ItemPage />} />
+                  <Route path="/search" element={<SearchPage />} />
+                  <Route path="/settings" element={<SettingsPage />} />
+                  <Route path="*" element={<NotFoundPage />} />
+                </Routes>
+              </RequireAuth>
+            }
+          />
+        </Routes>
+      </main>
+      <BackToTopButton />
+      <KeyboardShortcutsOverlay />
+    </FeedBarProvider>
+  );
+}

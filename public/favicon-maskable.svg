@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Android adaptive-icon / PWA maskable variant of public/favicon.svg.
+     Differences from the non-maskable source:
+      - Full-bleed indigo tile, no rounded corners (the OS launcher masks
+        its own shape; transparent corners would read as chipped).
+      - Glyph and home-indicator pill pulled inside the 80% safe zone
+        (circle of radius ~205 px centered on 256,256): the glyph is
+        scaled to ~0.78 and the pill shortened to 128x12 at y=384.
+     Rasterized into public/icon-512-maskable.png by
+     scripts/generate-icons.mjs. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#3a4ec4"/>
+
+  <g transform="translate(256 222) scale(0.78)" fill="none" stroke="#ffffff" stroke-width="14"
+     stroke-linecap="round" stroke-linejoin="round">
+    <!-- open page outline -->
+    <path d="M -95 -64 H 95 V 64 H -95 Z"/>
+    <!-- center spine fold -->
+    <path d="M 0 -64 V 64"/>
+    <!-- text lines on the left leaf -->
+    <path d="M -74 -30 H -22"/>
+    <path d="M -74 0 H -22"/>
+    <path d="M -74 30 H -36"/>
+    <!-- text lines on the right leaf -->
+    <path d="M 22 -30 H 74"/>
+    <path d="M 22 0 H 74"/>
+    <path d="M 22 30 H 60"/>
+  </g>
+  <rect x="192" y="384" width="128" height="12" rx="6" fill="#ffffff"/>
+</svg>
