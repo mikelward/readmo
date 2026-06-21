@@ -285,6 +285,14 @@ export async function safeFetch(
       }
     }
 
+    // TODO(PR2, P1 — DNS rebinding): we validate the resolved IP(s) above, but
+    // `fetchImpl` then performs its OWN DNS lookup, so a hostile domain can
+    // return a public IP to `resolve()` and rebind to a private/metadata IP
+    // for the actual connection — bypassing this denylist for discover, the
+    // poller, and the image proxy. The complete fix pins the connection to the
+    // vetted IP (custom Deno HttpClient connecting by IP with correct SNI/cert
+    // verification). Deferred to PR2 when the fetcher runs live and can be
+    // tested end-to-end. See PR #1 review (codex P1).
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let res: Response;

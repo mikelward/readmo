@@ -126,4 +126,20 @@ describe('ItemStateStore', () => {
     store.set('item-1', 'hidden', true, NOW);
     expect(store.get('item-1', NOW + TTL_MS + 1).hidden).toBe(false);
   });
+
+  it('returns a referentially-stable snapshot between mutations', () => {
+    // useSyncExternalStore requires get() to return the same reference when
+    // nothing changed — even for state past its TTL (withRetention clones).
+    const store = new ItemStateStore(memoryPersistence());
+    store.set('item-1', 'hidden', true, NOW);
+    const later = NOW + TTL_MS + 1;
+    const a = store.get('item-1', later);
+    const b = store.get('item-1', later);
+    expect(a).toBe(b); // same object identity, no re-render churn
+    expect(a.hidden).toBe(false); // and retention is applied
+
+    // A real mutation produces a new snapshot.
+    store.set('item-1', 'pinned', true, later);
+    expect(store.get('item-1', later)).not.toBe(a);
+  });
 });

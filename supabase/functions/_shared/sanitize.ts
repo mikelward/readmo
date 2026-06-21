@@ -138,6 +138,14 @@ function absolutize(
  * no-op for anything that isn't http(s). The proxy fetches through the
  * SSRF-hardened helper, caches, and strips third-party tracking pixels
  * (SPEC.md *Privacy*).
+ *
+ * `/api/img` is the spec-canonical same-origin path (it also matches the SW
+ * runtime-cache rule in vite.config.ts, so proxied images are the offline
+ * source). TODO(PR3 — wire the proxy): the Deno image function deploys at
+ * `/functions/v1/img`, so the deployment must route `/api/img` to it — a Vercel
+ * rewrite (or a thin Vercel `api/img` function). Until that routing lands with
+ * the live proxy in PR3, these URLs have no handler. See PR #1 review (codex
+ * P2) and SETUP.md.
  */
 export function proxify(url: string | null | undefined): string | null {
   if (!url) return null;

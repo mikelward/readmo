@@ -7,9 +7,9 @@
      visible at 192/512. Rasterized into public/icon-*.png by
      scripts/generate-icons.mjs. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <rect width="512" height="512" rx="96" fill="#3a4ec4"/>
+  <rect width="512" height="512" rx="96" fill="#1a1a1a"/>
 
-  <g transform="translate(256 212) scale(1)" fill="none" stroke="#ffffff" stroke-width="14"
+  <g transform="translate(256 212) scale(1)" fill="none" stroke="#faf9f5" stroke-width="14"
      stroke-linecap="round" stroke-linejoin="round">
     <!-- open page outline -->
     <path d="M -95 -64 H 95 V 64 H -95 Z"/>
@@ -24,5 +24,5 @@
     <path d="M 22 0 H 74"/>
     <path d="M 22 30 H 60"/>
   </g>
-  <rect x="176" y="404" width="160" height="14" rx="7" fill="#ffffff"/>
+  <rect x="176" y="404" width="160" height="14" rx="7" fill="#faf9f5"/>
 </svg>
