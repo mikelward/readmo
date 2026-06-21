@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>No-GUID Feed</title>
+    <link>https://noguid.example.com/</link>
+    <item>
+      <title>Has a link but no guid</title>
+      <link>https://noguid.example.com/posts/has-link</link>
+      <pubDate>Wed, 02 Oct 2024 13:00:00 GMT</pubDate>
+      <description>Falls back to the URL for its GUID.</description>
+    </item>
+    <item>
+      <title>Has neither guid nor link</title>
+      <pubDate>Thu, 03 Oct 2024 09:30:00 GMT</pubDate>
+      <description>Falls back to a content hash for its GUID.</description>
+    </item>
+  </channel>
+</rss>

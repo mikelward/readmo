@@ -1,0 +1,176 @@
+/*
+ * Readmo design tokens — "indigo on paper".
+ *
+ * Indigo (distinct from newshacker's orange) is used for links, focus
+ * rings, the primary "Open original" button, and active library icons.
+ * #3a4ec4 clears 4.5:1 on the paper background and on white (verify any
+ * change with a contrast checker — SPEC.md *Visual design* / *Accessibility*).
+ *
+ * Theming: tokens live on :root for light; the [data-theme='dark'] block and
+ * the prefers-color-scheme media query (for system mode) override them.
+ */
+
+:root {
+  --rm-accent: #3a4ec4;
+  --rm-accent-strong: #2f40a6;
+  --rm-accent-contrast: #ffffff;
+
+  --rm-bg: #faf9f5;
+  --rm-bg-card: #ffffff;
+  --rm-bg-elevated: #ffffff;
+  --rm-border: #e6e4dd;
+  --rm-border-strong: #d4d1c8;
+
+  --rm-text: #1a1a1a;
+  /* opened/read titles: mid-tone below unopened, above meta */
+  --rm-read: #4a4a4a;
+  --rm-meta: #6b6b6b;
+
+  --rm-danger: #c0392b;
+  --rm-success: #2e7d46;
+
+  /* swipe action edges */
+  --rm-hide-bg: #8a8378;
+  --rm-pin-bg: var(--rm-accent);
+
+  --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+
+  --rm-radius: 10px;
+  --rm-tap: 44px;
+
+  --rm-header-h: 56px;
+
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --rm-accent: #8b9bff;
+  --rm-accent-strong: #aab6ff;
+  --rm-accent-contrast: #10131f;
+
+  --rm-bg: #14161c;
+  --rm-bg-card: #1d2027;
+  --rm-bg-elevated: #242832;
+  --rm-border: #2c3038;
+  --rm-border-strong: #3a3f4a;
+
+  --rm-text: #ececec;
+  --rm-read: #a8a8a8;
+  --rm-meta: #8b8b8b;
+
+  --rm-danger: #ff6b5e;
+  --rm-success: #6bd08a;
+
+  --rm-hide-bg: #4a4640;
+  --rm-pin-bg: var(--rm-accent-strong);
+
+  --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+
+  color-scheme: dark;
+}
+
+/* System mode: no explicit data-theme attribute → follow the OS. The
+ * useTheme hook sets data-theme='light'|'dark' for explicit choices and
+ * removes it for 'system', so this only applies in system mode. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']):not([data-theme='dark']) {
+    --rm-accent: #8b9bff;
+    --rm-accent-strong: #aab6ff;
+    --rm-accent-contrast: #10131f;
+
+    --rm-bg: #14161c;
+    --rm-bg-card: #1d2027;
+    --rm-bg-elevated: #242832;
+    --rm-border: #2c3038;
+    --rm-border-strong: #3a3f4a;
+
+    --rm-text: #ececec;
+    --rm-read: #a8a8a8;
+    --rm-meta: #8b8b8b;
+
+    --rm-danger: #ff6b5e;
+    --rm-success: #6bd08a;
+
+    --rm-hide-bg: #4a4640;
+    --rm-pin-bg: var(--rm-accent-strong);
+
+    --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--rm-bg);
+  color: var(--rm-text);
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
+    sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+  font-size: 16px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  /* Stop the whole page rubber-banding so pull-to-refresh owns the gesture. */
+  overscroll-behavior-y: none;
+}
+
+a {
+  color: var(--rm-accent);
+  text-decoration: none;
+}
+
+@media (hover: hover) {
+  a:hover {
+    text-decoration: underline;
+  }
+}
+
+:focus-visible {
+  outline: 2px solid var(--rm-accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+.app-main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 0 env(safe-area-inset-bottom);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

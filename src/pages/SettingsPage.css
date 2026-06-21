@@ -1,0 +1,97 @@
+.settings {
+  padding-bottom: 32px;
+}
+
+.settings__section {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--rm-border);
+}
+
+.settings__heading {
+  font-size: 0.95rem;
+  margin: 0 0 10px;
+}
+
+.settings__add,
+.settings__opml,
+.settings__theme {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings__btn,
+.settings__theme-btn {
+  padding: 10px 16px;
+  min-height: var(--rm-tap);
+  border: 1px solid var(--rm-border-strong);
+  border-radius: var(--rm-radius);
+  background: var(--rm-bg-card);
+  color: var(--rm-text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings__theme-btn.is-active {
+  border-color: var(--rm-accent);
+  color: var(--rm-accent);
+  background: color-mix(in srgb, var(--rm-accent) 10%, transparent);
+}
+
+.settings__subs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.settings__sub,
+.settings__account {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--rm-border);
+}
+
+.settings__sub:last-child {
+  border-bottom: none;
+}
+
+.settings__sub-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings__sub-title {
+  font-weight: 600;
+}
+
+.settings__sub-url {
+  font-size: 0.8rem;
+  color: var(--rm-meta);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings__mute {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--rm-meta);
+}
+
+.settings__unsub {
+  border: none;
+  background: none;
+  color: var(--rm-danger);
+  font-weight: 600;
+  cursor: pointer;
+  min-height: var(--rm-tap);
+  padding: 0 8px;
+}
+
+.settings__account {
+  justify-content: space-between;
+}

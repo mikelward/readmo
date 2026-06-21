@@ -1,0 +1,36 @@
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 12px 8px;
+}
+
+.page-header__title {
+  font-size: 1.4rem;
+  margin: 0;
+}
+
+.search-input {
+  flex: 1 1 auto;
+  width: 100%;
+  font-size: 1rem;
+  padding: 12px 14px;
+  min-height: var(--rm-tap);
+  border: 1px solid var(--rm-border-strong);
+  border-radius: var(--rm-radius);
+  background: var(--rm-bg-card);
+  color: var(--rm-text);
+}
+
+.page-header__badge {
+  margin-left: auto;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #fff;
+  background: var(--rm-danger);
+  border: none;
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+  min-height: 32px;
+}

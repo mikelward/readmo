@@ -1,0 +1,253 @@
+import type { ReactNode, SVGProps } from 'react';
+
+// Material Symbols Outlined — Apache 2.0, Google. viewBox 0 -960 960 960,
+// fill-based paths that take `color` via currentColor. Monochrome, inline,
+// no icon font / runtime request (SPEC.md *Visual design*).
+const MS_VIEWBOX = '0 -960 960 960';
+
+type IconProps = Omit<SVGProps<SVGSVGElement>, 'viewBox' | 'fill' | 'children'>;
+
+function MaterialIcon({
+  children,
+  width = 24,
+  height = 24,
+  ...rest
+}: IconProps & { children: ReactNode }) {
+  return (
+    <svg
+      viewBox={MS_VIEWBOX}
+      fill="currentColor"
+      width={width}
+      height={height}
+      aria-hidden="true"
+      focusable="false"
+      {...rest}
+    >
+      {children}
+    </svg>
+  );
+}
+
+// ---- Pin (push_pin) -------------------------------------------------------
+
+export function PushPinOutline(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M640-480v-160h40v-80H280v80h40v160l-80 80v40h440v-40l-80-80Zm-360 80 80-80v-160h-40v-80h360v80h-40v160l80 80v40H520v200h-80v-200H240v-40h40Zm200 0Z" />
+    </MaterialIcon>
+  );
+}
+
+export function PushPinFilled(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M440-160v-280H240v-80l80-80v-200h-40v-80h400v80h-40v200l80 80v80H520v280h-80Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- Favorite (heart) -----------------------------------------------------
+
+export function FavoriteOutline(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="m480-120-58-52q-101-91-167-157T150-447.5Q111-500 95.5-544T80-634q0-94 63-157t157-63q52 0 99 22t81 62q34-40 81-62t99-22q94 0 157 63t63 157q0 46-15.5 90T810-447.5Q771-395 705-329T538-172l-58 52Zm0-108q96-86 158-147.5t98-107q36-45.5 50-81t14-70.5q0-60-40-100t-100-40q-47 0-87 26.5T518-680h-76q-15-41-55-67.5T300-774q-60 0-100 40t-40 100q0 35 14 70.5t50 81q36 45.5 98 107T480-228Zm0-273Z" />
+    </MaterialIcon>
+  );
+}
+
+export function FavoriteFilled(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="m480-120-58-52q-101-91-167-157T150-447.5Q111-500 95.5-544T80-634q0-94 63-157t157-63q52 0 99 22t81 62q34-40 81-62t99-22q94 0 157 63t63 157q0 46-15.5 90T810-447.5Q771-395 705-329T538-172l-58 52Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- Done (check_circle) --------------------------------------------------
+
+export function CheckCircleOutline(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="m424-296 282-282-56-56-226 226-114-114-56 56 170 170Zm56 216q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Zm0-320Z" />
+    </MaterialIcon>
+  );
+}
+
+export function CheckCircleFilled(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="m424-296 282-282-56-56-226 226-114-114-56 56 170 170Zm56 216q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- Hidden (visibility_off) ----------------------------------------------
+
+export function VisibilityOff(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="m644-428-58-58q9-47-27-88t-93-32l-58-58q17-8 34.5-12t37.5-4q75 0 127.5 52.5T660-500q0 20-4 37.5T644-428Zm128 126-58-56q38-29 67.5-63.5T832-500q-50-101-143.5-160.5T480-720q-29 0-57 4t-55 12l-62-62q41-17 84-25.5t90-8.5q151 0 269 83.5T920-500q-23 59-60.5 109.5T772-302Zm20 246L624-222q-35 11-70.5 16.5T480-200q-151 0-269-83.5T40-500q21-53 53-98.5t73-81.5L56-792l56-56 736 736-56 56ZM222-624q-29 26-53 57t-41 67q50 101 143.5 160.5T480-280q20 0 39-2.5t39-5.5l-36-38q-11 3-21 4.5t-21 1.5q-75 0-127.5-52.5T300-500q0-11 1.5-21t4.5-21l-84-82Zm319 93Zm-151 75Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- Mark unread (mark_email_unread) --------------------------------------
+
+export function MarkUnread(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h487q-5 20-6.5 40t1.5 40H160l320 200 153-96q14 12 30 21t34 15L480-440 160-640v400h640v-322q23-5 43-15t37-24v361q0 33-23.5 56.5T800-160H160Zm640-560q-50 0-85-35t-35-85q0-50 35-85t85-35q50 0 85 35t35 85q0 50-35 85t-85 35Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- Search ---------------------------------------------------------------
+
+export function Search(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M784-120 532-372q-30 24-69 38t-83 14q-109 0-184.5-75.5T120-580q0-109 75.5-184.5T380-840q109 0 184.5 75.5T640-580q0 44-14 83t-38 69l252 252-56 56ZM380-400q75 0 127.5-52.5T560-580q0-75-52.5-127.5T380-760q-75 0-127.5 52.5T200-580q0 75 52.5 127.5T380-400Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- Menu (hamburger) -----------------------------------------------------
+
+export function Menu(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M120-240v-80h720v80H120Zm0-200v-80h720v80H120Zm0-200v-80h720v80H120Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- Arrow back -----------------------------------------------------------
+
+export function ArrowBack(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M313-440l224 224-57 56-320-320 320-320 57 56-224 224h487v80H313Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- More (more_vert) -----------------------------------------------------
+
+export function MoreVert(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M480-160q-33 0-56.5-23.5T400-240q0-33 23.5-56.5T480-320q33 0 56.5 23.5T560-240q0 33-23.5 56.5T480-160Zm0-240q-33 0-56.5-23.5T400-480q0-33 23.5-56.5T480-560q33 0 56.5 23.5T560-480q0 33-23.5 56.5T480-400Zm0-240q-33 0-56.5-23.5T400-720q0-33 23.5-56.5T480-800q33 0 56.5 23.5T560-720q0 33-23.5 56.5T480-640Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- Open in new ----------------------------------------------------------
+
+export function OpenInNew(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h280v80H200v560h560v-280h80v280q0 33-23.5 56.5T760-120H200Zm188-212-56-56 372-372H560v-80h280v280h-80v-144L388-332Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- Share ----------------------------------------------------------------
+
+export function Share(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M720-80q-50 0-85-35t-35-85q0-7 1-14.5t3-13.5L322-392q-17 15-38 23.5t-44 8.5q-50 0-85-35t-35-85q0-50 35-85t85-35q23 0 44 8.5t38 23.5l283-164q-2-6-3-13.5t-1-14.5q0-50 35-85t85-35q50 0 85 35t35 85q0 50-35 85t-85 35q-23 0-44-8.5T642-672L359-508q2 6 3 13.5t1 14.5q0 7-1 14.5t-3 13.5l283 164q17-15 38-23.5t44-8.5q50 0 85 35t35 85q0 50-35 85t-85 35Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- Refresh --------------------------------------------------------------
+
+export function Refresh(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M480-160q-134 0-227-93t-93-227q0-134 93-227t227-93q69 0 132 28.5T720-690v-110h80v280H520v-80h168q-32-56-87.5-88T480-820q-100 0-170 70t-70 170q0 100 70 170t170 70q77 0 139-44t87-116h84q-28 106-114 173t-196 67Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- Close ----------------------------------------------------------------
+
+export function Close(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M256-200l-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- Settings -------------------------------------------------------------
+
+export function Settings(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="m370-80-16-128q-13-5-24.5-12T307-235l-119 50L78-375l103-78q-1-7-1-13.5v-27q0-6.5 1-13.5L78-585l110-190 119 50q11-8 23-15t24-12l16-128h220l16 128q13 5 24.5 12t22.5 16l119-50 110 190-103 78q1 7 1 13.5v27q0 6.5-2 13.5l103 78-110 190-118-50q-11 8-23 15t-24 12L590-80H370Zm112-260q58 0 99-41t41-99q0-58-41-99t-99-41q-59 0-99.5 41T342-480q0 58 40.5 99t99.5 41Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- Folder ---------------------------------------------------------------
+
+export function Folder(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h240l80 80h320q33 0 56.5 23.5T880-640v400q0 33-23.5 56.5T800-160H160Zm0-80h640v-400H447l-80-80H160v480Zm0 0v-480 480Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- Add (subscribe / new feed) -------------------------------------------
+
+export function Add(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M440-440H200v-80h240v-240h80v240h240v80H520v240h-80v-240Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- Theme: Sun (light_mode) ----------------------------------------------
+
+export function Sun(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M480-360q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35Zm0 80q-83 0-141.5-58.5T280-480q0-83 58.5-141.5T480-680q83 0 141.5 58.5T680-480q0 83-58.5 141.5T480-280ZM200-440H40v-80h160v80Zm720 0H760v-80h160v80ZM440-760v-160h80v160h-80Zm0 720v-160h80v160h-80ZM256-650l-101-97 57-59 96 100-52 56Zm492 496-97-101 53-55 101 97-57 59Zm-98-550 97-101 59 57-100 96-56-52ZM154-212l101-97 55 53-97 101-59-57Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- Theme: Moon (dark_mode) ----------------------------------------------
+
+export function Moon(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M480-120q-150 0-255-105T120-480q0-150 105-255t255-105q14 0 27.5 1t26.5 3q-41 29-65.5 75.5T444-660q0 90 63 153t153 63q55 0 101-24.5t75-65.5q2 13 3 26.5t1 27.5q0 150-105 255T480-120Zm0-80q88 0 158-48.5T740-375q-20 5-40 8t-40 3q-123 0-209.5-86.5T364-656q0-20 3-40t8-40q-78 32-126.5 102T200-480q0 116 82 198t198 82Zm-10-270Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- Theme: System (brightness_auto / contrast) ---------------------------
+
+export function SystemTheme(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80v-640q-133 0-226.5 93.5T160-480q0 133 93.5 226.5T480-160Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- Chevron right --------------------------------------------------------
+
+export function ChevronRight(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M504-480 320-664l56-56 240 240-240 240-56-56 184-184Z" />
+    </MaterialIcon>
+  );
+}

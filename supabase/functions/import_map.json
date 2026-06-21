@@ -1,0 +1,7 @@
+{
+  "//": "Deno import map for Readmo Edge Functions. The shared server modules under _shared/ import the parser and sanitizer with BARE specifiers (`fast-xml-parser`, `sanitize-html`) so that vitest (node) can import them directly from node_modules during unit tests. Deno does not resolve bare npm specifiers on its own, so this map rewrites them to `npm:` specifiers at deploy/serve time. Reference it from the CLI with `--import-map supabase/functions/import_map.json` (or via deno.json / config). The versions here are pinned to match package.json so node tests and Deno runtime parse identically.",
+  "imports": {
+    "fast-xml-parser": "npm:fast-xml-parser@^5.0.8",
+    "sanitize-html": "npm:sanitize-html@^2.17.4"
+  }
+}
