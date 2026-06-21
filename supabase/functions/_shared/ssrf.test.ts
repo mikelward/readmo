@@ -221,6 +221,23 @@ describe('safeFetch — with injected resolver/fetch', () => {
     ).rejects.toThrow(/too large|exceeded/i);
   });
 
+  it('times out a trickled body that never completes (deadline spans the read)', async () => {
+    // Headers arrive immediately, but the body stream never enqueues or closes.
+    // The timeout must still fire — it covers the body read, not just the fetch.
+    const neverEnding = new ReadableStream<Uint8Array>({
+      start() {
+        /* never enqueue, never close */
+      },
+    });
+    await expect(
+      safeFetch('https://slow.example.com/', {
+        timeoutMs: 30,
+        resolve: async () => ['8.8.8.8'],
+        fetchImpl: async () => new Response(neverEnding, { status: 200 }),
+      }),
+    ).rejects.toThrow(/Timed out reading response body/);
+  });
+
   it('does not forward Authorization/Cookie headers', async () => {
     let seen: Headers | undefined;
     await safeFetch('https://example.com/', {
