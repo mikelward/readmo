@@ -27,16 +27,21 @@ Deno.serve(async (req: Request) => {
   if (typeof url !== 'string' || !url) return json({ error: 'Missing url' }, 400);
 
   try {
+    // The settings form accepts bare site names (e.g. "example.com"), so
+    // normalize a missing scheme to https:// before anything touches the URL —
+    // otherwise assertSafeUrl/safeFetch reject it as "Invalid URL".
+    const target = /^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `https://${url}`;
+
     // Reddit short-circuit: derive the .rss form directly (its pages don't
     // reliably advertise the feed).
-    const reddit = redditFeedFor(url);
+    const reddit = redditFeedFor(target);
     if (reddit) {
       const feed = await tryParse(reddit);
       if (feed) return json({ candidates: [feed] });
     }
 
     // Fetch the target. It may itself be a feed or an HTML page.
-    const res = await safeFetch(url, { timeoutMs: 10_000, maxBytes: 8 * 1024 * 1024 });
+    const res = await safeFetch(target, { timeoutMs: 10_000, maxBytes: 8 * 1024 * 1024 });
     const body = new TextDecoder().decode(res.body);
 
     // If the target parses as a feed, offer it directly.

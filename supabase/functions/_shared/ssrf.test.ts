@@ -70,6 +70,20 @@ describe('isBlockedAddress — IPv6', () => {
     expect(isBlockedAddress('::ffff:169.254.169.254')).toBe(true);
   });
 
+  it('blocks NAT64 64:ff9b::/96 embedding a private/metadata IPv4', () => {
+    expect(isBlockedAddress('64:ff9b::a9fe:a9fe')).toBe(true); // 169.254.169.254
+    expect(isBlockedAddress('64:ff9b::7f00:1')).toBe(true); // 127.0.0.1
+    expect(isBlockedAddress('64:ff9b::0a00:1')).toBe(true); // 10.0.0.1
+  });
+
+  it('allows NAT64 embedding a public IPv4', () => {
+    expect(isBlockedAddress('64:ff9b::808:808')).toBe(false); // 8.8.8.8
+  });
+
+  it('blocks the NAT64 local-use prefix 64:ff9b:1::/48 wholesale', () => {
+    expect(isBlockedAddress('64:ff9b:1::1')).toBe(true);
+  });
+
   it('allows ordinary public IPv6', () => {
     expect(isBlockedAddress('2606:4700:4700::1111')).toBe(false); // cloudflare
   });

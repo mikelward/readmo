@@ -51,13 +51,17 @@ begin
   end if;
 
   -- --- Timestamp stamping -------------------------------------------------
-  -- On INSERT, OLD is NULL: stamp any flag that is being set true.
+  -- The trigger is the trusted source of *_at — never accept a client-supplied
+  -- timestamp. On INSERT, set now() for each flag that is true and NULL
+  -- otherwise (a coalesce() would let a client insert a far-future hidden/
+  -- opened timestamp and skew TTL retention + library ordering until the row
+  -- is toggled again).
   if (tg_op = 'INSERT') then
-    if new.pinned   then new.pinned_at   := coalesce(new.pinned_at, now());   end if;
-    if new.favorite then new.favorite_at := coalesce(new.favorite_at, now()); end if;
-    if new.done     then new.done_at     := coalesce(new.done_at, now());     end if;
-    if new.hidden   then new.hidden_at   := coalesce(new.hidden_at, now());   end if;
-    if new.opened   then new.opened_at   := coalesce(new.opened_at, now());   end if;
+    new.pinned_at   := case when new.pinned   then now() else null end;
+    new.favorite_at := case when new.favorite then now() else null end;
+    new.done_at     := case when new.done     then now() else null end;
+    new.hidden_at   := case when new.hidden   then now() else null end;
+    new.opened_at   := case when new.opened   then now() else null end;
   else
     -- On UPDATE, stamp on a false→true transition and clear on true→false.
     if new.pinned and not old.pinned then new.pinned_at := now();

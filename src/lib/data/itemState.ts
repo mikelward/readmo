@@ -101,9 +101,14 @@ export class ItemStateStore {
   // whose Hidden/Opened flag has aged past the TTL would yield a fresh object
   // on every `get()` (withRetention clones), and since `get()` is the
   // useSyncExternalStore snapshot, React would warn about an unstable snapshot
-  // and could re-render in a loop. Keyed on the raw stored object identity,
-  // which only changes on a real mutation.
-  private retainedCache = new Map<ItemId, { raw: ItemState; out: ItemState }>();
+  // and could re-render in a loop. Keyed on the raw stored object identity
+  // (changes only on a real mutation) AND a `validUntil` deadline — the next
+  // TTL boundary at which the retained snapshot would change — so a session
+  // left open past the 7-day TTL still re-includes expired rows.
+  private retainedCache = new Map<
+    ItemId,
+    { raw: ItemState; out: ItemState; validUntil: number }
+  >();
   // One level of undo, matching newshacker's "restore the last hide / swipe /
   // sweep batch" (SPEC.md *List toolbar*). Only hide-style mutations record
   // here; pin/favorite/done toggles are not toolbar-undoable.
@@ -117,9 +122,22 @@ export class ItemStateStore {
     const raw = this.map[id];
     if (!raw) return DEFAULT_ITEM_STATE;
     const cached = this.retainedCache.get(id);
-    if (cached && cached.raw === raw) return cached.out;
+    if (cached && cached.raw === raw && now < cached.validUntil) {
+      return cached.out;
+    }
     const out = withRetention(raw, now);
-    this.retainedCache.set(id, { raw, out });
+    // The retained snapshot only changes again when an as-yet-unexpired
+    // Hidden/Opened flag crosses its TTL boundary; cache until the earliest
+    // such boundary (else forever). This keeps repeated reads referentially
+    // stable while never pinning a stale pre-expiry snapshot indefinitely.
+    let validUntil = Number.POSITIVE_INFINITY;
+    if (out.hidden && raw.hiddenAt !== null) {
+      validUntil = Math.min(validUntil, raw.hiddenAt + TTL_MS);
+    }
+    if (out.opened && raw.openedAt !== null) {
+      validUntil = Math.min(validUntil, raw.openedAt + TTL_MS);
+    }
+    this.retainedCache.set(id, { raw, out, validUntil });
     return out;
   }
 
