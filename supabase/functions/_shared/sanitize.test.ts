@@ -42,18 +42,44 @@ describe('sanitizeContent', () => {
     expect(out).toContain('href="https://pub.example.com/relative"');
   });
 
-  it('absolutizes relative img src against the base URL', () => {
+  it('absolutizes a relative img src and routes it through the image proxy', () => {
     const out = sanitizeContent('<img src="pics/a.png">', base);
-    expect(out).toContain('src="https://pub.example.com/articles/pics/a.png"');
+    expect(out).toContain(
+      'src="/api/img?url=' +
+        encodeURIComponent('https://pub.example.com/articles/pics/a.png') +
+        '"',
+    );
+    // The publisher origin is never present as a directly-loadable src.
+    expect(out).not.toContain('src="https://pub.example.com/articles/pics/a.png"');
   });
 
-  it('absolutizes srcset candidates', () => {
+  it('routes srcset candidates through the image proxy, preserving descriptors', () => {
     const out = sanitizeContent(
       '<img src="/a.png" srcset="/a.png 1x, /a@2x.png 2x">',
       base,
     );
-    expect(out).toContain('https://pub.example.com/a.png 1x');
-    expect(out).toContain('https://pub.example.com/a@2x.png 2x');
+    expect(out).toContain(
+      '/api/img?url=' + encodeURIComponent('https://pub.example.com/a.png') + ' 1x',
+    );
+    expect(out).toContain(
+      '/api/img?url=' + encodeURIComponent('https://pub.example.com/a@2x.png') + ' 2x',
+    );
+  });
+
+  it('leaves inline data: images un-proxied', () => {
+    const dataUri = 'data:image/png;base64,iVBORw0KGgo=';
+    const out = sanitizeContent(`<img src="${dataUri}">`, base);
+    expect(out).toContain(`src="${dataUri}"`);
+    expect(out).not.toContain('/api/img');
+  });
+
+  it('does not proxy media enclosure <source src> (audio/video)', () => {
+    const out = sanitizeContent(
+      '<audio controls><source src="/ep.mp3" type="audio/mpeg"></audio>',
+      base,
+    );
+    expect(out).toContain('src="https://pub.example.com/ep.mp3"');
+    expect(out).not.toContain('/api/img');
   });
 
   it('returns empty string for null/empty input', () => {

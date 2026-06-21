@@ -30,19 +30,39 @@ function MaterialIcon({
 
 // ---- Pin (push_pin) -------------------------------------------------------
 
+// The pin glyphs use the classic Material Icons 24x24 grid (not the
+// 0 -960 960 960 Symbols grid the rest of this file uses): the Symbols
+// push_pin paths rendered as a broken diagonal sliver. These are the
+// well-known Material `push_pin` outline/filled shapes.
+function PinSvg({ children, ...props }: IconProps & { children: ReactNode }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      width={24}
+      height={24}
+      aria-hidden="true"
+      focusable="false"
+      {...props}
+    >
+      {children}
+    </svg>
+  );
+}
+
 export function PushPinOutline(props: IconProps) {
   return (
-    <MaterialIcon {...props}>
-      <path d="M640-480v-160h40v-80H280v80h40v160l-80 80v40h440v-40l-80-80Zm-360 80 80-80v-160h-40v-80h360v80h-40v160l80 80v40H520v200h-80v-200H240v-40h40Zm200 0Z" />
-    </MaterialIcon>
+    <PinSvg {...props}>
+      <path d="M14 4v5c0 1.12.37 2.16 1 3H9c.65-.86 1-1.9 1-3V4h4m3-2H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3V4h1c.55 0 1-.45 1-1s-.45-1-1-1z" />
+    </PinSvg>
   );
 }
 
 export function PushPinFilled(props: IconProps) {
   return (
-    <MaterialIcon {...props}>
-      <path d="M440-160v-280H240v-80l80-80v-200h-40v-80h400v80h-40v200l80 80v80H520v280h-80Z" />
-    </MaterialIcon>
+    <PinSvg {...props}>
+      <path d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z" />
+    </PinSvg>
   );
 }
 
