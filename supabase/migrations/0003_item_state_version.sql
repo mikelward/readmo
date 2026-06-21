@@ -20,20 +20,33 @@ create or replace function public.item_state_bump()
 returns trigger
 language plpgsql
 as $$
+declare
+  -- Which flags were newly turned ON in THIS write. Exclusivity MUST key off
+  -- the transition, not the absolute NEW value: on a partial UPDATE the
+  -- unspecified columns keep their OLD values, so `update({done:true})` on an
+  -- already-pinned row arrives with NEW.pinned still true — and absolute-value
+  -- logic would then clear the Done the client just set, leaving the row
+  -- pinned-and-not-done and breaking the pinned → Done lifecycle. Mirrors the
+  -- client applyMutation (one field changed per write). On INSERT, OLD is NULL
+  -- (its columns read as NULL), so "turned on" is simply the flag being true.
+  pin_on  boolean := new.pinned and (tg_op = 'INSERT' or not old.pinned);
+  hide_on boolean := new.hidden and (tg_op = 'INSERT' or not old.hidden);
+  done_on boolean := new.done   and (tg_op = 'INSERT' or not old.done);
 begin
   -- --- State exclusivity (write-path enforcement) -------------------------
-  -- Pin wins over Done/Hidden.
-  if new.pinned then
+  -- Pinning removes Done and Hidden.
+  if pin_on then
     new.done   := false;
     new.hidden := false;
   end if;
-  -- Hiding clears Pin (re-check after the block above so an explicit hide in
-  -- the same write still drops the pin).
-  if new.hidden then
+  -- Hiding clears Pin.
+  if hide_on then
     new.pinned := false;
   end if;
-  -- Done clears Pin (Done is where pinned items go when they leave the queue).
-  if new.done then
+  -- Marking Done clears Pin (Done is where pinned items go when they leave
+  -- the queue). Because done_on is transition-based, an explicit Done on a
+  -- pinned row now correctly drops the pin and keeps Done.
+  if done_on then
     new.pinned := false;
   end if;
 
@@ -64,13 +77,15 @@ begin
   end if;
 
   -- --- Monotonic version bump --------------------------------------------
-  -- Always server-assigned. On insert start at 1; on update take the greater
-  -- of (old.version + 1) and (new.version) so the value never regresses even
-  -- if a client echoes a stale version.
+  -- Always server-assigned and derived SOLELY from the stored row, ignoring
+  -- whatever `version` the client sent. (Using the client's value — even via
+  -- greatest() — would let a caller pick the next version by sending a huge
+  -- number, breaking conflict resolution and risking bigint overflow.) On
+  -- insert start at 1; on update increment the stored value.
   if (tg_op = 'INSERT') then
     new.version := 1;
   else
-    new.version := greatest(old.version, new.version) + 1;
+    new.version := old.version + 1;
   end if;
 
   return new;

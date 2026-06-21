@@ -33,6 +33,15 @@ const queryClient = new QueryClient({
   },
 });
 
+// TODO(PR2, P1 — per-user cache scoping): this single app-wide key is restored
+// with an infinite maxAge and never purged on sign-out / account change. Once
+// the SupabaseDataSource stores per-user feed/item responses here, a second
+// user on a shared device could hydrate the previous user's content before an
+// RLS refetch corrects it. AGENTS guardrail #8 requires keying the persisted
+// store (and Workbox runtime caches) by auth.uid() and purging the prior
+// user's caches before the new session paints. Wire this with real auth in
+// PR2. (PR1 is single mock user, so no cross-user leak today.) See PR #1
+// review (codex P1).
 const persister = createSyncStoragePersister({
   storage: typeof window !== 'undefined' ? window.localStorage : undefined,
   key: 'readmo:rq-cache',
