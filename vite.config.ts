@@ -50,7 +50,7 @@ export default defineConfig({
           short_name: 'readmo',
           description:
             'A mobile-friendly, installable reader for your RSS, Atom, and JSON feeds.',
-          theme_color: '#3a4ec4',
+          theme_color: '#faf9f5',
           background_color: '#faf9f5',
           display: 'standalone',
           start_url: '/',

@@ -90,23 +90,26 @@ newshacker.
 
 ## Visual design
 
-Indigo on paper — distinct from newshacker's orange, and (unlike orange)
-indigo clears 4.5:1 on white so it can be used for links, not just as a glyph
-backdrop. Everything else about the visual system mirrors newshacker.
+Ink on paper (monochrome) — a calm, near-black accent on warm paper rather
+than a colored hue. The ink accent clears 4.5:1 on the paper background so it
+can be used for links and the primary button, not just as a glyph backdrop.
+Everything else about the visual system mirrors newshacker.
 
-- **Accent / primary:** indigo `--rm-accent: #3a4ec4` (logo tile behind the
-  white glyph, focus rings, the primary "Open original" button, active library
-  icons, links). Verify the final hex clears 4.5:1 on both light and dark.
+- **Accent / primary:** ink `--rm-accent: #2b2b2b` (light) / `#ececec` (dark)
+  — focus rings, links, active library icons, the brand wordmark, and the
+  primary "Open original" button (a solid ink fill with paper-white text).
+  Links also carry an underline so they remain distinguishable without a hue.
+  Verify the final values clear 4.5:1 on both light and dark.
 - **Background:** warm off-white paper `--rm-bg: #faf9f5`; white
   `--rm-bg-card: #ffffff` for rows/cards.
 - **Text:** `--rm-text: #1a1a1a`; **opened/read titles** `--rm-read: #4a4a4a`
   (mid-tone below unopened, above meta); meta `--rm-meta: #6b6b6b`. The
   opened-title fade is the same read/unread treatment newshacker uses (color
   gap + weight step), identical in light and dark.
-- **Mark:** indigo rounded-square tile, white glyph biased toward the top,
-  white **home-indicator pill** near the bottom (same mobile-first motif as
-  newshacker). Generate the icon set once (`scripts/generate-icons.mjs`) into
-  `public/`.
+- **Mark:** ink (near-black) rounded-square tile, paper-white glyph biased
+  toward the top, paper-white **home-indicator pill** near the bottom (same
+  mobile-first motif as newshacker). Generate the icon set once
+  (`scripts/generate-icons.mjs`) into `public/`.
 - **Dark mode:** full light/dark/system via tokens.
 - Icons inlined monochrome SVG (Material Symbols, `fill="currentColor"`), no
   icon font / runtime request.
@@ -581,7 +584,7 @@ they live in the overflow. (No Upvote — RSS has no votes.)
 ## Accessibility
 
 - Semantic HTML, visible focus, `prefers-reduced-motion` honored.
-- Body contrast ≥4.5:1 (indigo accent clears it on white/dark — verify final
+- Body contrast ≥4.5:1 (ink accent clears it on white/dark — verify final
   hex).
 - Every icon-only button has an accessible name; the long-press tooltip is
   visual-only.
@@ -621,7 +624,7 @@ content. Closest mirror of newshacker.
 
 ### Install identity
 
-- Manifest (via `vite-plugin-pwa`): name "Readmo", theme `#3a4ec4`, background
+- Manifest (via `vite-plugin-pwa`): name "Readmo", theme `#faf9f5`, background
   `#faf9f5`, `display: standalone`, `start_url: /`.
 - Icon set into `public/`: `icon-192/512`, `icon-512-maskable`,
   `apple-touch-icon` (180), `favicon.svg`, `favicon-maskable.svg`,

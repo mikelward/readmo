@@ -34,9 +34,12 @@ const publicDir = resolve(here, '..', 'public');
 // stays crisp for the largest (512x512). Higher is wasted work.
 const INPUT_DENSITY = 384;
 
-// Readmo accent indigo (--rm-accent) and the white used for glyph + pill.
-const INDIGO = '#3a4ec4';
-const WHITE = '#ffffff';
+// Paper / monochrome mark: an ink (near-black) tile with a paper-white glyph
+// and home-indicator pill, matching the "ink on paper" theme. (The constant
+// is still named INDIGO for the rest of the file's references; its value is
+// now ink.)
+const INDIGO = '#1a1a1a';
+const WHITE = '#faf9f5';
 
 // The reading glyph: an open page/book with text lines, biased toward the
 // top of the tile. Drawn as a group so the maskable variant can reuse it

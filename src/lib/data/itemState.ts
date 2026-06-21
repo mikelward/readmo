@@ -96,6 +96,14 @@ type UndoBatch = Array<[ItemId, ItemState | null]>;
 export class ItemStateStore {
   private map: Record<ItemId, ItemState>;
   private listeners = new Set<StateListener>();
+  // Per-id cache of the retention-applied snapshot so `get()` returns a
+  // referentially-stable object between store changes. Without this, an item
+  // whose Hidden/Opened flag has aged past the TTL would yield a fresh object
+  // on every `get()` (withRetention clones), and since `get()` is the
+  // useSyncExternalStore snapshot, React would warn about an unstable snapshot
+  // and could re-render in a loop. Keyed on the raw stored object identity,
+  // which only changes on a real mutation.
+  private retainedCache = new Map<ItemId, { raw: ItemState; out: ItemState }>();
   // One level of undo, matching newshacker's "restore the last hide / swipe /
   // sweep batch" (SPEC.md *List toolbar*). Only hide-style mutations record
   // here; pin/favorite/done toggles are not toolbar-undoable.
@@ -108,7 +116,11 @@ export class ItemStateStore {
   get(id: ItemId, now: number = Date.now()): ItemState {
     const raw = this.map[id];
     if (!raw) return DEFAULT_ITEM_STATE;
-    return withRetention(raw, now);
+    const cached = this.retainedCache.get(id);
+    if (cached && cached.raw === raw) return cached.out;
+    const out = withRetention(raw, now);
+    this.retainedCache.set(id, { raw, out });
+    return out;
   }
 
   /** All non-default, non-expired states keyed by id. */

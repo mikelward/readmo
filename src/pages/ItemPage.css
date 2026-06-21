@@ -186,4 +186,5 @@
 
 .reader__body a {
   color: var(--rm-accent);
+  text-decoration: underline;
 }

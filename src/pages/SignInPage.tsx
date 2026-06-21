@@ -1,18 +1,30 @@
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import './SignInPage.css';
 
+interface FromState {
+  from?: { pathname?: string; search?: string; hash?: string };
+}
+
 /** Clean sign-in landing (SPEC.md *Auth*). PR1 wires mock OAuth buttons that
- * sign in immediately; PR2 swaps these for Supabase Google/GitHub OAuth. */
+ * sign in immediately; PR2 swaps these for Supabase Google/GitHub OAuth.
+ * Deep links round-trip: RequireAuth stashes the requested location in
+ * `state.from`, and we land the user back there after signing in. */
 export function SignInPage() {
   const { signIn } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   useDocumentTitle('Sign in · readmo');
+
+  const from = (location.state as FromState | null)?.from;
+  const target = from?.pathname
+    ? `${from.pathname}${from.search ?? ''}${from.hash ?? ''}`
+    : '/';
 
   const handleSignIn = () => {
     signIn();
-    navigate('/');
+    navigate(target, { replace: true });
   };
 
   return (
