@@ -80,9 +80,14 @@ export function sanitizeContent(
       },
       img: (tagName, attribs) => {
         const next: Record<string, string> = { ...attribs };
+        // Absolutize, then route through the same-origin image proxy so the
+        // reader's browser never hits the publisher directly (SPEC.md
+        // *Privacy* / guardrail: no reader IP/UA leak, strips tracking
+        // pixels, doubles as the offline-image source). data: images are
+        // inline and left untouched.
         const abs = absolutize(attribs.src, baseUrl);
-        if (abs) next.src = abs;
-        const srcset = absolutizeSrcset(attribs.srcset, baseUrl);
+        if (abs) next.src = proxify(abs);
+        const srcset = proxifySrcset(attribs.srcset, baseUrl);
         if (srcset) next.srcset = srcset;
         // Lazy-load by default (SPEC.md reader view: "images lazy-load").
         if (!next.loading) next.loading = 'lazy';
@@ -90,9 +95,13 @@ export function sanitizeContent(
       },
       source: (tagName, attribs) => {
         const next: Record<string, string> = { ...attribs };
+        // `<source srcset>` is always an image candidate (in <picture>/<img>),
+        // so it goes through the image proxy. `<source src>` may be a media
+        // enclosure (audio/video), which the image proxy must not touch — we
+        // only absolutize it.
         const abs = absolutize(attribs.src, baseUrl);
         if (abs) next.src = abs;
-        const srcset = absolutizeSrcset(attribs.srcset, baseUrl);
+        const srcset = proxifySrcset(attribs.srcset, baseUrl);
         if (srcset) next.srcset = srcset;
         return { tagName, attribs: next };
       },
@@ -123,8 +132,23 @@ function absolutize(
   }
 }
 
-/** Absolutize each candidate in a srcset ("url 1x, url 2x"). */
-function absolutizeSrcset(
+/**
+ * Rewrite an absolute image URL to the same-origin proxy endpoint
+ * `/api/img?url=…`. Leaves `data:` URIs (inline images) untouched, and is a
+ * no-op for anything that isn't http(s). The proxy fetches through the
+ * SSRF-hardened helper, caches, and strips third-party tracking pixels
+ * (SPEC.md *Privacy*).
+ */
+export function proxify(url: string | null | undefined): string | null {
+  if (!url) return null;
+  if (url.startsWith('data:')) return url;
+  if (!/^https?:\/\//i.test(url)) return url;
+  return `/api/img?url=${encodeURIComponent(url)}`;
+}
+
+/** Absolutize each candidate in a srcset ("url 1x, url 2x") and route it
+ * through the image proxy. */
+function proxifySrcset(
   srcset: string | undefined,
   base: string | null | undefined,
 ): string | null {
@@ -136,7 +160,7 @@ function absolutizeSrcset(
     const url = sp === -1 ? seg : seg.slice(0, sp);
     const descriptor = sp === -1 ? '' : seg.slice(sp);
     const abs = absolutize(url, base);
-    return (abs ?? url) + descriptor;
+    return (proxify(abs ?? url) ?? url) + descriptor;
   });
   const joined = parts.filter(Boolean).join(', ');
   return joined || null;

@@ -106,18 +106,23 @@ create policy items_select on public.items
   );
 
 -- ===========================================================================
--- Keep secret_url server-only. RLS controls ROW visibility but not COLUMN
--- visibility, so even a visible feeds row would otherwise leak secret_url to
--- the anon/authenticated roles. Two-part defense:
---   1. Revoke column-level access to secret_url from client roles.
---   2. Expose a display-safe view `feeds_public` that omits secret_url for
---      clients to read through.
--- The service role (poller) retains full table access and reads secret_url.
+-- Keep the fetchable feed URLs server-only. RLS controls ROW visibility but
+-- not COLUMN visibility, so even a visible feeds row would otherwise leak the
+-- fetch URLs to the anon/authenticated roles. BOTH `secret_url` AND `url` are
+-- treated as secret: `url` is the UNIQUE fetch/de-dup key and, when a user
+-- pastes a tokenized/private feed URL (paid newsletters, per-user feed URLs
+-- with a secret in the path/query), it embeds that token. Exposing `url` would
+-- hand every co-subscriber (and any permanent-state reader) the secret, which
+-- the spec forbids ("keep secret/tokenized feed URLs server-only"). Clients
+-- only ever need display-safe metadata (`site_url`, `title`, health). Defense:
+--   1. Revoke column-level SELECT on url + secret_url from client roles.
+--   2. Expose a display-safe view `feeds_public` that omits both fetch URLs.
+-- The service role (poller) retains full table access and reads both columns.
 -- ===========================================================================
 
--- 1. Revoke the secret column from the client-facing roles. (They keep access
---    to the other columns via the table's RLS SELECT policy above.)
-revoke select (secret_url) on public.feeds from anon, authenticated;
+-- 1. Revoke the secret columns from the client-facing roles. (They keep access
+--    to the display-safe columns via the table's RLS SELECT policy above.)
+revoke select (secret_url, url) on public.feeds from anon, authenticated;
 -- Defensive: clients never write feeds, so revoke write entirely.
 revoke insert, update, delete on public.feeds from anon, authenticated;
 revoke insert, update, delete on public.items from anon, authenticated;
@@ -125,16 +130,17 @@ revoke insert, update, delete on public.items from anon, authenticated;
 -- 2. A display-safe view. security_invoker=on makes the view honor the
 --    querying user's RLS on the underlying feeds table (so the same
 --    subscription/permanent-state visibility applies), while structurally
---    omitting secret_url.
+--    omitting BOTH fetch URLs (url + secret_url). Clients display `site_url`.
 create or replace view public.feeds_public
   with (security_invoker = on) as
   select
-    id, url, site_url, title,
+    id, site_url, title,
     last_fetched_at, next_fetch_at, fetch_interval_s,
     error_count, last_error, created_at
   from public.feeds;
 
 comment on view public.feeds_public is
-  'Display-safe projection of feeds for clients. Omits secret_url; honors the '
-  'caller''s RLS via security_invoker. The poller (service role) reads '
-  'public.feeds directly for secret_url.';
+  'Display-safe projection of feeds for clients. Omits the fetch URLs '
+  '(url + secret_url), which may embed per-user tokens; honors the caller''s '
+  'RLS via security_invoker. The poller (service role) reads public.feeds '
+  'directly for the fetch URLs.';

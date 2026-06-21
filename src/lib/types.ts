@@ -16,7 +16,10 @@ export interface Enclosure {
  * ever sees display-safe fields. */
 export interface Feed {
   id: FeedId;
-  /** Display-safe feed URL (no embedded secret). */
+  /** Display-safe URL only. The SupabaseDataSource MUST source this from the
+   * feed's `site_url` (or another display field) — never the server-only
+   * fetch/de-dup `url`, which can embed a per-user token (see
+   * supabase/migrations 0002_rls: feeds_public omits both fetch URLs). */
   url: string;
   siteUrl: string | null;
   title: string;

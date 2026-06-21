@@ -54,6 +54,21 @@ describe('icons', () => {
     }
   });
 
+  it('renders the pin glyphs on the 0 0 24 24 grid with a non-trivial path', () => {
+    // Guards against regressing to the malformed Material Symbols push_pin
+    // path that rendered as a thin diagonal sliver.
+    for (const name of ['PushPinOutline', 'PushPinFilled'] as const) {
+      const Icon = (icons as Record<string, IconComponent>)[name];
+      const { container, unmount } = render(<Icon />);
+      const svg = container.querySelector('svg')!;
+      expect(svg.getAttribute('viewBox'), name).toBe('0 0 24 24');
+      const d = svg.querySelector('path')!.getAttribute('d') ?? '';
+      // The real push_pin shape is a long path; the broken sliver was short.
+      expect(d.length, name).toBeGreaterThan(80);
+      unmount();
+    }
+  });
+
   it('forwards props (className, size override)', () => {
     const { container } = render(
       <icons.Search className="hdr-icon" width={20} height={20} />,
