@@ -142,4 +142,18 @@ describe('ItemStateStore', () => {
     store.set('item-1', 'pinned', true, later);
     expect(store.get('item-1', later)).not.toBe(a);
   });
+
+  it('recomputes the cached snapshot after the TTL boundary', () => {
+    const store = new ItemStateStore(memoryPersistence());
+    store.set('item-1', 'hidden', true, NOW);
+    // Read before expiry: stable and still hidden.
+    const before1 = store.get('item-1', NOW + 1000);
+    const before2 = store.get('item-1', NOW + 2000);
+    expect(before1).toBe(before2);
+    expect(before1.hidden).toBe(true);
+    // Read past the TTL boundary (same raw, no mutation): now expired, so the
+    // cache must recompute rather than return the stale hidden snapshot.
+    const after = store.get('item-1', NOW + TTL_MS + 1);
+    expect(after.hidden).toBe(false);
+  });
 });

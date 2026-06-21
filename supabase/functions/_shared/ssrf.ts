@@ -141,10 +141,33 @@ function isBlockedV6(addr: string): boolean {
   if (first >= 0xfc00 && first <= 0xfdff) return true;
   // ff00::/8 multicast.
   if ((first & 0xff00) === 0xff00) return true;
-  // ::/8 reserved block other than the handled :: / ::1 (e.g. ::ffff: mapped
-  // is handled earlier). Block 64:ff9b (NAT64) and other ::-prefixed oddities.
+
+  // NAT64 well-known prefix 64:ff9b::/96 (RFC 6052): the low 32 bits embed an
+  // IPv4 address, so classify THAT — otherwise 64:ff9b::a9fe:a9fe (which maps
+  // to 169.254.169.254, the cloud-metadata IP) would slip through as public on
+  // NAT64-enabled egress.
+  if (
+    first === 0x0064 &&
+    groups[1] === 0xff9b &&
+    groups[2] === 0 &&
+    groups[3] === 0 &&
+    groups[4] === 0 &&
+    groups[5] === 0
+  ) {
+    const embedded =
+      `${(groups[6] >> 8) & 0xff}.${groups[6] & 0xff}.` +
+      `${(groups[7] >> 8) & 0xff}.${groups[7] & 0xff}`;
+    return isBlockedV4(embedded);
+  }
+  // NAT64 local-use prefix 64:ff9b:1::/48 (RFC 8215): the IPv4 embedding format
+  // varies, so block the whole prefix conservatively.
+  if (first === 0x0064 && groups[1] === 0xff9b && groups[2] === 0x0001) {
+    return true;
+  }
+
+  // ::/8 reserved block other than the handled :: / ::1 (::ffff: mapped is
+  // handled earlier): all-zero high bits → IPv4-compatible / reserved; block.
   if (groups.every((g, i) => (i < 5 ? g === 0 : true)) && groups[5] === 0) {
-    // all-zero high bits → IPv4-compatible / reserved; block.
     return true;
   }
 
