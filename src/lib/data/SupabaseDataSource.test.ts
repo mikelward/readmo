@@ -214,7 +214,7 @@ describe('SupabaseDataSource dispatch + writes', () => {
 
     // Hiding i6 locally writes only the changed field through to the server...
     env.ds.stateStore.set('i6', 'hidden', true);
-    await Promise.resolve();
+    await new Promise((r) => setTimeout(r)); // drain the per-item write chain
     expect(env.fake.rpcCalls).toContainEqual({
       name: 'set_item_state',
       params: { p_item_id: 'i6', p_hidden: true },
@@ -303,7 +303,7 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(b.subscription.titleOverride).toBe('Custom');
   });
 
-  it('subscribe routes through the subscribe_to_feed RPC', async () => {
+  it('subscribe routes through subscribe_to_feed and triggers an immediate refresh', async () => {
     const env = setup();
     const feed = await env.ds.subscribe('https://new.example.com/feed', 'Tech');
     expect(env.fake.rpcCalls).toContainEqual({
@@ -311,21 +311,39 @@ describe('SupabaseDataSource dispatch + writes', () => {
       params: { p_url: 'https://new.example.com/feed', p_folder: 'Tech' },
     });
     expect(feed.id).toBe('feed-new');
+    await Promise.resolve(); // let the fire-and-forget refresh dispatch
+    // On-demand poll of the new feed (SPEC: adding a feed fetches immediately).
+    expect(env.fake.invokeCalls).toContainEqual({ name: 'refresh', body: { feedId: 'feed-new' } });
     // Now subscribed + present in the list.
     const subs = await env.ds.getSubscriptions();
     expect(subs.map((s) => s.subscription.feedId)).toContain('feed-new');
   });
 
-  it('importOpml subscribes each xmlUrl, counting added vs already-subscribed', async () => {
+  it('importOpml subscribes each xmlUrl (entity-decoded), counting added vs already-subscribed', async () => {
     const env = setup();
     const xml = `<opml><body>
       <outline type="rss" xmlUrl="https://a.example.com" />
-      <outline type="rss" xmlUrl="https://new.example.com/feed" />
+      <outline type="rss" xmlUrl="https://new.example.com/feed?a=1&amp;b=2" />
     </body></opml>`;
     // a.example.com resolves to feed-a (already subscribed) → skipped; the other
-    // is new → added.
+    // is new → added, and its &amp; is decoded before subscribing.
     const result = await env.ds.importOpml(xml);
     expect(result).toEqual({ added: 1, skipped: 1 });
+    expect(env.fake.rpcCalls).toContainEqual({
+      name: 'subscribe_to_feed',
+      params: { p_url: 'https://new.example.com/feed?a=1&b=2', p_folder: null },
+    });
+  });
+
+  it('serializes set_item_state writes for the same item (last action wins)', async () => {
+    const env = setup();
+    await env.ds.getHomeItems(); // hydrate
+    env.ds.stateStore.set('i3', 'pinned', true);
+    env.ds.stateStore.set('i3', 'pinned', false);
+    // Let the per-item write chain drain.
+    await new Promise((r) => setTimeout(r));
+    const row = env.fake.store.item_state.find((s) => s.item_id === 'i3');
+    expect(row?.pinned).toBe(false); // the later Unpin is applied last
   });
 
   it('retryParkedFeed re-polls via the refresh function', async () => {
