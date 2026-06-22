@@ -69,10 +69,11 @@ describe('useUserCacheScope', () => {
       { wrapper },
     );
 
-    // Ensure a signed-out starting point (may be a no-op depending on prior
-    // module state), then clear the mocks so we measure only the sign-in.
+    // Establish a signed-out starting point and let that transition fully
+    // settle (purge + reload), then clear the mocks so we measure only the
+    // sign-in that follows.
     act(() => result.current.auth.signOut());
-    await Promise.resolve();
+    await waitFor(() => expect(reloadApp).toHaveBeenCalled());
     vi.mocked(reloadApp).mockClear();
     (caches.delete as ReturnType<typeof vi.fn>).mockClear();
 

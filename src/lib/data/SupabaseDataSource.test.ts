@@ -1,0 +1,181 @@
+// @vitest-environment node
+import { beforeEach, describe, expect, it } from 'vitest';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseDataSource } from './SupabaseDataSource';
+import { makeFakeSupabase, type FakeTables } from './fakeSupabaseClient';
+
+const recent = new Date('2026-06-20T00:00:00.000Z').toISOString();
+function iso(day: number): string {
+  return new Date(`2026-06-${String(day).padStart(2, '0')}T00:00:00.000Z`).toISOString();
+}
+
+function seed(): FakeTables {
+  return {
+    feeds_public: [
+      { id: 'feed-a', site_url: 'https://a.example.com', title: 'Alpha Blog', error_count: 0, last_error: null, last_fetched_at: null, next_fetch_at: null, fetch_interval_s: 1800, created_at: null },
+      { id: 'feed-b', site_url: 'https://b.example.com', title: 'Beta News', error_count: 0, last_error: null, last_fetched_at: null, next_fetch_at: null, fetch_interval_s: 1800, created_at: null },
+      { id: 'feed-c', site_url: 'https://c.example.com', title: 'Gamma', error_count: 0, last_error: null, last_fetched_at: null, next_fetch_at: null, fetch_interval_s: 1800, created_at: null },
+    ],
+    subscriptions: [
+      { feed_id: 'feed-a', folder: 'Tech', title_override: null, muted: false, sort: 0 },
+      { feed_id: 'feed-b', folder: null, title_override: null, muted: false, sort: 1 },
+      { feed_id: 'feed-c', folder: null, title_override: null, muted: true, sort: 2 },
+    ],
+    items: [
+      mkItem('i1', 'feed-a', 1, 'Alpha one'),
+      mkItem('i2', 'feed-a', 2, 'Alpha two'),
+      mkItem('i3', 'feed-b', 3, 'Beta three'),
+      mkItem('i4', 'feed-b', 4, 'Beta four'),
+      mkItem('i5', 'feed-c', 5, 'Gamma five'),
+      mkItem('i6', 'feed-a', 6, 'Alpha six'),
+    ],
+    item_state: [
+      mkState('i2', { pinned: true, pinned_at: recent }),
+      mkState('i4', { done: true, done_at: recent }),
+      mkState('i1', { hidden: true, hidden_at: recent }),
+    ],
+    folders: [
+      { name: 'Tech', sort: 0 },
+    ],
+  };
+}
+
+function mkItem(id: string, feed_id: string, day: number, title: string) {
+  return {
+    id, feed_id, guid: `g-${id}`, url: `https://x/${id}`, title, author: null,
+    published_at: iso(day), content_html: `<p>${title}</p>`, summary: null,
+    enclosures: [], content_hash: null, created_at: iso(day),
+  };
+}
+
+function mkState(item_id: string, over: Record<string, unknown>) {
+  return {
+    user_id: 'u1', item_id,
+    pinned: false, pinned_at: null, favorite: false, favorite_at: null,
+    done: false, done_at: null, hidden: false, hidden_at: null,
+    opened: false, opened_at: null, version: 1, ...over,
+  };
+}
+
+function setup(tables: FakeTables = seed()) {
+  const fake = makeFakeSupabase(tables);
+  const ds = new SupabaseDataSource('readmo:item-state:test', fake.client as unknown as SupabaseClient);
+  return { ds, fake };
+}
+
+const ids = (items: Array<{ item: { id: string } }>) => items.map((fi) => fi.item.id);
+
+describe('SupabaseDataSource reads', () => {
+  let env: ReturnType<typeof setup>;
+  beforeEach(() => {
+    env = setup();
+  });
+
+  it('getHomeItems: excludes muted feeds, filters Done/Hidden, prepends Pinned (oldest-first)', async () => {
+    const page = await env.ds.getHomeItems();
+    // i2 pinned (top), then body newest-first: i6 (day 6), i3 (day 3).
+    // i1 hidden + i4 done are excluded; feed-c is muted.
+    expect(ids(page.items)).toEqual(['i2', 'i6', 'i3']);
+    expect(page.total).toBe(3);
+    expect(page.nextCursor).toBeNull();
+  });
+
+  it('getFeedItems: a single feed view includes a muted feed’s own items', async () => {
+    const page = await env.ds.getFeedItems('feed-c');
+    expect(ids(page.items)).toEqual(['i5']);
+  });
+
+  it('getFolderItems: scoped to the folder’s feeds', async () => {
+    const page = await env.ds.getFolderItems('Tech');
+    expect(ids(page.items)).toEqual(['i2', 'i6']); // feed-a only; i1 hidden
+  });
+
+  it('paginates the body with an opaque cursor (pinned only on page 1)', async () => {
+    const p1 = await env.ds.getHomeItems({ limit: 1 });
+    expect(ids(p1.items)).toEqual(['i2', 'i6']); // pinned + 1 body row
+    expect(p1.nextCursor).toBe('1');
+
+    const p2 = await env.ds.getHomeItems({ limit: 1, cursor: p1.nextCursor });
+    expect(ids(p2.items)).toEqual(['i3']); // no pinned prepend on page 2
+    expect(p2.nextCursor).toBeNull();
+  });
+
+  it('getItem / getItemsByIds map and preserve order', async () => {
+    const one = await env.ds.getItem('i3');
+    expect(one?.item.title).toBe('Beta three');
+    expect(one?.feed.id).toBe('feed-b');
+
+    const many = await env.ds.getItemsByIds(['i6', 'i1', 'i3']);
+    expect(ids(many)).toEqual(['i6', 'i1', 'i3']);
+  });
+
+  it('search matches item title and feed title, deduped + newest-first', async () => {
+    const results = await env.ds.search('alpha');
+    expect(ids(results)).toEqual(['i6', 'i2', 'i1']);
+  });
+
+  it('getSubscriptions sorts by sort and surfaces mute state', async () => {
+    const subs = await env.ds.getSubscriptions();
+    expect(subs.map((s) => s.subscription.feedId)).toEqual(['feed-a', 'feed-b', 'feed-c']);
+    expect(subs.find((s) => s.subscription.feedId === 'feed-c')?.subscription.muted).toBe(true);
+  });
+
+  it('getFolders returns ordered folders', async () => {
+    expect(await env.ds.getFolders()).toEqual([{ name: 'Tech', sort: 0 }]);
+  });
+
+  it('getFeed sources the display url from site_url', async () => {
+    const feed = await env.ds.getFeed('feed-b');
+    expect(feed?.url).toBe('https://b.example.com');
+    expect(feed?.title).toBe('Beta News');
+  });
+});
+
+describe('SupabaseDataSource dispatch + writes', () => {
+  it('discover invokes the edge function and maps candidates', async () => {
+    const env = setup();
+    env.fake.invokeResult.current = {
+      data: {
+        candidates: [
+          { feedUrl: 'https://x.com/feed', title: 'X Feed', siteUrl: 'https://x.com', sample: [{ title: 'p1' }, { title: 'p2' }, { title: '' }] },
+        ],
+      },
+      error: null,
+    };
+    const found = await env.ds.discover('x.com');
+    expect(found).toEqual([
+      { url: 'https://x.com/feed', title: 'X Feed', siteUrl: 'https://x.com', sampleTitles: ['p1', 'p2'] },
+    ]);
+    expect(env.fake.invokeCalls).toContainEqual({ name: 'discover', body: { url: 'x.com' } });
+  });
+
+  it('refresh invokes the edge function with the feed id', async () => {
+    const env = setup();
+    await env.ds.refresh('feed-a');
+    expect(env.fake.invokeCalls).toContainEqual({ name: 'refresh', body: { feedId: 'feed-a' } });
+  });
+
+  it('unsubscribe deletes the subscription row', async () => {
+    const env = setup();
+    await env.ds.unsubscribe('feed-a');
+    const subs = await env.ds.getSubscriptions();
+    expect(subs.map((s) => s.subscription.feedId)).toEqual(['feed-b', 'feed-c']);
+  });
+
+  it('setMuted / setTitleOverride update only their columns', async () => {
+    const env = setup();
+    await env.ds.setMuted('feed-b', true);
+    await env.ds.setTitleOverride('feed-b', 'Custom');
+    const subs = await env.ds.getSubscriptions();
+    const b = subs.find((s) => s.subscription.feedId === 'feed-b')!;
+    expect(b.subscription.muted).toBe(true);
+    expect(b.subscription.titleOverride).toBe('Custom');
+  });
+
+  it('throws notImplemented for the RPC-gated write path', async () => {
+    const env = setup();
+    await expect(env.ds.subscribe('https://new.example.com/feed')).rejects.toThrow(/not implemented/i);
+    await expect(env.ds.importOpml('<opml/>')).rejects.toThrow(/not implemented/i);
+    await expect(env.ds.retryParkedFeed('feed-a')).rejects.toThrow(/not implemented/i);
+  });
+});

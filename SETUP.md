@@ -124,9 +124,13 @@ origins and `http://localhost:5173/**` for local dev).
 | `SUPABASE_SERVICE_ROLE_KEY` | **server only** (Edge Functions / poller) | **Yes — never ship to client** |
 | Google / GitHub client secrets | Supabase Auth config | **Yes — server only** |
 
-**Client build** (Vite) gets only `SUPABASE_URL` + `SUPABASE_ANON_KEY` (e.g. as
-`VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`). The service-role key and OAuth
-secrets must **never** be referenced in any `VITE_*`/client variable.
+**Client build** (Vite) gets only `SUPABASE_URL` + `SUPABASE_ANON_KEY` as
+`VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` — copy `.env.example` to
+`.env.local` and fill these in. The Supabase client (`src/lib/supabase/client.ts`)
+and `SupabaseDataSource` read exactly these two vars; when they are absent the
+app falls back to the mock auth + `MockDataSource` so it still runs with no
+backend. The service-role key and OAuth secrets must **never** be referenced in
+any `VITE_*`/client variable.
 
 **Edge Functions** read their secrets from the Supabase Functions environment:
 
