@@ -105,6 +105,18 @@ export function sanitizeContent(
         if (srcset) next.srcset = srcset;
         return { tagName, attribs: next };
       },
+      video: (tagName, attribs) => {
+        const next: Record<string, string> = { ...attribs };
+        // `poster` is an image, so route it through the same-origin proxy just
+        // like <img src> (no reader IP/UA leak, offline cache). `src` is the
+        // video media enclosure, not an image, so the proxy must not touch it —
+        // only absolutize, matching the <source src> rule above.
+        const absSrc = absolutize(attribs.src, baseUrl);
+        if (absSrc) next.src = absSrc;
+        const absPoster = absolutize(attribs.poster, baseUrl);
+        if (absPoster) next.poster = proxify(absPoster) ?? absPoster;
+        return { tagName, attribs: next };
+      },
     },
     // Discard comments (may carry conditional-comment payloads).
     allowProtocolRelative: false,

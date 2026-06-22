@@ -82,6 +82,39 @@ describe('sanitizeContent', () => {
     expect(out).not.toContain('/api/img');
   });
 
+  it('routes a <video poster> through the image proxy', () => {
+    const out = sanitizeContent(
+      '<video poster="https://tracker.example/pixel.gif" src="/clip.mp4"></video>',
+      base,
+    );
+    expect(out).toContain(
+      'poster="/api/img?url=' +
+        encodeURIComponent('https://tracker.example/pixel.gif') +
+        '"',
+    );
+    // The publisher-controlled poster is never a directly-loadable URL.
+    expect(out).not.toContain('poster="https://tracker.example/pixel.gif"');
+  });
+
+  it('absolutizes a relative <video poster> before proxying it', () => {
+    const out = sanitizeContent('<video poster="thumbs/p.jpg"></video>', base);
+    expect(out).toContain(
+      'poster="/api/img?url=' +
+        encodeURIComponent('https://pub.example.com/articles/thumbs/p.jpg') +
+        '"',
+    );
+  });
+
+  it('does not proxy the <video src> media enclosure', () => {
+    const out = sanitizeContent(
+      '<video src="/clip.mp4" poster="/p.jpg" controls></video>',
+      base,
+    );
+    expect(out).toContain('src="https://pub.example.com/clip.mp4"');
+    // Only the poster is proxied, never the video file itself.
+    expect(out).not.toContain('/api/img?url=' + encodeURIComponent('https://pub.example.com/clip.mp4'));
+  });
+
   it('returns empty string for null/empty input', () => {
     expect(sanitizeContent(null, base)).toBe('');
     expect(sanitizeContent('', base)).toBe('');
