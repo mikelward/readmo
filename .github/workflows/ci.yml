@@ -49,4 +49,4 @@ jobs:
         run: deno check supabase/functions/_shared/ssrf.ts
 
       - name: Test SSRF IP-pinning
-        run: deno test --allow-net supabase/functions/_shared/ssrf.pin.test.ts
+        run: deno test --allow-net supabase/functions/_shared/ssrf.pin.deno.test.ts
