@@ -73,6 +73,38 @@ export function withRetention(
   return next;
 }
 
+/** Structural equality of two item states (all flags + timestamps + version). */
+function sameState(a: ItemState, b: ItemState): boolean {
+  return (
+    a.pinned === b.pinned &&
+    a.pinnedAt === b.pinnedAt &&
+    a.favorite === b.favorite &&
+    a.favoriteAt === b.favoriteAt &&
+    a.done === b.done &&
+    a.doneAt === b.doneAt &&
+    a.hidden === b.hidden &&
+    a.hiddenAt === b.hiddenAt &&
+    a.opened === b.opened &&
+    a.openedAt === b.openedAt &&
+    a.version === b.version
+  );
+}
+
+/** Whether two state maps are structurally identical (so hydrate can skip a
+ * no-op persist/emit). */
+function sameMap(
+  a: Record<ItemId, ItemState>,
+  b: Record<ItemId, ItemState>,
+): boolean {
+  const ak = Object.keys(a);
+  if (ak.length !== Object.keys(b).length) return false;
+  for (const k of ak) {
+    const bv = b[k];
+    if (!bv || !sameState(a[k], bv)) return false;
+  }
+  return true;
+}
+
 export type StateListener = () => void;
 
 /** Pluggable persistence for the state map. The mock uses localStorage; a
@@ -178,22 +210,33 @@ export class ItemStateStore {
     );
   }
 
-  /** Overlay authoritative server state onto the local store, keeping the
-   * higher `version` per item so an in-flight optimistic bump isn't clobbered by
-   * a stale server row (and vice-versa). Used by SupabaseDataSource after
-   * fetching the caller's item_state rows. Persists + notifies once. */
-  hydrate(rows: Array<[ItemId, ItemState]>): void {
-    if (rows.length === 0) return;
-    let changed = false;
-    const next = { ...this.map };
-    for (const [id, incoming] of rows) {
-      const cur = next[id];
-      if (!cur || incoming.version >= cur.version) {
-        next[id] = incoming;
-        changed = true;
-      }
+  /**
+   * Reconcile the local store against the authoritative server `item_state`
+   * rows. The server is the source of truth, EXCEPT for items with an un-synced
+   * pending write (`pendingIds`, from the outbox): those keep their optimistic
+   * local value so a hydrate that races an in-flight write doesn't wipe it.
+   * Local rows the server didn't return AND that aren't pending are genuinely
+   * stale (the item_state row was reset/expired elsewhere) and are dropped — the
+   * pending guard is what makes that clearing safe (no data-loss race). Persists
+   * + notifies once if anything changed. Used by SupabaseDataSource after
+   * fetching the caller's rows.
+   */
+  hydrate(
+    rows: Array<[ItemId, ItemState]>,
+    pendingIds: Iterable<ItemId> = [],
+  ): void {
+    const pending = new Set(pendingIds);
+    const serverIds = new Set(rows.map(([id]) => id));
+    const next: Record<ItemId, ItemState> = {};
+    // Server rows win unless the item has a pending local write.
+    for (const [id, srv] of rows) {
+      next[id] = pending.has(id) ? (this.map[id] ?? srv) : srv;
     }
-    if (!changed) return;
+    // Keep local-only rows only while a write for them is still pending.
+    for (const id of Object.keys(this.map)) {
+      if (!serverIds.has(id) && pending.has(id)) next[id] = this.map[id];
+    }
+    if (sameMap(this.map, next)) return;
     this.map = next;
     this.persistence.save(this.map);
     this.emit();
