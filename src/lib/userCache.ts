@@ -12,6 +12,9 @@ const ITEM_STATE_BASE = 'readmo:item-state';
 // The uid that last booted the app, so a boot can detect an account switch that
 // completed via a full-page redirect/reload (no in-tab transition observed).
 const LAST_UID_KEY = 'readmo:last-uid';
+// Set once the legacy (pre-scoping) global stores have been migrated into a
+// user-scoped key, so the migration runs at most once.
+const MIGRATED_KEY = 'readmo:cache-migrated';
 
 // The named Workbox runtime caches (see vite.config.ts runtimeCaching). These
 // are not per-user prefixed yet, so a purge deletes them wholesale; the next
@@ -48,32 +51,65 @@ export async function clearUserCaches(uid: string | null): Promise<void> {
   }
 }
 
-function readLastUid(): string | null {
+// Copy a legacy global store into its user-scoped key (only when the scoped key
+// is empty, so we never clobber newer data), then remove the legacy key.
+function moveKey(from: string, to: string): void {
+  const value = window.localStorage.getItem(from);
+  if (value === null) return;
+  if (window.localStorage.getItem(to) === null) {
+    window.localStorage.setItem(to, value);
+  }
+  window.localStorage.removeItem(from);
+}
+
+// One-time migration from the pre-scoping global keys. An existing install
+// upgrading to the keyed layout has its pins/favorites/offline cache at the base
+// keys; move them into the signed-in user's scope so they survive instead of
+// being treated as a departing user's data to purge. Skipped while signed out
+// (no uid to scope into) — it runs on the first signed-in boot instead.
+function migrateLegacyCaches(currentUid: string | null): void {
   try {
-    return window.localStorage.getItem(LAST_UID_KEY);
+    if (!currentUid || window.localStorage.getItem(MIGRATED_KEY)) return;
+    moveKey(RQ_CACHE_BASE, rqCacheKey(currentUid));
+    moveKey(ITEM_STATE_BASE, itemStateKey(currentUid));
+    window.localStorage.setItem(MIGRATED_KEY, '1');
   } catch {
-    return null;
+    // ignore (storage unavailable/denied)
   }
 }
 
 /**
- * Boot-time reconciliation (call before first paint). If the app is booting as a
- * different user than last time — e.g. an OAuth/account switch that completed via
- * a full-page redirect, so no in-tab transition fired — purge the previous user's
- * persisted stores and the named Workbox runtime caches before rendering, so the
- * NetworkFirst data cache can't serve the previous user's REST responses offline.
- * Always records the current uid as last-seen.
+ * Boot-time reconciliation (call before first paint). Two jobs:
+ *   1. One-time migrate the legacy global stores into the current user's scope
+ *      (so upgrading users don't lose pins/favorites/offline cache).
+ *   2. If this boot's uid differs from the last recorded one — e.g. an account
+ *      switch that completed via a full-page redirect, so no in-tab transition
+ *      fired — purge the previous user's persisted stores + named Workbox caches
+ *      before rendering, so the NetworkFirst data cache can't serve the previous
+ *      user's REST responses offline.
+ *
+ * The sentinel is ABSENT only on the very first keyed boot; that case is treated
+ * as first-run (no purge — there is no previous user), not as a departing
+ * signed-out user. Afterwards it's always present ('' when signed out).
  */
 export async function reconcileUserCachesOnBoot(
   currentUid: string | null,
 ): Promise<void> {
-  const last = readLastUid();
+  migrateLegacyCaches(currentUid);
+
+  let raw: string | null = null;
+  try {
+    raw = window.localStorage.getItem(LAST_UID_KEY);
+  } catch {
+    // ignore (storage unavailable/denied)
+  }
+  // First keyed boot (no sentinel): no previous user to purge.
+  const last = raw === null ? currentUid : raw === '' ? null : raw;
   if (last !== currentUid) {
     await clearUserCaches(last);
   }
   try {
-    if (currentUid) window.localStorage.setItem(LAST_UID_KEY, currentUid);
-    else window.localStorage.removeItem(LAST_UID_KEY);
+    window.localStorage.setItem(LAST_UID_KEY, currentUid ?? '');
   } catch {
     // ignore (storage unavailable/denied)
   }

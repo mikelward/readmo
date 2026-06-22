@@ -49,22 +49,25 @@ const queryClient = new QueryClient({
 // the unscoped base store. Seamless re-keying without a reload, and per-user
 // prefixing of the Workbox runtime caches, land with real multi-user auth in PR2.
 const bootUid = getActiveUid();
-const persister = createSyncStoragePersister({
-  storage: typeof window !== 'undefined' ? window.localStorage : undefined,
-  key: rqCacheKey(bootUid),
-  throttleTime: 1000,
-});
 
 // Apply the stored theme before first paint to avoid a flash.
 applyTheme(getStoredTheme());
 
-const dataSource = new MockDataSource(itemStateKey(bootUid));
-
-// If this boot is a different user than last time (e.g. an account switch via a
-// full-page redirect/reload, where no in-tab transition was observed), purge the
-// previous user's persisted stores + Workbox runtime caches BEFORE first paint,
-// then render. Same-user boots skip the purge and hydrate their own cache.
+// Reconcile on-device caches for this user BEFORE building the persister/data
+// source or painting: migrate legacy global stores into the user's scope, and
+// purge a previous user's caches if this boot is a different user (e.g. an
+// account switch via full-page redirect, where no in-tab transition fired). The
+// persister + MockDataSource read localStorage on construction, so they must be
+// created only after the reconcile so they see the migrated, correctly-scoped
+// data. Same-user boots skip the purge and hydrate their own cache.
 void reconcileUserCachesOnBoot(bootUid).finally(() => {
+  const persister = createSyncStoragePersister({
+    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+    key: rqCacheKey(bootUid),
+    throttleTime: 1000,
+  });
+  const dataSource = new MockDataSource(itemStateKey(bootUid));
+
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <PersistQueryClientProvider
