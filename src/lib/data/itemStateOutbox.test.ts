@@ -143,7 +143,15 @@ describe('ItemStateOutbox', () => {
   });
 
   describe('optimistic concurrency (base version)', () => {
-    it('bases a brand-new write on 0 when no server version is known', async () => {
+    it('sends a null base (no check) for an edit made before the first hydrate', async () => {
+      // Cold boot: version unknown, and we can't tell new from existing yet.
+      h.outbox.enqueue('a', { pinned: true });
+      await tick();
+      expect(h.bases).toEqual([null]);
+    });
+
+    it('bases a brand-new item on 0 once a hydrate confirms it has no row', async () => {
+      h.outbox.observeServerVersions([]); // hydrate ran; 'a' has no server row
       h.outbox.enqueue('a', { pinned: true });
       await tick();
       expect(h.bases).toEqual([0]);
@@ -191,6 +199,7 @@ describe('ItemStateOutbox', () => {
   });
 
   it('persists pending writes so a new outbox replays them', async () => {
+    h.outbox.observeServerVersions([]); // hydrate ran; 'a' is new → base 0
     h.setOnline(false);
     h.outbox.enqueue('a', { hidden: true });
     await tick();
