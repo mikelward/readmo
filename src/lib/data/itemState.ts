@@ -113,9 +113,22 @@ export class ItemStateStore {
   // sweep batch" (SPEC.md *List toolbar*). Only hide-style mutations record
   // here; pin/favorite/done toggles are not toolbar-undoable.
   private lastUndo: UndoBatch | null = null;
+  // Optional write-through: invoked per field mutation so a backing data source
+  // can persist it (SupabaseDataSource routes these to the set_item_state RPC).
+  // The local map is still the optimistic mirror; the mock leaves this unset.
+  private sink: ((id: ItemId, field: ItemStateField, value: boolean) => void) | null =
+    null;
 
   constructor(private persistence: StatePersistence) {
     this.map = persistence.load();
+  }
+
+  /** Register a per-mutation write-through sink (see `sink`). Hydration does NOT
+   * fire it — only user-driven set/hide/undo mutations do. */
+  setMutationSink(
+    sink: (id: ItemId, field: ItemStateField, value: boolean) => void,
+  ): void {
+    this.sink = sink;
   }
 
   get(id: ItemId, now: number = Date.now()): ItemState {
@@ -179,6 +192,7 @@ export class ItemStateStore {
     const next = applyMutation(prev, field, value, now);
     this.map = { ...this.map, [id]: next };
     this.persistence.save(this.map);
+    this.sink?.(id, field, value);
     this.emit();
     return next;
   }
@@ -201,6 +215,7 @@ export class ItemStateStore {
     }
     this.lastUndo = batch;
     this.persistence.save(this.map);
+    for (const id of ids) this.sink?.(id, 'hidden', true);
     this.emit();
   }
 
@@ -220,6 +235,9 @@ export class ItemStateStore {
     this.map = next;
     this.lastUndo = null;
     this.persistence.save(this.map);
+    // Mirror the restore to the backend: the batch only ever set `hidden=true`,
+    // so undo reverts each item's hidden flag to its prior value (default false).
+    for (const [id, prior] of batch) this.sink?.(id, 'hidden', prior?.hidden ?? false);
     this.emit();
   }
 

@@ -121,6 +121,24 @@ describe('ItemStateStore', () => {
     expect(store.get('nope')).toEqual(DEFAULT_ITEM_STATE);
   });
 
+  it('write-through sink fires per field mutation (set / hide / undo), not on hydrate', () => {
+    const store = new ItemStateStore(memoryPersistence());
+    const calls: Array<[string, string, boolean]> = [];
+    store.setMutationSink((id, field, value) => calls.push([id, field, value]));
+
+    store.set('a', 'pinned', true);
+    store.hide('b'); // hidden = true (undoable)
+    store.undoLast(); // reverts b -> hidden false
+    // Hydration overlays server rows and must NOT write back through the sink.
+    store.hydrate([['c', { ...DEFAULT_ITEM_STATE, done: true, version: 5 }]]);
+
+    expect(calls).toEqual([
+      ['a', 'pinned', true],
+      ['b', 'hidden', true],
+      ['b', 'hidden', false],
+    ]);
+  });
+
   it('applies retention on read', () => {
     const store = new ItemStateStore(memoryPersistence());
     store.set('item-1', 'hidden', true, NOW);
