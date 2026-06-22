@@ -103,6 +103,11 @@ export class SupabaseDataSource implements DataSource {
   constructor(stateKey = 'readmo:item-state', client?: SupabaseClient) {
     this.sb = client ?? getSupabase();
     this.stateStore = new ItemStateStore(localStoragePersistence(stateKey));
+    // Kick off item_state hydration at boot so the library routes (/pinned,
+    // /favorites, …), which derive their ids from the store, populate even when
+    // no feed view has run yet. ensureHydrated is memoized; when the rows land
+    // the store emits and those views refetch with real ids.
+    void this.ensureHydrated().catch(() => {});
   }
 
   // --- helpers --------------------------------------------------------------
@@ -119,7 +124,11 @@ export class SupabaseDataSource implements DataSource {
             : String(res.error);
       throw new Error(msg);
     }
-    return (res.data ?? ([] as unknown)) as T;
+    // Preserve null: maybeSingle() returns { data: null } for a missing/
+    // unauthorized row, and getItem/getFeed rely on that null to short-circuit.
+    // PostgREST list selects return [] (never null), so array callers are
+    // unaffected.
+    return res.data as T;
   }
 
   /** Fetch the caller's item_state rows once and overlay them onto the store so
@@ -298,6 +307,10 @@ export class SupabaseDataSource implements DataSource {
   }
 
   async getItemsByIds(ids: ItemId[]): Promise<FeedItem[]> {
+    // Ensure state is hydrated even on the empty-ids path so a direct cold boot
+    // into a library route triggers the item_state fetch (which then repopulates
+    // the store and re-derives the ids), rather than silently returning empty.
+    await this.ensureHydrated();
     if (ids.length === 0) return [];
     const rows = this.unwrap<ItemRow[]>(
       await this.sb.from('items').select(ITEM_COLS).in('id', ids),
@@ -457,13 +470,21 @@ export class SupabaseDataSource implements DataSource {
     return notImplemented('importOpml');
   }
 
+  /**
+   * KNOWN LIMITATION (tracked for the deferred backend item): `xmlUrl` here is
+   * the display-safe `site_url` (homepage), not the RSS/Atom fetch URL. That is
+   * deliberate — `feeds_public` never exposes `url`/`secret_url` (a per-user
+   * token can ride in `secret_url`), so the client cannot emit the real feed
+   * endpoint without leaking server-only data. A faithful, re-importable export
+   * needs an authenticated server export RPC; until that lands the exported OPML
+   * carries the public homepage address only.
+   */
   async exportOpml(): Promise<string> {
     const subs = await this.loadSubscriptions();
     const outlines = subs
       .map(({ subscription, feed }) => {
         const title = subscription.titleOverride ?? feed.title;
-        // `feed.url` is the display-safe site URL (feeds_public never exposes
-        // the fetch URL), so exported OPML carries the public address only.
+        // See the method-level note: public homepage URL only, by design.
         return `    <outline type="rss" text="${escapeXml(title)}" title="${escapeXml(
           title,
         )}" xmlUrl="${escapeXml(feed.url)}"${

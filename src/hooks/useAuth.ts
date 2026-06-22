@@ -93,6 +93,7 @@ function mapSessionUser(u: SessionUserLike | null | undefined): AuthUser | null 
 }
 
 let supabaseUser: AuthUser | null = null;
+let supabaseUserSeeded = false;
 const supabaseListeners = new Set<() => void>();
 let subscribedToSupabase = false;
 
@@ -108,6 +109,9 @@ function sameUser(a: AuthUser | null, b: AuthUser | null): boolean {
 }
 
 function setSupabaseUser(next: AuthUser | null): void {
+  // An authoritative value from getSession()/onAuthStateChange also satisfies
+  // the seed, so a later first getSnapshot won't re-read (and clobber) it.
+  supabaseUserSeeded = true;
   // Keep the reference stable when nothing material changed so a token refresh
   // (which re-fires onAuthStateChange) doesn't churn the useSyncExternalStore
   // snapshot.
@@ -141,26 +145,43 @@ function subscribeSupabase(cb: () => void): () => void {
 }
 
 function getSupabaseUser(): AuthUser | null {
+  // Seed synchronously from the persisted session on the very first snapshot, so
+  // a returning signed-in user's first render is already signed-in. Without this
+  // the first snapshot is null until the async getSession() resolves, and
+  // RequireAuth would bounce to /signin while useUserCacheScope sees a null->uid
+  // transition and reloads — which resets module state to null and loops.
+  if (!supabaseUserSeeded) {
+    supabaseUserSeeded = true;
+    supabaseUser = readPersistedSupabaseUser();
+  }
   return supabaseUser;
 }
 
-/** Synchronously parse the persisted Supabase session for the signed-in uid.
- * Defensive about the stored shape (supabase-js has stored the session both
- * directly and under `currentSession`). */
-function readPersistedSupabaseUid(): string | null {
+/** Synchronously parse the persisted Supabase session. Defensive about the
+ * stored shape (supabase-js has stored the session both directly and under
+ * `currentSession`). */
+function readPersistedSession(): SessionUserLike | null {
   if (typeof window === 'undefined') return null;
   try {
     const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as {
-      user?: { id?: unknown };
-      currentSession?: { user?: { id?: unknown } };
+      user?: SessionUserLike;
+      currentSession?: { user?: SessionUserLike };
     };
-    const id = parsed.user?.id ?? parsed.currentSession?.user?.id;
-    return typeof id === 'string' ? id : null;
+    const user = parsed.user ?? parsed.currentSession?.user;
+    return user && typeof user.id === 'string' ? user : null;
   } catch {
     return null;
   }
+}
+
+function readPersistedSupabaseUid(): string | null {
+  return readPersistedSession()?.id ?? null;
+}
+
+function readPersistedSupabaseUser(): AuthUser | null {
+  return mapSessionUser(readPersistedSession());
 }
 
 // ---------------------------------------------------------------------------
