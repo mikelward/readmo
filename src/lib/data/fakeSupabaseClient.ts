@@ -228,7 +228,7 @@ function runRpc(
 ): { data: unknown; error: unknown } {
   rpcCalls.push({ name, params });
   const items = store.items ?? [];
-  const subs = store.subscriptions ?? [];
+  const subs = (store.subscriptions ??= []);
   const states = (store.item_state ??= []);
   const subByFeed = new Map(subs.map((s) => [s.feed_id, s]));
   const stateByItem = new Map(states.map((s) => [s.item_id, s]));
@@ -254,6 +254,29 @@ function runRpc(
       row.hidden = false;
     }
     return { data: row, error: null };
+  }
+
+  if (name === 'subscribe_to_feed') {
+    // Find-or-create by the public address (the fake matches on site_url), then
+    // subscribe; returns the feeds_public row (setof → array).
+    const url = String(params.p_url ?? '');
+    const folder = (params.p_folder ?? null) as string | null;
+    const feedsPublic = (store.feeds_public ??= []);
+    let row = feedsPublic.find((r) => r.site_url === url);
+    if (!row) {
+      let id = 'feed-new';
+      for (let n = 2; feedsPublic.some((r) => r.id === id); n++) id = `feed-new-${n}`;
+      row = {
+        id, site_url: url, title: url, error_count: 0, last_error: null,
+        last_fetched_at: null, next_fetch_at: null, fetch_interval_s: 1800, created_at: null,
+      };
+      feedsPublic.push(row);
+    }
+    if (!subs.some((s) => s.feed_id === row!.id)) {
+      const sort = subs.reduce((m, s) => Math.max(m, Number(s.sort ?? 0)), -1) + 1;
+      subs.push({ feed_id: row.id, folder, title_override: null, muted: false, sort });
+    }
+    return { data: [row], error: null };
   }
 
   const scope = params.p_scope as string;

@@ -43,14 +43,6 @@ const SUBSCRIPTION_COLS = 'feed_id, folder, title_override, muted, sort';
  * unbounded request that could exceed the request-line/query limit. */
 const ID_LOOKUP_CHUNK = 200;
 
-function notImplemented(method: string): never {
-  throw new Error(
-    `SupabaseDataSource.${method} is not implemented yet — the privileged ` +
-      `write path (subscribe_to_feed / set_item_state RPCs + item_state sync) ` +
-      `lands in the next item. Reads + auth are wired in this PR.`,
-  );
-}
-
 function escapeLike(q: string): string {
   // Treat the user's query literally: escape the LIKE wildcards.
   return q.replace(/[\\%_]/g, (c) => `\\${c}`);
@@ -80,24 +72,21 @@ function chunk<T>(arr: T[], size: number): T[][] {
 
 /**
  * Live {@link DataSource} backed by Supabase (Postgres + RLS + Edge Functions).
- * THIS PR ships the READ surface + real auth; reads are RLS-gated, so they only
- * ever return rows the signed-in user may see. Item *state* is hydrated from the
- * server once and mirrored in a shared {@link ItemStateStore} (same store the UI
- * already reads) so feed ordering — pinned-first, Done/Hidden filtered — matches
- * the mock.
+ * Reads are RLS-gated, so they only ever return rows the signed-in user may see.
+ * Home/folder/feed reads go through the `feed_items` RPC; item state is hydrated
+ * from the server into a shared {@link ItemStateStore} (the same store the UI
+ * reads) and triage writes flow back through `set_item_state`. Subscribe / OPML
+ * import / parked-feed retry use the `subscribe_to_feed` RPC and the `refresh`
+ * Edge Function.
  *
- * Deliberate seams left for the next item:
- *  - the privileged write path (`subscribe`, OPML import, parked-feed retry) goes
- *    through the `subscribe_to_feed` / `set_item_state` SECURITY DEFINER RPCs and
- *    throws `notImplemented` here for now;
- *  - item_state *mutations* still persist locally/optimistically (no RPC
- *    write-through or offline outbox yet);
- *  - the feed query excludes Pinned/Done/Hidden via an id list; a heavy archive
- *    should move that join server-side (see MAX_EXCLUDE_IDS).
+ * Deferred to the offline/sync milestone (see SPEC *Sync*): the offline mutation
+ * outbox + server-version reconciliation/rollback (item_state writes are
+ * currently fire-and-forget optimistic), and an authenticated OPML *export* RPC
+ * (the client can't emit server-only fetch URLs).
  *
  * Pagination is offset-based behind an opaque numeric cursor (mirroring the
- * mock); it can move to keyset later without changing the interface. Pinned
- * items are prepended once on the first page, in addition to a full body page.
+ * mock); each page is the bounded slice of the combined pinned-then-body
+ * sequence the `feed_items` RPC returns.
  */
 export class SupabaseDataSource implements DataSource {
   readonly stateStore: ItemStateStore;
@@ -256,6 +245,10 @@ export class SupabaseDataSource implements DataSource {
     const limit = opts?.limit ?? PAGE_SIZE;
     const offset = decodeCursor(opts?.cursor);
 
+    // Ensure item_state is loaded before returning rows: the UI reads per-row
+    // pin/opened affordances from the store, and overlayLocalState below consults
+    // it, so a page returned before hydration would briefly show default flags.
+    await this.ensureHydrated();
     const rows = this.unwrap<Array<{ item: ItemRow; total_count: number }>>(
       await this.sb.rpc('feed_items', { ...args, p_limit: limit, p_offset: offset }),
     );
@@ -446,9 +439,20 @@ export class SupabaseDataSource implements DataSource {
     });
   }
 
-  async subscribe(_feedUrl: string, _folder?: string | null): Promise<Feed> {
-    // → subscribe_to_feed RPC (authorizes by URL possession); next item.
-    return notImplemented('subscribe');
+  async subscribe(feedUrl: string, folder?: string | null): Promise<Feed> {
+    // subscribe_to_feed (0004) authorizes by URL possession, find-or-creates the
+    // shared feed, subscribes auth.uid(), and returns the feeds_public row.
+    const rows = this.unwrap<FeedPublicRow[]>(
+      await this.sb.rpc('subscribe_to_feed', {
+        p_url: feedUrl,
+        p_folder: folder ?? null,
+      }),
+    );
+    const row = Array.isArray(rows) ? rows[0] : (rows as FeedPublicRow | null);
+    if (!row) throw new Error('subscribe_to_feed returned no feed');
+    const feed = mapFeed(row);
+    this.feedCache.set(feed.id, feed);
+    return feed;
   }
 
   async unsubscribe(feedId: FeedId): Promise<void> {
@@ -487,16 +491,35 @@ export class SupabaseDataSource implements DataSource {
     this.feedCache.clear();
   }
 
-  async retryParkedFeed(_feedId: FeedId): Promise<void> {
-    // Server-side state reset (service role); wired with the write path.
-    return notImplemented('retryParkedFeed');
+  async retryParkedFeed(feedId: FeedId): Promise<void> {
+    // "Retry now" = poll the feed immediately; a successful poll resets
+    // error_count/parked server-side (poll/index.ts). refresh() also drops the
+    // stale feedCache so the cleared health is re-read.
+    await this.refresh(feedId);
   }
 
   // --- OPML -----------------------------------------------------------------
 
-  async importOpml(_xml: string): Promise<{ added: number; skipped: number }> {
-    // Each <outline> becomes a subscribe_to_feed call; next item.
-    return notImplemented('importOpml');
+  async importOpml(xml: string): Promise<{ added: number; skipped: number }> {
+    // Each <outline xmlUrl> becomes a subscribe_to_feed call (same extraction as
+    // the mock). subscribe_to_feed is idempotent, so we count a URL as skipped
+    // when it resolved to a feed the caller was already subscribed to.
+    const urls = [...xml.matchAll(/xmlUrl="([^"]+)"/g)].map((m) => m[1]);
+    const subscribed = new Set(
+      (await this.loadSubscriptions()).map((s) => s.subscription.feedId),
+    );
+    let added = 0;
+    let skipped = 0;
+    for (const url of urls) {
+      const feed = await this.subscribe(url);
+      if (subscribed.has(feed.id)) {
+        skipped++;
+      } else {
+        subscribed.add(feed.id);
+        added++;
+      }
+    }
+    return { added, skipped };
   }
 
   /**

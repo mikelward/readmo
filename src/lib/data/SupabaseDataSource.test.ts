@@ -303,10 +303,34 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(b.subscription.titleOverride).toBe('Custom');
   });
 
-  it('throws notImplemented for the RPC-gated write path', async () => {
+  it('subscribe routes through the subscribe_to_feed RPC', async () => {
     const env = setup();
-    await expect(env.ds.subscribe('https://new.example.com/feed')).rejects.toThrow(/not implemented/i);
-    await expect(env.ds.importOpml('<opml/>')).rejects.toThrow(/not implemented/i);
-    await expect(env.ds.retryParkedFeed('feed-a')).rejects.toThrow(/not implemented/i);
+    const feed = await env.ds.subscribe('https://new.example.com/feed', 'Tech');
+    expect(env.fake.rpcCalls).toContainEqual({
+      name: 'subscribe_to_feed',
+      params: { p_url: 'https://new.example.com/feed', p_folder: 'Tech' },
+    });
+    expect(feed.id).toBe('feed-new');
+    // Now subscribed + present in the list.
+    const subs = await env.ds.getSubscriptions();
+    expect(subs.map((s) => s.subscription.feedId)).toContain('feed-new');
+  });
+
+  it('importOpml subscribes each xmlUrl, counting added vs already-subscribed', async () => {
+    const env = setup();
+    const xml = `<opml><body>
+      <outline type="rss" xmlUrl="https://a.example.com" />
+      <outline type="rss" xmlUrl="https://new.example.com/feed" />
+    </body></opml>`;
+    // a.example.com resolves to feed-a (already subscribed) → skipped; the other
+    // is new → added.
+    const result = await env.ds.importOpml(xml);
+    expect(result).toEqual({ added: 1, skipped: 1 });
+  });
+
+  it('retryParkedFeed re-polls via the refresh function', async () => {
+    const env = setup();
+    await env.ds.retryParkedFeed('feed-a');
+    expect(env.fake.invokeCalls).toContainEqual({ name: 'refresh', body: { feedId: 'feed-a' } });
   });
 });
