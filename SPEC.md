@@ -424,23 +424,22 @@ loopback/link-local/private/metadata targets and redirects to them.
 - Realtime (optional, post-MVP): Supabase Realtime can push `item_state`
   changes to other open sessions. MVP relies on refetch-on-focus + PTR.
 - **Implementation status.** `SupabaseDataSource` (`src/lib/data/`) implements
-  the **read** surface against Postgres + RLS + the `feeds_public` view (feed
-  aggregates with pinned-first ordering and Done/Hidden filtering, item/library
-  reads, search, subscriptions/folders) plus the `discover`/`refresh` Edge
-  Function calls; item state is hydrated from the server into the shared
-  `ItemStateStore` so ordering matches the mock. Still deferred (next item): the
+  the **read** surface against Postgres + RLS. Home/folder/feed reads run through
+  the server-side `feed_items` / `pinned_feed_items` RPCs (`0006_feed_rpcs.sql`),
+  which drive from `subscriptions` → `items` and LEFT JOIN `item_state` (scoped
+  to `auth.uid()`) — newest-first by `sort_at`, Done/Hidden/Pinned filtered,
+  Pinned prepended — so the client never sends an unbounded `feed_id`/exclusion
+  `IN (…)` list. Item/library reads (`feeds_public`, chunked id lookups), search,
+  subscriptions/folders, and the `discover`/`refresh` Edge Function calls round
+  it out; item state is hydrated from the server into the shared `ItemStateStore`
+  so the optimistic UI layer matches the mock. Still deferred (next item): the
   privileged **write** path through the `subscribe_to_feed` / `set_item_state`
   RPCs, the optimistic write-through + offline outbox + version reconciliation
   above, and swapping `main.tsx` from `MockDataSource` to the live source. The
   app keeps booting on the mock until that write path lands. Also deferred: an
   **authenticated OPML-export RPC** — the client can't emit real feed fetch URLs
   (`feeds_public` exposes only `site_url`, never `url`/`secret_url`), so live
-  `exportOpml` carries homepage URLs until a server-side export exists; and a
-  **server-side subscription-scoped feed RPC** (drives from `subscriptions` →
-  `items` LEFT JOIN `item_state`) so home/folder reads don't pass every
-  subscribed `feed_id` (or the Pinned/Done/Hidden exclusion list) in one
-  `IN (…)` URL — the current client-side join is fine for typical accounts but
-  not for users with many hundreds of feeds/states.
+  `exportOpml` carries homepage URLs until a server-side export exists.
 
 ---
 

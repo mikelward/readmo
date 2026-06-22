@@ -38,14 +38,6 @@ const ITEM_STATE_COLS =
   'item_id, pinned, pinned_at, favorite, favorite_at, done, done_at, hidden, hidden_at, opened, opened_at, version';
 const SUBSCRIPTION_COLS = 'feed_id, folder, title_override, muted, sort';
 
-/** Cap on the body-exclusion id list (pinned/done/hidden) we push into a single
- * `not in (…)` filter (keeps the request URL bounded). Above this the server
- * filter is skipped and feedView falls back to a client-side exclusion floor, so
- * correctness holds (no archived/hidden/pinned leak) with only approximate
- * paging. The eventual proper fix is a server-side feed RPC that joins
- * item_state; see the class note. */
-const MAX_EXCLUDE_IDS = 500;
-
 /** Max ids per `in (…)` lookup, so a large library bucket (Done/Hidden/Favorite
  * with hundreds/thousands of ids) is fetched in bounded batches rather than one
  * unbounded request that could exceed the request-line/query limit. */
@@ -230,95 +222,37 @@ export class SupabaseDataSource implements DataSource {
     return out;
   }
 
-  /** Pinned (oldest-first) + the full set to exclude from feed bodies
-   * (pinned ∪ done ∪ hidden), derived from the hydrated state store. */
-  private partitionStateIds(): {
-    pinnedOldestFirst: ItemId[];
-    excludeFromBody: ItemId[];
-  } {
-    const pinned: Array<[ItemId, number]> = [];
-    const exclude: ItemId[] = [];
-    for (const [id, st] of this.stateStore.entries()) {
-      if (st.pinned) {
-        pinned.push([id, st.pinnedAt ?? 0]);
-        exclude.push(id);
-      } else if (st.done || st.hidden) {
-        exclude.push(id);
-      }
-    }
-    pinned.sort((a, b) => a[1] - b[1]);
-    return { pinnedOldestFirst: pinned.map((p) => p[0]), excludeFromBody: exclude };
-  }
-
-  /** Shared feed-view read: pinned-first (page 1 only) over the given feed set,
-   * body newest-first with Pinned/Done/Hidden excluded server-side. */
+  /**
+   * Shared feed-view read, fully server-side via the `feed_items` /
+   * `pinned_feed_items` RPCs (0006_feed_rpcs.sql). The RPC drives from the
+   * caller's `subscriptions` → `items` and LEFT JOINs `item_state` (scoped to
+   * `auth.uid()`), so the body is newest-first by `sort_at` with Done/Hidden/
+   * Pinned excluded and Pinned lifted to the top — all in Postgres. This avoids
+   * sending every subscribed `feed_id` (or the Pinned/Done/Hidden exclusion
+   * list) in one request URL, which is the scale limit the client-side join hit.
+   */
   private async feedView(
-    feedIds: FeedId[],
+    args: { p_scope: 'home' | 'folder' | 'feed'; p_folder: string | null; p_feed_id: FeedId | null },
     opts?: FeedListOptions,
   ): Promise<Page<FeedItem>> {
-    if (feedIds.length === 0) {
-      return { items: [], total: 0, nextCursor: null };
-    }
-    await this.ensureHydrated();
-
     const limit = opts?.limit ?? PAGE_SIZE;
     const offset = decodeCursor(opts?.cursor);
-    const { pinnedOldestFirst, excludeFromBody } = this.partitionStateIds();
-    const excludeSet = new Set(excludeFromBody);
 
-    // Body: newest-first by sort_at (= published_at ?? created_at), excluding
-    // pinned/done/hidden, offset-paginated.
-    //
-    // NOTE: `.in('feed_id', feedIds)` sends every subscribed feed id in one
-    // request URL. Fine for typical subscription counts, but a user with many
-    // hundreds of feeds can exceed request-line limits. This isn't cleanly
-    // batchable here (the query is sort_at-ordered + offset-paginated + counted),
-    // so the scalable fix is the server-side subscription-scoped feed RPC the
-    // SPEC already designates (drives from subscriptions → items LEFT JOIN
-    // item_state); it also subsumes the MAX_EXCLUDE_IDS exclusion. Tracked with
-    // the deferred backend/write-path work.
-    let query = this.sb
-      .from('items')
-      .select(ITEM_COLS, { count: 'exact' })
-      .in('feed_id', feedIds);
-    if (excludeFromBody.length > 0 && excludeFromBody.length <= MAX_EXCLUDE_IDS) {
-      query = query.not('id', 'in', `(${excludeFromBody.join(',')})`);
-    }
-    query = query
-      .order('sort_at', { ascending: false })
-      .order('id', { ascending: false })
-      .range(offset, offset + limit - 1);
+    // Body: paginated, newest-first, Done/Hidden/Pinned already filtered out.
+    // total_count is a window count returned on every row (same for all).
+    const bodyRows = this.unwrap<Array<{ item: ItemRow; total_count: number }>>(
+      await this.sb.rpc('feed_items', { ...args, p_limit: limit, p_offset: offset }),
+    );
+    const bodyTotal = bodyRows.length > 0 ? Number(bodyRows[0].total_count) : 0;
+    const body = await this.resolveFeedItems(bodyRows.map((r) => r.item));
 
-    const res = (await query) as {
-      data: ItemRow[] | null;
-      count: number | null;
-      error: unknown;
-    };
-    // Correctness floor: never surface pinned/done/hidden in the body even when
-    // the server-side `not in` was skipped (exclusion set over MAX_EXCLUDE_IDS).
-    // In that degraded path pages may run short and total/nextCursor are
-    // approximate, but archived/hidden/pinned items never reappear or duplicate.
-    const rawRows = this.unwrap<ItemRow[]>(res);
-    const bodyRows =
-      excludeSet.size > 0
-        ? rawRows.filter((r) => !excludeSet.has(r.id))
-        : rawRows;
-    const bodyTotal = res.count ?? bodyRows.length;
-    const body = await this.resolveFeedItems(bodyRows);
-
-    // Pinned prepend (page 1 only), restricted to this feed set and rendered
-    // once at the top, oldest-pinned first.
+    // Pinned prepend (page 1 only), oldest-pinned first, scoped to this view.
     let pinned: FeedItem[] = [];
-    if (offset === 0 && pinnedOldestFirst.length > 0) {
-      const pinnedRows = await this.fetchItemRowsByIds(
-        pinnedOldestFirst,
-        feedIds,
+    if (offset === 0) {
+      const pinnedRows = this.unwrap<ItemRow[]>(
+        await this.sb.rpc('pinned_feed_items', args),
       );
-      const byId = new Map(pinnedRows.map((r) => [r.id, r]));
-      const ordered = pinnedOldestFirst
-        .map((id) => byId.get(id))
-        .filter((r): r is ItemRow => r !== undefined);
-      pinned = await this.resolveFeedItems(ordered);
+      pinned = await this.resolveFeedItems(pinnedRows);
     }
 
     const nextOffset = offset + limit;
@@ -332,30 +266,23 @@ export class SupabaseDataSource implements DataSource {
   // --- feed reads -----------------------------------------------------------
 
   async getHomeItems(opts?: FeedListOptions): Promise<Page<FeedItem>> {
-    const subs = await this.loadSubscriptions();
-    const feedIds = subs
-      .filter((s) => !s.subscription.muted)
-      .map((s) => s.subscription.feedId);
-    return this.feedView(feedIds, opts);
+    return this.feedView({ p_scope: 'home', p_folder: null, p_feed_id: null }, opts);
   }
 
   async getFolderItems(
     name: string,
     opts?: FeedListOptions,
   ): Promise<Page<FeedItem>> {
-    const subs = await this.loadSubscriptions();
-    const feedIds = subs
-      .filter((s) => !s.subscription.muted && s.subscription.folder === name)
-      .map((s) => s.subscription.feedId);
-    return this.feedView(feedIds, opts);
+    return this.feedView({ p_scope: 'folder', p_folder: name, p_feed_id: null }, opts);
   }
 
   async getFeedItems(
     feedId: FeedId,
     opts?: FeedListOptions,
   ): Promise<Page<FeedItem>> {
-    // Single-feed view includes a muted feed's own items.
-    return this.feedView([feedId], opts);
+    // Single-feed view includes a muted feed's own items (the RPC's 'feed' scope
+    // doesn't apply the mute filter).
+    return this.feedView({ p_scope: 'feed', p_folder: null, p_feed_id: feedId }, opts);
   }
 
   async getItem(id: ItemId): Promise<FeedItem | null> {

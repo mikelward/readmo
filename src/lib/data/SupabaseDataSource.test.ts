@@ -116,15 +116,6 @@ describe('SupabaseDataSource reads', () => {
     expect(ids(page.items)).toEqual(['i2', 'i-undated', 'i6', 'i3']);
   });
 
-  it('excludes Done/Hidden/Pinned client-side when the server filter is skipped', async () => {
-    const env2 = setup();
-    env2.fake.ignoreNotInFilter(); // simulate the exclusion set exceeding the cap
-    const page = await env2.ds.getHomeItems();
-    // The client-side floor still keeps archived/hidden/pinned out of the body
-    // (and pinned isn't duplicated): same visible result as the server-filtered path.
-    expect(ids(page.items)).toEqual(['i2', 'i6', 'i3']);
-  });
-
   it('getItem / getItemsByIds map and preserve order', async () => {
     const one = await env.ds.getItem('i3');
     expect(one?.item.title).toBe('Beta three');
