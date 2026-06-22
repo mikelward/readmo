@@ -10,8 +10,18 @@ import type { ItemId, ItemStateField } from '../types';
 //    burst collapses to one write carrying the final values;
 //  - serialized per item via a single drain loop, so writes can't reorder;
 //  - retried on reconnect; a *transient* (network) failure keeps the entry queued,
-//    while a *permanent* server rejection (e.g. lost visibility) drops it and asks
-//    the caller to re-reconcile from server truth.
+//    while a *permanent* server rejection (e.g. lost visibility, or a version
+//    conflict) drops it and asks the caller to re-reconcile from server truth.
+//
+// Optimistic concurrency (SPEC.md *Sync → Conflict resolution*): each queued
+// write carries the server `version` its change was based on. The send path
+// passes it to `set_item_state`, which applies the write only if the row is
+// still at that version, else rejects (a stale offline replay then reconciles
+// instead of clobbering a newer change from another device). The base is
+// snapshotted when an item first goes pending and advances to the server's
+// returned version after each successful write, so sequential edits don't
+// false-conflict; a conflict is permanent → the entry (and any newer queued
+// edits for it) is dropped and the store rolls back to server truth.
 //
 // `pendingIds()` lets the hydrate path preserve un-synced local rows while
 // clearing genuinely-stale ones (closing the "clear local states absent from
@@ -22,6 +32,9 @@ export type ChangedFields = Partial<Record<ItemStateField, boolean>>;
 interface OutboxEntry {
   id: ItemId;
   changed: ChangedFields;
+  /** Server version the change is based on (see optimistic concurrency above).
+   * Absent for legacy persisted entries → sent as null (no check). */
+  base?: number | null;
 }
 
 export interface OutboxPersistence {
@@ -33,8 +46,12 @@ export interface OutboxPersistence {
 export interface SendResult {
   ok: boolean;
   /** True when the server rejected the write for good (not a transient network
-   * error) — the entry is dropped and the caller re-reconciles. */
+   * error) — e.g. a version conflict or lost visibility. The entry is dropped
+   * and the caller re-reconciles. */
   permanent?: boolean;
+  /** The row's new server `version` after a successful write, so the outbox can
+   * base the item's next queued write on it. */
+  version?: number;
 }
 
 // Transient-retry backoff bounds. A transient failure while still "online"
@@ -58,10 +75,23 @@ export class ItemStateOutbox {
   private dirtyDuringDrain = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private retryAttempt = 0;
+  // The server version each pending item's queued change is based on (sent to
+  // the server for the optimistic-concurrency check). Snapshotted when an item
+  // first goes pending; advanced to the server's returned version after a
+  // successful write so sequential edits don't false-conflict.
+  private readonly base = new Map<ItemId, number>();
+  // Last known server version per item, from hydrate observation and successful
+  // sends — the base a *fresh* (not-yet-pending) edit will be based on.
+  private readonly serverVersion = new Map<ItemId, number>();
 
   constructor(
-    /** Persist `changed` for one item; resolves with delivery outcome. */
-    private readonly send: (id: ItemId, changed: ChangedFields) => Promise<SendResult>,
+    /** Persist `changed` for one item (carrying the base version for the
+     * optimistic-concurrency check); resolves with delivery outcome. */
+    private readonly send: (
+      id: ItemId,
+      changed: ChangedFields,
+      baseVersion: number | null,
+    ) => Promise<SendResult>,
     private readonly persistence: OutboxPersistence,
     /** Online check — flush is a no-op while offline. */
     private readonly isOnline: () => boolean,
@@ -69,7 +99,22 @@ export class ItemStateOutbox {
      * caller can re-pull server truth to correct the optimistic local state. */
     private readonly onPermanentReject: (ids: ItemId[]) => void,
   ) {
-    for (const e of this.persistence.load()) this.queue.set(e.id, e.changed);
+    for (const e of this.persistence.load()) {
+      this.queue.set(e.id, e.changed);
+      if (e.base != null) this.base.set(e.id, e.base);
+    }
+  }
+
+  /** Record server versions observed by a hydrate so a future (not-yet-pending)
+   * edit is based on the right version. Skips items with a pending write — their
+   * base is locked to what the edit was made against, and a successful send (or
+   * a conflict reconcile) is the authority for advancing it. */
+  observeServerVersions(rows: Iterable<readonly [ItemId, number]>): void {
+    for (const [id, version] of rows) {
+      if (!this.queue.has(id) && !this.inFlight.has(id)) {
+        this.serverVersion.set(id, version);
+      }
+    }
   }
 
   /** Merged un-synced changed-fields per item — both queued and in-flight
@@ -92,6 +137,11 @@ export class ItemStateOutbox {
   /** Queue a mutation (merging into any pending entry for the item) and kick a
    * flush. The local store has already applied it optimistically. */
   enqueue(id: ItemId, changed: ChangedFields): void {
+    // First un-synced edit for this item: lock its base to the last known server
+    // version (0 = expect no row yet). Coalesced follow-ups keep that base.
+    if (!this.queue.has(id) && !this.inFlight.has(id) && !this.base.has(id)) {
+      this.base.set(id, this.serverVersion.get(id) ?? 0);
+    }
     this.queue.set(id, { ...this.queue.get(id), ...changed });
     if (this.draining) this.dirtyDuringDrain = true;
     this.persist();
@@ -117,9 +167,10 @@ export class ItemStateOutbox {
         // until the send resolves.
         this.queue.delete(id);
         this.inFlight.set(id, changed);
+        const baseVersion = this.base.get(id) ?? null;
         let result: SendResult;
         try {
-          result = await this.send(id, changed);
+          result = await this.send(id, changed, baseVersion);
         } catch {
           result = { ok: false, permanent: false }; // network error → transient
         } finally {
@@ -127,12 +178,26 @@ export class ItemStateOutbox {
         }
         if (!result.ok && !result.permanent) {
           // Transient: requeue, letting any newer enqueue (arrived during send)
-          // win per field.
+          // win per field. Base is unchanged — the write never landed.
           transient = true;
           const newer = this.queue.get(id);
           this.queue.set(id, newer ? { ...changed, ...newer } : changed);
         } else if (result.permanent) {
+          // Conflict / lost visibility: roll back. Drop this item entirely —
+          // including any newer edits queued during the send, which were based
+          // on the now-reconciled-away optimistic state — and re-reconcile.
+          this.queue.delete(id);
+          this.base.delete(id);
           rejected.push(id);
+        } else {
+          // Success. Advance the known server version; base the item's next
+          // queued edit (if any arrived during the send) on it, else clear it.
+          if (result.version != null) this.serverVersion.set(id, result.version);
+          if (this.queue.has(id) && result.version != null) {
+            this.base.set(id, result.version);
+          } else {
+            this.base.delete(id);
+          }
         }
         if (!this.isOnline()) break; // went offline mid-drain; keep the rest
       }
@@ -181,7 +246,11 @@ export class ItemStateOutbox {
 
   private persist(): void {
     this.persistence.save(
-      [...this.queue.entries()].map(([id, changed]) => ({ id, changed })),
+      [...this.queue.entries()].map(([id, changed]) => ({
+        id,
+        changed,
+        base: this.base.get(id) ?? null,
+      })),
     );
   }
 }

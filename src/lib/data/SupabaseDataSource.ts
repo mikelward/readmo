@@ -123,15 +123,20 @@ export class SupabaseDataSource implements DataSource {
     // reconnect, and surviving a reload/offline gap. A permanent server rejection
     // re-pulls server truth to correct the optimistic state.
     this.outbox = new ItemStateOutbox(
-      async (id, changed) => {
+      async (id, changed, baseVersion) => {
         const params: Record<string, unknown> = { p_item_id: id };
         // Send only the changed fields (set_item_state leaves null params
         // untouched), so a stale mirror can't clobber a field changed elsewhere.
         for (const [f, v] of Object.entries(changed)) params[`p_${f}`] = v;
-        const { error } = await this.sb.rpc('set_item_state', params);
+        // Optimistic-concurrency base: apply only if the row is still at this
+        // version (0007). A conflict comes back as an error → permanent.
+        if (baseVersion != null) params.p_base_version = baseVersion;
+        const { data, error } = await this.sb.rpc('set_item_state', params);
         // A returned error means the server processed and rejected the write
-        // (permanent); a thrown/network error is caught by the outbox as transient.
-        return { ok: !error, permanent: Boolean(error) };
+        // (permanent — e.g. a version conflict or lost visibility); a
+        // thrown/network error is caught by the outbox as transient.
+        const version = (data as ItemStateRow | null)?.version;
+        return { ok: !error, permanent: Boolean(error), version };
       },
       localStorageOutboxPersistence(`${stateKey}${OUTBOX_SUFFIX}`),
       () => {
@@ -188,15 +193,30 @@ export class SupabaseDataSource implements DataSource {
   private ensureHydrated(): Promise<void> {
     if (!this.hydration) {
       this.hydration = (async () => {
+        // Snapshot pending writes BEFORE the read: a write that's in flight at
+        // boot (flush + ensureHydrated start together) may resolve and clear the
+        // outbox while this select is awaiting, which would otherwise let the
+        // just-read pre-write server row look authoritative and overwrite the
+        // optimistic state.
+        const before = this.outbox.pendingChanges();
         const rows = this.unwrap<ItemStateRow[]>(
           await this.sb.from('item_state').select(ITEM_STATE_COLS),
         );
-        // Pass the outbox's pending changed-fields so the reconcile overlays
-        // un-synced local writes onto server truth (per field) while clearing
-        // genuinely-stale rows.
+        // Record server versions so a future (not-yet-pending) edit bases its
+        // optimistic-concurrency check on the right version.
+        this.outbox.observeServerVersions(rows.map((r) => [r.item_id, r.version]));
+        // Union with anything pending now, so an enqueue made DURING the select
+        // is preserved too (newer fields win). Either snapshot alone misses one
+        // of the two races; the union covers both.
+        const pending = before;
+        for (const [id, ch] of this.outbox.pendingChanges()) {
+          pending.set(id, { ...pending.get(id), ...ch });
+        }
+        // Overlay un-synced local writes onto server truth (per field) while
+        // clearing genuinely-stale rows.
         this.stateStore.hydrate(
           rows.map((r) => [r.item_id, mapItemState(r)] as [ItemId, ItemState]),
-          this.outbox.pendingChanges(),
+          pending,
         );
       })().catch((err) => {
         // Don't memoize a rejected promise — a transient/offline/expired-token
