@@ -453,6 +453,17 @@ loopback/link-local/private/metadata targets and redirects to them.
   emit real feed fetch URLs (`feeds_public` exposes only `site_url`, never
   `url`/`secret_url`),
   so live `exportOpml` carries homepage URLs until a server-side export exists.
+- **Deferred — idempotency keys for exactly-once write delivery.** The outbox is
+  at-least-once: a write can commit on the server while the client crashes/loses
+  the response before recording the returned `version`. On replay the version
+  check (0007) then sees the row already advanced and rejects with `40001`, so
+  that write — and any same-item follow-up queued behind it — reconciles away.
+  The state stays *consistent* (it matches what committed); at most a triage
+  toggle made in that narrow crash-during-ack window is dropped. The complete fix
+  is a per-write idempotency token the server dedups on (a replay of a committed
+  write returns success + the new version, letting the outbox advance the
+  successor's base) — a dedicated milestone, since a client-only dependency hack
+  can't close it (the predecessor replay itself conflicts without server dedup).
 
 ---
 
