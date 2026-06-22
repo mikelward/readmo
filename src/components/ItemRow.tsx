@@ -11,7 +11,7 @@ import { TooltipButton } from './TooltipButton';
 import { PushPinFilled, PushPinOutline } from './icons';
 import './ItemRow.css';
 
-interface RightAction {
+export interface RightAction {
   label: string;
   icon: ReactNode;
   onToggle: () => void;

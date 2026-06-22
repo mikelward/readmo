@@ -3,7 +3,7 @@ import { useDataSource } from '../lib/data/context';
 import { useStateBucket } from '../hooks/useItemState';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { LibraryItemList } from '../components/LibraryItemList';
-import { ListToolbar } from '../components/ListToolbar';
+import { ListPage } from '../components/ListPage';
 import {
   CheckCircleFilled,
   FavoriteFilled,
@@ -12,7 +12,6 @@ import {
   VisibilityOff,
 } from '../components/icons';
 import type { ItemStateField } from '../lib/types';
-import './PageHeader.css';
 
 interface LibraryPageProps {
   title: string;
@@ -38,28 +37,30 @@ function LibraryPage({
   useDocumentTitle(`${title} · readmo`);
 
   return (
-    <>
-      <div className="page-header">
-        <h1 className="page-header__title">{title}</h1>
-        {forgettable && ids.length > 0 ? (
-          <button
-            type="button"
-            className="page-header__badge"
-            style={{ background: 'var(--rm-meta)' }}
-            onClick={() => ids.forEach((id) => ds.stateStore.set(id, field, false))}
-          >
-            Forget all
-          </button>
-        ) : null}
-      </div>
+    <ListPage
+      header={
+        <>
+          <h1 className="page-header__title">{title}</h1>
+          {forgettable && ids.length > 0 ? (
+            <button
+              type="button"
+              className="page-header__badge"
+              style={{ background: 'var(--rm-meta)' }}
+              onClick={() => ids.forEach((id) => ds.stateStore.set(id, field, false))}
+            >
+              Forget all
+            </button>
+          ) : null}
+        </>
+      }
+    >
       <LibraryItemList
         field={field}
         actionLabel={actionLabel}
         actionIcon={actionIcon}
         emptyLabel={emptyLabel}
       />
-      <ListToolbar placement="bottom" actions={false} />
-    </>
+    </ListPage>
   );
 }
 
