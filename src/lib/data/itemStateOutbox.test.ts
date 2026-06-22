@@ -187,6 +187,14 @@ describe('ItemStateOutbox', () => {
       expect(h.sent).toEqual([['a', { pinned: false }]]);
     });
 
+    it('does not rewind a known server version to an older observed one', async () => {
+      h.outbox.observeServerVersions([['a', 6]]); // recorded by a successful send
+      h.outbox.observeServerVersions([['a', 5]]); // stale select landing late
+      h.outbox.enqueue('a', { pinned: true });
+      await tick();
+      expect(h.bases).toEqual([6]); // bases on the newer version, not the stale 5
+    });
+
     it('drops the item (and notifies) on a version conflict', async () => {
       h.outbox.observeServerVersions([['a', 5]]);
       h.setResult({ ok: false, permanent: true }); // conflict
