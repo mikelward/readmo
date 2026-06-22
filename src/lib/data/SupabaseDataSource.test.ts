@@ -208,20 +208,40 @@ describe('SupabaseDataSource reads', () => {
 });
 
 describe('SupabaseDataSource dispatch + writes', () => {
-  it('writes item-state mutations through the set_item_state RPC', async () => {
+  it('writes item-state mutations through the set_item_state RPC (full state)', async () => {
     const env = setup();
     await env.ds.getHomeItems(); // hydrate
 
-    // Hiding i6 locally writes through to the server...
+    // Hiding i6 locally writes the FULL resulting state through to the server...
     env.ds.stateStore.set('i6', 'hidden', true);
     await Promise.resolve();
     expect(env.fake.rpcCalls).toContainEqual({
       name: 'set_item_state',
-      params: { p_item_id: 'i6', p_hidden: true },
+      params: {
+        p_item_id: 'i6',
+        p_pinned: false,
+        p_favorite: false,
+        p_done: false,
+        p_hidden: true,
+        p_opened: false,
+      },
     });
 
     // ...so the next feed read (server truth via feed_items) no longer surfaces it.
     const page = await env.ds.getHomeItems();
+    expect(ids(page.items)).not.toContain('i6');
+  });
+
+  it('overlays local optimistic state even before the write commits', async () => {
+    const env = setup();
+    await env.ds.getHomeItems(); // hydrate
+    // Disable write-through so the server (fake) stays unchanged — simulating an
+    // in-flight/slow set_item_state while useFeedItems refetches.
+    env.ds.stateStore.setMutationSink(() => {});
+    env.ds.stateStore.set('i6', 'hidden', true); // local only
+
+    const page = await env.ds.getHomeItems();
+    // The server RPC still returns i6, but the local overlay drops it.
     expect(ids(page.items)).not.toContain('i6');
   });
 

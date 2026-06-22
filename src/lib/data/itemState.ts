@@ -113,21 +113,23 @@ export class ItemStateStore {
   // sweep batch" (SPEC.md *List toolbar*). Only hide-style mutations record
   // here; pin/favorite/done toggles are not toolbar-undoable.
   private lastUndo: UndoBatch | null = null;
-  // Optional write-through: invoked per field mutation so a backing data source
-  // can persist it (SupabaseDataSource routes these to the set_item_state RPC).
-  // The local map is still the optimistic mirror; the mock leaves this unset.
-  private sink: ((id: ItemId, field: ItemStateField, value: boolean) => void) | null =
-    null;
+  // Optional write-through: invoked with the FULL resulting state for an item
+  // after a mutation, so a backing data source can persist every field
+  // (SupabaseDataSource routes this to the set_item_state RPC). Passing the whole
+  // state — not just the changed field — means undo restores all fields (e.g. a
+  // pin that hiding had cleared) and the server mirrors the client's
+  // exclusivity. The local map stays the optimistic mirror; the mock leaves this
+  // unset.
+  private sink: ((id: ItemId, state: ItemState) => void) | null = null;
 
   constructor(private persistence: StatePersistence) {
     this.map = persistence.load();
   }
 
-  /** Register a per-mutation write-through sink (see `sink`). Hydration does NOT
-   * fire it — only user-driven set/hide/undo mutations do. */
-  setMutationSink(
-    sink: (id: ItemId, field: ItemStateField, value: boolean) => void,
-  ): void {
+  /** Register a write-through sink invoked with the full post-mutation state
+   * (see `sink`). Hydration does NOT fire it — only user-driven set/hide/undo
+   * mutations do. */
+  setMutationSink(sink: (id: ItemId, state: ItemState) => void): void {
     this.sink = sink;
   }
 
@@ -192,7 +194,7 @@ export class ItemStateStore {
     const next = applyMutation(prev, field, value, now);
     this.map = { ...this.map, [id]: next };
     this.persistence.save(this.map);
-    this.sink?.(id, field, value);
+    this.sink?.(id, next);
     this.emit();
     return next;
   }
@@ -215,7 +217,7 @@ export class ItemStateStore {
     }
     this.lastUndo = batch;
     this.persistence.save(this.map);
-    for (const id of ids) this.sink?.(id, 'hidden', true);
+    for (const id of ids) this.sink?.(id, this.map[id]);
     this.emit();
   }
 
@@ -235,9 +237,10 @@ export class ItemStateStore {
     this.map = next;
     this.lastUndo = null;
     this.persistence.save(this.map);
-    // Mirror the restore to the backend: the batch only ever set `hidden=true`,
-    // so undo reverts each item's hidden flag to its prior value (default false).
-    for (const [id, prior] of batch) this.sink?.(id, 'hidden', prior?.hidden ?? false);
+    // Mirror the full restored state to the backend, not just `hidden`: hiding
+    // had cleared Pinned/Done, so restoring must re-send those too (else the
+    // server keeps them cleared and the next hydrate drops the restored pin).
+    for (const [id, prior] of batch) this.sink?.(id, prior ?? DEFAULT_ITEM_STATE);
     this.emit();
   }
 

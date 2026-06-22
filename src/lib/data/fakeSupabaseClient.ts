@@ -5,6 +5,8 @@
 // PostgREST emulation — it applies the same filters the data source issues so we
 // can assert mapping, ordering, filtering, pagination, and dispatch.
 
+import { TTL_MS } from '../types';
+
 type Row = Record<string, unknown>;
 
 interface OrderSpec {
@@ -280,10 +282,14 @@ function runRpc(
     const pinned = scoped
       .filter((it) => stateByItem.get(it.id as string)?.pinned)
       .sort((a, b) => pinMs(a) - pinMs(b) || idDesc(a, b)); // section 0: pinned_at asc
+    const hiddenActive = (st: Row | undefined) =>
+      Boolean(st?.hidden) &&
+      typeof st?.hidden_at === 'string' &&
+      Date.now() - Date.parse(st.hidden_at) <= TTL_MS; // Hidden expires after the TTL
     const body = scoped
       .filter((it) => {
         const st = stateByItem.get(it.id as string);
-        return !(st && (st.pinned || st.done || st.hidden));
+        return !(st && (st.pinned || st.done || hiddenActive(st)));
       })
       .sort((a, b) => sortMs(b) - sortMs(a) || idDesc(a, b)); // section 1: sort_at desc
     const combined = [...pinned, ...body];
