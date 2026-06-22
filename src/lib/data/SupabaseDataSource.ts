@@ -119,9 +119,16 @@ export class SupabaseDataSource implements DataSource {
     // version reconciliation + rollback-on-error are the remaining write-path
     // refinements; a failed write currently just leaves the local value until the
     // next hydrate reconciles by version.)
-    this.stateStore.setMutationSink((id, field, value) => {
+    this.stateStore.setMutationSink((id, st) => {
       void this.sb
-        .rpc('set_item_state', { p_item_id: id, [`p_${field}`]: value })
+        .rpc('set_item_state', {
+          p_item_id: id,
+          p_pinned: st.pinned,
+          p_favorite: st.favorite,
+          p_done: st.done,
+          p_hidden: st.hidden,
+          p_opened: st.opened,
+        })
         .then(({ error }) => {
           if (error) this.hydration = null; // force a fresh server reconcile next read
         });
@@ -258,7 +265,9 @@ export class SupabaseDataSource implements DataSource {
       await this.sb.rpc('feed_items', { ...args, p_limit: limit, p_offset: offset }),
     );
     const total = rows.length > 0 ? Number(rows[0].total_count) : 0;
-    const items = await this.resolveFeedItems(rows.map((r) => r.item));
+    const items = await this.resolveFeedItems(
+      this.overlayLocalState(rows.map((r) => r.item)),
+    );
 
     const nextOffset = offset + limit;
     return {
@@ -266,6 +275,28 @@ export class SupabaseDataSource implements DataSource {
       total,
       nextCursor: nextOffset < total ? String(nextOffset) : null,
     };
+  }
+
+  /**
+   * Re-apply the local optimistic state to a page of RPC rows. The server join
+   * is authoritative, but a just-written mutation may not have committed before
+   * `useFeedItems` refetches — so overlay the store (which updated synchronously)
+   * onto the bounded page: drop items now locally Done/Hidden (TTL-aware via
+   * `stateStore.get`) and re-lift locally-Pinned ones to the top (oldest-pin
+   * first). Operates only on the already-fetched page, so it can't resurrect a
+   * row the server dropped — that self-heals on the next clean refetch.
+   */
+  private overlayLocalState(items: ItemRow[]): ItemRow[] {
+    const pinned: Array<{ row: ItemRow; at: number }> = [];
+    const body: ItemRow[] = [];
+    for (const row of items) {
+      const st = this.stateStore.get(row.id);
+      if (st.done || st.hidden) continue;
+      if (st.pinned) pinned.push({ row, at: st.pinnedAt ?? 0 });
+      else body.push(row);
+    }
+    pinned.sort((a, b) => a.at - b.at);
+    return [...pinned.map((p) => p.row), ...body];
   }
 
   // --- feed reads -----------------------------------------------------------

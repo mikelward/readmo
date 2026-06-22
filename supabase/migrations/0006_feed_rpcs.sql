@@ -41,7 +41,11 @@ as $$
   with scoped as (
     select i, st.pinned as is_pinned, st.pinned_at,
            coalesce(st.done, false) as is_done,
-           coalesce(st.hidden, false) as is_hidden
+           -- Hidden is TTL'd (7 days): once hidden_at ages out, the item
+           -- re-enters the feed, matching the client's withRetention so a user
+           -- isn't stuck with no way to unhide it (SPEC.md *Retention*).
+           (coalesce(st.hidden, false)
+              and st.hidden_at > now() - interval '7 days') as is_hidden
     from public.items i
     join public.subscriptions s
       on s.feed_id = i.feed_id and s.user_id = auth.uid()
@@ -59,7 +63,7 @@ as $$
     -- Section 0: Pinned, oldest-pinned first.
     select i, 0 as section, pinned_at as ord_at from scoped where is_pinned is true
     union all
-    -- Section 1: body, newest-first, Done/Hidden/Pinned excluded.
+    -- Section 1: body, newest-first, Done/active-Hidden/Pinned excluded.
     select i, 1 as section, (i).sort_at as ord_at
     from scoped
     where is_pinned is not true and not is_done and not is_hidden

@@ -121,22 +121,34 @@ describe('ItemStateStore', () => {
     expect(store.get('nope')).toEqual(DEFAULT_ITEM_STATE);
   });
 
-  it('write-through sink fires per field mutation (set / hide / undo), not on hydrate', () => {
+  it('write-through sink fires full state (set / hide / undo), not on hydrate', () => {
     const store = new ItemStateStore(memoryPersistence());
-    const calls: Array<[string, string, boolean]> = [];
-    store.setMutationSink((id, field, value) => calls.push([id, field, value]));
+    const calls: Array<[string, ItemState]> = [];
+    store.setMutationSink((id, state) => calls.push([id, state]));
 
     store.set('a', 'pinned', true);
     store.hide('b'); // hidden = true (undoable)
-    store.undoLast(); // reverts b -> hidden false
+    store.undoLast(); // reverts b -> full prior (default) state
     // Hydration overlays server rows and must NOT write back through the sink.
     store.hydrate([['c', { ...DEFAULT_ITEM_STATE, done: true, version: 5 }]]);
 
-    expect(calls).toEqual([
-      ['a', 'pinned', true],
-      ['b', 'hidden', true],
-      ['b', 'hidden', false],
+    expect(calls.map(([id, s]) => [id, s.pinned, s.hidden])).toEqual([
+      ['a', true, false],
+      ['b', false, true],
+      ['b', false, false], // undo restored the full prior state, not just hidden
     ]);
+  });
+
+  it('undo write-through restores a pin that hiding cleared', () => {
+    const store = new ItemStateStore(memoryPersistence());
+    store.set('x', 'pinned', true); // pinned
+    const calls: Array<[string, ItemState]> = [];
+    store.setMutationSink((id, state) => calls.push([id, state]));
+    store.hide('x'); // hiding clears pinned
+    store.undoLast(); // must restore pinned=true, hidden=false
+    const [, restored] = calls[calls.length - 1];
+    expect(restored.pinned).toBe(true);
+    expect(restored.hidden).toBe(false);
   });
 
   it('applies retention on read', () => {
