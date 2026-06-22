@@ -22,6 +22,23 @@ import type {
  * constant, so keep these two in lockstep. */
 export const PARKED_ERROR_THRESHOLD = 8;
 
+/** SQLSTATEs a set_item_state write can return that are *permanent* — retrying
+ * the same write won't succeed, so the outbox drops it and re-reconciles:
+ *   - 40001 serialization_failure → our optimistic-concurrency version conflict
+ *   - 42501 insufficient_privilege → the caller lost visibility of the item
+ * Everything else (429/5xx server hiccup, missing/unknown code, auth that a
+ * token refresh fixes) is treated as transient so a short outage can't roll back
+ * and lose a user's triage action. */
+export const PERMANENT_WRITE_CODES = new Set(['40001', '42501']);
+
+/** Whether a PostgREST/Supabase RPC error is a permanent write rejection (see
+ * PERMANENT_WRITE_CODES). A thrown/network error never reaches here — the outbox
+ * catches those as transient. */
+export function isPermanentWriteError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && PERMANENT_WRITE_CODES.has(code);
+}
+
 /** ISO timestamptz (or null) → epoch ms (or null). */
 export function tsToMs(ts: string | null | undefined): number | null {
   if (!ts) return null;

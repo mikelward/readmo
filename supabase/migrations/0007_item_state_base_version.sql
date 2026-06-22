@@ -68,11 +68,20 @@ begin
 
   -- Optimistic concurrency: apply only if the row is still at the version the
   -- caller's queued change was based on. coalesce(no row) → 0, so a base of 0
-  -- means "expected fresh". A mismatch is a non-transient conflict.
+  -- means "expected fresh". A mismatch is a non-transient conflict. The check
+  -- must be atomic with the write, or two concurrent writers both read the same
+  -- version, both pass, and the second silently clobbers the first:
+  --   1. SELECT ... FOR UPDATE locks an EXISTING row, serializing same-row
+  --      updaters — the second waits, then sees the bumped version and conflicts.
+  --   2. For a base-0 FIRST insert there is no row to lock above, so the loser
+  --      of the INSERT race is caught by re-asserting the base in the ON CONFLICT
+  --      DO UPDATE's WHERE (evaluated under the lock ON CONFLICT takes): a
+  --      version mismatch updates no row, and the `not found` below rejects it.
   if p_base_version is not null then
     select version into v_cur
     from public.item_state
-    where user_id = v_uid and item_id = p_item_id;
+    where user_id = v_uid and item_id = p_item_id
+    for update;
 
     if coalesce(v_cur, 0) <> p_base_version then
       raise exception
@@ -98,7 +107,17 @@ begin
     done     = coalesce(p_done,     st.done),
     hidden   = coalesce(p_hidden,   st.hidden),
     opened   = coalesce(p_opened,   st.opened)
+  -- NULL base → no check (version = version, always true).
+  where st.version = coalesce(p_base_version, st.version)
   returning st.* into v_row;
+
+  if not found then
+    -- A concurrent writer won the row between our check and the upsert (the
+    -- base-0 first-insert race); reject so the loser reconciles.
+    raise exception
+      'item_state % changed concurrently (base %)', p_item_id, p_base_version
+      using errcode = '40001';
+  end if;
 
   return v_row;
 end;

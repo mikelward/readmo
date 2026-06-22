@@ -31,6 +31,7 @@ import {
   mapItem,
   mapItemState,
   mapSubscription,
+  isPermanentWriteError,
 } from './supabaseMappers';
 
 /** The display-safe columns of `feeds_public` (and of `feeds` for clients —
@@ -132,11 +133,11 @@ export class SupabaseDataSource implements DataSource {
         // version (0007). A conflict comes back as an error → permanent.
         if (baseVersion != null) params.p_base_version = baseVersion;
         const { data, error } = await this.sb.rpc('set_item_state', params);
-        // A returned error means the server processed and rejected the write
-        // (permanent — e.g. a version conflict or lost visibility); a
-        // thrown/network error is caught by the outbox as transient.
+        // Only a KNOWN-permanent error (version conflict / lost visibility) drops
+        // the write; a 429/5xx hiccup (or a thrown/network error) stays queued
+        // and retries, so a short outage can't roll back the user's action.
         const version = (data as ItemStateRow | null)?.version;
-        return { ok: !error, permanent: Boolean(error), version };
+        return { ok: !error, permanent: isPermanentWriteError(error), version };
       },
       localStorageOutboxPersistence(`${stateKey}${OUTBOX_SUFFIX}`),
       () => {

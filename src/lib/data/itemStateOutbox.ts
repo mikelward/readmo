@@ -83,6 +83,11 @@ export class ItemStateOutbox {
   // Last known server version per item, from hydrate observation and successful
   // sends — the base a *fresh* (not-yet-pending) edit will be based on.
   private readonly serverVersion = new Map<ItemId, number>();
+  // Whether a full server hydrate has been observed. Until then we can't tell an
+  // item with no known version apart from a genuinely-new one, so we send a null
+  // base (no check) rather than assume 0 ("expect no row") and false-conflict an
+  // edit made on an already-existing item during a cold boot.
+  private hydrated = false;
 
   constructor(
     /** Persist `changed` for one item (carrying the base version for the
@@ -110,6 +115,7 @@ export class ItemStateOutbox {
    * base is locked to what the edit was made against, and a successful send (or
    * a conflict reconcile) is the authority for advancing it. */
   observeServerVersions(rows: Iterable<readonly [ItemId, number]>): void {
+    this.hydrated = true;
     for (const [id, version] of rows) {
       if (!this.queue.has(id) && !this.inFlight.has(id)) {
         this.serverVersion.set(id, version);
@@ -137,10 +143,16 @@ export class ItemStateOutbox {
   /** Queue a mutation (merging into any pending entry for the item) and kick a
    * flush. The local store has already applied it optimistically. */
   enqueue(id: ItemId, changed: ChangedFields): void {
-    // First un-synced edit for this item: lock its base to the last known server
-    // version (0 = expect no row yet). Coalesced follow-ups keep that base.
+    // First un-synced edit for this item: lock its base. Use the known server
+    // version if we have one; else 0 ("expect no row") only once a full hydrate
+    // has confirmed the item has no server row — before that, leave the base
+    // unset so the send goes out with a null base (no check) rather than
+    // false-conflict an existing item on a cold boot. Coalesced follow-ups keep
+    // whatever base the first edit locked.
     if (!this.queue.has(id) && !this.inFlight.has(id) && !this.base.has(id)) {
-      this.base.set(id, this.serverVersion.get(id) ?? 0);
+      const known = this.serverVersion.get(id);
+      if (known != null) this.base.set(id, known);
+      else if (this.hydrated) this.base.set(id, 0);
     }
     this.queue.set(id, { ...this.queue.get(id), ...changed });
     if (this.draining) this.dirtyDuringDrain = true;

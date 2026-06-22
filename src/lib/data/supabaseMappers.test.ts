@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   PARKED_ERROR_THRESHOLD,
+  isPermanentWriteError,
   mapFeed,
   mapItem,
   mapItemState,
@@ -12,6 +13,20 @@ import {
   type ItemStateRow,
   type SubscriptionRow,
 } from './supabaseMappers';
+
+describe('isPermanentWriteError', () => {
+  it('treats version conflict and lost visibility as permanent', () => {
+    expect(isPermanentWriteError({ code: '40001' })).toBe(true); // conflict
+    expect(isPermanentWriteError({ code: '42501' })).toBe(true); // visibility
+  });
+
+  it('treats transient/unknown failures as non-permanent (keep queued)', () => {
+    expect(isPermanentWriteError({ code: '53300' })).toBe(false); // too many conns
+    expect(isPermanentWriteError({ code: '28000' })).toBe(false); // auth (refresh)
+    expect(isPermanentWriteError({ message: '503' })).toBe(false); // no code
+    expect(isPermanentWriteError(null)).toBe(false);
+  });
+});
 
 describe('tsToMs', () => {
   it('parses ISO timestamps and tolerates null/garbage', () => {
