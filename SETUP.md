@@ -57,6 +57,7 @@ The migrations live in `supabase/migrations/` and apply in sortable order:
 | `0001_schema.sql` | Tables (`feeds`, `items`, `subscriptions`, `item_state`, `folders`), indexes (incl. the partial `item_state` pinned/done/hidden indexes). |
 | `0002_rls.sql` | Enables RLS + policies; `feeds`/`items` visibility scoped to subscription **or** permanent state; keeps `secret_url` server-only via column revoke + the `feeds_public` view. |
 | `0003_item_state_version.sql` | Server-assigned monotonic `version` bump + state-exclusivity enforcement + `*_at` timestamping trigger on `item_state`. |
+| `0004_access_rpcs.sql` | Closes the access-by-UUID escalation: `subscribe_to_feed` / `set_item_state` SECURITY DEFINER RPCs (authorize by URL possession / current item visibility) and **revokes direct client `INSERT`** on `subscriptions` + `item_state`. |
 
 Apply them:
 
@@ -75,6 +76,10 @@ supabase db reset      # re-applies every migration from scratch
 - The `feeds_public` view exists and does **not** expose `secret_url`.
 - Client roles (`anon`, `authenticated`) have **no** column access to
   `feeds.secret_url`.
+- `anon`/`authenticated` have **no** direct `INSERT` on `subscriptions` or
+  `item_state` (clients write via `subscribe_to_feed` / `set_item_state`).
+- Optional regression check: `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f
+  supabase/tests/access_rpcs.sql` prints `PASS …` for each access check.
 
 ---
 

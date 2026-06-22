@@ -22,16 +22,17 @@ alter table public.folders       enable row level security;
 -- ===========================================================================
 -- subscriptions — readable/writable only by the owning user.
 --
--- TODO(PR2, P1 — access-by-UUID escalation): the INSERT policy only checks
--- user_id, so a signed-in user who learns a feed's UUID can insert a
--- subscription row and thereby satisfy feeds_select/items_select, gaining read
+-- NOTE(P1 — access-by-UUID escalation): the INSERT policy below only checks
+-- user_id, so on its own a signed-in user who learns a feed's UUID could insert
+-- a subscription row and thereby satisfy feeds_select/items_select, gaining read
 -- access to a PRIVATE/tokenized feed's content without ever possessing its URL.
--- (Public RSS leaks nothing; the risk is private/tokenized feeds.) The same
--- hole exists for item_state inserts below. Fix in PR2: route subscribe + the
--- first permanent item_state write through a SECURITY DEFINER RPC that
--- validates URL possession / item visibility, and revoke direct client INSERT
--- on these tables. Deferred so it can be built and tested against the live DB.
--- See PR #1 review (codex P1, two threads).
+-- (Public RSS leaks nothing; the risk is private/tokenized feeds.) The same hole
+-- existed for item_state inserts below. CLOSED in 0004_access_rpcs.sql: subscribe
+-- and the first permanent item_state write now go through SECURITY DEFINER RPCs
+-- (subscribe_to_feed / set_item_state) that prove URL possession / current item
+-- visibility, and 0004 REVOKES direct client INSERT on both tables — so the
+-- insert policy here can no longer be exercised by clients. See PR #1 review
+-- (codex P1, two threads).
 -- ===========================================================================
 create policy subscriptions_select on public.subscriptions
   for select using (user_id = auth.uid());
@@ -47,11 +48,12 @@ create policy subscriptions_delete on public.subscriptions
 -- column is server-assigned by a trigger; see 0003. Clients may set the
 -- boolean/timestamp fields.)
 --
--- TODO(PR2, P1 — access-by-UUID escalation): see the subscriptions note above.
--- Inserting an item_state row with pinned/favorite/done satisfies the
+-- NOTE(P1 — access-by-UUID escalation): see the subscriptions note above.
+-- Inserting an item_state row with pinned/favorite/done would satisfy the
 -- permanent-state branch of items_select/feeds_select, exposing a private item
--- + its feed by UUID alone. The first permanent write must be gated on the
--- item already being visible to the caller (or go through a validated RPC).
+-- + its feed by UUID alone. CLOSED in 0004_access_rpcs.sql: the set_item_state
+-- RPC gates the write on the item already being visible to the caller, and
+-- direct client INSERT on item_state is revoked there.
 -- ===========================================================================
 create policy item_state_select on public.item_state
   for select using (user_id = auth.uid());
