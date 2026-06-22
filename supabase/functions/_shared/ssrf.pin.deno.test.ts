@@ -191,3 +191,47 @@ Deno.test('IP-pinned fetch (HTTPS: SNI + cert verification)', async (t) => {
   ac.abort();
   await server.finished;
 });
+
+// The deliberately-stalled socket leaks ops/resources by design, so opt out of
+// the sanitizers for this one.
+Deno.test({
+  name: 'IP-pinned fetch is bounded by the abort signal on a stalled peer',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    // A raw TCP listener that accepts connections but never sends a response —
+    // models a vetted IP that accepts TCP then stalls.
+    const listener = Deno.listen({ port: 0, hostname: '127.0.0.1' });
+    const port = (listener.addr as Deno.NetAddr).port;
+    (async () => {
+      try {
+        for await (const _conn of listener) { /* hold open, never reply */ }
+      } catch {
+        /* listener closed */
+      }
+    })();
+
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 100); // stand-in for timeoutMs
+    const started = Date.now();
+    let threw = false;
+    try {
+      const res = await fetchViaIpPinned(
+        new URL(`http://bogus.invalid:${port}/`),
+        '127.0.0.1',
+        { signal: ac.signal },
+      );
+      await res.text();
+    } catch {
+      threw = true;
+    }
+    clearTimeout(timer);
+    listener.close();
+
+    assertEquals(threw, true);
+    // Promptly aborted, not hung until an OS-level timeout.
+    if (Date.now() - started > 5000) {
+      throw new Error('abort did not bound the stalled connection');
+    }
+  },
+});
