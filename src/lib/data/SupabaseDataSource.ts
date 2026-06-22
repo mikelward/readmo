@@ -104,8 +104,6 @@ export class SupabaseDataSource implements DataSource {
 
   private readonly sb: SupabaseClient;
   private readonly feedCache = new Map<FeedId, Feed>();
-  private subsCache: Array<{ subscription: Subscription; feed: Feed }> | null =
-    null;
   private hydration: Promise<void> | null = null;
 
   constructor(stateKey = 'readmo:item-state', client?: SupabaseClient) {
@@ -229,7 +227,9 @@ export class SupabaseDataSource implements DataSource {
   private async loadSubscriptions(): Promise<
     Array<{ subscription: Subscription; feed: Feed }>
   > {
-    if (this.subsCache) return this.subsCache;
+    // No per-instance memo: React Query owns subscription-list caching at the
+    // hook layer, so a `['subscriptions']` invalidation (after subscribe/unsub/
+    // mute, or to pick up another device's change) must re-hit Supabase here.
     const subRows = this.unwrap<SubscriptionRow[]>(
       await this.sb.from('subscriptions').select(SUBSCRIPTION_COLS),
     );
@@ -240,7 +240,6 @@ export class SupabaseDataSource implements DataSource {
       if (feed) out.push({ subscription: mapSubscription(row), feed });
     }
     out.sort((a, b) => a.subscription.sort - b.subscription.sort);
-    this.subsCache = out;
     return out;
   }
 
@@ -463,7 +462,6 @@ export class SupabaseDataSource implements DataSource {
       .delete()
       .eq('feed_id', feedId);
     if (error) throw error instanceof Error ? error : new Error(String(error));
-    this.subsCache = null;
   }
 
   async setMuted(feedId: FeedId, muted: boolean): Promise<void> {
@@ -472,7 +470,6 @@ export class SupabaseDataSource implements DataSource {
       .update({ muted })
       .eq('feed_id', feedId);
     if (error) throw error instanceof Error ? error : new Error(String(error));
-    this.subsCache = null;
   }
 
   async setTitleOverride(feedId: FeedId, title: string | null): Promise<void> {
@@ -481,7 +478,6 @@ export class SupabaseDataSource implements DataSource {
       .update({ title_override: title })
       .eq('feed_id', feedId);
     if (error) throw error instanceof Error ? error : new Error(String(error));
-    this.subsCache = null;
   }
 
   async refresh(feedId?: FeedId): Promise<void> {
@@ -491,10 +487,8 @@ export class SupabaseDataSource implements DataSource {
     if (error) throw error instanceof Error ? error : new Error(String(error));
     // A refresh/poll updates feeds_public (title, parked/error health), so the
     // permanent feed cache is now stale. Drop it (coarse-grained; a per-feed
-    // update can come with the live write path) so reads re-fetch fresh
-    // metadata.
+    // update can come with the live write path) so reads re-fetch fresh metadata.
     this.feedCache.clear();
-    this.subsCache = null;
   }
 
   async retryParkedFeed(_feedId: FeedId): Promise<void> {
