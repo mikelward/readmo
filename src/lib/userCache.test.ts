@@ -86,9 +86,40 @@ describe('reconcileUserCachesOnBoot', () => {
     expect(caches.delete).not.toHaveBeenCalled();
   });
 
-  it('clears the recorded uid when booting signed-out', async () => {
+  it('records the signed-out sentinel and purges the prior user', async () => {
     window.localStorage.setItem('readmo:last-uid', 'old');
     await reconcileUserCachesOnBoot(null);
-    expect(window.localStorage.getItem('readmo:last-uid')).toBeNull();
+    // Sentinel is recorded as '' (present) to distinguish signed-out from a
+    // never-booted (first-run) install.
+    expect(window.localStorage.getItem('readmo:last-uid')).toBe('');
+    expect(caches.delete).toHaveBeenCalledWith('readmo-data');
+  });
+
+  it('migrates legacy global stores into the user scope on first keyed boot', async () => {
+    // No sentinel / no migrated flag → an install upgrading to the keyed layout.
+    window.localStorage.setItem(itemStateKey(null), 'legacy-state');
+    window.localStorage.setItem(rqCacheKey(null), 'legacy-rq');
+
+    await reconcileUserCachesOnBoot('demo');
+
+    // Legacy data is moved into the demo user's scope, not wiped.
+    expect(window.localStorage.getItem(itemStateKey('demo'))).toBe('legacy-state');
+    expect(window.localStorage.getItem(rqCacheKey('demo'))).toBe('legacy-rq');
+    expect(window.localStorage.getItem(itemStateKey(null))).toBeNull();
+    expect(window.localStorage.getItem(rqCacheKey(null))).toBeNull();
+    // First keyed boot has no previous user, so nothing is purged.
+    expect(caches.delete).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem('readmo:last-uid')).toBe('demo');
+  });
+
+  it('migrates only once (subsequent boots leave the base keys alone)', async () => {
+    window.localStorage.setItem('readmo:cache-migrated', '1');
+    window.localStorage.setItem(itemStateKey(null), 'anon-scratch');
+
+    await reconcileUserCachesOnBoot('demo');
+
+    // Already migrated → the base key is not pulled into the user's scope.
+    expect(window.localStorage.getItem(itemStateKey('demo'))).toBeNull();
+    expect(window.localStorage.getItem(itemStateKey(null))).toBe('anon-scratch');
   });
 });
