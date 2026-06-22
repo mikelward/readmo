@@ -257,8 +257,17 @@ export class ItemStateOutbox {
   }
 
   private persist(): void {
+    // Persist the union of in-flight and queued changes (same merge as
+    // pendingChanges). A persist triggered by a follow-up enqueue must NOT drop
+    // an in-flight predecessor that's been taken out of `queue` for its send —
+    // otherwise a crash/reload before that RPC confirms would never replay it.
+    const merged = new Map<ItemId, ChangedFields>();
+    for (const [id, changed] of this.inFlight) merged.set(id, { ...changed });
+    for (const [id, changed] of this.queue) {
+      merged.set(id, { ...merged.get(id), ...changed });
+    }
     this.persistence.save(
-      [...this.queue.entries()].map(([id, changed]) => ({
+      [...merged.entries()].map(([id, changed]) => ({
         id,
         changed,
         base: this.base.get(id) ?? null,

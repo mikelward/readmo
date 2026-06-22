@@ -198,6 +198,29 @@ describe('ItemStateOutbox', () => {
     });
   });
 
+  it('keeps an in-flight write durable when a follow-up is enqueued', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const persistence = memPersistence();
+    const outbox = new ItemStateOutbox(
+      async (id) => {
+        if (id === 'a') await gate; // hold a's send open
+        return { ok: true, version: 1 };
+      },
+      persistence,
+      () => true,
+      () => {},
+    );
+    outbox.enqueue('a', { pinned: true }); // taken in-flight (send awaits gate)
+    await tick();
+    outbox.enqueue('b', { hidden: true }); // persist() fires while 'a' in flight
+    // Both must be durable — a crash/reload before a's RPC confirms must replay it.
+    const ids = (persistence.rows() as Array<{ id: string }>).map((r) => r.id).sort();
+    expect(ids).toEqual(['a', 'b']);
+    release();
+    await tick();
+  });
+
   it('persists pending writes so a new outbox replays them', async () => {
     h.outbox.observeServerVersions([]); // hydrate ran; 'a' is new → base 0
     h.setOnline(false);
