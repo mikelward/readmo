@@ -1,4 +1,4 @@
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth, type OAuthProvider } from '../hooks/useAuth';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { isSupabaseConfigured } from '../lib/supabase/client';
@@ -14,7 +14,7 @@ interface FromState {
  * stashes the requested location in `state.from`, and we land the user back
  * there after signing in. */
 export function SignInPage() {
-  const { signIn } = useAuth();
+  const { user, signIn } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   useDocumentTitle('Sign in · readmo');
@@ -23,6 +23,10 @@ export function SignInPage() {
   const target = from?.pathname
     ? `${from.pathname}${from.search ?? ''}${from.hash ?? ''}`
     : '/';
+
+  // Already signed in (e.g. landing here after an OAuth callback + reload): send
+  // the user into the app instead of showing the sign-in screen.
+  if (user) return <Navigate to={target} replace />;
 
   const handleSignIn = (provider: OAuthProvider) => {
     signIn(provider, target);

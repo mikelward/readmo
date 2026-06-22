@@ -171,6 +171,31 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(env.fake.invokeCalls).toContainEqual({ name: 'refresh', body: { feedId: 'feed-a' } });
   });
 
+  it('refresh invalidates cached feed metadata', async () => {
+    const env = setup();
+    expect((await env.ds.getFeed('feed-a'))?.title).toBe('Alpha Blog');
+    // A poll/refresh updated feeds_public server-side.
+    env.fake.store.feeds_public.find((r) => r.id === 'feed-a')!.title = 'Alpha Renamed';
+    await env.ds.refresh('feed-a');
+    // The stale cache was dropped, so the next read reflects the server change.
+    expect((await env.ds.getFeed('feed-a'))?.title).toBe('Alpha Renamed');
+  });
+
+  it('recovers hydration after a transient item_state failure', async () => {
+    const fake = makeFakeSupabase(seed());
+    fake.failSelectOnce('item_state'); // first (eager) hydration attempt errors
+    const ds = new SupabaseDataSource(
+      'readmo:item-state:test',
+      fake.client as unknown as SupabaseClient,
+    );
+    // Let the failed eager hydration settle and clear itself.
+    await new Promise((r) => setTimeout(r));
+    expect(ds.stateStore.entries()).toHaveLength(0);
+    // A subsequent read retries and succeeds instead of replaying the rejection.
+    await ds.getItemsByIds([]);
+    expect(Object.fromEntries(ds.stateStore.entries())['i2']?.pinned).toBe(true);
+  });
+
   it('unsubscribe deletes the subscription row', async () => {
     const env = setup();
     await env.ds.unsubscribe('feed-a');

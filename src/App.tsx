@@ -24,9 +24,13 @@ import { NotFoundPage } from './pages/NotFoundPage';
 /** Signed-in gate. First launch with no session routes to /signin; deep links
  * round-trip through sign-in and then land on the target (SPEC.md *Auth*). */
 function RequireAuth({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
+  const { user, initializing } = useAuth();
   const location = useLocation();
   if (!user) {
+    // A configured Supabase session may still be settling (e.g. a fresh OAuth
+    // callback whose token is in the URL hash). Hold rather than bounce to
+    // /signin, which would drop the callback and strand the user there.
+    if (initializing) return null;
     return <Navigate to="/signin" replace state={{ from: location }} />;
   }
   return <>{children}</>;

@@ -53,6 +53,7 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
   constructor(
     private readonly table: string,
     private readonly store: FakeTables,
+    private readonly control: { failSelectOnce: Set<string> },
   ) {
     this.rows = store[table] ?? [];
   }
@@ -170,6 +171,15 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
       for (const r of this.filtered()) Object.assign(r, this.patch);
       return { data: null, count: null, error: null };
     }
+    // One-shot injected failure for the next select on this table.
+    if (this.control.failSelectOnce.has(this.table)) {
+      this.control.failSelectOnce.delete(this.table);
+      return {
+        data: null,
+        count: null,
+        error: { message: `injected error for ${this.table}` },
+      };
+    }
     const matched = this.filtered();
     const count = this.wantCount ? matched.length : null;
     let out = this.sorted(matched);
@@ -194,18 +204,23 @@ export function makeFakeSupabase(tables: FakeTables): {
   store: FakeTables;
   invokeCalls: InvokeCall[];
   invokeResult: { current: { data: unknown; error: unknown } };
+  /** Make the next `select` on `table` return an error once (transient-failure
+   * simulation). */
+  failSelectOnce: (table: string) => void;
 } {
   const store: FakeTables = {};
   for (const [k, v] of Object.entries(tables)) store[k] = v.map((r) => ({ ...r }));
   const invokeCalls: InvokeCall[] = [];
   const invokeResult = { current: { data: null as unknown, error: null as unknown } };
+  const control = { failSelectOnce: new Set<string>() };
 
   return {
     store,
     invokeCalls,
     invokeResult,
+    failSelectOnce: (table: string) => control.failSelectOnce.add(table),
     client: {
-      from: (table: string) => new FakeQuery(table, store),
+      from: (table: string) => new FakeQuery(table, store, control),
       functions: {
         invoke: async (name: string, opts?: { body?: unknown }) => {
           invokeCalls.push({ name, body: opts?.body });

@@ -80,6 +80,11 @@ describe('getActiveUid (Supabase configured)', () => {
       email: 'boot@example.com',
       avatarUrl: null,
     });
+    // Flush the pending getSession() resolution inside act (keeps logs clean).
+    await act(async () => {
+      await new Promise((r) => setTimeout(r));
+    });
+    expect(result.current.user?.uid).toBe('u-boot');
   });
 });
 
@@ -116,6 +121,26 @@ describe('useAuth (Supabase configured)', () => {
     expect(h.fakeAuth.signOut).toHaveBeenCalled();
 
     act(() => h.state.cb?.('SIGNED_OUT', null));
+    expect(result.current.user).toBeNull();
+  });
+
+  it('reports initializing=true until the first getSession() resolves', async () => {
+    window.localStorage.clear();
+    h.fakeAuth.getSession.mockResolvedValueOnce({ data: { session: null } });
+    // Fresh module so the module-level "initialized" flag starts false.
+    vi.resetModules();
+    const { useAuth: freshUseAuth } = await import('./useAuth');
+    const { result } = renderHook(() => freshUseAuth());
+
+    // First render: session not yet known — hold, don't treat as signed out.
+    expect(result.current.initializing).toBe(true);
+    expect(result.current.user).toBeNull();
+
+    // After getSession resolves (to no session here), initializing clears.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r));
+    });
+    expect(result.current.initializing).toBe(false);
     expect(result.current.user).toBeNull();
   });
 });
