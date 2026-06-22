@@ -35,13 +35,15 @@ const queryClient = new QueryClient({
   },
 });
 
-// Per-user cache scoping (AGENTS guardrail #8). Key the persisted query cache
-// and the item-state store by the signed-in user so a second user on a shared
+// Per-user cache scoping (AGENTS guardrail #8). The persisted query cache and
+// item-state store are keyed by the signed-in user so a second user on a shared
 // device can't hydrate the previous user's content. The boot uid is read
-// synchronously (like the theme below) so the keys are correct before first
-// paint; App purges a departing user's caches on any auth transition. Full
-// in-session re-keying on account change without reload, and per-user prefixing
-// of the Workbox runtime caches, land with real multi-user auth in PR2.
+// synchronously (like the theme below) so these singletons are scoped correctly
+// before first paint. On any auth transition App (useUserCacheScope) purges the
+// departing user's caches and reloads, which re-runs this boot keying for the
+// new user — so signing in from a signed-out boot is re-keyed too, not left on
+// the unscoped base store. Seamless re-keying without a reload, and per-user
+// prefixing of the Workbox runtime caches, land with real multi-user auth in PR2.
 const bootUid = getActiveUid();
 const persister = createSyncStoragePersister({
   storage: typeof window !== 'undefined' ? window.localStorage : undefined,

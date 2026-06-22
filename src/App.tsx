@@ -34,7 +34,10 @@ function RequireAuth({ children }: { children: ReactNode }) {
 }
 
 export default function App() {
-  useUserCacheScope();
+  // Gate rendering across an auth transition: while the previous user's caches
+  // are being purged and the app reloads, paint nothing so the next user can't
+  // briefly see the previous user's cached content (guardrail #8).
+  if (useUserCacheScope()) return null;
   return (
     <FeedBarProvider>
       <ScrollToTop />
