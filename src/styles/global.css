@@ -143,7 +143,7 @@
   --rm-danger: #c0392b;
   --rm-success: #2e7d46;
 
-  /* Muted teal-grey dark enough for the hard-coded white swipe label
+  /* Muted teal-gray dark enough for the hard-coded white swipe label
      (.item-row__swipe-hint): ~4.7:1 on #fff, vs ~3.25:1 for the lighter
      #7f938e it replaces. */
   --rm-hide-bg: #647873;
