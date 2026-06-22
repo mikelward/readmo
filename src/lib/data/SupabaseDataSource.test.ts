@@ -215,9 +215,11 @@ describe('SupabaseDataSource dispatch + writes', () => {
     // Hiding i6 locally writes only the changed field through to the server...
     env.ds.stateStore.set('i6', 'hidden', true);
     await new Promise((r) => setTimeout(r)); // drain the per-item write chain
+    // i6 had no server state, so the optimistic-concurrency base is 0 (expect
+    // no row yet).
     expect(env.fake.rpcCalls).toContainEqual({
       name: 'set_item_state',
-      params: { p_item_id: 'i6', p_hidden: true },
+      params: { p_item_id: 'i6', p_hidden: true, p_base_version: 0 },
     });
 
     // ...so the next feed read (server truth via feed_items) no longer surfaces it.

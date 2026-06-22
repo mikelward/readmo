@@ -21,6 +21,7 @@ function memPersistence(): OutboxPersistence & { rows: () => unknown } {
 interface Harness {
   outbox: ItemStateOutbox;
   sent: Array<[string, ChangedFields]>;
+  bases: Array<number | null>;
   rejected: string[][];
   setOnline: (v: boolean) => void;
   setResult: (r: SendResult) => void;
@@ -29,12 +30,14 @@ interface Harness {
 
 function makeHarness(persistence = memPersistence()): Harness {
   const sent: Array<[string, ChangedFields]> = [];
+  const bases: Array<number | null> = [];
   const rejected: string[][] = [];
   let online = true;
   let result: SendResult = { ok: true };
   const outbox = new ItemStateOutbox(
-    async (id, changed) => {
+    async (id, changed, base) => {
       sent.push([id, changed]);
+      bases.push(base);
       return result;
     },
     persistence,
@@ -44,6 +47,7 @@ function makeHarness(persistence = memPersistence()): Harness {
   return {
     outbox,
     sent,
+    bases,
     rejected,
     persistence,
     setOnline: (v) => (online = v),
@@ -138,11 +142,61 @@ describe('ItemStateOutbox', () => {
     expect(h.rejected).toEqual([['a']]);
   });
 
+  describe('optimistic concurrency (base version)', () => {
+    it('bases a brand-new write on 0 when no server version is known', async () => {
+      h.outbox.enqueue('a', { pinned: true });
+      await tick();
+      expect(h.bases).toEqual([0]);
+    });
+
+    it('bases a write on the observed server version', async () => {
+      h.outbox.observeServerVersions([['a', 5]]);
+      h.outbox.enqueue('a', { pinned: true });
+      await tick();
+      expect(h.bases).toEqual([5]);
+    });
+
+    it('advances the base to the returned version for the next edit', async () => {
+      h.outbox.observeServerVersions([['a', 5]]);
+      h.setResult({ ok: true, version: 6 });
+      h.outbox.enqueue('a', { pinned: true });
+      await tick();
+      // A later, separate edit is based on the version the first write returned.
+      h.setResult({ ok: true, version: 7 });
+      h.outbox.enqueue('a', { pinned: false });
+      await tick();
+      expect(h.bases).toEqual([5, 6]);
+    });
+
+    it('keeps the original base across a coalesced burst', async () => {
+      h.outbox.observeServerVersions([['a', 5]]);
+      h.setOnline(false);
+      h.outbox.enqueue('a', { pinned: true });
+      h.outbox.enqueue('a', { pinned: false }); // coalesces; base unchanged
+      h.setOnline(true);
+      await h.outbox.flush();
+      expect(h.bases).toEqual([5]);
+      expect(h.sent).toEqual([['a', { pinned: false }]]);
+    });
+
+    it('drops the item (and notifies) on a version conflict', async () => {
+      h.outbox.observeServerVersions([['a', 5]]);
+      h.setResult({ ok: false, permanent: true }); // conflict
+      h.outbox.enqueue('a', { pinned: true });
+      await tick();
+      expect(h.bases).toEqual([5]);
+      expect(h.outbox.pendingIds()).toEqual([]); // rolled back
+      expect(h.rejected).toEqual([['a']]);
+    });
+  });
+
   it('persists pending writes so a new outbox replays them', async () => {
     h.setOnline(false);
     h.outbox.enqueue('a', { hidden: true });
     await tick();
-    expect(h.persistence.rows()).toEqual([{ id: 'a', changed: { hidden: true } }]);
+    expect(h.persistence.rows()).toEqual([
+      { id: 'a', changed: { hidden: true }, base: 0 },
+    ]);
 
     // A fresh outbox over the same persistence (e.g. next boot) replays it.
     const h2 = makeHarness(h.persistence);

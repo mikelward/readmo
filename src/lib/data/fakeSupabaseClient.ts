@@ -237,8 +237,20 @@ function runRpc(
     const itemId = params.p_item_id as string;
     const fields = ['pinned', 'favorite', 'done', 'hidden', 'opened'] as const;
     let row = stateByItem.get(itemId);
+    // Optimistic concurrency (0007): apply only if the row is still at the
+    // caller's base version (0 = expect no row yet), else a conflict error.
+    const base = params.p_base_version;
+    if (typeof base === 'number') {
+      const cur = (row?.version as number | undefined) ?? 0;
+      if (cur !== base) {
+        return {
+          data: null,
+          error: { code: '40001', message: `item_state ${itemId} changed since version ${base} (server at ${cur})` },
+        };
+      }
+    }
     if (!row) {
-      row = { item_id: itemId, pinned: false, favorite: false, done: false, hidden: false, opened: false };
+      row = { item_id: itemId, pinned: false, favorite: false, done: false, hidden: false, opened: false, version: 0 };
       states.push(row);
     }
     for (const f of fields) {
@@ -253,6 +265,8 @@ function runRpc(
       row.done = false;
       row.hidden = false;
     }
+    // Server-assigned monotonic version bump (mirrors the 0003 trigger).
+    row.version = ((row.version as number | undefined) ?? 0) + 1;
     return { data: row, error: null };
   }
 

@@ -433,15 +433,23 @@ loopback/link-local/private/metadata targets and redirects to them.
   `feed_id`/exclusion `IN (…)` list. Item/library reads (`feeds_public`, chunked
   id lookups), search, subscriptions/folders, and the `discover`/`refresh` Edge
   Function calls round it out; item state is hydrated from the server into the
-  shared `ItemStateStore`. Writes are wired: triage flags go through the
-  `set_item_state` RPC (optimistic store update + changed-field write-through, so
-  a refetch reflects them); Add-feed / OPML import / parked-feed retry go through
-  the `subscribe_to_feed` RPC and the `refresh` function. `main.tsx` selects the
-  live source when `isSupabaseConfigured()` (else the mock seed), so a configured
-  deployment boots on real RLS-scoped data. Still deferred (the offline/sync
-  milestone): the offline mutation outbox + server-version reconciliation/rollback
-  (until which the item-state hydrate keeps its conservative keep-and-overlay
-  merge). Also deferred: an **authenticated OPML-export RPC** — the client can't
+  shared `ItemStateStore`. Writes are wired through the
+  offline outbox (`itemStateOutbox.ts`): triage flags apply to the store
+  optimistically, then queue for durable, coalesced, serialized delivery to the
+  `set_item_state` RPC — surviving reloads/offline gaps and replaying on
+  reconnect. Each queued write carries the server `version` it was based on;
+  `set_item_state` (0007) applies it only if the row is still at that version,
+  else rejects so the stale replay rolls back and re-reconciles instead of
+  clobbering newer truth. The hydrate path overlays only still-pending fields
+  onto server truth and clears genuinely-stale rows. Add-feed / OPML import /
+  parked-feed retry go through the `subscribe_to_feed` RPC and the `refresh`
+  function. `main.tsx` selects the live source when `isSupabaseConfigured()`
+  (else the mock seed), so a configured deployment boots on real RLS-scoped data.
+  The version check is row-level (per item), so two devices editing the same
+  item conflict even on independent flags — deliberately conservative (the loser
+  re-reconciles) rather than risk a silent clobber; per-field versioning is a
+  possible future refinement. Still deferred: an **authenticated OPML-export
+  RPC** — the client can't
   emit real feed fetch URLs (`feeds_public` exposes only `site_url`, never
   `url`/`secret_url`),
   so live `exportOpml` carries homepage URLs until a server-side export exists.
