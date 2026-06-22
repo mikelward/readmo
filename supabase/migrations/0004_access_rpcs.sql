@@ -86,9 +86,23 @@ begin
     returning id into v_feed_id;
 
     if v_feed_id is null then
-      raise exception
-        'feed requires its tokenized fetch URL, not the public url'
-        using errcode = '42501';
+      -- ON CONFLICT returned nothing: a row with this `url` already exists.
+      -- That's either (a) a concurrent subscriber who just inserted the SAME
+      -- public feed (we lost the insert race), or (b) a secret-backed row whose
+      -- public url we presented without its token. Re-run the fetch-url
+      -- authorization against the committed row: it succeeds for (a) and still
+      -- refuses (b), so legitimate concurrent public subscribes don't fail.
+      select id into v_feed_id
+      from public.feeds
+      where (secret_url is null and url = v_url)
+         or (secret_url = v_url)
+      limit 1;
+
+      if v_feed_id is null then
+        raise exception
+          'feed requires its tokenized fetch URL, not the public url'
+          using errcode = '42501';
+      end if;
     end if;
   end if;
 
