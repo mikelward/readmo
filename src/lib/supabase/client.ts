@@ -6,8 +6,16 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 // to the mock auth + MockDataSource path, so this module never throws at import
 // time — only `getSupabase()` throws, and only if actually called unconfigured.
 
-const url = import.meta.env.VITE_SUPABASE_URL;
-const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// Accept our own VITE_* names first, then fall back to the public names the
+// Supabase↔Vercel integration provisions (NEXT_PUBLIC_*), so deployments wired
+// through that integration work without hand-duplicating env vars. Only public
+// keys are read here — never the service-role/secret keys.
+const env = import.meta.env;
+const url = env.VITE_SUPABASE_URL ?? env.NEXT_PUBLIC_SUPABASE_URL;
+const anonKey =
+  env.VITE_SUPABASE_ANON_KEY ??
+  env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+  env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
 /** Deterministic localStorage key for the persisted auth session. Fixed (rather
  * than supabase-js's default `sb-<ref>-auth-token`) so the boot path can read

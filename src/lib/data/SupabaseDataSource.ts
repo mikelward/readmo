@@ -329,22 +329,33 @@ export class SupabaseDataSource implements DataSource {
     const feedIds = subs
       .filter((s) => s.feed.title.toLowerCase().includes(ql))
       .map((s) => s.feed.id);
+    const sortMs = (r: ItemRow) =>
+      Date.parse(r.published_at ?? r.created_at ?? '') || 0;
     let feedRows: ItemRow[] = [];
     if (feedIds.length > 0) {
-      feedRows = this.unwrap<ItemRow[]>(
-        await this.sb
-          .from('items')
-          .select(ITEM_COLS)
-          .in('feed_id', feedIds)
-          .order('sort_at', { ascending: false })
-          .limit(50),
+      // A broad query ("news") can match many subscriptions, so batch the
+      // feed_id lookup rather than send every id in one IN(...) URL. Each batch
+      // returns its 50 newest; merge and keep the global 50 newest.
+      const batches = await Promise.all(
+        chunk(feedIds, ID_LOOKUP_CHUNK).map(async (c) =>
+          this.unwrap<ItemRow[]>(
+            await this.sb
+              .from('items')
+              .select(ITEM_COLS)
+              .in('feed_id', c)
+              .order('sort_at', { ascending: false })
+              .limit(50),
+          ),
+        ),
       );
+      feedRows = batches
+        .flat()
+        .sort((a, b) => sortMs(b) - sortMs(a))
+        .slice(0, 50);
     }
 
     const byId = new Map<string, ItemRow>();
     for (const r of [...titleRows, ...feedRows]) byId.set(r.id, r);
-    const sortMs = (r: ItemRow) =>
-      Date.parse(r.published_at ?? r.created_at ?? '') || 0;
     const merged = [...byId.values()].sort((a, b) => sortMs(b) - sortMs(a));
     return this.resolveFeedItems(merged);
   }
