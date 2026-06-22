@@ -39,12 +39,24 @@
 }
 
 .app-header__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 1.25rem;
   font-weight: 800;
   letter-spacing: -0.02em;
   color: var(--rm-accent);
   text-decoration: none;
   padding: 0 6px;
+}
+
+.app-header__brand-mark {
+  display: block;
+  flex: 0 0 auto;
+}
+
+.app-header__brand-text {
+  display: inline-block;
 }
 
 .app-header__spacer {

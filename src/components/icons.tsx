@@ -281,3 +281,42 @@ export function ChevronRight(props: IconProps) {
     </MaterialIcon>
   );
 }
+
+// ---- Brand mark -----------------------------------------------------------
+
+// The Readmo app mark, inline. Mirrors public/favicon.svg: ink rounded-square
+// tile, paper-white uppercase "R" centered slightly above the midline, and
+// the paper-white home-indicator pill near the bottom edge. Defaults to 28px
+// (sized to sit comfortably in the 56px header next to the wordmark); pass
+// width/height to override.
+export function BrandMark({
+  width = 28,
+  height = 28,
+  ...rest
+}: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 512 512"
+      width={width}
+      height={height}
+      aria-hidden="true"
+      focusable="false"
+      {...rest}
+    >
+      <rect width="512" height="512" rx="96" fill="#1a1a1a" />
+      <text
+        x="256"
+        y="240"
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
+        fontWeight={700}
+        fontSize={320}
+        fill="#faf9f5"
+      >
+        R
+      </text>
+      <rect x="176" y="400" width="160" height="12" rx="6" fill="#faf9f5" />
+    </svg>
+  );
+}

@@ -8,10 +8,11 @@
 //     truth for the mark) — the script writes public/favicon.svg and
 //     public/favicon-maskable.svg itself, then rasterizes the PNGs from
 //     those same strings. No hand-maintained SVG to drift out of sync.
-//  2. The mark is Readmo's: an indigo (#3a4ec4) rounded-square tile, a
-//     white reading/feed glyph (an open page with text lines) biased
-//     toward the TOP, and a white "home-indicator pill" near the bottom
-//     edge — the mobile-first motif inherited from newshacker.
+//  2. The mark is Readmo's: an ink (#1a1a1a) rounded-square tile, a
+//     paper-white uppercase "R" centered slightly above the midline, and
+//     a paper-white "home-indicator pill" near the bottom edge — the
+//     letter-mark + mobile-first motif inherited from newshacker, in our
+//     ink-on-paper palette.
 //
 // Uses the repo's direct `sharp` devDependency. It's a dev-time one-shot:
 // writes into public/, and the produced PNGs/SVGs are committed alongside
@@ -34,55 +35,34 @@ const publicDir = resolve(here, '..', 'public');
 // stays crisp for the largest (512x512). Higher is wasted work.
 const INPUT_DENSITY = 384;
 
-// Paper / monochrome mark: an ink (near-black) tile with a paper-white glyph
-// and home-indicator pill, matching the "ink on paper" theme. (The constant
-// is still named INDIGO for the rest of the file's references; its value is
-// now ink.)
-const INDIGO = '#1a1a1a';
-const WHITE = '#faf9f5';
+// Paper / monochrome mark: an ink (near-black) tile with a paper-white
+// letterform and home-indicator pill, matching the "ink on paper" theme.
+const INK = '#1a1a1a';
+const PAPER = '#faf9f5';
 
-// The reading glyph: an open page/book with text lines, biased toward the
-// top of the tile. Drawn as a group so the maskable variant can reuse it
-// at a smaller scale inside the safe zone. `cx`/`cy` center the group;
-// `s` scales it. Coordinates are authored around a 0,0 origin then
-// translated, so the glyph is easy to reposition between variants.
-function readingGlyph({ cx, cy, s }) {
-  // Page outline: a rounded rectangle with a soft center "spine" fold,
-  // suggesting an open book / page. Text lines sit on the right leaf.
-  // Authored in a roughly 200-wide x 150-tall box centered on origin.
-  const t = `translate(${cx} ${cy}) scale(${s})`;
-  return `
-  <g transform="${t}" fill="none" stroke="${WHITE}" stroke-width="14"
-     stroke-linecap="round" stroke-linejoin="round">
-    <!-- open page outline -->
-    <path d="M -95 -64 H 95 V 64 H -95 Z"/>
-    <!-- center spine fold -->
-    <path d="M 0 -64 V 64"/>
-    <!-- text lines on the left leaf -->
-    <path d="M -74 -30 H -22"/>
-    <path d="M -74 0 H -22"/>
-    <path d="M -74 30 H -36"/>
-    <!-- text lines on the right leaf -->
-    <path d="M 22 -30 H 74"/>
-    <path d="M 22 0 H 74"/>
-    <path d="M 22 30 H 60"/>
-  </g>`;
-}
+const FONT_FAMILY =
+  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif";
 
-// Non-maskable mark: rounded-square tile, glyph biased toward the top
-// (centered above the midline), home-indicator pill near the bottom edge.
+// Non-maskable mark: rounded-square ink tile, uppercase "R" centered
+// slightly above the midline, home-indicator pill near the bottom edge.
 const FAVICON_SVG = `<?xml version="1.0" encoding="UTF-8"?>
-<!-- Readmo mark. Indigo rounded-square tile, a white open-page reading
-     glyph biased toward the TOP, and a white home-indicator pill near the
-     bottom edge (the iOS home indicator / Android gesture bar — a
-     mobile-first cue readers see daily, inherited from newshacker). The
-     pill survives as a horizontal stroke at favicon scale and is plainly
-     visible at 192/512. Rasterized into public/icon-*.png by
-     scripts/generate-icons.mjs. -->
+<!-- Readmo mark. Ink rounded-square tile, a paper-white uppercase "R"
+     centered slightly above the midline, and a paper-white home-indicator
+     pill near the bottom edge (the iOS home indicator / Android gesture
+     bar — a mobile-first cue readers see daily, inherited from
+     newshacker). The pill survives as a horizontal stroke at favicon
+     scale and is plainly visible at 192/512. Rasterized into
+     public/icon-*.png by scripts/generate-icons.mjs. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <rect width="512" height="512" rx="96" fill="${INDIGO}"/>
-${readingGlyph({ cx: 256, cy: 212, s: 1.0 })}
-  <rect x="176" y="404" width="160" height="14" rx="7" fill="${WHITE}"/>
+  <rect width="512" height="512" rx="96" fill="${INK}"/>
+  <text x="256" y="240"
+        text-anchor="middle"
+        dominant-baseline="central"
+        font-family="${FONT_FAMILY}"
+        font-weight="700"
+        font-size="320"
+        fill="${PAPER}">R</text>
+  <rect x="176" y="400" width="160" height="12" rx="6" fill="${PAPER}"/>
 </svg>`;
 
 // Maskable variant: full-bleed tile (no rounded corners — the launcher
@@ -93,17 +73,23 @@ ${readingGlyph({ cx: 256, cy: 212, s: 1.0 })}
 const FAVICON_MASKABLE_SVG = `<?xml version="1.0" encoding="UTF-8"?>
 <!-- Android adaptive-icon / PWA maskable variant of public/favicon.svg.
      Differences from the non-maskable source:
-      - Full-bleed indigo tile, no rounded corners (the OS launcher masks
-        its own shape; transparent corners would read as chipped).
+      - Full-bleed ink tile, no rounded corners (the OS launcher masks its
+        own shape; transparent corners would read as chipped).
       - Glyph and home-indicator pill pulled inside the 80% safe zone
-        (circle of radius ~205 px centered on 256,256): the glyph is
-        scaled to ~0.78 and the pill shortened to 128x12 at y=384.
+        (circle of radius ~205 px centered on 256,256): the "R" is sized
+        down to 256 and the pill shortened to 128x10 at y=380.
      Rasterized into public/icon-512-maskable.png by
      scripts/generate-icons.mjs. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <rect width="512" height="512" fill="${INDIGO}"/>
-${readingGlyph({ cx: 256, cy: 222, s: 0.78 })}
-  <rect x="192" y="384" width="128" height="12" rx="6" fill="${WHITE}"/>
+  <rect width="512" height="512" fill="${INK}"/>
+  <text x="256" y="240"
+        text-anchor="middle"
+        dominant-baseline="central"
+        font-family="${FONT_FAMILY}"
+        font-weight="700"
+        font-size="256"
+        fill="${PAPER}">R</text>
+  <rect x="192" y="380" width="128" height="10" rx="5" fill="${PAPER}"/>
 </svg>`;
 
 // SVG files written to public/, plus the PNG raster targets and which SVG

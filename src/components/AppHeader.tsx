@@ -1,14 +1,15 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
-import { Menu, Search } from './icons';
+import { BrandMark, Menu, Search } from './icons';
 import { AppDrawer } from './AppDrawer';
 import { HeaderAccountMenu } from './HeaderAccountMenu';
 import './AppHeader.css';
 
-/** App header: drawer toggle (left), brand wordmark (center-left, links to
- * `/`), an Offline pill + Search glass + account chip (right). Present on
- * every page; the account chip is always-visible per SPEC.md *Auth*. */
+/** App header: drawer toggle (left), brand mark + wordmark (center-left,
+ * both inside one link to `/`), an Offline pill + Search glass + account
+ * chip (right). Present on every page; the account chip is always-visible
+ * per SPEC.md *Auth*. */
 export function AppHeader() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const online = useOnlineStatus();
@@ -27,7 +28,8 @@ export function AppHeader() {
           </button>
 
           <Link to="/" className="app-header__brand" aria-label="readmo home">
-            readmo
+            <BrandMark className="app-header__brand-mark" />
+            <span className="app-header__brand-text">readmo</span>
           </Link>
 
           <div className="app-header__spacer" />

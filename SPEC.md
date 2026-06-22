@@ -106,9 +106,11 @@ Everything else about the visual system mirrors newshacker.
   (mid-tone below unopened, above meta); meta `--rm-meta: #6b6b6b`. The
   opened-title fade is the same read/unread treatment newshacker uses (color
   gap + weight step), identical in light and dark.
-- **Mark:** ink (near-black) rounded-square tile, paper-white glyph biased
-  toward the top, paper-white **home-indicator pill** near the bottom (same
-  mobile-first motif as newshacker). Generate the icon set once
+- **Mark:** ink (near-black) rounded-square tile, paper-white uppercase
+  **"R"** letterform centered slightly above the midline, paper-white
+  **home-indicator pill** near the bottom (the letter-mark + mobile-first
+  motif, in our ink-on-paper palette). The same mark renders inline before
+  the **readmo** wordmark in the app header. Generate the icon set once
   (`scripts/generate-icons.mjs`) into `public/`.
 - **Dark mode:** full light/dark/system via tokens.
 - Icons inlined monochrome SVG (Material Symbols, `fill="currentColor"`), no
