@@ -674,6 +674,25 @@ keys differ; the strategies map one-to-one:
   `CACHE_BUSTER` bump). The outbox is per-user, flushed-or-discarded on
   sign-out. The one place Readmo must be stricter than newshacker, which never
   had multiple identities or private content on a device.
+- **On-device storage surfaces (PR1 mock).** Until the IndexedDB/auth backend
+  lands, the client keys these `localStorage` surfaces by the signed-in user id
+  (the mock uid; `auth.uid()` in PR2), falling back to the unscoped base key
+  when signed out:
+  - `readmo:rq-cache:<uid>` — persisted React Query blob.
+  - `readmo:item-state:<uid>` — per-item triage state (pinned/favorite/…).
+  - `readmo:last-uid` — the uid that last booted (sentinel; `''` when signed
+    out), used to detect an account switch that happened via a full-page reload.
+  - `readmo:cache-migrated` — one-shot flag marking that the pre-scoping global
+    keys were migrated into the signed-in user's scoped keys (so an upgrade
+    preserves pins/favorites instead of wiping them).
+
+  On any auth transition the departing **user's** scoped keys are purged and the
+  app reloads (re-keying the singletons); the anonymous scope is preserved so an
+  upgrade-while-signed-out can migrate its legacy data on the next sign-in. The
+  Workbox runtime caches (`readmo-data`/`readmo-images`/`readmo-favicons`) are
+  **purged** on transition/boot in PR1 but not yet per-user *prefixed* — true
+  per-user keying (and the IndexedDB move) lands with real auth in PR2, when the
+  NetworkFirst data cache actually holds Supabase responses (PR1 has none).
 
 ### Prefetch on Pin/Favorite (mirrors newshacker's pin/favorite prefetch)
 
