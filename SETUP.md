@@ -85,10 +85,10 @@ supabase db reset      # re-applies every migration from scratch
 
 ---
 
-## 4. Configure OAuth (Google + GitHub + Discord)
+## 4. Configure OAuth (Google + Discord)
 
-MVP ships **Google**, **GitHub**, and **Discord** sign-in (Apple is deferred).
-No passwords are stored by Readmo. In **Authentication → Providers**:
+MVP ships **Google** and **Discord** sign-in (Apple is deferred). No passwords
+are stored by Readmo. In **Authentication → Providers**:
 
 ### Google
 1. In the [Google Cloud Console](https://console.cloud.google.com), create an
@@ -97,13 +97,6 @@ No passwords are stored by Readmo. In **Authentication → Providers**:
    `https://<your-project-ref>.supabase.co/auth/v1/callback`.
 3. Copy the **Client ID** and **Client Secret** into Supabase → Providers →
    Google. Enable it.
-
-### GitHub
-1. In GitHub → **Settings → Developer settings → OAuth Apps → New OAuth App**.
-2. Authorization callback URL:
-   `https://<your-project-ref>.supabase.co/auth/v1/callback`.
-3. Copy the **Client ID** and **Client Secret** into Supabase → Providers →
-   GitHub. Enable it.
 
 ### Discord
 1. In the [Discord Developer Portal](https://discord.com/developers/applications),
@@ -130,7 +123,7 @@ origins and `http://localhost:5173/**` for local dev).
 | `SUPABASE_URL` | client **and** server | No (public) |
 | `SUPABASE_ANON_KEY` | client **and** server | No (public, RLS-gated) |
 | `SUPABASE_SERVICE_ROLE_KEY` | **server only** (Edge Functions / poller) | **Yes — never ship to client** |
-| Google / GitHub / Discord client secrets | Supabase Auth config | **Yes — server only** |
+| Google / Discord client secrets | Supabase Auth config | **Yes — server only** |
 
 **Client build** (Vite) gets only `SUPABASE_URL` + `SUPABASE_ANON_KEY` as
 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` — copy `.env.example` to
