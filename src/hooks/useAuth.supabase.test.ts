@@ -6,7 +6,11 @@ import { act, renderHook } from '@testing-library/react';
 const h = vi.hoisted(() => {
   const state: { cb: ((e: string, s: unknown) => void) | null } = { cb: null };
   const fakeAuth = {
-    getSession: vi.fn(async () => ({ data: { session: null } })),
+    getSession: vi.fn(
+      async (): Promise<{ data: { session: { user: unknown } | null } }> => ({
+        data: { session: null },
+      }),
+    ),
     onAuthStateChange: (fn: (e: string, s: unknown) => void) => {
       state.cb = fn;
       return { data: { subscription: { unsubscribe() {} } } };
@@ -45,6 +49,37 @@ describe('getActiveUid (Supabase configured)', () => {
     expect(getActiveUid()).toBe('u-legacy');
     window.localStorage.setItem('readmo:sb-auth', 'not json');
     expect(getActiveUid()).toBeNull();
+  });
+
+  it('seeds the first useAuth() snapshot from the persisted session (no null flash)', async () => {
+    // A returning signed-in user: session already in localStorage before boot.
+    window.localStorage.setItem(
+      'readmo:sb-auth',
+      JSON.stringify({
+        user: { id: 'u-boot', email: 'boot@example.com', user_metadata: { name: 'Boot' } },
+      }),
+    );
+    // getSession() confirms the same user, so the async resolve is a no-op on
+    // the snapshot (sameUser guard) — the assertion is about the seeded first
+    // render either way.
+    h.fakeAuth.getSession.mockResolvedValueOnce({
+      data: {
+        session: {
+          user: { id: 'u-boot', email: 'boot@example.com', user_metadata: { name: 'Boot' } },
+        },
+      },
+    });
+    // Fresh module instance so the one-time lazy seed runs against this storage.
+    vi.resetModules();
+    const { useAuth: freshUseAuth } = await import('./useAuth');
+    const { result } = renderHook(() => freshUseAuth());
+    // The very first committed snapshot is already signed-in — not null.
+    expect(result.current.user).toEqual({
+      uid: 'u-boot',
+      name: 'Boot',
+      email: 'boot@example.com',
+      avatarUrl: null,
+    });
   });
 });
 

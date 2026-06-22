@@ -109,6 +109,22 @@ describe('SupabaseDataSource reads', () => {
     expect(ids(many)).toEqual(['i6', 'i1', 'i3']);
   });
 
+  it('getItem / getFeed return null for a missing/unauthorized row', async () => {
+    expect(await env.ds.getItem('does-not-exist')).toBeNull();
+    expect(await env.ds.getFeed('does-not-exist')).toBeNull();
+  });
+
+  it('hydrates item_state on the empty-ids path (cold library-route boot)', async () => {
+    // A direct boot into /pinned etc.: ids are empty because no feed view has
+    // hydrated the store. The empty-ids path must still fetch item_state.
+    const items = await env.ds.getItemsByIds([]);
+    expect(items).toEqual([]);
+    const entries = Object.fromEntries(env.ds.stateStore.entries());
+    expect(entries['i2']?.pinned).toBe(true);
+    expect(entries['i4']?.done).toBe(true);
+    expect(entries['i1']?.hidden).toBe(true);
+  });
+
   it('search matches item title and feed title, deduped + newest-first', async () => {
     const results = await env.ds.search('alpha');
     expect(ids(results)).toEqual(['i6', 'i2', 'i1']);

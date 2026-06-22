@@ -428,7 +428,10 @@ loopback/link-local/private/metadata targets and redirects to them.
   privileged **write** path through the `subscribe_to_feed` / `set_item_state`
   RPCs, the optimistic write-through + offline outbox + version reconciliation
   above, and swapping `main.tsx` from `MockDataSource` to the live source. The
-  app keeps booting on the mock until that write path lands.
+  app keeps booting on the mock until that write path lands. Also deferred: an
+  **authenticated OPML-export RPC** — the client can't emit real feed fetch URLs
+  (`feeds_public` exposes only `site_url`, never `url`/`secret_url`), so live
+  `exportOpml` carries homepage URLs until a server-side export exists.
 
 ---
 
