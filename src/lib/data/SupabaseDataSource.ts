@@ -11,6 +11,10 @@ import {
 import { getSupabase } from '../supabase/client';
 import { ItemStateStore, localStoragePersistence } from './itemState';
 import {
+  ItemStateOutbox,
+  localStorageOutboxPersistence,
+} from './itemStateOutbox';
+import {
   type DataSource,
   type DiscoveredFeed,
   type FeedListOptions,
@@ -106,40 +110,50 @@ export class SupabaseDataSource implements DataSource {
   private readonly sb: SupabaseClient;
   private readonly feedCache = new Map<FeedId, Feed>();
   private hydration: Promise<void> | null = null;
-  // Per-item write-through chain, so set_item_state calls for the same item
-  // commit in the order the user made them (see the sink in the constructor).
-  private readonly writeChains = new Map<ItemId, Promise<void>>();
+  private readonly outbox: ItemStateOutbox;
 
   constructor(stateKey = 'readmo:item-state', client?: SupabaseClient) {
     this.sb = client ?? getSupabase();
     this.stateStore = new ItemStateStore(localStoragePersistence(stateKey));
-    // Write-through: persist each optimistic triage mutation to the server via
-    // the set_item_state RPC (0004), so a subsequent feed/library refetch — which
-    // reads server truth through feed_items — reflects it instead of resurfacing
-    // a locally hidden/done item or leaving a newly-pinned one in the body. The
-    // store stays the optimistic local mirror for instant UI. (Offline outbox +
-    // version reconciliation + rollback-on-error are the remaining write-path
-    // refinements; a failed write currently just leaves the local value until the
-    // next hydrate reconciles by version.)
-    this.stateStore.setMutationSink((id, changed) => {
-      // Send only the fields this action changed (set_item_state leaves null
-      // params untouched), so a stale local mirror can't clobber an independent
-      // field changed on another device.
-      const params: Record<string, unknown> = { p_item_id: id };
-      for (const [field, value] of Object.entries(changed)) params[`p_${field}`] = value;
-      // Serialize writes per item so rapid toggles (Pin then Unpin) can't commit
-      // out of order on a slow link and leave the server on the earlier value.
-      const prev = this.writeChains.get(id) ?? Promise.resolve();
-      const next = prev.then(async () => {
+
+    // Durable write-through via the offline outbox: triage toggles apply to the
+    // store optimistically (instant UI) and are queued here for delivery to the
+    // set_item_state RPC (0004) — coalesced per item, serialized, retried on
+    // reconnect, and surviving a reload/offline gap. A permanent server rejection
+    // re-pulls server truth to correct the optimistic state.
+    this.outbox = new ItemStateOutbox(
+      async (id, changed) => {
+        const params: Record<string, unknown> = { p_item_id: id };
+        // Send only the changed fields (set_item_state leaves null params
+        // untouched), so a stale mirror can't clobber a field changed elsewhere.
+        for (const [f, v] of Object.entries(changed)) params[`p_${f}`] = v;
         const { error } = await this.sb.rpc('set_item_state', params);
-        if (error) this.hydration = null; // force a fresh server reconcile next read
-      });
-      const guarded = next.catch(() => {});
-      this.writeChains.set(id, guarded);
-      void guarded.then(() => {
-        if (this.writeChains.get(id) === guarded) this.writeChains.delete(id);
-      });
-    });
+        // A returned error means the server processed and rejected the write
+        // (permanent); a thrown/network error is caught by the outbox as transient.
+        return { ok: !error, permanent: Boolean(error) };
+      },
+      localStorageOutboxPersistence(`${stateKey}:outbox`),
+      () => {
+        // Default to online unless the platform explicitly reports offline (some
+        // runtimes expose `navigator` without a boolean `onLine`).
+        const online = globalThis.navigator?.onLine;
+        return typeof online === 'boolean' ? online : true;
+      },
+      () => {
+        // Some writes were permanently rejected — drop our memoized hydration so
+        // the next read re-pulls server truth and corrects the local store.
+        this.hydration = null;
+        void this.ensureHydrated();
+      },
+    );
+    this.stateStore.setMutationSink((id, changed) => this.outbox.enqueue(id, changed));
+    // Replay anything queued in a prior session now, and again when connectivity
+    // returns.
+    void this.outbox.flush();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', () => void this.outbox.flush());
+    }
+
     // Kick off item_state hydration at boot so the library routes (/pinned,
     // /favorites, …), which derive their ids from the store, populate even when
     // no feed view has run yet. ensureHydrated is memoized; when the rows land
@@ -176,8 +190,11 @@ export class SupabaseDataSource implements DataSource {
         const rows = this.unwrap<ItemStateRow[]>(
           await this.sb.from('item_state').select(ITEM_STATE_COLS),
         );
+        // Pass the outbox's pending ids so the reconcile preserves un-synced
+        // local writes while clearing genuinely-stale rows.
         this.stateStore.hydrate(
           rows.map((r) => [r.item_id, mapItemState(r)] as [ItemId, ItemState]),
+          this.outbox.pendingIds(),
         );
       })().catch((err) => {
         // Don't memoize a rejected promise — a transient/offline/expired-token

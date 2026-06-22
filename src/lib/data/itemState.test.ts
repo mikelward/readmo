@@ -197,4 +197,42 @@ describe('ItemStateStore', () => {
     const after = store.get('item-1', NOW + TTL_MS + 1);
     expect(after.hidden).toBe(false);
   });
+
+  describe('hydrate (server reconcile)', () => {
+    const srv = (over: Partial<ItemState>): ItemState => ({
+      ...DEFAULT_ITEM_STATE,
+      ...over,
+    });
+
+    it('takes server truth for non-pending items', () => {
+      const store = new ItemStateStore(memoryPersistence());
+      store.set('a', 'pinned', true);
+      // Server says a is done (not pinned); a has no pending write → server wins.
+      store.hydrate([['a', srv({ done: true, version: 9 })]], []);
+      expect(store.get('a').pinned).toBe(false);
+      expect(store.get('a').done).toBe(true);
+    });
+
+    it('drops local-only rows the server omits when not pending', () => {
+      const store = new ItemStateStore(memoryPersistence());
+      store.set('a', 'pinned', true);
+      store.hydrate([], []); // server has no rows for this user, nothing pending
+      expect(store.get('a')).toEqual(DEFAULT_ITEM_STATE); // cleared
+    });
+
+    it('preserves a pending local row the server has not yet got', () => {
+      const store = new ItemStateStore(memoryPersistence());
+      store.set('a', 'pinned', true); // optimistic, still in flight
+      store.hydrate([], ['a']); // a is pending → keep the optimistic pin
+      expect(store.get('a').pinned).toBe(true);
+    });
+
+    it('keeps the optimistic value for a pending item the server also returns', () => {
+      const store = new ItemStateStore(memoryPersistence());
+      store.set('a', 'pinned', true);
+      // Server still shows the pre-write (unpinned) row, but a is pending.
+      store.hydrate([['a', srv({ pinned: false, version: 2 })]], ['a']);
+      expect(store.get('a').pinned).toBe(true);
+    });
+  });
 });
