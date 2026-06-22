@@ -13,13 +13,14 @@ import type {
 // returns snake_case columns and timestamptz as ISO strings; we normalize to the
 // camelCase domain types and epoch-ms timestamps the UI uses.
 
-/** After this many consecutive poll failures the circuit breaker has parked the
- * feed (surfaced as a feed-health badge with "retry now"). The `feeds` table has
- * no explicit `parked` column, so we derive it from `error_count`.
- * TODO(next): align with the poller's exact parking signal once the live
- * `poll`/`refresh` write-back is wired (it may instead push `next_fetch_at` far
- * out); revisit when porting the circuit-breaker bookkeeping. */
-export const PARKED_ERROR_THRESHOLD = 5;
+/** A feed is parked once the poller's circuit breaker has tripped. We derive it
+ * from `error_count` because `feeds` has no explicit `parked` column.
+ * MUST stay in sync with the poller's `CIRCUIT_BREAKER_FAILS`
+ * (supabase/functions/poll/index.ts) — it parks when `error_count >= 8`, so a
+ * lower value here would flag the badge + "retry now" for feeds still in normal
+ * backoff (5–7 failures). Separate runtimes (Deno vs. client) can't share the
+ * constant, so keep these two in lockstep. */
+export const PARKED_ERROR_THRESHOLD = 8;
 
 /** ISO timestamptz (or null) → epoch ms (or null). */
 export function tsToMs(ts: string | null | undefined): number | null {

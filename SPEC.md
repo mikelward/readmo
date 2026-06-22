@@ -435,7 +435,12 @@ loopback/link-local/private/metadata targets and redirects to them.
   app keeps booting on the mock until that write path lands. Also deferred: an
   **authenticated OPML-export RPC** — the client can't emit real feed fetch URLs
   (`feeds_public` exposes only `site_url`, never `url`/`secret_url`), so live
-  `exportOpml` carries homepage URLs until a server-side export exists.
+  `exportOpml` carries homepage URLs until a server-side export exists; and a
+  **server-side subscription-scoped feed RPC** (drives from `subscriptions` →
+  `items` LEFT JOIN `item_state`) so home/folder reads don't pass every
+  subscribed `feed_id` (or the Pinned/Done/Hidden exclusion list) in one
+  `IN (…)` URL — the current client-side join is fine for typical accounts but
+  not for users with many hundreds of feeds/states.
 
 ---
 
