@@ -120,3 +120,65 @@ begin
   if n <> 0 then raise exception 'FAIL T5d: pin not cleared by Done'; end if;
   raise notice 'PASS T5: permanent state retained post-unsubscribe; trigger intact';
 end $$;
+
+-- ===== Test 6: repointing subscriptions.feed_id via direct UPDATE is denied =
+-- (Revoking INSERT alone is not enough — a legit row's access-granting key must
+-- not be mutable to a private UUID. See 0004 update lock-down.)
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  perform public.subscribe_to_feed('https://public.example/feed.xml');   -- legit row
+  begin
+    update public.subscriptions set feed_id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+      where user_id=auth.uid();
+    raise exception 'FAIL T6: subscriptions.feed_id UPDATE succeeded';
+  exception when insufficient_privilege then
+    raise notice 'PASS T6: subscriptions.feed_id UPDATE denied';
+  end;
+  select count(*) into n from public.items where id='cccccccc-cccc-cccc-cccc-cccccccccccc';
+  if n <> 0 then raise exception 'FAIL T6b: private item visible via UPDATE (n=%)', n; end if;
+  raise notice 'PASS T6b: private item still invisible';
+end $$;
+
+-- ===== Test 7: legit display/ordering updates on subscriptions still work ===
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  update public.subscriptions set muted=true, folder='News', sort=3 where user_id=auth.uid();
+  select count(*) into n from public.subscriptions
+    where user_id=auth.uid() and muted and folder='News' and sort=3;
+  if n <> 1 then raise exception 'FAIL T7: legit subscription update blocked'; end if;
+  raise notice 'PASS T7: mute/folder/sort updates still allowed';
+end $$;
+
+-- ===== Test 8: direct UPDATE on item_state is fully revoked (no key repoint) =
+do $$
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  -- attacker holds a permanent row on the public item (from T5).
+  begin
+    update public.item_state set item_id='cccccccc-cccc-cccc-cccc-cccccccccccc'
+      where user_id=auth.uid();
+    raise exception 'FAIL T8: item_state direct UPDATE succeeded';
+  exception when insufficient_privilege then
+    raise notice 'PASS T8: item_state direct UPDATE denied';
+  end;
+end $$;
+
+-- ===== Test 9: set_item_state still performs flag writes (RPC is the path) ===
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  perform public.set_item_state('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', p_favorite => true);
+  select count(*) into n from public.item_state
+    where item_id='eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee' and favorite;
+  if n <> 1 then raise exception 'FAIL T9: RPC flag update broken'; end if;
+  raise notice 'PASS T9: set_item_state still performs flag writes';
+end $$;

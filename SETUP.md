@@ -77,7 +77,9 @@ supabase db reset      # re-applies every migration from scratch
 - Client roles (`anon`, `authenticated`) have **no** column access to
   `feeds.secret_url`.
 - `anon`/`authenticated` have **no** direct `INSERT` on `subscriptions` or
-  `item_state` (clients write via `subscribe_to_feed` / `set_item_state`).
+  `item_state`, **no** direct `UPDATE` on `item_state`, and may update only
+  `folder`/`title_override`/`muted`/`sort` (never `feed_id`) on `subscriptions`
+  — clients write via `subscribe_to_feed` / `set_item_state`.
 - Optional regression check: `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f
   supabase/tests/access_rpcs.sql` prints `PASS …` for each access check.
 

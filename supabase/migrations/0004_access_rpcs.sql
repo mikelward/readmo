@@ -171,6 +171,28 @@ comment on function public.set_item_state(uuid, boolean, boolean, boolean, boole
 revoke insert on public.subscriptions from anon, authenticated;
 revoke insert on public.item_state    from anon, authenticated;
 
+-- Revoking INSERT alone is NOT enough: subscriptions_update / item_state_update
+-- (0002) gate only on user_id and do not freeze the access-granting key, so a
+-- caller could create one legitimate row via the RPCs and then UPDATE its
+-- feed_id / item_id to a PRIVATE UUID, re-triggering the same escalation
+-- through feeds_select / items_select. Lock the key columns down too:
+--
+--   * subscriptions — keep direct UPDATE only for the display/ordering columns
+--     (folder, title_override, muted, sort); never user_id or feed_id. A
+--     table-level REVOKE first, then a COLUMN grant, because Supabase's default
+--     table-level UPDATE grant would otherwise let `set feed_id = …` through (a
+--     column REVOKE does not override an existing table grant — same reason as
+--     the SELECT lock-down in 0002).
+revoke update on public.subscriptions from anon, authenticated;
+grant  update (folder, title_override, muted, sort)
+  on public.subscriptions to authenticated;
+--
+--   * item_state — set_item_state already performs every flag write (as an
+--     upsert), so clients need no direct UPDATE at all. Revoke it entirely;
+--     this also prevents repointing item_id. DELETE stays (clearing your own
+--     row grants no access).
+revoke update on public.item_state from anon, authenticated;
+
 -- Definer functions default to EXECUTE for PUBLIC; restrict to signed-in users.
 revoke execute on function public.subscribe_to_feed(text, text) from public;
 grant  execute on function public.subscribe_to_feed(text, text) to authenticated;
