@@ -9,8 +9,11 @@
 //   - Scheme allow-list: http/https only.
 //   - Resolved-IP denylist: loopback, link-local (incl. 169.254.169.254 cloud
 //     metadata), RFC1918, ULA, 0.0.0.0/8, and other reserved ranges — checked
-//     against the RESOLVED IP(s), not just the literal, to defeat DNS
-//     rebinding.
+//     against the RESOLVED IP(s), not just the literal.
+//   - Connection pinning: production opens the socket to a vetted resolved IP
+//     itself (TLS SNI + cert verification bound to the hostname), so the HTTP
+//     client can't re-resolve the name and rebind to a private/metadata IP
+//     between our check and the connection (DNS rebinding).
 //   - Manual redirect following with a per-hop re-check (a 302 to
 //     169.254.169.254 is rejected), capped at depth 5.
 //   - Request timeout + response body size cap.
@@ -277,7 +280,6 @@ export async function safeFetch(
   const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
   const maxRedirects = opts.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
   const resolve = opts.resolve ?? defaultResolve;
-  const fetchImpl = opts.fetchImpl ?? fetch;
 
   // Build a headers object that NEVER carries caller credentials. We only set
   // what the caller explicitly passes plus a default UA if absent.
@@ -297,8 +299,16 @@ export async function safeFetch(
     // Resolve the host (if it's a name) and check EVERY resolved IP — this is
     // the DNS-rebinding defense: the literal might be fine but the name could
     // point at 169.254.169.254.
+    // Resolve to the vetted IP(s) we will actually CONNECT to. For a literal
+    // host the literal is the connect target (already validated by
+    // assertSafeUrl); for a name we resolve, reject any blocked IP, and pin the
+    // connection to a resolved IP below so the HTTP layer can't re-resolve and
+    // rebind to a private/metadata address.
     const host = parsed.hostname.replace(/^\[|\]$/g, '');
-    if (!isIpLiteral(host)) {
+    let pinIps: string[];
+    if (isIpLiteral(host)) {
+      pinIps = [host];
+    } else {
       const ips = await resolve(host);
       if (ips.length === 0) throw new SsrfError(`No DNS records for ${host}`);
       for (const ip of ips) {
@@ -306,16 +316,9 @@ export async function safeFetch(
           throw new SsrfError(`Host ${host} resolves to blocked IP ${ip}`);
         }
       }
+      pinIps = ips;
     }
 
-    // TODO(PR2, P1 — DNS rebinding): we validate the resolved IP(s) above, but
-    // `fetchImpl` then performs its OWN DNS lookup, so a hostile domain can
-    // return a public IP to `resolve()` and rebind to a private/metadata IP
-    // for the actual connection — bypassing this denylist for discover, the
-    // poller, and the image proxy. The complete fix pins the connection to the
-    // vetted IP (custom Deno HttpClient connecting by IP with correct SNI/cert
-    // verification). Deferred to PR2 when the fetcher runs live and can be
-    // tested end-to-end. See PR #1 review (codex P1).
     // One deadline per hop covering BOTH the fetch AND the body read. The
     // finally clears it on every exit (redirect `continue`, terminal return,
     // or throw); the next hop installs a fresh controller/timer. Clearing only
@@ -325,12 +328,21 @@ export async function safeFetch(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetchImpl(current, {
-        method: opts.method ?? 'GET',
-        headers: baseHeaders,
-        redirect: 'manual', // we follow manually so we can re-check each hop
-        signal: controller.signal,
-      });
+      // Production pins the TCP connection to a vetted IP (closing the DNS
+      // rebinding hole — the HTTP client never re-resolves the name). Tests
+      // inject `fetchImpl` to simulate responses/redirects without real I/O.
+      const res = opts.fetchImpl
+        ? await opts.fetchImpl(current, {
+            method: opts.method ?? 'GET',
+            headers: baseHeaders,
+            redirect: 'manual', // we follow manually so we can re-check each hop
+            signal: controller.signal,
+          })
+        : await fetchPinned(parsed, pinIps, {
+            method: opts.method ?? 'GET',
+            headers: baseHeaders,
+            signal: controller.signal,
+          });
 
       // Handle redirects ourselves so each Location is re-validated.
       if (res.status >= 300 && res.status < 400) {
@@ -446,4 +458,293 @@ async function defaultResolve(hostname: string): Promise<string[]> {
   throw new SsrfError(
     'No DNS resolver available (inject opts.resolve outside Deno)',
   );
+}
+
+// ---------------------------------------------------------------------------
+// IP-pinned fetch (DNS-rebinding defense)
+//
+// The global fetch performs its OWN DNS lookup, so validating resolved IPs is
+// not enough: a hostile name can answer with a public IP to `resolve()` and a
+// private/metadata IP at connect time. We instead open the TCP connection to a
+// vetted IP ourselves and (for https) run the TLS handshake with SNI + cert
+// verification bound to the original hostname — the name is never re-resolved.
+// A minimal HTTP/1.1 client (Connection: close) speaks over that pinned socket.
+// ---------------------------------------------------------------------------
+
+type Bytes = Uint8Array<ArrayBufferLike>;
+
+interface PinnedFetchOptions {
+  method?: string;
+  headers?: Record<string, string>;
+  signal?: AbortSignal;
+  /** Extra TLS trust anchors (the integration test uses a local CA);
+   * production passes none and uses the system roots. */
+  caCerts?: string[];
+}
+
+/** Try each vetted IP in turn (first that connects wins) so a feed whose first
+ * A record is unreachable still loads; an abort propagates immediately. */
+async function fetchPinned(
+  parsed: URL,
+  ips: string[],
+  opts: PinnedFetchOptions,
+): Promise<Response> {
+  let lastErr: unknown;
+  for (const ip of ips) {
+    try {
+      return await fetchViaIpPinned(parsed, ip, opts);
+    } catch (err) {
+      if (opts.signal?.aborted) throw err;
+      lastErr = err;
+    }
+  }
+  throw lastErr ?? new SsrfError('connection failed: no resolved IPs');
+}
+
+/**
+ * Issue an HTTP/1.1 request over a connection PINNED to `ip`, with TLS SNI and
+ * certificate verification bound to the URL's hostname — so the transport can
+ * never re-resolve the name to a private/metadata address. Returns a streaming
+ * Response (body de-chunked and gzip/deflate-decoded) so the caller's size cap
+ * still bounds it. Exported for the Deno integration test; production reaches
+ * it through safeFetch.
+ */
+export async function fetchViaIpPinned(
+  parsed: URL,
+  ip: string,
+  opts: PinnedFetchOptions = {},
+): Promise<Response> {
+  const isHttps = parsed.protocol === 'https:';
+  const port = parsed.port ? Number(parsed.port) : isHttps ? 443 : 80;
+  const sni = parsed.hostname.replace(/^\[|\]$/g, '');
+
+  if (opts.signal?.aborted) throw new SsrfError('aborted before connect');
+  const tcp = await Deno.connect({ hostname: ip, port });
+  let conn: Deno.Conn;
+  try {
+    conn = isHttps
+      ? await Deno.startTls(tcp, { hostname: sni, caCerts: opts.caCerts })
+      : tcp;
+  } catch (err) {
+    try {
+      tcp.close();
+    } catch {
+      /* already closed */
+    }
+    throw err;
+  }
+
+  // Deno.connect / stream reads take no signal, so close the socket when the
+  // caller's deadline fires; that rejects any in-flight read.
+  const close = () => {
+    try {
+      conn.close();
+    } catch {
+      /* already closed */
+    }
+  };
+  opts.signal?.addEventListener('abort', close, { once: true });
+
+  try {
+    const method = (opts.method ?? 'GET').toUpperCase();
+    const headers: Record<string, string> = { ...(opts.headers ?? {}) };
+    headers['Host'] = parsed.host;
+    headers['Connection'] = 'close';
+    if (!hasHeader(headers, 'accept-encoding')) {
+      headers['Accept-Encoding'] = 'gzip, deflate';
+    }
+    const reqLines = [`${method} ${parsed.pathname + parsed.search} HTTP/1.1`];
+    for (const [k, v] of Object.entries(headers)) reqLines.push(`${k}: ${v}`);
+    const reqBytes = new TextEncoder().encode(reqLines.join('\r\n') + '\r\n\r\n');
+    const writer = conn.writable.getWriter();
+    await writer.write(reqBytes);
+    writer.releaseLock();
+
+    const reader = conn.readable.getReader();
+    // Accumulate bytes until the end of the header block.
+    let buf: Bytes = new Uint8Array(0);
+    let headerEnd = -1;
+    while (headerEnd < 0) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf = concatBytes(buf, value);
+      headerEnd = indexOfDoubleCrlf(buf);
+      if (buf.length > 64 * 1024) {
+        throw new SsrfError('response headers too large');
+      }
+    }
+    if (headerEnd < 0) throw new SsrfError('connection closed before headers');
+
+    const headText = new TextDecoder().decode(buf.subarray(0, headerEnd));
+    const leftover = buf.subarray(headerEnd + 4);
+    const [statusLine, ...headerLines] = headText.split('\r\n');
+    const m = /^HTTP\/\d(?:\.\d)? (\d{3})/.exec(statusLine);
+    if (!m) throw new SsrfError(`malformed status line: ${statusLine}`);
+    const status = Number(m[1]);
+
+    const resHeaders = new Headers();
+    for (const line of headerLines) {
+      const i = line.indexOf(':');
+      if (i > 0) {
+        resHeaders.append(line.slice(0, i).trim(), line.slice(i + 1).trim());
+      }
+    }
+
+    const chunked = (resHeaders.get('transfer-encoding') ?? '')
+      .toLowerCase()
+      .includes('chunked');
+    const clen = resHeaders.get('content-length');
+    const bodyless = status === 204 || status === 304 || method === 'HEAD';
+
+    if (bodyless) {
+      close();
+      return new Response(null, { status, headers: resHeaders });
+    }
+
+    let body: ReadableStream<Bytes> = bodyStream(reader, leftover, {
+      chunked,
+      contentLength: clen != null && !chunked ? Number(clen) : null,
+      close,
+    });
+
+    // Transparently decode, matching a normal fetch, then drop the framing
+    // headers that no longer describe the decoded stream.
+    const enc = (resHeaders.get('content-encoding') ?? '').toLowerCase();
+    if (enc === 'gzip' || enc === 'deflate') {
+      body = body.pipeThrough(
+        new DecompressionStream(enc) as unknown as ReadableWritablePair<
+          Bytes,
+          Bytes
+        >,
+      );
+      resHeaders.delete('content-encoding');
+      resHeaders.delete('content-length');
+    }
+
+    return new Response(body, { status, headers: resHeaders });
+  } catch (err) {
+    close();
+    throw err;
+  } finally {
+    opts.signal?.removeEventListener('abort', close);
+  }
+}
+
+/** Build a body ReadableStream over the pinned connection, honoring
+ * Transfer-Encoding: chunked, Content-Length, or read-until-close framing, and
+ * closing the socket when the body is fully read or the stream is cancelled. */
+function bodyStream(
+  reader: ReadableStreamDefaultReader<Bytes>,
+  initial: Bytes,
+  framing: { chunked: boolean; contentLength: number | null; close: () => void },
+): ReadableStream<Bytes> {
+  let pending = initial;
+  let remaining = framing.contentLength;
+  let finished = false;
+
+  const finish = (c: ReadableStreamDefaultController<Bytes>) => {
+    if (finished) return;
+    finished = true;
+    framing.close();
+    c.close();
+  };
+  // Grow `pending` until it holds at least `min` bytes; false at EOF.
+  async function fill(min: number): Promise<boolean> {
+    while (pending.length < min) {
+      const { value, done } = await reader.read();
+      if (done || !value) return false;
+      pending = concatBytes(pending, value);
+    }
+    return true;
+  }
+  // Next available bytes (drains `pending` first, else one read); empty at EOF.
+  async function next(): Promise<Bytes> {
+    if (pending.length > 0) {
+      const out = pending;
+      pending = new Uint8Array(0);
+      return out;
+    }
+    const { value, done } = await reader.read();
+    return done || !value ? new Uint8Array(0) : value;
+  }
+
+  return new ReadableStream<Bytes>({
+    async pull(controller) {
+      try {
+        if (finished) return;
+        if (framing.chunked) {
+          let nl = indexOfCrlf(pending);
+          while (nl < 0) {
+            if (!(await fill(pending.length + 1))) {
+              finish(controller);
+              return;
+            }
+            nl = indexOfCrlf(pending);
+          }
+          const size = parseInt(
+            new TextDecoder().decode(pending.subarray(0, nl)).split(';')[0],
+            16,
+          );
+          pending = pending.subarray(nl + 2);
+          if (!Number.isFinite(size)) throw new SsrfError('bad chunk size');
+          if (size === 0) {
+            finish(controller);
+            return;
+          }
+          if (!(await fill(size + 2))) throw new SsrfError('truncated chunk');
+          controller.enqueue(pending.subarray(0, size));
+          pending = pending.subarray(size + 2); // skip the chunk's trailing CRLF
+        } else if (remaining !== null) {
+          if (remaining <= 0) {
+            finish(controller);
+            return;
+          }
+          const out = await next();
+          if (out.length === 0) {
+            finish(controller);
+            return;
+          }
+          const take = out.subarray(0, remaining);
+          remaining -= take.length;
+          if (take.length < out.length) pending = out.subarray(take.length);
+          controller.enqueue(take);
+          if (remaining <= 0) finish(controller);
+        } else {
+          const out = await next();
+          if (out.length === 0) {
+            finish(controller);
+            return;
+          }
+          controller.enqueue(out);
+        }
+      } catch (err) {
+        framing.close();
+        controller.error(err);
+      }
+    },
+    cancel() {
+      framing.close();
+    },
+  });
+}
+
+function concatBytes(a: Bytes, b: Bytes): Bytes {
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a);
+  out.set(b, a.length);
+  return out;
+}
+function indexOfDoubleCrlf(b: Bytes): number {
+  for (let i = 0; i + 3 < b.length; i++) {
+    if (b[i] === 13 && b[i + 1] === 10 && b[i + 2] === 13 && b[i + 3] === 10) {
+      return i;
+    }
+  }
+  return -1;
+}
+function indexOfCrlf(b: Bytes): number {
+  for (let i = 0; i + 1 < b.length; i++) {
+    if (b[i] === 13 && b[i + 1] === 10) return i;
+  }
+  return -1;
 }
