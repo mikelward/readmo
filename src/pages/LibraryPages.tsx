@@ -3,6 +3,7 @@ import { useDataSource } from '../lib/data/context';
 import { useStateBucket } from '../hooks/useItemState';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { LibraryItemList } from '../components/LibraryItemList';
+import { ListToolbar } from '../components/ListToolbar';
 import {
   CheckCircleFilled,
   FavoriteFilled,
@@ -57,6 +58,7 @@ function LibraryPage({
         actionIcon={actionIcon}
         emptyLabel={emptyLabel}
       />
+      <ListToolbar placement="bottom" actions={false} />
     </>
   );
 }
