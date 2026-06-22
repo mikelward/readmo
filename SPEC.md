@@ -435,14 +435,15 @@ loopback/link-local/private/metadata targets and redirects to them.
   Function calls round it out; item state is hydrated from the server into the
   shared `ItemStateStore`. Triage writes go through the `set_item_state` RPC: the
   store applies the mutation optimistically (instant UI) and writes through, so a
-  subsequent feed refetch reflects it. Still deferred (next item): the
-  `subscribe_to_feed` write path (subscribe / OPML import / parked-feed retry),
-  the offline mutation outbox + version-based reconciliation/rollback, and
-  swapping `main.tsx` from `MockDataSource` to the live source — the app keeps
-  booting on the mock until then. Also deferred: an **authenticated OPML-export
-  RPC** — the client can't emit real feed fetch URLs (`feeds_public` exposes only
-  `site_url`, never `url`/`secret_url`), so live `exportOpml` carries homepage
-  URLs until a server-side export exists.
+  subsequent feed refetch reflects it. `main.tsx` selects the live source when
+  `isSupabaseConfigured()` (else the mock seed), so a configured deployment boots
+  on real RLS-scoped data. Still deferred (next item): the `subscribe_to_feed`
+  write path (subscribe / OPML import / parked-feed retry) and the offline
+  mutation outbox + version-based reconciliation/rollback (until which the
+  item-state hydrate keeps its conservative keep-and-overlay merge). Also
+  deferred: an **authenticated OPML-export RPC** — the client can't emit real feed
+  fetch URLs (`feeds_public` exposes only `site_url`, never `url`/`secret_url`),
+  so live `exportOpml` carries homepage URLs until a server-side export exists.
 
 ---
 

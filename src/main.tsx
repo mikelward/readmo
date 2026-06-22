@@ -8,6 +8,8 @@ import App from './App';
 import { ToastProvider } from './components/Toast';
 import { DataSourceProvider } from './lib/data/context';
 import { MockDataSource } from './lib/data/MockDataSource';
+import { SupabaseDataSource } from './lib/data/SupabaseDataSource';
+import { isSupabaseConfigured } from './lib/supabase/client';
 import { applyTheme, getStoredTheme } from './lib/theme';
 import { getActiveUid } from './hooks/useAuth';
 import {
@@ -57,7 +59,7 @@ applyTheme(getStoredTheme());
 // source or painting: migrate legacy global stores into the user's scope, and
 // purge a previous user's caches if this boot is a different user (e.g. an
 // account switch via full-page redirect, where no in-tab transition fired). The
-// persister + MockDataSource read localStorage on construction, so they must be
+// persister + data source read localStorage on construction, so they must be
 // created only after the reconcile so they see the migrated, correctly-scoped
 // data. Same-user boots skip the purge and hydrate their own cache.
 void reconcileUserCachesOnBoot(bootUid).finally(() => {
@@ -66,7 +68,12 @@ void reconcileUserCachesOnBoot(bootUid).finally(() => {
     key: rqCacheKey(bootUid),
     throttleTime: 1000,
   });
-  const dataSource = new MockDataSource(itemStateKey(bootUid));
+  // Live Supabase source when configured (real RLS-scoped subscriptions + item
+  // state, written through to the server); otherwise the mock seed for
+  // backend-less local/demo dev. Both key their item-state store by the boot uid.
+  const dataSource = isSupabaseConfigured()
+    ? new SupabaseDataSource(itemStateKey(bootUid))
+    : new MockDataSource(itemStateKey(bootUid));
 
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
