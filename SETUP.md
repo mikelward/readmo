@@ -133,17 +133,24 @@ app falls back to the mock auth + `MockDataSource` so it still runs with no
 backend. The service-role key and OAuth secrets must **never** be referenced in
 any `VITE_*`/client variable.
 
-**Edge Functions** read their secrets from the Supabase Functions environment:
+**Edge Functions** read `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and
+`SUPABASE_SERVICE_ROLE_KEY` from the Functions environment, but you do **not**
+set these yourself — Supabase **auto-injects** them into the deployed runtime.
+The CLI reserves the `SUPABASE_` prefix and refuses to set them:
 
-```sh
-supabase secrets set \
-  SUPABASE_URL="https://<ref>.supabase.co" \
-  SUPABASE_ANON_KEY="<anon-key>" \
-  SUPABASE_SERVICE_ROLE_KEY="<service-role-key>"
+```
+$ supabase secrets set SUPABASE_URL=… SUPABASE_ANON_KEY=… SUPABASE_SERVICE_ROLE_KEY=…
+Env name cannot start with SUPABASE_, skipping: SUPABASE_URL
+Env name cannot start with SUPABASE_, skipping: SUPABASE_ANON_KEY
+Env name cannot start with SUPABASE_, skipping: SUPABASE_SERVICE_ROLE_KEY
 ```
 
-(`SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` are injected automatically in the
-Functions runtime on most projects; set them explicitly if running locally.)
+That warning is expected — there is nothing to set for deployment. Use
+`supabase secrets set` only for *custom* (non-`SUPABASE_`) names, of which this
+project has none. The service-role key is needed by hand in only two places:
+the **cron poller** (§7, passed as a bearer token) and **local**
+`supabase functions serve` (off-platform, so put the three vars in a local,
+untracked `.env`).
 
 ---
 
@@ -163,9 +170,17 @@ supabase functions serve discover --import-map supabase/functions/import_map.jso
 # Deploy each function:
 supabase functions deploy discover --import-map supabase/functions/import_map.json
 supabase functions deploy refresh  --import-map supabase/functions/import_map.json
-supabase functions deploy img      --import-map supabase/functions/import_map.json
 supabase functions deploy poll     --import-map supabase/functions/import_map.json
+supabase functions deploy img      --import-map supabase/functions/import_map.json --no-verify-jwt
 ```
+
+> **`img` must deploy with `--no-verify-jwt`.** It's the image proxy: the
+> browser loads it via `<img src="…/functions/v1/img?url=…">`, and an `<img>`
+> tag can't send an `Authorization` header — with JWT verification on (the
+> default) every image would 401. It's safe to expose: the function only relays
+> `image/*` through the SSRF-hardened `safeFetch` (no auth-bearing logic, no DB
+> writes). The other three keep JWT verification **on** — `discover`/`refresh`
+> run as the calling user, and `poll` checks the service-role bearer itself.
 
 > If you prefer a project-level config, add the same `imports` map to a
 > `supabase/functions/deno.json` and reference it via `--config`; the
