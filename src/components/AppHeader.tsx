@@ -6,10 +6,11 @@ import { AppDrawer } from './AppDrawer';
 import { HeaderAccountMenu } from './HeaderAccountMenu';
 import './AppHeader.css';
 
-/** App header: drawer toggle (left), brand mark + wordmark (center-left,
- * both inside one link to `/`), an Offline pill + Search glass + account
- * chip (right). Present on every page; the account chip is always-visible
- * per SPEC.md *Auth*. */
+/** App header: drawer toggle pinned to the viewport's left edge, brand
+ * mark + wordmark and the Offline pill / Search glass inside a 720px
+ * centered inner (aligned with the article column), and the account chip
+ * pinned to the viewport's right edge. Present on every page; the account
+ * chip is always-visible per SPEC.md *Auth*. */
 export function AppHeader() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const online = useOnlineStatus();
@@ -17,16 +18,16 @@ export function AppHeader() {
   return (
     <>
       <header className="app-header">
-        <div className="app-header__inner">
-          <button
-            type="button"
-            className="app-header__icon-btn"
-            aria-label="Open menu"
-            onClick={() => setDrawerOpen(true)}
-          >
-            <Menu />
-          </button>
+        <button
+          type="button"
+          className="app-header__icon-btn app-header__edge app-header__edge--left"
+          aria-label="Open menu"
+          onClick={() => setDrawerOpen(true)}
+        >
+          <Menu />
+        </button>
 
+        <div className="app-header__inner">
           <Link to="/" className="app-header__brand" aria-label="readmo home">
             <BrandMark className="app-header__brand-mark" />
             <span className="app-header__brand-text">readmo</span>
@@ -51,7 +52,9 @@ export function AppHeader() {
           >
             <Search />
           </Link>
+        </div>
 
+        <div className="app-header__edge app-header__edge--right">
           <HeaderAccountMenu />
         </div>
       </header>
