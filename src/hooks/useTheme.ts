@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   THEME_CHANGE_EVENT,
+  type Palette,
   type Theme,
+  applyPalette,
   applyTheme,
   applyThemeColorMeta,
+  getStoredPalette,
   getStoredTheme,
   resolveTheme,
+  setStoredPalette,
   setStoredTheme,
 } from '../lib/theme';
 
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>(() => getStoredTheme());
+  const [palette, setPaletteState] = useState<Palette>(() => getStoredPalette());
   const [resolved, setResolved] = useState<'light' | 'dark'>(() =>
     resolveTheme(getStoredTheme()),
   );
@@ -18,15 +23,18 @@ export function useTheme() {
   useEffect(() => {
     const sync = () => {
       const next = getStoredTheme();
+      const nextPalette = getStoredPalette();
       setThemeState(next);
+      setPaletteState(nextPalette);
       setResolved(resolveTheme(next));
       // Repaint, not just re-render: the page is styled off the
-      // `data-theme` attribute on <html>, which only the tab that
-      // called setStoredTheme has applied. A cross-tab `storage`
-      // event must apply it here too or this tab's picker flips
-      // while the page colors stay stale. (Idempotent for the
-      // same-tab THEME_CHANGE_EVENT case.)
+      // `data-theme`/`data-palette` attributes on <html>, which only the tab
+      // that called setStoredTheme/Palette has applied. A cross-tab `storage`
+      // event must apply them here too or this tab's picker flips while the
+      // page colors stay stale. (Idempotent for the same-tab
+      // THEME_CHANGE_EVENT case.)
       applyTheme(next);
+      applyPalette(nextPalette);
     };
     window.addEventListener(THEME_CHANGE_EVENT, sync);
     window.addEventListener('storage', sync);
@@ -53,6 +61,7 @@ export function useTheme() {
   }, [theme]);
 
   const setTheme = useCallback((t: Theme) => setStoredTheme(t), []);
+  const setPalette = useCallback((p: Palette) => setStoredPalette(p), []);
 
-  return { theme, resolved, setTheme };
+  return { theme, palette, resolved, setTheme, setPalette };
 }

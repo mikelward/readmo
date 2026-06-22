@@ -1,19 +1,24 @@
 /*
- * Readmo design tokens — "indigo on paper".
+ * Readmo design tokens — "ink on paper" (default) + an opt-in "turquoise"
+ * palette.
  *
- * Indigo (distinct from newshacker's orange) is used for links, focus
- * rings, the primary "Open original" button, and active library icons.
- * #3a4ec4 clears 4.5:1 on the paper background and on white (verify any
- * change with a contrast checker — SPEC.md *Visual design* / *Accessibility*).
+ * Two orthogonal axes:
+ *   - Mode (light/dark/system) → the `data-theme` attribute on <html>.
+ *   - Palette (ink/turquoise)  → the `data-palette` attribute on <html>.
+ * Ink is the default palette, so it owns the bare `:root` / `[data-theme]`
+ * blocks (no `data-palette`). Turquoise overrides them under
+ * `:root[data-palette='turquoise']`. Each palette ships a light and a dark
+ * variant, plus a `prefers-color-scheme: dark` block for system mode.
  *
- * Theming: tokens live on :root for light; the [data-theme='dark'] block and
- * the prefers-color-scheme media query (for system mode) override them.
+ * The ink accent (#2b2b2b light / #ececec dark) and the turquoise accent
+ * (#0e7c74 light / #5ed6c9 dark) both clear 4.5:1 on their backgrounds — verify
+ * any change with a contrast checker (SPEC.md *Visual design* / *Accessibility*).
  */
 
 :root {
-  /* Paper / monochrome: ink accent rather than indigo. Links, focus rings,
-     active library icons, and the brand wordmark are near-black "ink"; the
-     primary "Open original" button is a solid ink fill with paper-white text. */
+  /* Paper / monochrome ink. Links, focus rings, active library icons, and the
+     brand wordmark are near-black "ink"; the primary "Open original" button is
+     a solid ink fill with paper-white text. */
   --rm-accent: #2b2b2b;
   --rm-accent-strong: #000000;
   --rm-accent-contrast: #faf9f5;
@@ -35,6 +40,10 @@
   /* swipe action edges */
   --rm-hide-bg: #8a8378;
   --rm-pin-bg: var(--rm-accent);
+
+  /* brand mark: rounded-square tile + paper-white "R"/pill (BrandMark) */
+  --rm-brand-tile: #1a1a1a;
+  --rm-brand-fg: #faf9f5;
 
   --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 
@@ -67,6 +76,9 @@
   --rm-hide-bg: #4a4640;
   --rm-pin-bg: #5b5b5b;
 
+  --rm-brand-tile: #1a1a1a;
+  --rm-brand-fg: #faf9f5;
+
   --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 
   color-scheme: dark;
@@ -74,12 +86,13 @@
 
 /* System mode: no explicit data-theme attribute → follow the OS. The
  * useTheme hook sets data-theme='light'|'dark' for explicit choices and
- * removes it for 'system', so this only applies in system mode. */
+ * removes it for 'system', so this only applies in system mode. Mirrors the
+ * explicit [data-theme='dark'] block exactly. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']):not([data-theme='dark']) {
-    --rm-accent: #8b9bff;
-    --rm-accent-strong: #aab6ff;
-    --rm-accent-contrast: #10131f;
+    --rm-accent: #ececec;
+    --rm-accent-strong: #ffffff;
+    --rm-accent-contrast: #14161c;
 
     --rm-bg: #14161c;
     --rm-bg-card: #1d2027;
@@ -95,7 +108,110 @@
     --rm-success: #6bd08a;
 
     --rm-hide-bg: #4a4640;
+    --rm-pin-bg: #5b5b5b;
+
+    --rm-brand-tile: #1a1a1a;
+    --rm-brand-fg: #faf9f5;
+
+    --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+
+    color-scheme: dark;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Turquoise palette — soft turquoise on paper. Opt-in via data-palette.
+ * Higher specificity than the bare ink :root, so it wins when applied. The
+ * dark variant ([data-palette][data-theme='dark']) and the system-dark media
+ * block below it both out-specify the turquoise-light block.
+ * ------------------------------------------------------------------------- */
+:root[data-palette='turquoise'] {
+  --rm-accent: #0e7c74;
+  --rm-accent-strong: #0a5c56;
+  --rm-accent-contrast: #ffffff;
+
+  --rm-bg: #f1f9f7;
+  --rm-bg-card: #ffffff;
+  --rm-bg-elevated: #ffffff;
+  --rm-border: #d6e8e4;
+  --rm-border-strong: #bfdcd6;
+
+  --rm-text: #15201e;
+  --rm-read: #45534f;
+  --rm-meta: #647571;
+
+  --rm-danger: #c0392b;
+  --rm-success: #2e7d46;
+
+  --rm-hide-bg: #7f938e;
+  --rm-pin-bg: var(--rm-accent);
+
+  --rm-brand-tile: #0e7c74;
+  --rm-brand-fg: #f1f9f7;
+
+  --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+
+  color-scheme: light;
+}
+
+:root[data-palette='turquoise'][data-theme='dark'] {
+  --rm-accent: #5ed6c9;
+  --rm-accent-strong: #7ee3d8;
+  --rm-accent-contrast: #08201d;
+
+  --rm-bg: #0f1a18;
+  --rm-bg-card: #16221f;
+  --rm-bg-elevated: #1c2a27;
+  --rm-border: #243430;
+  --rm-border-strong: #32453f;
+
+  --rm-text: #e8f1ef;
+  --rm-read: #9fb2ad;
+  --rm-meta: #7d908b;
+
+  --rm-danger: #ff6b5e;
+  --rm-success: #6bd08a;
+
+  --rm-hide-bg: #3a4a45;
+  --rm-pin-bg: var(--rm-accent-strong);
+
+  /* Keep the brand tile a constant teal across modes for recognizability. */
+  --rm-brand-tile: #0e7c74;
+  --rm-brand-fg: #f1f9f7;
+
+  --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+
+  color-scheme: dark;
+}
+
+/* Turquoise + system mode + OS dark. Out-specifies the ink system-dark block
+ * (extra [data-palette] attribute) and the turquoise-light block. */
+@media (prefers-color-scheme: dark) {
+  :root[data-palette='turquoise']:not([data-theme='light']):not(
+      [data-theme='dark']
+    ) {
+    --rm-accent: #5ed6c9;
+    --rm-accent-strong: #7ee3d8;
+    --rm-accent-contrast: #08201d;
+
+    --rm-bg: #0f1a18;
+    --rm-bg-card: #16221f;
+    --rm-bg-elevated: #1c2a27;
+    --rm-border: #243430;
+    --rm-border-strong: #32453f;
+
+    --rm-text: #e8f1ef;
+    --rm-read: #9fb2ad;
+    --rm-meta: #7d908b;
+
+    --rm-danger: #ff6b5e;
+    --rm-success: #6bd08a;
+
+    --rm-hide-bg: #3a4a45;
     --rm-pin-bg: var(--rm-accent-strong);
+
+    --rm-brand-tile: #0e7c74;
+    --rm-brand-fg: #f1f9f7;
 
     --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 

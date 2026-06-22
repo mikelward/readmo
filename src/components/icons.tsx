@@ -303,7 +303,16 @@ export function BrandMark({
       focusable="false"
       {...rest}
     >
-      <rect width="512" height="512" rx="96" fill="#1a1a1a" />
+      {/* Tile + letterform read from the palette tokens (CSS custom props only
+          resolve via `style`, not the `fill` presentation attribute), so the
+          mark follows the active palette — ink by default, teal under
+          turquoise. Fallbacks keep it correct if rendered outside the app. */}
+      <rect
+        width="512"
+        height="512"
+        rx="96"
+        style={{ fill: 'var(--rm-brand-tile, #1a1a1a)' }}
+      />
       <text
         x="256"
         y="240"
@@ -312,11 +321,18 @@ export function BrandMark({
         fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
         fontWeight={700}
         fontSize={320}
-        fill="#faf9f5"
+        style={{ fill: 'var(--rm-brand-fg, #faf9f5)' }}
       >
         R
       </text>
-      <rect x="176" y="400" width="160" height="12" rx="6" fill="#faf9f5" />
+      <rect
+        x="176"
+        y="400"
+        width="160"
+        height="12"
+        rx="6"
+        style={{ fill: 'var(--rm-brand-fg, #faf9f5)' }}
+      />
     </svg>
   );
 }

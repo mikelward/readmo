@@ -10,7 +10,12 @@ import { DataSourceProvider } from './lib/data/context';
 import { MockDataSource } from './lib/data/MockDataSource';
 import { SupabaseDataSource } from './lib/data/SupabaseDataSource';
 import { isSupabaseConfigured } from './lib/supabase/client';
-import { applyTheme, getStoredTheme } from './lib/theme';
+import {
+  applyPalette,
+  applyTheme,
+  getStoredPalette,
+  getStoredTheme,
+} from './lib/theme';
 import { getActiveUid } from './hooks/useAuth';
 import {
   itemStateKey,
@@ -52,8 +57,9 @@ const queryClient = new QueryClient({
 // prefixing of the Workbox runtime caches, land with real multi-user auth in PR2.
 const bootUid = getActiveUid();
 
-// Apply the stored theme before first paint to avoid a flash.
+// Apply the stored theme + palette before first paint to avoid a flash.
 applyTheme(getStoredTheme());
+applyPalette(getStoredPalette());
 
 // Reconcile on-device caches for this user BEFORE building the persister/data
 // source or painting: migrate legacy global stores into the user's scope, and

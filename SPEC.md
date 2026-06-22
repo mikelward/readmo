@@ -119,6 +119,14 @@ Everything else about the visual system mirrors newshacker.
   article column max-width so it aligns with the list below. Safe-area
   insets reserve space for landscape-iPhone notches on the edge controls.
 - **Dark mode:** full light/dark/system via tokens.
+- **Palette:** two color families selectable in Settings, orthogonal to the
+  light/dark/**mode** axis — **Ink** (default, the monochrome ink-on-paper above)
+  and **Turquoise** (a soft turquoise: teal accent `--rm-accent: #0e7c74` light /
+  `#5ed6c9` dark on faintly turquoise-tinted paper; both clear 4.5:1). Mode drives
+  the `data-theme` attribute, palette drives `data-palette`; each palette ships
+  its own light and dark variants. The brand mark's tile follows the palette
+  (ink tile by default, teal under Turquoise) via the `--rm-brand-tile` /
+  `--rm-brand-fg` tokens.
 - Icons inlined monochrome SVG (Material Symbols, `fill="currentColor"`), no
   icon font / runtime request.
 
