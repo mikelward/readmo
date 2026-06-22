@@ -2,17 +2,13 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
-import { useShareItem } from '../hooks/useShareItem';
-import { ItemRow } from '../components/ItemRow';
-import { ListToolbar } from '../components/ListToolbar';
-import './PageHeader.css';
-import '../components/ItemList.css';
+import { ItemRows } from '../components/ItemRows';
+import { ListPage } from '../components/ListPage';
 
 /** `/search` — search over feed + item titles (SPEC.md *Search*; MVP is title
  * search, body search deferred). */
 export function SearchPage() {
   const ds = useDataSource();
-  const share = useShareItem();
   const [query, setQuery] = useState('');
   useDocumentTitle('Search · readmo');
 
@@ -23,8 +19,8 @@ export function SearchPage() {
   });
 
   return (
-    <div>
-      <div className="page-header">
+    <ListPage
+      header={
         <input
           type="search"
           className="search-input"
@@ -34,25 +30,11 @@ export function SearchPage() {
           aria-label="Search"
           onChange={(e) => setQuery(e.target.value)}
         />
-      </div>
-      {query.trim() && results.length === 0 ? (
-        <div className="item-list__state">
-          <p>No matches.</p>
-        </div>
-      ) : (
-        <ul className="item-list__rows">
-          {results.map((fi) => (
-            <li key={fi.item.id} className="item-list__row">
-              <ItemRow
-                feedItem={fi}
-                enableSwipe={false}
-                onShare={() => share({ title: fi.item.title, url: fi.item.url })}
-              />
-            </li>
-          ))}
-        </ul>
-      )}
-      <ListToolbar placement="bottom" actions={false} />
-    </div>
+      }
+    >
+      {query.trim() ? (
+        <ItemRows items={results} emptyLabel="No matches." />
+      ) : null}
+    </ListPage>
   );
 }

@@ -2,10 +2,8 @@ import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useStateBucket } from '../hooks/useItemState';
-import { useShareItem } from '../hooks/useShareItem';
 import type { ItemStateField } from '../lib/types';
-import { ItemRow } from './ItemRow';
-import './ItemList.css';
+import { ItemRows } from './ItemRows';
 
 interface Props {
   /** Which state bucket this view lists. */
@@ -29,50 +27,23 @@ export function LibraryItemList({
   const ds = useDataSource();
   const store = ds.stateStore;
   const ids = useStateBucket(field);
-  const share = useShareItem();
 
   const query = useQuery({
     queryKey: ['library', field, ids.join(',')],
     queryFn: () => ds.getItemsByIds(ids),
   });
 
-  const items = query.data ?? [];
-
-  if (query.isLoading) {
-    return (
-      <ul className="item-list__skeletons" aria-hidden="true">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <li key={i} className="item-list__skeleton" />
-        ))}
-      </ul>
-    );
-  }
-
-  if (items.length === 0) {
-    return (
-      <div className="item-list__state">
-        <p>{emptyLabel}</p>
-      </div>
-    );
-  }
-
   return (
-    <ul className="item-list__rows">
-      {items.map((fi) => (
-        <li key={fi.item.id} className="item-list__row">
-          <ItemRow
-            feedItem={fi}
-            enableSwipe={false}
-            onShare={() => share({ title: fi.item.title, url: fi.item.url })}
-            rightAction={{
-              label: actionLabel,
-              icon: actionIcon,
-              testId: `library-action-${field}`,
-              onToggle: () => store.set(fi.item.id, field, false),
-            }}
-          />
-        </li>
-      ))}
-    </ul>
+    <ItemRows
+      items={query.data ?? []}
+      isLoading={query.isLoading}
+      emptyLabel={emptyLabel}
+      rightAction={(fi) => ({
+        label: actionLabel,
+        icon: actionIcon,
+        testId: `library-action-${field}`,
+        onToggle: () => store.set(fi.item.id, field, false),
+      })}
+    />
   );
 }

@@ -2,8 +2,7 @@ import { useEffect, useMemo } from 'react';
 import { useDataSource } from '../lib/data/context';
 import { useFeedItems, type FetchPage } from '../hooks/useFeedItems';
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
-import { useShareItem } from '../hooks/useShareItem';
-import { ItemRow } from './ItemRow';
+import { ItemRows } from './ItemRows';
 import { ListToolbar } from './ListToolbar';
 import { useFeedBar } from './FeedBarContext';
 import './ItemList.css';
@@ -30,7 +29,6 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
     isRefreshing,
     refreshFailed,
   } = useFeedItems(viewKey, fetchPage);
-  const share = useShareItem();
   const listRef = useListKeyboardNav();
   const { registerSweep } = useFeedBar();
 
@@ -53,36 +51,22 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
     <div className="item-list">
       <ListToolbar />
 
-      {isLoading ? (
-        <ul className="item-list__skeletons" aria-hidden="true">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <li key={i} className="item-list__skeleton" />
-          ))}
-        </ul>
-      ) : isError ? (
+      {isError ? (
         <div className="item-list__state" role="alert">
           <p>Couldn’t load items.</p>
           <button type="button" onClick={() => refetch()}>
             Retry
           </button>
         </div>
-      ) : items.length === 0 ? (
-        <div className="item-list__state">
-          <p>{emptyLabel ?? 'Nothing here yet.'}</p>
-        </div>
       ) : (
-        <ul className="item-list__rows" ref={listRef}>
-          {items.map((fi) => (
-            <li key={fi.item.id} className="item-list__row">
-              <ItemRow
-                feedItem={fi}
-                onShare={() =>
-                  share({ title: fi.item.title, url: fi.item.url })
-                }
-              />
-            </li>
-          ))}
-        </ul>
+        <ItemRows
+          items={items}
+          isLoading={isLoading}
+          skeletonCount={6}
+          enableSwipe
+          listRef={listRef}
+          emptyLabel={emptyLabel ?? 'Nothing here yet.'}
+        />
       )}
 
       {/* Background-refresh status strip — only when rows are already on
