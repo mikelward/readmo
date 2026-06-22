@@ -1,9 +1,20 @@
 export const THEME_STORAGE_KEY = 'readmo:theme';
+export const PALETTE_STORAGE_KEY = 'readmo:palette';
 export const THEME_CHANGE_EVENT = 'readmo:themeChanged';
 
+// "Mode" (light/dark/system) and "palette" (color family) are orthogonal: each
+// palette ships its own light and dark variants, so the user picks both. Mode
+// drives the `data-theme` attribute; palette drives `data-palette`. `global.css`
+// combines them (e.g. `:root[data-palette='turquoise'][data-theme='dark']`).
 export type Theme = 'light' | 'dark' | 'system';
+export type Palette = 'ink' | 'turquoise';
 
 const THEMES: readonly Theme[] = ['light', 'dark', 'system'];
+const PALETTES: readonly Palette[] = ['ink', 'turquoise'];
+
+// Ink is the default palette, so it owns the bare `:root`/`[data-theme]` blocks
+// and needs no `data-palette` attribute.
+const DEFAULT_PALETTE: Palette = 'ink';
 
 function hasWindow(): boolean {
   return typeof window !== 'undefined';
@@ -12,6 +23,12 @@ function hasWindow(): boolean {
 function isTheme(value: unknown): value is Theme {
   return (
     typeof value === 'string' && (THEMES as readonly string[]).includes(value)
+  );
+}
+
+function isPalette(value: unknown): value is Palette {
+  return (
+    typeof value === 'string' && (PALETTES as readonly string[]).includes(value)
   );
 }
 
@@ -25,12 +42,23 @@ export function getStoredTheme(): Theme {
   }
 }
 
+export function getStoredPalette(): Palette {
+  if (!hasWindow()) return DEFAULT_PALETTE;
+  try {
+    const raw = window.localStorage.getItem(PALETTE_STORAGE_KEY);
+    return isPalette(raw) ? raw : DEFAULT_PALETTE;
+  } catch {
+    return DEFAULT_PALETTE;
+  }
+}
+
 // These have to match the `--rm-bg` values in `global.css`: the browser
 // paints `<meta name="theme-color">` above the page, and we want that
-// strip to be indistinguishable from the sticky app header.
-const META_THEME_COLORS = {
-  light: '#faf9f5',
-  dark: '#14161c',
+// strip to be indistinguishable from the sticky app header. Keyed by palette
+// then resolved mode so the chrome tint tracks both axes.
+const META_THEME_COLORS: Record<Palette, Record<'light' | 'dark', string>> = {
+  ink: { light: '#faf9f5', dark: '#14161c' },
+  turquoise: { light: '#f1f9f7', dark: '#0f1a18' },
 } as const;
 
 // Keep the browser's address-bar / OS-chrome tint in sync with the
@@ -39,12 +67,15 @@ const META_THEME_COLORS = {
 // toggle or the OS `prefers-color-scheme` changes under a `system`
 // selection. Without this, forcing dark-on-light (or vice versa) leaves
 // a stale band of the wrong color above the header.
-export function applyThemeColorMeta(resolved: 'light' | 'dark'): void {
+export function applyThemeColorMeta(
+  resolved: 'light' | 'dark',
+  palette: Palette = getStoredPalette(),
+): void {
   if (typeof document === 'undefined') return;
   const meta = document.querySelector<HTMLMetaElement>(
     'meta[name="theme-color"]',
   );
-  if (meta) meta.content = META_THEME_COLORS[resolved];
+  if (meta) meta.content = META_THEME_COLORS[palette][resolved];
 }
 
 export function applyTheme(theme: Theme): void {
@@ -56,6 +87,16 @@ export function applyTheme(theme: Theme): void {
     root.setAttribute('data-theme', theme);
   }
   applyThemeColorMeta(resolveTheme(theme));
+}
+
+export function applyPalette(palette: Palette): void {
+  if (typeof document === 'undefined') return;
+  const root = document.documentElement;
+  if (palette === DEFAULT_PALETTE) {
+    root.removeAttribute('data-palette');
+  } else {
+    root.setAttribute('data-palette', palette);
+  }
 }
 
 export function setStoredTheme(theme: Theme): void {
@@ -72,6 +113,27 @@ export function setStoredTheme(theme: Theme): void {
   applyTheme(theme);
   window.dispatchEvent(
     new CustomEvent(THEME_CHANGE_EVENT, { detail: { theme } }),
+  );
+}
+
+export function setStoredPalette(palette: Palette): void {
+  if (hasWindow()) {
+    try {
+      if (palette === DEFAULT_PALETTE) {
+        window.localStorage.removeItem(PALETTE_STORAGE_KEY);
+      } else {
+        window.localStorage.setItem(PALETTE_STORAGE_KEY, palette);
+      }
+    } catch {
+      // quota or privacy-mode failures are non-fatal
+    }
+  }
+  applyPalette(palette);
+  // The chrome tint depends on both axes, so re-sync it against the current mode
+  // under the new palette.
+  applyThemeColorMeta(resolveTheme(getStoredTheme()), palette);
+  window.dispatchEvent(
+    new CustomEvent(THEME_CHANGE_EVENT, { detail: { palette } }),
   );
 }
 

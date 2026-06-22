@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 import { useTheme } from './useTheme';
-import { THEME_STORAGE_KEY } from '../lib/theme';
+import { PALETTE_STORAGE_KEY, THEME_STORAGE_KEY } from '../lib/theme';
 
 // Helper: mock `window.matchMedia` so the hook's system-flip effect can
 // subscribe. `fire` flips the mock's reported match state and dispatches
@@ -59,11 +59,13 @@ describe('useTheme', () => {
   beforeEach(() => {
     window.localStorage.clear();
     document.documentElement.removeAttribute('data-theme');
+    document.documentElement.removeAttribute('data-palette');
   });
 
   afterEach(() => {
     window.localStorage.clear();
     document.documentElement.removeAttribute('data-theme');
+    document.documentElement.removeAttribute('data-palette');
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.remove();
     vi.restoreAllMocks();
@@ -83,6 +85,38 @@ describe('useTheme', () => {
     expect(result.current.theme).toBe('system');
     expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBeNull();
     expect(document.documentElement.hasAttribute('data-theme')).toBe(false);
+  });
+
+  it('returns the stored palette and persists changes independently of mode', () => {
+    const { result } = renderHook(() => useTheme());
+    expect(result.current.palette).toBe('ink');
+
+    act(() => result.current.setTheme('dark'));
+    act(() => result.current.setPalette('turquoise'));
+    expect(result.current.palette).toBe('turquoise');
+    expect(result.current.theme).toBe('dark');
+    expect(window.localStorage.getItem(PALETTE_STORAGE_KEY)).toBe('turquoise');
+    expect(document.documentElement.getAttribute('data-palette')).toBe(
+      'turquoise',
+    );
+    // Mode attribute is untouched by a palette change.
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+
+    act(() => result.current.setPalette('ink'));
+    expect(result.current.palette).toBe('ink');
+    expect(window.localStorage.getItem(PALETTE_STORAGE_KEY)).toBeNull();
+    expect(document.documentElement.hasAttribute('data-palette')).toBe(false);
+  });
+
+  it('syncs palette across hook instances via the change event', () => {
+    const a = renderHook(() => useTheme());
+    const b = renderHook(() => useTheme());
+
+    act(() => a.result.current.setPalette('turquoise'));
+    expect(b.result.current.palette).toBe('turquoise');
+    expect(document.documentElement.getAttribute('data-palette')).toBe(
+      'turquoise',
+    );
   });
 
   it('syncs across hook instances via the change event', () => {

@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  PALETTE_STORAGE_KEY,
   THEME_CHANGE_EVENT,
   THEME_STORAGE_KEY,
+  applyPalette,
   applyTheme,
   applyThemeColorMeta,
+  getStoredPalette,
   getStoredTheme,
   resolveTheme,
+  setStoredPalette,
   setStoredTheme,
 } from './theme';
 
@@ -25,11 +29,13 @@ describe('theme lib', () => {
   beforeEach(() => {
     window.localStorage.clear();
     document.documentElement.removeAttribute('data-theme');
+    document.documentElement.removeAttribute('data-palette');
   });
 
   afterEach(() => {
     window.localStorage.clear();
     document.documentElement.removeAttribute('data-theme');
+    document.documentElement.removeAttribute('data-palette');
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.remove();
   });
@@ -137,5 +143,89 @@ describe('theme lib', () => {
     );
     expect(resolveTheme('system')).toBe('dark');
     spy.mockRestore();
+  });
+});
+
+describe('palette', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    document.documentElement.removeAttribute('data-theme');
+    document.documentElement.removeAttribute('data-palette');
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+    document.documentElement.removeAttribute('data-theme');
+    document.documentElement.removeAttribute('data-palette');
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.remove();
+  });
+
+  it('defaults to "ink" when storage is empty', () => {
+    expect(getStoredPalette()).toBe('ink');
+  });
+
+  it('reads a stored palette and ignores garbage', () => {
+    window.localStorage.setItem(PALETTE_STORAGE_KEY, 'turquoise');
+    expect(getStoredPalette()).toBe('turquoise');
+    window.localStorage.setItem(PALETTE_STORAGE_KEY, 'magenta');
+    expect(getStoredPalette()).toBe('ink');
+  });
+
+  it('setStoredPalette persists turquoise and sets data-palette', () => {
+    setStoredPalette('turquoise');
+    expect(window.localStorage.getItem(PALETTE_STORAGE_KEY)).toBe('turquoise');
+    expect(document.documentElement.getAttribute('data-palette')).toBe(
+      'turquoise',
+    );
+  });
+
+  it('setStoredPalette("ink") clears the attribute and the key', () => {
+    setStoredPalette('turquoise');
+    setStoredPalette('ink');
+    expect(window.localStorage.getItem(PALETTE_STORAGE_KEY)).toBeNull();
+    expect(document.documentElement.hasAttribute('data-palette')).toBe(false);
+  });
+
+  it('applyPalette toggles the attribute without touching storage', () => {
+    applyPalette('turquoise');
+    expect(document.documentElement.getAttribute('data-palette')).toBe(
+      'turquoise',
+    );
+    expect(window.localStorage.getItem(PALETTE_STORAGE_KEY)).toBeNull();
+    applyPalette('ink');
+    expect(document.documentElement.hasAttribute('data-palette')).toBe(false);
+  });
+
+  it('setStoredPalette fires a change event', () => {
+    const handler = vi.fn();
+    window.addEventListener(THEME_CHANGE_EVENT, handler);
+    setStoredPalette('turquoise');
+    expect(handler).toHaveBeenCalledTimes(1);
+    window.removeEventListener(THEME_CHANGE_EVENT, handler);
+  });
+
+  it('meta theme-color tracks the palette as well as the mode', () => {
+    const meta = installMetaThemeColor();
+    // ink (default) light/dark
+    applyThemeColorMeta('light', 'ink');
+    expect(meta.content).toBe('#faf9f5');
+    applyThemeColorMeta('dark', 'ink');
+    expect(meta.content).toBe('#14161c');
+    // turquoise light/dark
+    applyThemeColorMeta('light', 'turquoise');
+    expect(meta.content).toBe('#f1f9f7');
+    applyThemeColorMeta('dark', 'turquoise');
+    expect(meta.content).toBe('#0f1a18');
+  });
+
+  it('setStoredPalette repaints the meta color for the current mode', () => {
+    const meta = installMetaThemeColor();
+    setStoredTheme('light');
+    setStoredPalette('turquoise');
+    expect(meta.content).toBe('#f1f9f7');
+    setStoredTheme('dark');
+    // mode flip under turquoise → dark turquoise bg
+    expect(meta.content).toBe('#0f1a18');
   });
 });

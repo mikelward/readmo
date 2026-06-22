@@ -5,14 +5,14 @@ import { useTheme } from '../hooks/useTheme';
 import { useAuth } from '../hooks/useAuth';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useToast } from '../hooks/useToast';
-import type { Theme } from '../lib/theme';
+import type { Palette, Theme } from '../lib/theme';
 import './SettingsPage.css';
 import './PageHeader.css';
 
 export function SettingsPage() {
   const ds = useDataSource();
   const queryClient = useQueryClient();
-  const { theme, setTheme } = useTheme();
+  const { theme, palette, setTheme, setPalette } = useTheme();
   const { user, signOut } = useAuth();
   const { showToast } = useToast();
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -61,6 +61,7 @@ export function SettingsPage() {
   };
 
   const themes: Theme[] = ['light', 'dark', 'system'];
+  const palettes: Palette[] = ['ink', 'turquoise'];
 
   return (
     <div className="settings">
@@ -159,8 +160,26 @@ export function SettingsPage() {
       </section>
 
       <section className="settings__section">
-        <h2 className="settings__heading">Theme</h2>
-        <div className="settings__theme" role="radiogroup" aria-label="Theme">
+        <h2 className="settings__heading">Palette</h2>
+        <div className="settings__theme" role="radiogroup" aria-label="Palette">
+          {palettes.map((p) => (
+            <button
+              key={p}
+              type="button"
+              role="radio"
+              aria-checked={palette === p}
+              className={'settings__theme-btn' + (palette === p ? ' is-active' : '')}
+              onClick={() => setPalette(p)}
+            >
+              {p[0].toUpperCase() + p.slice(1)}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="settings__section">
+        <h2 className="settings__heading">Mode</h2>
+        <div className="settings__theme" role="radiogroup" aria-label="Mode">
           {themes.map((t) => (
             <button
               key={t}
