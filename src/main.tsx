@@ -9,6 +9,8 @@ import { ToastProvider } from './components/Toast';
 import { DataSourceProvider } from './lib/data/context';
 import { MockDataSource } from './lib/data/MockDataSource';
 import { applyTheme, getStoredTheme } from './lib/theme';
+import { getActiveUid } from './hooks/useAuth';
+import { rqCacheKey, itemStateKey } from './lib/userCache';
 import './styles/global.css';
 
 // Bump to invalidate the persisted query cache on a breaking shape change.
@@ -33,25 +35,24 @@ const queryClient = new QueryClient({
   },
 });
 
-// TODO(PR2, P1 — per-user cache scoping): this single app-wide key is restored
-// with an infinite maxAge and never purged on sign-out / account change. Once
-// the SupabaseDataSource stores per-user feed/item responses here, a second
-// user on a shared device could hydrate the previous user's content before an
-// RLS refetch corrects it. AGENTS guardrail #8 requires keying the persisted
-// store (and Workbox runtime caches) by auth.uid() and purging the prior
-// user's caches before the new session paints. Wire this with real auth in
-// PR2. (PR1 is single mock user, so no cross-user leak today.) See PR #1
-// review (codex P1).
+// Per-user cache scoping (AGENTS guardrail #8). Key the persisted query cache
+// and the item-state store by the signed-in user so a second user on a shared
+// device can't hydrate the previous user's content. The boot uid is read
+// synchronously (like the theme below) so the keys are correct before first
+// paint; App purges a departing user's caches on any auth transition. Full
+// in-session re-keying on account change without reload, and per-user prefixing
+// of the Workbox runtime caches, land with real multi-user auth in PR2.
+const bootUid = getActiveUid();
 const persister = createSyncStoragePersister({
   storage: typeof window !== 'undefined' ? window.localStorage : undefined,
-  key: 'readmo:rq-cache',
+  key: rqCacheKey(bootUid),
   throttleTime: 1000,
 });
 
 // Apply the stored theme before first paint to avoid a flash.
 applyTheme(getStoredTheme());
 
-const dataSource = new MockDataSource();
+const dataSource = new MockDataSource(itemStateKey(bootUid));
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
