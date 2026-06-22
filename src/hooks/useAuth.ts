@@ -6,6 +6,9 @@ import { useCallback, useSyncExternalStore } from 'react';
 // signed-out state that routes to /signin.
 
 export interface AuthUser {
+  /** Stable subject id used to scope on-device caches (guardrail #8). In PR2
+   * this is the Supabase auth.uid(); in PR1 it's a fixed mock id. */
+  uid: string;
   name: string;
   email: string;
   avatarUrl: string | null;
@@ -15,10 +18,17 @@ const STORAGE_KEY = 'readmo:mock-signed-out';
 const CHANGE_EVENT = 'readmo:auth-changed';
 
 const DEMO_USER: AuthUser = {
+  uid: 'mock:demo@readmo.app',
   name: 'Demo Reader',
   email: 'demo@readmo.app',
   avatarUrl: null,
 };
+
+/** The signed-in user's id, or null when signed out. Synchronous so the boot
+ * path (main.tsx) can key caches before first paint, mirroring getStoredTheme(). */
+export function getActiveUid(): string | null {
+  return readSignedOut() ? null : DEMO_USER.uid;
+}
 
 function readSignedOut(): boolean {
   if (typeof window === 'undefined') return false;

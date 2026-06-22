@@ -6,6 +6,7 @@ import { BackToTopButton } from './components/BackToTopButton';
 import { KeyboardShortcutsOverlay } from './components/KeyboardShortcutsOverlay';
 import { FeedBarProvider } from './components/FeedBarContext';
 import { useAuth } from './hooks/useAuth';
+import { useUserCacheScope } from './hooks/useUserCacheScope';
 import { HomePage, FolderPage, FeedPage } from './pages/FeedPages';
 import {
   PinnedPage,
@@ -33,6 +34,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
 }
 
 export default function App() {
+  useUserCacheScope();
   return (
     <FeedBarProvider>
       <ScrollToTop />
