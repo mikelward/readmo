@@ -208,23 +208,16 @@ describe('SupabaseDataSource reads', () => {
 });
 
 describe('SupabaseDataSource dispatch + writes', () => {
-  it('writes item-state mutations through the set_item_state RPC (full state)', async () => {
+  it('writes item-state mutations through the set_item_state RPC (changed fields only)', async () => {
     const env = setup();
     await env.ds.getHomeItems(); // hydrate
 
-    // Hiding i6 locally writes the FULL resulting state through to the server...
+    // Hiding i6 locally writes only the changed field through to the server...
     env.ds.stateStore.set('i6', 'hidden', true);
     await Promise.resolve();
     expect(env.fake.rpcCalls).toContainEqual({
       name: 'set_item_state',
-      params: {
-        p_item_id: 'i6',
-        p_pinned: false,
-        p_favorite: false,
-        p_done: false,
-        p_hidden: true,
-        p_opened: false,
-      },
+      params: { p_item_id: 'i6', p_hidden: true },
     });
 
     // ...so the next feed read (server truth via feed_items) no longer surfaces it.
