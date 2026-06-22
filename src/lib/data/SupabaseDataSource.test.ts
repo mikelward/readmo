@@ -134,6 +134,20 @@ describe('SupabaseDataSource reads', () => {
     expect(ids(many)).toEqual(['i6', 'i1', 'i3']);
   });
 
+  it('getItemsByIds chunks a large id list (no unbounded IN)', async () => {
+    const tables = seed();
+    const big = Array.from({ length: 450 }, (_, i) => {
+      const id = `big-${String(i).padStart(3, '0')}`;
+      return mkItem(id, 'feed-a', 1, `Big ${i}`);
+    });
+    tables.items.push(...big);
+    const { ds } = setup(tables);
+    const wanted = big.map((r) => r.id).reverse(); // arbitrary order to verify re-sort
+    const got = await ds.getItemsByIds(wanted);
+    expect(got).toHaveLength(450);
+    expect(ids(got)).toEqual(wanted); // input order preserved across chunks
+  });
+
   it('getItem / getFeed return null for a missing/unauthorized row', async () => {
     expect(await env.ds.getItem('does-not-exist')).toBeNull();
     expect(await env.ds.getFeed('does-not-exist')).toBeNull();

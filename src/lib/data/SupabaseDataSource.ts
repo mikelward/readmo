@@ -46,6 +46,11 @@ const SUBSCRIPTION_COLS = 'feed_id, folder, title_override, muted, sort';
  * item_state; see the class note. */
 const MAX_EXCLUDE_IDS = 500;
 
+/** Max ids per `in (…)` lookup, so a large library bucket (Done/Hidden/Favorite
+ * with hundreds/thousands of ids) is fetched in bounded batches rather than one
+ * unbounded request that could exceed the request-line/query limit. */
+const ID_LOOKUP_CHUNK = 200;
+
 function notImplemented(method: string): never {
   throw new Error(
     `SupabaseDataSource.${method} is not implemented yet — the privileged ` +
@@ -154,6 +159,27 @@ export class SupabaseDataSource implements DataSource {
       });
     }
     return this.hydration;
+  }
+
+  /** Fetch item rows for an id list in bounded `in (…)` batches (keeps the
+   * request URL within limits for large library buckets). Optionally restricts
+   * to a feed set. Order is not guaranteed — callers re-sort. */
+  private async fetchItemRowsByIds(
+    ids: ItemId[],
+    feedIds?: FeedId[],
+  ): Promise<ItemRow[]> {
+    const chunks: ItemId[][] = [];
+    for (let i = 0; i < ids.length; i += ID_LOOKUP_CHUNK) {
+      chunks.push(ids.slice(i, i + ID_LOOKUP_CHUNK));
+    }
+    const batches = await Promise.all(
+      chunks.map(async (chunk) => {
+        let q = this.sb.from('items').select(ITEM_COLS).in('id', chunk);
+        if (feedIds) q = q.in('feed_id', feedIds);
+        return this.unwrap<ItemRow[]>(await q);
+      }),
+    );
+    return batches.flat();
   }
 
   private async ensureFeeds(ids: FeedId[]): Promise<void> {
@@ -265,12 +291,9 @@ export class SupabaseDataSource implements DataSource {
     // once at the top, oldest-pinned first.
     let pinned: FeedItem[] = [];
     if (offset === 0 && pinnedOldestFirst.length > 0) {
-      const pinnedRows = this.unwrap<ItemRow[]>(
-        await this.sb
-          .from('items')
-          .select(ITEM_COLS)
-          .in('id', pinnedOldestFirst)
-          .in('feed_id', feedIds),
+      const pinnedRows = await this.fetchItemRowsByIds(
+        pinnedOldestFirst,
+        feedIds,
       );
       const byId = new Map(pinnedRows.map((r) => [r.id, r]));
       const ordered = pinnedOldestFirst
@@ -331,9 +354,7 @@ export class SupabaseDataSource implements DataSource {
     // the store and re-derives the ids), rather than silently returning empty.
     await this.ensureHydrated();
     if (ids.length === 0) return [];
-    const rows = this.unwrap<ItemRow[]>(
-      await this.sb.from('items').select(ITEM_COLS).in('id', ids),
-    );
+    const rows = await this.fetchItemRowsByIds(ids);
     const order = new Map(ids.map((id, i) => [id, i]));
     rows.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
     return this.resolveFeedItems(rows);
