@@ -258,6 +258,15 @@ export class SupabaseDataSource implements DataSource {
 
     // Body: newest-first by sort_at (= published_at ?? created_at), excluding
     // pinned/done/hidden, offset-paginated.
+    //
+    // NOTE: `.in('feed_id', feedIds)` sends every subscribed feed id in one
+    // request URL. Fine for typical subscription counts, but a user with many
+    // hundreds of feeds can exceed request-line limits. This isn't cleanly
+    // batchable here (the query is sort_at-ordered + offset-paginated + counted),
+    // so the scalable fix is the server-side subscription-scoped feed RPC the
+    // SPEC already designates (drives from subscriptions → items LEFT JOIN
+    // item_state); it also subsumes the MAX_EXCLUDE_IDS exclusion. Tracked with
+    // the deferred backend/write-path work.
     let query = this.sb
       .from('items')
       .select(ITEM_COLS, { count: 'exact' })
