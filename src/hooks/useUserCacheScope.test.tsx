@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import { act, renderHook } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAuth } from './useAuth';
 import { useUserCacheScope } from './useUserCacheScope';
@@ -9,37 +9,51 @@ import { itemStateKey, rqCacheKey } from '../lib/userCache';
 const DEMO_UID = 'mock:demo@readmo.app';
 
 describe('useUserCacheScope', () => {
+  let reloadSpy: ReturnType<typeof vi.fn>;
+  const realLocation = window.location;
+
   beforeEach(() => {
     window.localStorage.clear();
     vi.stubGlobal('caches', { delete: vi.fn().mockResolvedValue(true) });
+    reloadSpy = vi.fn();
+    // window.location.reload is non-configurable in jsdom; swap the whole object.
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { reload: reloadSpy },
+    });
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: realLocation,
+    });
+  });
 
-  it('clears the query cache and purges the departing user on sign-out', () => {
+  it('gates rendering, purges the departing user, and reloads on sign-out', async () => {
     const queryClient = new QueryClient();
     const wrapper = ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     );
 
     const { result } = renderHook(
-      () => {
-        useUserCacheScope();
-        return useAuth();
-      },
+      () => ({ transitioning: useUserCacheScope(), auth: useAuth() }),
       { wrapper },
     );
 
-    // Normalise to a signed-in baseline (prevUid === DEMO_UID, no transition).
-    act(() => result.current.signIn());
+    // Signed-in baseline: no transition in flight.
+    expect(result.current.transitioning).toBe(false);
 
     // Seed the departing user's in-memory + persisted state.
     queryClient.setQueryData(['feed'], { secret: 1 });
     window.localStorage.setItem(rqCacheKey(DEMO_UID), 'blob');
     window.localStorage.setItem(itemStateKey(DEMO_UID), 'state');
-    (caches.delete as ReturnType<typeof vi.fn>).mockClear();
 
-    act(() => result.current.signOut());
+    act(() => result.current.auth.signOut());
 
+    // Gate flips on so the caller renders nothing during the transition.
+    expect(result.current.transitioning).toBe(true);
     // In-memory cache emptied so nothing paints for the next user.
     expect(queryClient.getQueryData(['feed'])).toBeUndefined();
     // The departing user's persisted stores are purged.
@@ -49,5 +63,7 @@ describe('useUserCacheScope', () => {
     expect(caches.delete).toHaveBeenCalledWith('readmo-data');
     expect(caches.delete).toHaveBeenCalledWith('readmo-images');
     expect(caches.delete).toHaveBeenCalledWith('readmo-favicons');
+    // ...then the app reloads to re-key the data source/persister.
+    await waitFor(() => expect(reloadSpy).toHaveBeenCalledTimes(1));
   });
 });
