@@ -117,19 +117,15 @@ export class SupabaseDataSource implements DataSource {
     // version reconciliation + rollback-on-error are the remaining write-path
     // refinements; a failed write currently just leaves the local value until the
     // next hydrate reconciles by version.)
-    this.stateStore.setMutationSink((id, st) => {
-      void this.sb
-        .rpc('set_item_state', {
-          p_item_id: id,
-          p_pinned: st.pinned,
-          p_favorite: st.favorite,
-          p_done: st.done,
-          p_hidden: st.hidden,
-          p_opened: st.opened,
-        })
-        .then(({ error }) => {
-          if (error) this.hydration = null; // force a fresh server reconcile next read
-        });
+    this.stateStore.setMutationSink((id, changed) => {
+      // Send only the fields this action changed (set_item_state leaves null
+      // params untouched), so a stale local mirror can't clobber an independent
+      // field changed on another device.
+      const params: Record<string, unknown> = { p_item_id: id };
+      for (const [field, value] of Object.entries(changed)) params[`p_${field}`] = value;
+      void this.sb.rpc('set_item_state', params).then(({ error }) => {
+        if (error) this.hydration = null; // force a fresh server reconcile next read
+      });
     });
     // Kick off item_state hydration at boot so the library routes (/pinned,
     // /favorites, …), which derive their ids from the store, populate even when

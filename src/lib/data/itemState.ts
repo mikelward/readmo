@@ -113,24 +113,39 @@ export class ItemStateStore {
   // sweep batch" (SPEC.md *List toolbar*). Only hide-style mutations record
   // here; pin/favorite/done toggles are not toolbar-undoable.
   private lastUndo: UndoBatch | null = null;
-  // Optional write-through: invoked with the FULL resulting state for an item
-  // after a mutation, so a backing data source can persist every field
-  // (SupabaseDataSource routes this to the set_item_state RPC). Passing the whole
-  // state — not just the changed field — means undo restores all fields (e.g. a
-  // pin that hiding had cleared) and the server mirrors the client's
-  // exclusivity. The local map stays the optimistic mirror; the mock leaves this
-  // unset.
-  private sink: ((id: ItemId, state: ItemState) => void) | null = null;
+  // Optional write-through: invoked with the set of boolean fields a mutation
+  // actually CHANGED (prev→next diff), so a backing data source can persist just
+  // those (SupabaseDataSource routes this to the set_item_state RPC). Sending the
+  // diff — not the full state — means exclusivity-cleared fields (e.g. pin
+  // clearing done/hidden) and undo's restored fields ARE sent, while independent
+  // fields untouched by this action (e.g. favorite) are left alone, so a stale
+  // local mirror can't clobber a concurrent change made elsewhere. The local map
+  // stays the optimistic mirror; the mock leaves this unset.
+  private sink:
+    | ((id: ItemId, changed: Partial<Record<ItemStateField, boolean>>) => void)
+    | null = null;
 
   constructor(private persistence: StatePersistence) {
     this.map = persistence.load();
   }
 
-  /** Register a write-through sink invoked with the full post-mutation state
-   * (see `sink`). Hydration does NOT fire it — only user-driven set/hide/undo
-   * mutations do. */
-  setMutationSink(sink: (id: ItemId, state: ItemState) => void): void {
+  /** Register a write-through sink invoked with the changed-field diff of a
+   * mutation (see `sink`). Hydration does NOT fire it — only user-driven
+   * set/hide/undo mutations do. */
+  setMutationSink(
+    sink: (id: ItemId, changed: Partial<Record<ItemStateField, boolean>>) => void,
+  ): void {
     this.sink = sink;
+  }
+
+  /** Fields whose boolean value differs between two states, with their `to`
+   * values — the minimal write that moves `from` to `to`. */
+  private emitDiff(id: ItemId, from: ItemState, to: ItemState): void {
+    if (!this.sink) return;
+    const fields: ItemStateField[] = ['pinned', 'favorite', 'done', 'hidden', 'opened'];
+    const changed: Partial<Record<ItemStateField, boolean>> = {};
+    for (const f of fields) if (from[f] !== to[f]) changed[f] = to[f];
+    if (Object.keys(changed).length > 0) this.sink(id, changed);
   }
 
   get(id: ItemId, now: number = Date.now()): ItemState {
@@ -194,7 +209,7 @@ export class ItemStateStore {
     const next = applyMutation(prev, field, value, now);
     this.map = { ...this.map, [id]: next };
     this.persistence.save(this.map);
-    this.sink?.(id, next);
+    this.emitDiff(id, prev, next);
     this.emit();
     return next;
   }
@@ -211,13 +226,14 @@ export class ItemStateStore {
     if (ids.length === 0) return;
     const batch: UndoBatch = [];
     for (const id of ids) {
-      batch.push([id, this.map[id] ?? null]);
       const prev = this.map[id] ?? DEFAULT_ITEM_STATE;
-      this.map = { ...this.map, [id]: applyMutation(prev, 'hidden', true, now) };
+      batch.push([id, this.map[id] ?? null]);
+      const next = applyMutation(prev, 'hidden', true, now);
+      this.map = { ...this.map, [id]: next };
+      this.emitDiff(id, prev, next);
     }
     this.lastUndo = batch;
     this.persistence.save(this.map);
-    for (const id of ids) this.sink?.(id, this.map[id]);
     this.emit();
   }
 
@@ -230,6 +246,14 @@ export class ItemStateStore {
     const batch = this.lastUndo;
     if (!batch) return;
     const next = { ...this.map };
+    // Emit the diff from the current (hidden) state back to the restored prior
+    // BEFORE reassigning the map — restoring re-sends whatever hiding changed
+    // (hidden, plus any Pinned/Done it cleared), so the server doesn't keep them
+    // cleared and drop the restored pin on the next hydrate. Untouched fields
+    // aren't sent.
+    for (const [id, prior] of batch) {
+      this.emitDiff(id, this.map[id] ?? DEFAULT_ITEM_STATE, prior ?? DEFAULT_ITEM_STATE);
+    }
     for (const [id, prior] of batch) {
       if (prior === null) delete next[id];
       else next[id] = prior;
@@ -237,10 +261,6 @@ export class ItemStateStore {
     this.map = next;
     this.lastUndo = null;
     this.persistence.save(this.map);
-    // Mirror the full restored state to the backend, not just `hidden`: hiding
-    // had cleared Pinned/Done, so restoring must re-send those too (else the
-    // server keeps them cleared and the next hydrate drops the restored pin).
-    for (const [id, prior] of batch) this.sink?.(id, prior ?? DEFAULT_ITEM_STATE);
     this.emit();
   }
 
