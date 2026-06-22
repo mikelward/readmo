@@ -35,6 +35,27 @@ describe('ItemPage (reader)', () => {
     expect(source.stateStore.get('item-1').pinned).toBe(true);
   });
 
+  it('renders the toolbar at the bottom too and pins from it', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReader(source);
+    const pin = await screen.findByTestId('reader-pin-bottom');
+    expect(screen.getByTestId('open-original-bottom')).toBeInTheDocument();
+    await user.click(pin);
+    expect(source.stateStore.get('item-1').pinned).toBe(true);
+  });
+
+  it('renders the toolbar at the bottom with a back-to-top button and pins from it', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReader(source);
+    const pin = await screen.findByTestId('reader-pin-bottom');
+    expect(screen.getByTestId('open-original-bottom')).toBeInTheDocument();
+    expect(screen.getByTestId('reader-back-to-top')).toBeInTheDocument();
+    await user.click(pin);
+    expect(source.stateStore.get('item-1').pinned).toBe(true);
+  });
+
   it('Done marks the item done and clears pinned (exclusivity)', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
