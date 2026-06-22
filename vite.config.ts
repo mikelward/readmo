@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
@@ -130,5 +130,8 @@ export default defineConfig({
     setupFiles: ['./vitest.setup.ts'],
     css: false,
     unstubGlobals: true,
+    // `*.deno.test.ts` are Deno-runtime integration tests (real TCP/TLS) run by
+    // `deno test` in the `edge` CI job, not Vitest — exclude them here.
+    exclude: [...configDefaults.exclude, '**/*.deno.test.ts'],
   },
 });
