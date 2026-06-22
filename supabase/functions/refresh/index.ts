@@ -70,7 +70,7 @@ Deno.serve(async (req: Request) => {
 async function refreshOne(service: any, feedId: string): Promise<boolean> {
   const { data: feed } = await service
     .from('feeds')
-    .select('id, url, secret_url, last_fetched_at')
+    .select('id, url, secret_url, last_fetched_at, fetch_interval_s')
     .eq('id', feedId)
     .single();
   if (!feed) return false;
@@ -115,7 +115,17 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
   }
   await service
     .from('feeds')
-    .update({ last_fetched_at: new Date().toISOString() })
+    .update({
+      last_fetched_at: new Date().toISOString(),
+      // Mirror the poller's success path: a successful manual refresh clears the
+      // circuit breaker (error_count/last_error) and reschedules, so "Retry now"
+      // on a parked feed actually un-parks it instead of leaving the badge stuck.
+      error_count: 0,
+      last_error: null,
+      next_fetch_at: new Date(
+        Date.now() + (feed.fetch_interval_s ?? 1800) * 1000,
+      ).toISOString(),
+    })
     .eq('id', feed.id);
   return true;
 }

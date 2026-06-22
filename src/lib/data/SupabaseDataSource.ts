@@ -56,6 +56,18 @@ function escapeXml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+/** Decode the XML entities OPML attribute values are escaped with (inverse of
+ * escapeXml). `&amp;` is decoded last so `&amp;lt;` → `&lt;`, not `<`. */
+function decodeXmlEntities(s: string): string {
+  return s
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
 function decodeCursor(cursor: string | null | undefined): number {
   if (!cursor) return 0;
   const n = Number.parseInt(cursor, 10);
@@ -94,6 +106,9 @@ export class SupabaseDataSource implements DataSource {
   private readonly sb: SupabaseClient;
   private readonly feedCache = new Map<FeedId, Feed>();
   private hydration: Promise<void> | null = null;
+  // Per-item write-through chain, so set_item_state calls for the same item
+  // commit in the order the user made them (see the sink in the constructor).
+  private readonly writeChains = new Map<ItemId, Promise<void>>();
 
   constructor(stateKey = 'readmo:item-state', client?: SupabaseClient) {
     this.sb = client ?? getSupabase();
@@ -112,8 +127,17 @@ export class SupabaseDataSource implements DataSource {
       // field changed on another device.
       const params: Record<string, unknown> = { p_item_id: id };
       for (const [field, value] of Object.entries(changed)) params[`p_${field}`] = value;
-      void this.sb.rpc('set_item_state', params).then(({ error }) => {
+      // Serialize writes per item so rapid toggles (Pin then Unpin) can't commit
+      // out of order on a slow link and leave the server on the earlier value.
+      const prev = this.writeChains.get(id) ?? Promise.resolve();
+      const next = prev.then(async () => {
+        const { error } = await this.sb.rpc('set_item_state', params);
         if (error) this.hydration = null; // force a fresh server reconcile next read
+      });
+      const guarded = next.catch(() => {});
+      this.writeChains.set(id, guarded);
+      void guarded.then(() => {
+        if (this.writeChains.get(id) === guarded) this.writeChains.delete(id);
       });
     });
     // Kick off item_state hydration at boot so the library routes (/pinned,
@@ -439,9 +463,10 @@ export class SupabaseDataSource implements DataSource {
     });
   }
 
-  async subscribe(feedUrl: string, folder?: string | null): Promise<Feed> {
-    // subscribe_to_feed (0004) authorizes by URL possession, find-or-creates the
-    // shared feed, subscribes auth.uid(), and returns the feeds_public row.
+  /** subscribe_to_feed (0004) authorizes by URL possession, find-or-creates the
+   * shared feed, subscribes auth.uid(), and returns the feeds_public row. Does
+   * NOT trigger a fetch — callers that want the immediate poll do it. */
+  private async subscribeOnly(feedUrl: string, folder?: string | null): Promise<Feed> {
     const rows = this.unwrap<FeedPublicRow[]>(
       await this.sb.rpc('subscribe_to_feed', {
         p_url: feedUrl,
@@ -452,6 +477,15 @@ export class SupabaseDataSource implements DataSource {
     if (!row) throw new Error('subscribe_to_feed returned no feed');
     const feed = mapFeed(row);
     this.feedCache.set(feed.id, feed);
+    return feed;
+  }
+
+  async subscribe(feedUrl: string, folder?: string | null): Promise<Feed> {
+    const feed = await this.subscribeOnly(feedUrl, folder);
+    // SPEC *Polling → On-demand*: adding a feed triggers an immediate
+    // server-side fetch so items/metadata appear without waiting for the cron
+    // (debounced server-side). Fire-and-forget — don't block the Add on a poll.
+    void this.refresh(feed.id);
     return feed;
   }
 
@@ -501,17 +535,19 @@ export class SupabaseDataSource implements DataSource {
   // --- OPML -----------------------------------------------------------------
 
   async importOpml(xml: string): Promise<{ added: number; skipped: number }> {
-    // Each <outline xmlUrl> becomes a subscribe_to_feed call (same extraction as
-    // the mock). subscribe_to_feed is idempotent, so we count a URL as skipped
-    // when it resolved to a feed the caller was already subscribed to.
-    const urls = [...xml.matchAll(/xmlUrl="([^"]+)"/g)].map((m) => m[1]);
+    // Each <outline xmlUrl> becomes a subscribe_to_feed call. OPML attribute
+    // values are XML-escaped, so decode entities (e.g. `&amp;` in a query string)
+    // before subscribing or the feed gets stored/polled under the wrong URL.
+    // subscribe_to_feed is idempotent, so a URL is "skipped" when it resolves to
+    // a feed the caller already subscribed to.
+    const urls = [...xml.matchAll(/xmlUrl="([^"]+)"/g)].map((m) => decodeXmlEntities(m[1]));
     const subscribed = new Set(
       (await this.loadSubscriptions()).map((s) => s.subscription.feedId),
     );
     let added = 0;
     let skipped = 0;
     for (const url of urls) {
-      const feed = await this.subscribe(url);
+      const feed = await this.subscribeOnly(url); // no per-feed refresh storm
       if (subscribed.has(feed.id)) {
         skipped++;
       } else {
@@ -519,6 +555,9 @@ export class SupabaseDataSource implements DataSource {
         added++;
       }
     }
+    // One immediate server fetch for the whole import (debounced server-side, so
+    // already-fresh feeds are skipped) rather than a refresh per feed.
+    if (added > 0) void this.refresh();
     return { added, skipped };
   }
 
