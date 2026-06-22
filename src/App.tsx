@@ -34,6 +34,10 @@ function RequireAuth({ children }: { children: ReactNode }) {
 }
 
 export default function App() {
+  // The reader carries its own sticky bottom toolbar whose leading slot is a
+  // Back to top button, so the global button would duplicate it there. Keep it
+  // for the feed/library list views.
+  const showBackToTop = !useLocation().pathname.startsWith('/item/');
   // Gate rendering across an auth transition: while the previous user's caches
   // are being purged and the app reloads, paint nothing so the next user can't
   // briefly see the previous user's cached content (guardrail #8).
@@ -69,7 +73,7 @@ export default function App() {
           />
         </Routes>
       </main>
-      <BackToTopButton />
+      {showBackToTop ? <BackToTopButton /> : null}
       <KeyboardShortcutsOverlay />
     </FeedBarProvider>
   );
