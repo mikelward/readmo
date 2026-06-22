@@ -141,11 +141,34 @@ describe('SupabaseDataSource reads', () => {
       return mkItem(id, 'feed-a', 1, `Big ${i}`);
     });
     tables.items.push(...big);
-    const { ds } = setup(tables);
+    const { ds, fake } = setup(tables);
     const wanted = big.map((r) => r.id).reverse(); // arbitrary order to verify re-sort
     const got = await ds.getItemsByIds(wanted);
     expect(got).toHaveLength(450);
     expect(ids(got)).toEqual(wanted); // input order preserved across chunks
+    expect(fake.selectCount('items')).toBe(3); // ceil(450 / 200) batched requests
+  });
+
+  it('chunks feed-metadata lookups across many feeds', async () => {
+    const tables = seed();
+    const N = 300;
+    for (let i = 0; i < N; i++) {
+      const fid = `mf-${String(i).padStart(3, '0')}`;
+      tables.feeds_public.push({
+        id: fid, site_url: `https://f${i}.example.com`, title: `Feed ${i}`,
+        error_count: 0, last_error: null, last_fetched_at: null,
+        next_fetch_at: null, fetch_interval_s: 1800, created_at: null,
+      });
+      tables.items.push(mkItem(`it-${String(i).padStart(3, '0')}`, fid, 1, `Item ${i}`));
+    }
+    const { ds, fake } = setup(tables);
+    const wanted = Array.from({ length: N }, (_, i) => `it-${String(i).padStart(3, '0')}`);
+    const got = await ds.getItemsByIds(wanted);
+    expect(got).toHaveLength(N);
+    expect(got.every((fi) => fi.feed.id.startsWith('mf-'))).toBe(true);
+    // 300 distinct feeds + 300 ids => ceil(300/200) = 2 batched requests each.
+    expect(fake.selectCount('feeds_public')).toBe(2);
+    expect(fake.selectCount('items')).toBe(2);
   });
 
   it('getItem / getFeed return null for a missing/unauthorized row', async () => {

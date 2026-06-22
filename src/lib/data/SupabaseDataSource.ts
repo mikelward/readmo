@@ -78,6 +78,14 @@ function decodeCursor(cursor: string | null | undefined): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+/** Split an array into bounded batches (keeps `in (…)` request URLs within
+ * server/proxy request-line limits for large id lists). */
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
 /**
  * Live {@link DataSource} backed by Supabase (Postgres + RLS + Edge Functions).
  * THIS PR ships the READ surface + real auth; reads are RLS-gated, so they only
@@ -168,13 +176,9 @@ export class SupabaseDataSource implements DataSource {
     ids: ItemId[],
     feedIds?: FeedId[],
   ): Promise<ItemRow[]> {
-    const chunks: ItemId[][] = [];
-    for (let i = 0; i < ids.length; i += ID_LOOKUP_CHUNK) {
-      chunks.push(ids.slice(i, i + ID_LOOKUP_CHUNK));
-    }
     const batches = await Promise.all(
-      chunks.map(async (chunk) => {
-        let q = this.sb.from('items').select(ITEM_COLS).in('id', chunk);
+      chunk(ids, ID_LOOKUP_CHUNK).map(async (c) => {
+        let q = this.sb.from('items').select(ITEM_COLS).in('id', c);
         if (feedIds) q = q.in('feed_id', feedIds);
         return this.unwrap<ItemRow[]>(await q);
       }),
@@ -185,10 +189,16 @@ export class SupabaseDataSource implements DataSource {
   private async ensureFeeds(ids: FeedId[]): Promise<void> {
     const missing = [...new Set(ids)].filter((id) => !this.feedCache.has(id));
     if (missing.length === 0) return;
-    const rows = this.unwrap<FeedPublicRow[]>(
-      await this.sb.from('feeds_public').select(FEED_COLS).in('id', missing),
+    // Batch the metadata lookup too: a library/search result can span hundreds
+    // of distinct feeds, which would otherwise be one unbounded feeds_public IN.
+    const batches = await Promise.all(
+      chunk(missing, ID_LOOKUP_CHUNK).map(async (c) =>
+        this.unwrap<FeedPublicRow[]>(
+          await this.sb.from('feeds_public').select(FEED_COLS).in('id', c),
+        ),
+      ),
     );
-    for (const row of rows) this.feedCache.set(row.id, mapFeed(row));
+    for (const row of batches.flat()) this.feedCache.set(row.id, mapFeed(row));
   }
 
   /** Map item rows to FeedItems, loading any feeds not already cached. */

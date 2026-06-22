@@ -53,7 +53,11 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
   constructor(
     private readonly table: string,
     private readonly store: FakeTables,
-    private readonly control: { failSelectOnce: Set<string>; ignoreNotIn: boolean },
+    private readonly control: {
+      failSelectOnce: Set<string>;
+      ignoreNotIn: boolean;
+      selectCounts: Map<string, number>;
+    },
   ) {
     this.rows = store[table] ?? [];
   }
@@ -180,6 +184,11 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
       for (const r of this.filtered()) Object.assign(r, this.patch);
       return { data: null, count: null, error: null };
     }
+    // Count select requests per table (lets tests prove `in (…)` chunking).
+    this.control.selectCounts.set(
+      this.table,
+      (this.control.selectCounts.get(this.table) ?? 0) + 1,
+    );
     // One-shot injected failure for the next select on this table.
     if (this.control.failSelectOnce.has(this.table)) {
       this.control.failSelectOnce.delete(this.table);
@@ -219,12 +228,19 @@ export function makeFakeSupabase(tables: FakeTables): {
   /** Make `.not('…','in',…)` a no-op, simulating the server-side exclusion filter
    * being skipped (exclusion set over the cap). */
   ignoreNotInFilter: () => void;
+  /** Number of `select` requests issued against `table` (proves `in (…)`
+   * chunking — N batches => N requests). */
+  selectCount: (table: string) => number;
 } {
   const store: FakeTables = {};
   for (const [k, v] of Object.entries(tables)) store[k] = v.map((r) => ({ ...r }));
   const invokeCalls: InvokeCall[] = [];
   const invokeResult = { current: { data: null as unknown, error: null as unknown } };
-  const control = { failSelectOnce: new Set<string>(), ignoreNotIn: false };
+  const control = {
+    failSelectOnce: new Set<string>(),
+    ignoreNotIn: false,
+    selectCounts: new Map<string, number>(),
+  };
 
   return {
     store,
@@ -234,6 +250,7 @@ export function makeFakeSupabase(tables: FakeTables): {
     ignoreNotInFilter: () => {
       control.ignoreNotIn = true;
     },
+    selectCount: (table: string) => control.selectCounts.get(table) ?? 0,
     client: {
       from: (table: string) => new FakeQuery(table, store, control),
       functions: {
