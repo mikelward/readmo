@@ -390,6 +390,13 @@ loopback/link-local/private/metadata targets and redirects to them.
   32px avatar (OAuth picture, falling back to an initial-on-color disc —
   deterministic, offline, zero requests); tap → popover with name, link to
   settings, "Sign out". Not in the drawer.
+- **Implementation status.** Real Supabase OAuth (Google / GitHub) is wired
+  behind the existing `useAuth` / `getActiveUid` shape: when
+  `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` are present the buttons start
+  the real redirect and the session drives the header chip + per-user cache
+  keying (`getActiveUid` reads the persisted session synchronously at boot);
+  when those env vars are absent the app falls back to the mock demo user so
+  tests and backend-less local dev still work. Apple sign-in stays deferred.
 
 ### Sync (server is the source of truth)
 
@@ -412,6 +419,16 @@ loopback/link-local/private/metadata targets and redirects to them.
   Readmo has a real backend, so the authoritative clock lives there.)
 - Realtime (optional, post-MVP): Supabase Realtime can push `item_state`
   changes to other open sessions. MVP relies on refetch-on-focus + PTR.
+- **Implementation status.** `SupabaseDataSource` (`src/lib/data/`) implements
+  the **read** surface against Postgres + RLS + the `feeds_public` view (feed
+  aggregates with pinned-first ordering and Done/Hidden filtering, item/library
+  reads, search, subscriptions/folders) plus the `discover`/`refresh` Edge
+  Function calls; item state is hydrated from the server into the shared
+  `ItemStateStore` so ordering matches the mock. Still deferred (next item): the
+  privileged **write** path through the `subscribe_to_feed` / `set_item_state`
+  RPCs, the optimistic write-through + offline outbox + version reconciliation
+  above, and swapping `main.tsx` from `MockDataSource` to the live source. The
+  app keeps booting on the mock until that write path lands.
 
 ---
 
@@ -682,10 +699,10 @@ keys differ; the strategies map one-to-one:
   `CACHE_BUSTER` bump). The outbox is per-user, flushed-or-discarded on
   sign-out. The one place Readmo must be stricter than newshacker, which never
   had multiple identities or private content on a device.
-- **On-device storage surfaces (PR1 mock).** Until the IndexedDB/auth backend
-  lands, the client keys these `localStorage` surfaces by the signed-in user id
-  (the mock uid; `auth.uid()` in PR2), falling back to the unscoped base key
-  when signed out:
+- **On-device storage surfaces.** Until the IndexedDB move lands, the client
+  keys these `localStorage` surfaces by the signed-in user id — the real
+  `auth.uid()` when Supabase is configured, the mock uid otherwise — falling
+  back to the unscoped base key when signed out:
   - `readmo:rq-cache:<uid>` — persisted React Query blob.
   - `readmo:item-state:<uid>` — per-item triage state (pinned/favorite/…).
   - `readmo:last-uid` — the uid that last booted (sentinel; `''` when signed

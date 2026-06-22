@@ -148,6 +148,27 @@ export class ItemStateStore {
     );
   }
 
+  /** Overlay authoritative server state onto the local store, keeping the
+   * higher `version` per item so an in-flight optimistic bump isn't clobbered by
+   * a stale server row (and vice-versa). Used by SupabaseDataSource after
+   * fetching the caller's item_state rows. Persists + notifies once. */
+  hydrate(rows: Array<[ItemId, ItemState]>): void {
+    if (rows.length === 0) return;
+    let changed = false;
+    const next = { ...this.map };
+    for (const [id, incoming] of rows) {
+      const cur = next[id];
+      if (!cur || incoming.version >= cur.version) {
+        next[id] = incoming;
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    this.map = next;
+    this.persistence.save(this.map);
+    this.emit();
+  }
+
   set(
     id: ItemId,
     field: ItemStateField,
