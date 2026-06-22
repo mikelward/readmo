@@ -112,6 +112,12 @@ Everything else about the visual system mirrors newshacker.
   motif, in our ink-on-paper palette). The same mark renders inline before
   the **readmo** wordmark in the app header. Generate the icon set once
   (`scripts/generate-icons.mjs`) into `public/`.
+- **App header layout:** three slots in a single sticky row. The drawer
+  toggle is pinned to the viewport's left edge and the account chip to the
+  viewport's right edge so both stay reachable at any width; the centered
+  inner (brand mark + wordmark, Offline pill, Search) keeps the 720px
+  article column max-width so it aligns with the list below. Safe-area
+  insets reserve space for landscape-iPhone notches on the edge controls.
 - **Dark mode:** full light/dark/system via tokens.
 - Icons inlined monochrome SVG (Material Symbols, `fill="currentColor"`), no
   icon font / runtime request.

@@ -2,13 +2,35 @@
   position: sticky;
   top: 0;
   z-index: 20;
+  display: flex;
+  align-items: center;
   height: var(--rm-header-h);
   background: var(--rm-bg-card);
   border-bottom: 1px solid var(--rm-border);
   padding-top: env(safe-area-inset-top);
 }
 
+/* Edge controls (drawer toggle on the left, account chip on the right) hug
+ * the viewport edges so they're reachable on wide screens without forcing
+ * the brand row to widen with them. Safe-area insets keep them clear of
+ * notches on landscape iPhones. */
+.app-header__edge {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.app-header__edge--left {
+  margin-left: max(8px, env(safe-area-inset-left));
+}
+
+.app-header__edge--right {
+  margin-right: max(8px, env(safe-area-inset-right));
+}
+
 .app-header__inner {
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -16,6 +38,7 @@
   max-width: 720px;
   margin: 0 auto;
   padding: 0 8px;
+  min-width: 0;
 }
 
 .app-header__icon-btn {
