@@ -46,6 +46,11 @@ const RETRY_MAX_MS = 60_000;
 export class ItemStateOutbox {
   // Pending merged changes per item, in insertion order (Map preserves it).
   private readonly queue = new Map<ItemId, ChangedFields>();
+  // Entries whose send() is awaiting a response: removed from `queue` so a
+  // concurrent enqueue re-adds cleanly, but still reported as pending so a
+  // hydrate racing the in-flight write doesn't treat the optimistic local row as
+  // synced and wipe/overwrite it.
+  private readonly inFlight = new Map<ItemId, ChangedFields>();
   private draining = false;
   // Set when a fresh enqueue arrives mid-drain — distinct from an item left
   // queued by a transient failure, so re-entrant work re-flushes at once while
@@ -67,9 +72,21 @@ export class ItemStateOutbox {
     for (const e of this.persistence.load()) this.queue.set(e.id, e.changed);
   }
 
-  /** Ids with an un-synced pending write. */
+  /** Merged un-synced changed-fields per item — both queued and in-flight
+   * writes — so hydrate can overlay exactly the pending fields onto server
+   * truth. Queued (newer) values win per field over an in-flight send. */
+  pendingChanges(): Map<ItemId, ChangedFields> {
+    const out = new Map<ItemId, ChangedFields>();
+    for (const [id, changed] of this.inFlight) out.set(id, { ...changed });
+    for (const [id, changed] of this.queue) {
+      out.set(id, { ...out.get(id), ...changed });
+    }
+    return out;
+  }
+
+  /** Ids with an un-synced pending write (queued or in flight). */
   pendingIds(): ItemId[] {
-    return [...this.queue.keys()];
+    return [...this.pendingChanges().keys()];
   }
 
   /** Queue a mutation (merging into any pending entry for the item) and kick a
@@ -95,13 +112,18 @@ export class ItemStateOutbox {
         if (!changed) continue;
         // Take the entry before sending. A concurrent enqueue during the await
         // re-adds the item with the newer fields, so coalescing never loses the
-        // latest action (and we never clear a field that changed mid-flight).
+        // latest action (and we never clear a field that changed mid-flight). The
+        // entry stays visible via `inFlight` so it's still reported as pending
+        // until the send resolves.
         this.queue.delete(id);
+        this.inFlight.set(id, changed);
         let result: SendResult;
         try {
           result = await this.send(id, changed);
         } catch {
           result = { ok: false, permanent: false }; // network error → transient
+        } finally {
+          this.inFlight.delete(id);
         }
         if (!result.ok && !result.permanent) {
           // Transient: requeue, letting any newer enqueue (arrived during send)

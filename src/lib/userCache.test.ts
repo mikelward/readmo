@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearUserCaches,
   itemStateKey,
+  outboxKey,
   reconcileUserCachesOnBoot,
   rqCacheKey,
 } from './userCache';
@@ -12,6 +13,9 @@ describe('cache key derivation', () => {
     expect(rqCacheKey(null)).toBe('readmo:rq-cache');
     expect(itemStateKey('u1')).toBe('readmo:item-state:u1');
     expect(itemStateKey(null)).toBe('readmo:item-state');
+    // The outbox key must match SupabaseDataSource's `${stateKey}:outbox`.
+    expect(outboxKey('u1')).toBe('readmo:item-state:u1:outbox');
+    expect(outboxKey(null)).toBe('readmo:item-state:outbox');
   });
 });
 
@@ -22,7 +26,9 @@ describe('clearUserCaches', () => {
   it("removes the user's keyed stores and deletes the named Workbox caches", async () => {
     window.localStorage.setItem(rqCacheKey('u1'), 'blob');
     window.localStorage.setItem(itemStateKey('u1'), 'state');
+    window.localStorage.setItem(outboxKey('u1'), 'queued-writes');
     window.localStorage.setItem(rqCacheKey('u2'), 'keep'); // another user's data
+    window.localStorage.setItem(outboxKey('u2'), 'keep'); // another user's outbox
 
     const del = vi.fn().mockResolvedValue(true);
     vi.stubGlobal('caches', { delete: del });
@@ -31,8 +37,11 @@ describe('clearUserCaches', () => {
 
     expect(window.localStorage.getItem(rqCacheKey('u1'))).toBeNull();
     expect(window.localStorage.getItem(itemStateKey('u1'))).toBeNull();
+    // The departing user's queued offline writes are purged too.
+    expect(window.localStorage.getItem(outboxKey('u1'))).toBeNull();
     // A different user's persisted data is untouched.
     expect(window.localStorage.getItem(rqCacheKey('u2'))).toBe('keep');
+    expect(window.localStorage.getItem(outboxKey('u2'))).toBe('keep');
     expect(del).toHaveBeenCalledWith('readmo-data');
     expect(del).toHaveBeenCalledWith('readmo-images');
     expect(del).toHaveBeenCalledWith('readmo-favicons');

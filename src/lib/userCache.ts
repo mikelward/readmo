@@ -9,6 +9,11 @@
 
 const RQ_CACHE_BASE = 'readmo:rq-cache';
 const ITEM_STATE_BASE = 'readmo:item-state';
+// Suffix SupabaseDataSource appends to the item-state key for its offline write
+// outbox. Defined here so clearUserCaches purges queued mutations with the rest
+// of a departing user's data (SPEC/AGENTS: the outbox is flushed-or-discarded on
+// sign-out — leaving it would replay one user's writes under another's scope).
+export const OUTBOX_SUFFIX = ':outbox';
 // The uid that last booted the app, so a boot can detect an account switch that
 // completed via a full-page redirect/reload (no in-tab transition observed).
 const LAST_UID_KEY = 'readmo:last-uid';
@@ -31,6 +36,11 @@ export function itemStateKey(uid: string | null): string {
   return uid ? `${ITEM_STATE_BASE}:${uid}` : ITEM_STATE_BASE;
 }
 
+/** Offline item-state outbox key for a user (item-state key + suffix). */
+export function outboxKey(uid: string | null): string {
+  return `${itemStateKey(uid)}${OUTBOX_SUFFIX}`;
+}
+
 /**
  * Purge a user's persisted, on-device data: their keyed React-Query blob and
  * item-state store, plus the named Workbox runtime caches. Best-effort and
@@ -41,6 +51,7 @@ export async function clearUserCaches(uid: string | null): Promise<void> {
   try {
     window.localStorage.removeItem(rqCacheKey(uid));
     window.localStorage.removeItem(itemStateKey(uid));
+    window.localStorage.removeItem(outboxKey(uid));
   } catch {
     // ignore (storage unavailable/denied)
   }

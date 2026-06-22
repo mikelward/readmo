@@ -208,7 +208,7 @@ describe('ItemStateStore', () => {
       const store = new ItemStateStore(memoryPersistence());
       store.set('a', 'pinned', true);
       // Server says a is done (not pinned); a has no pending write → server wins.
-      store.hydrate([['a', srv({ done: true, version: 9 })]], []);
+      store.hydrate([['a', srv({ done: true, version: 9 })]], new Map());
       expect(store.get('a').pinned).toBe(false);
       expect(store.get('a').done).toBe(true);
     });
@@ -216,14 +216,15 @@ describe('ItemStateStore', () => {
     it('drops local-only rows the server omits when not pending', () => {
       const store = new ItemStateStore(memoryPersistence());
       store.set('a', 'pinned', true);
-      store.hydrate([], []); // server has no rows for this user, nothing pending
+      store.hydrate([], new Map()); // server has no rows, nothing pending
       expect(store.get('a')).toEqual(DEFAULT_ITEM_STATE); // cleared
     });
 
     it('preserves a pending local row the server has not yet got', () => {
       const store = new ItemStateStore(memoryPersistence());
       store.set('a', 'pinned', true); // optimistic, still in flight
-      store.hydrate([], ['a']); // a is pending → keep the optimistic pin
+      // a is pending → keep the optimistic pin.
+      store.hydrate([], new Map([['a', { pinned: true }]]));
       expect(store.get('a').pinned).toBe(true);
     });
 
@@ -231,8 +232,23 @@ describe('ItemStateStore', () => {
       const store = new ItemStateStore(memoryPersistence());
       store.set('a', 'pinned', true);
       // Server still shows the pre-write (unpinned) row, but a is pending.
-      store.hydrate([['a', srv({ pinned: false, version: 2 })]], ['a']);
+      store.hydrate(
+        [['a', srv({ pinned: false, version: 2 })]],
+        new Map([['a', { pinned: true }]]),
+      );
       expect(store.get('a').pinned).toBe(true);
+    });
+
+    it('adopts an independent server field while keeping the pending one', () => {
+      const store = new ItemStateStore(memoryPersistence());
+      store.set('a', 'pinned', true); // local pending write: pinned
+      // Server hasn't got the pin yet, but another device favorited a.
+      store.hydrate(
+        [['a', srv({ pinned: false, favorite: true, version: 3 })]],
+        new Map([['a', { pinned: true }]]),
+      );
+      expect(store.get('a').pinned).toBe(true); // pending field preserved
+      expect(store.get('a').favorite).toBe(true); // independent server field adopted
     });
   });
 });
