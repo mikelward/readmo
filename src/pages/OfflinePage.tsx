@@ -4,6 +4,7 @@ import { useStateBucket } from '../hooks/useItemState';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useShareItem } from '../hooks/useShareItem';
 import { ItemRow } from '../components/ItemRow';
+import { ListToolbar } from '../components/ListToolbar';
 import './PageHeader.css';
 import '../components/ItemList.css';
 
@@ -45,6 +46,7 @@ export function OfflinePage() {
           ))}
         </ul>
       )}
+      <ListToolbar placement="bottom" actions={false} />
     </div>
   );
 }
