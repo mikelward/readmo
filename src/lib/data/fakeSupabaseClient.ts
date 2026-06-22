@@ -214,9 +214,80 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
   }
 }
 
+/** Emulate the feed_items / pinned_feed_items RPCs (0006_feed_rpcs.sql) against
+ * the seeded tables: drive from subscriptions, LEFT JOIN item_state, order by
+ * sort_at (= published_at ?? created_at), exclude Done/Hidden/Pinned from the
+ * body, and surface Pinned (oldest-first) for the prepend. */
+function runRpc(
+  store: FakeTables,
+  name: string,
+  params: Record<string, unknown>,
+): { data: unknown; error: unknown } {
+  const items = store.items ?? [];
+  const subs = store.subscriptions ?? [];
+  const states = store.item_state ?? [];
+  const subByFeed = new Map(subs.map((s) => [s.feed_id, s]));
+  const stateByItem = new Map(states.map((s) => [s.item_id, s]));
+
+  const scope = params.p_scope as string;
+  const folder = (params.p_folder ?? null) as string | null;
+  const feedId = (params.p_feed_id ?? null) as string | null;
+
+  const inScope = (feed_id: unknown): boolean => {
+    const s = subByFeed.get(feed_id as string);
+    if (!s) return false;
+    if (scope === 'home') return !s.muted;
+    if (scope === 'folder') return !s.muted && (s.folder ?? null) === folder;
+    if (scope === 'feed') return feed_id === feedId;
+    return false;
+  };
+  const sortMs = (it: Row) =>
+    Date.parse(String(it.published_at ?? it.created_at ?? '')) || 0;
+  const idCmp = (a: Row, b: Row, dir: 1 | -1) => {
+    const av = String(a.id);
+    const bv = String(b.id);
+    return av < bv ? -dir : av > bv ? dir : 0;
+  };
+
+  if (name === 'feed_items') {
+    const limit = Math.max(Number(params.p_limit ?? 30), 0);
+    const offset = Math.max(Number(params.p_offset ?? 0), 0);
+    const filtered = items
+      .filter((it) => {
+        if (!inScope(it.feed_id)) return false;
+        const st = stateByItem.get(it.id as string);
+        return !(st && (st.pinned || st.done || st.hidden));
+      })
+      .sort((a, b) => sortMs(b) - sortMs(a) || idCmp(a, b, -1)); // sort_at desc, id desc
+    const total = filtered.length;
+    return {
+      data: filtered
+        .slice(offset, offset + limit)
+        .map((it) => ({ item: it, total_count: total })),
+      error: null,
+    };
+  }
+  if (name === 'pinned_feed_items') {
+    const pinAt = (it: Row) => {
+      const st = stateByItem.get(it.id as string);
+      return st?.pinned_at ? Date.parse(String(st.pinned_at)) : Infinity; // nulls last
+    };
+    const pinned = items
+      .filter((it) => {
+        if (!inScope(it.feed_id)) return false;
+        const st = stateByItem.get(it.id as string);
+        return Boolean(st && st.pinned);
+      })
+      .sort((a, b) => pinAt(a) - pinAt(b) || idCmp(a, b, 1)); // pinned_at asc, id asc
+    return { data: pinned, error: null };
+  }
+  return { data: null, error: { message: `unknown rpc ${name}` } };
+}
+
 export function makeFakeSupabase(tables: FakeTables): {
   client: {
     from: (table: string) => FakeQuery;
+    rpc: (name: string, params?: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }>;
     functions: { invoke: (name: string, opts?: { body?: unknown }) => Promise<{ data: unknown; error: unknown }> };
   };
   store: FakeTables;
@@ -253,6 +324,12 @@ export function makeFakeSupabase(tables: FakeTables): {
     selectCount: (table: string) => control.selectCounts.get(table) ?? 0,
     client: {
       from: (table: string) => new FakeQuery(table, store, control),
+      rpc: (name: string, params?: Record<string, unknown>) => ({
+        then: <R1, R2>(
+          onF?: ((v: { data: unknown; error: unknown }) => R1 | PromiseLike<R1>) | null,
+          onR?: ((reason: unknown) => R2 | PromiseLike<R2>) | null,
+        ) => Promise.resolve(runRpc(store, name, params ?? {})).then(onF, onR),
+      }),
       functions: {
         invoke: async (name: string, opts?: { body?: unknown }) => {
           invokeCalls.push({ name, body: opts?.body });
