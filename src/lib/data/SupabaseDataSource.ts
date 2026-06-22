@@ -111,6 +111,21 @@ export class SupabaseDataSource implements DataSource {
   constructor(stateKey = 'readmo:item-state', client?: SupabaseClient) {
     this.sb = client ?? getSupabase();
     this.stateStore = new ItemStateStore(localStoragePersistence(stateKey));
+    // Write-through: persist each optimistic triage mutation to the server via
+    // the set_item_state RPC (0004), so a subsequent feed/library refetch — which
+    // reads server truth through feed_items — reflects it instead of resurfacing
+    // a locally hidden/done item or leaving a newly-pinned one in the body. The
+    // store stays the optimistic local mirror for instant UI. (Offline outbox +
+    // version reconciliation + rollback-on-error are the remaining write-path
+    // refinements; a failed write currently just leaves the local value until the
+    // next hydrate reconciles by version.)
+    this.stateStore.setMutationSink((id, field, value) => {
+      void this.sb
+        .rpc('set_item_state', { p_item_id: id, [`p_${field}`]: value })
+        .then(({ error }) => {
+          if (error) this.hydration = null; // force a fresh server reconcile next read
+        });
+    });
     // Kick off item_state hydration at boot so the library routes (/pinned,
     // /favorites, …), which derive their ids from the store, populate even when
     // no feed view has run yet. ensureHydrated is memoized; when the rows land
@@ -223,13 +238,14 @@ export class SupabaseDataSource implements DataSource {
   }
 
   /**
-   * Shared feed-view read, fully server-side via the `feed_items` /
-   * `pinned_feed_items` RPCs (0006_feed_rpcs.sql). The RPC drives from the
-   * caller's `subscriptions` → `items` and LEFT JOINs `item_state` (scoped to
-   * `auth.uid()`), so the body is newest-first by `sort_at` with Done/Hidden/
-   * Pinned excluded and Pinned lifted to the top — all in Postgres. This avoids
-   * sending every subscribed `feed_id` (or the Pinned/Done/Hidden exclusion
-   * list) in one request URL, which is the scale limit the client-side join hit.
+   * Shared feed-view read, fully server-side via the `feed_items` RPC
+   * (0006_feed_rpcs.sql). The RPC drives from the caller's `subscriptions` →
+   * `items` and LEFT JOINs `item_state` (scoped to `auth.uid()`) and returns one
+   * combined, already-paged sequence: Pinned first (oldest-first), then the body
+   * (newest-first by `sort_at`, Done/Hidden excluded). Because it pages the
+   * *combined* sequence, each page holds at most `limit` rows (matching the
+   * mock), and the client never sends an unbounded `feed_id`/exclusion `IN (…)`.
+   * `total_count` is a window count carried on every row.
    */
   private async feedView(
     args: { p_scope: 'home' | 'folder' | 'feed'; p_folder: string | null; p_feed_id: FeedId | null },
@@ -238,28 +254,17 @@ export class SupabaseDataSource implements DataSource {
     const limit = opts?.limit ?? PAGE_SIZE;
     const offset = decodeCursor(opts?.cursor);
 
-    // Body: paginated, newest-first, Done/Hidden/Pinned already filtered out.
-    // total_count is a window count returned on every row (same for all).
-    const bodyRows = this.unwrap<Array<{ item: ItemRow; total_count: number }>>(
+    const rows = this.unwrap<Array<{ item: ItemRow; total_count: number }>>(
       await this.sb.rpc('feed_items', { ...args, p_limit: limit, p_offset: offset }),
     );
-    const bodyTotal = bodyRows.length > 0 ? Number(bodyRows[0].total_count) : 0;
-    const body = await this.resolveFeedItems(bodyRows.map((r) => r.item));
-
-    // Pinned prepend (page 1 only), oldest-pinned first, scoped to this view.
-    let pinned: FeedItem[] = [];
-    if (offset === 0) {
-      const pinnedRows = this.unwrap<ItemRow[]>(
-        await this.sb.rpc('pinned_feed_items', args),
-      );
-      pinned = await this.resolveFeedItems(pinnedRows);
-    }
+    const total = rows.length > 0 ? Number(rows[0].total_count) : 0;
+    const items = await this.resolveFeedItems(rows.map((r) => r.item));
 
     const nextOffset = offset + limit;
     return {
-      items: [...pinned, ...body],
-      total: bodyTotal + (offset === 0 ? pinned.length : 0),
-      nextCursor: nextOffset < bodyTotal ? String(nextOffset) : null,
+      items,
+      total,
+      nextCursor: nextOffset < total ? String(nextOffset) : null,
     };
   }
 

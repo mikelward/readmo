@@ -214,25 +214,49 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
   }
 }
 
-/** Emulate the feed_items / pinned_feed_items RPCs (0006_feed_rpcs.sql) against
- * the seeded tables: drive from subscriptions, LEFT JOIN item_state, order by
- * sort_at (= published_at ?? created_at), exclude Done/Hidden/Pinned from the
- * body, and surface Pinned (oldest-first) for the prepend. */
+/** Emulate the RPCs (0006_feed_rpcs.sql + set_item_state) against the seeded
+ * tables: drive from subscriptions, LEFT JOIN item_state, build the combined
+ * Pinned-then-body sequence ordered like the SQL, and page it. set_item_state
+ * upserts store.item_state so a write-through is visible to later reads. */
 function runRpc(
   store: FakeTables,
+  rpcCalls: Array<{ name: string; params: Record<string, unknown> }>,
   name: string,
   params: Record<string, unknown>,
 ): { data: unknown; error: unknown } {
+  rpcCalls.push({ name, params });
   const items = store.items ?? [];
   const subs = store.subscriptions ?? [];
-  const states = store.item_state ?? [];
+  const states = (store.item_state ??= []);
   const subByFeed = new Map(subs.map((s) => [s.feed_id, s]));
   const stateByItem = new Map(states.map((s) => [s.item_id, s]));
+
+  if (name === 'set_item_state') {
+    const itemId = params.p_item_id as string;
+    const fields = ['pinned', 'favorite', 'done', 'hidden', 'opened'] as const;
+    let row = stateByItem.get(itemId);
+    if (!row) {
+      row = { item_id: itemId, pinned: false, favorite: false, done: false, hidden: false, opened: false };
+      states.push(row);
+    }
+    for (const f of fields) {
+      const v = params[`p_${f}`];
+      if (typeof v === 'boolean') {
+        row[f] = v;
+        row[`${f}_at`] = v ? new Date().toISOString() : null;
+      }
+    }
+    // Mirror the pin exclusivity the DB trigger enforces.
+    if (params.p_pinned === true) {
+      row.done = false;
+      row.hidden = false;
+    }
+    return { data: row, error: null };
+  }
 
   const scope = params.p_scope as string;
   const folder = (params.p_folder ?? null) as string | null;
   const feedId = (params.p_feed_id ?? null) as string | null;
-
   const inScope = (feed_id: unknown): boolean => {
     const s = subByFeed.get(feed_id as string);
     if (!s) return false;
@@ -243,43 +267,33 @@ function runRpc(
   };
   const sortMs = (it: Row) =>
     Date.parse(String(it.published_at ?? it.created_at ?? '')) || 0;
-  const idCmp = (a: Row, b: Row, dir: 1 | -1) => {
-    const av = String(a.id);
-    const bv = String(b.id);
-    return av < bv ? -dir : av > bv ? dir : 0;
+  const pinMs = (it: Row) => {
+    const st = stateByItem.get(it.id as string);
+    return st?.pinned_at ? Date.parse(String(st.pinned_at)) : Infinity;
   };
+  const idDesc = (a: Row, b: Row) => (String(a.id) < String(b.id) ? 1 : String(a.id) > String(b.id) ? -1 : 0);
 
   if (name === 'feed_items') {
     const limit = Math.max(Number(params.p_limit ?? 30), 0);
     const offset = Math.max(Number(params.p_offset ?? 0), 0);
-    const filtered = items
+    const scoped = items.filter((it) => inScope(it.feed_id));
+    const pinned = scoped
+      .filter((it) => stateByItem.get(it.id as string)?.pinned)
+      .sort((a, b) => pinMs(a) - pinMs(b) || idDesc(a, b)); // section 0: pinned_at asc
+    const body = scoped
       .filter((it) => {
-        if (!inScope(it.feed_id)) return false;
         const st = stateByItem.get(it.id as string);
         return !(st && (st.pinned || st.done || st.hidden));
       })
-      .sort((a, b) => sortMs(b) - sortMs(a) || idCmp(a, b, -1)); // sort_at desc, id desc
-    const total = filtered.length;
+      .sort((a, b) => sortMs(b) - sortMs(a) || idDesc(a, b)); // section 1: sort_at desc
+    const combined = [...pinned, ...body];
+    const total = combined.length;
     return {
-      data: filtered
+      data: combined
         .slice(offset, offset + limit)
         .map((it) => ({ item: it, total_count: total })),
       error: null,
     };
-  }
-  if (name === 'pinned_feed_items') {
-    const pinAt = (it: Row) => {
-      const st = stateByItem.get(it.id as string);
-      return st?.pinned_at ? Date.parse(String(st.pinned_at)) : Infinity; // nulls last
-    };
-    const pinned = items
-      .filter((it) => {
-        if (!inScope(it.feed_id)) return false;
-        const st = stateByItem.get(it.id as string);
-        return Boolean(st && st.pinned);
-      })
-      .sort((a, b) => pinAt(a) - pinAt(b) || idCmp(a, b, 1)); // pinned_at asc, id asc
-    return { data: pinned, error: null };
   }
   return { data: null, error: { message: `unknown rpc ${name}` } };
 }
@@ -302,10 +316,13 @@ export function makeFakeSupabase(tables: FakeTables): {
   /** Number of `select` requests issued against `table` (proves `in (…)`
    * chunking — N batches => N requests). */
   selectCount: (table: string) => number;
+  /** Every `.rpc(name, params)` call, in order (for asserting write-through). */
+  rpcCalls: Array<{ name: string; params: Record<string, unknown> }>;
 } {
   const store: FakeTables = {};
   for (const [k, v] of Object.entries(tables)) store[k] = v.map((r) => ({ ...r }));
   const invokeCalls: InvokeCall[] = [];
+  const rpcCalls: Array<{ name: string; params: Record<string, unknown> }> = [];
   const invokeResult = { current: { data: null as unknown, error: null as unknown } };
   const control = {
     failSelectOnce: new Set<string>(),
@@ -316,6 +333,7 @@ export function makeFakeSupabase(tables: FakeTables): {
   return {
     store,
     invokeCalls,
+    rpcCalls,
     invokeResult,
     failSelectOnce: (table: string) => control.failSelectOnce.add(table),
     ignoreNotInFilter: () => {
@@ -328,7 +346,7 @@ export function makeFakeSupabase(tables: FakeTables): {
         then: <R1, R2>(
           onF?: ((v: { data: unknown; error: unknown }) => R1 | PromiseLike<R1>) | null,
           onR?: ((reason: unknown) => R2 | PromiseLike<R2>) | null,
-        ) => Promise.resolve(runRpc(store, name, params ?? {})).then(onF, onR),
+        ) => Promise.resolve(runRpc(store, rpcCalls, name, params ?? {})).then(onF, onR),
       }),
       functions: {
         invoke: async (name: string, opts?: { body?: unknown }) => {

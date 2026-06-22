@@ -425,21 +425,24 @@ loopback/link-local/private/metadata targets and redirects to them.
   changes to other open sessions. MVP relies on refetch-on-focus + PTR.
 - **Implementation status.** `SupabaseDataSource` (`src/lib/data/`) implements
   the **read** surface against Postgres + RLS. Home/folder/feed reads run through
-  the server-side `feed_items` / `pinned_feed_items` RPCs (`0006_feed_rpcs.sql`),
-  which drive from `subscriptions` → `items` and LEFT JOIN `item_state` (scoped
-  to `auth.uid()`) — newest-first by `sort_at`, Done/Hidden/Pinned filtered,
-  Pinned prepended — so the client never sends an unbounded `feed_id`/exclusion
-  `IN (…)` list. Item/library reads (`feeds_public`, chunked id lookups), search,
-  subscriptions/folders, and the `discover`/`refresh` Edge Function calls round
-  it out; item state is hydrated from the server into the shared `ItemStateStore`
-  so the optimistic UI layer matches the mock. Still deferred (next item): the
-  privileged **write** path through the `subscribe_to_feed` / `set_item_state`
-  RPCs, the optimistic write-through + offline outbox + version reconciliation
-  above, and swapping `main.tsx` from `MockDataSource` to the live source. The
-  app keeps booting on the mock until that write path lands. Also deferred: an
-  **authenticated OPML-export RPC** — the client can't emit real feed fetch URLs
-  (`feeds_public` exposes only `site_url`, never `url`/`secret_url`), so live
-  `exportOpml` carries homepage URLs until a server-side export exists.
+  the server-side `feed_items` RPC (`0006_feed_rpcs.sql`), which drives from
+  `subscriptions` → `items` and LEFT JOINs `item_state` (scoped to `auth.uid()`)
+  and returns one combined, already-paged sequence — Pinned first (oldest-first),
+  then the body newest-first by `sort_at` with Done/Hidden excluded — so each page
+  is bounded to the page size and the client never sends an unbounded
+  `feed_id`/exclusion `IN (…)` list. Item/library reads (`feeds_public`, chunked
+  id lookups), search, subscriptions/folders, and the `discover`/`refresh` Edge
+  Function calls round it out; item state is hydrated from the server into the
+  shared `ItemStateStore`. Triage writes go through the `set_item_state` RPC: the
+  store applies the mutation optimistically (instant UI) and writes through, so a
+  subsequent feed refetch reflects it. Still deferred (next item): the
+  `subscribe_to_feed` write path (subscribe / OPML import / parked-feed retry),
+  the offline mutation outbox + version-based reconciliation/rollback, and
+  swapping `main.tsx` from `MockDataSource` to the live source — the app keeps
+  booting on the mock until then. Also deferred: an **authenticated OPML-export
+  RPC** — the client can't emit real feed fetch URLs (`feeds_public` exposes only
+  `site_url`, never `url`/`secret_url`), so live `exportOpml` carries homepage
+  URLs until a server-side export exists.
 
 ---
 

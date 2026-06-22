@@ -90,14 +90,21 @@ describe('SupabaseDataSource reads', () => {
     expect(ids(page.items)).toEqual(['i2', 'i6']); // feed-a only; i1 hidden
   });
 
-  it('paginates the body with an opaque cursor (pinned only on page 1)', async () => {
+  it('pages the COMBINED pinned+body sequence, bounded to limit per page', async () => {
+    // Combined order is [i2 (pinned), i6, i3 (body, newest-first)]; each page
+    // holds at most `limit` rows (pinned no longer dumped wholesale on page 1).
     const p1 = await env.ds.getHomeItems({ limit: 1 });
-    expect(ids(p1.items)).toEqual(['i2', 'i6']); // pinned + 1 body row
+    expect(ids(p1.items)).toEqual(['i2']);
+    expect(p1.total).toBe(3);
     expect(p1.nextCursor).toBe('1');
 
     const p2 = await env.ds.getHomeItems({ limit: 1, cursor: p1.nextCursor });
-    expect(ids(p2.items)).toEqual(['i3']); // no pinned prepend on page 2
-    expect(p2.nextCursor).toBeNull();
+    expect(ids(p2.items)).toEqual(['i6']);
+    expect(p2.nextCursor).toBe('2');
+
+    const p3 = await env.ds.getHomeItems({ limit: 1, cursor: p2.nextCursor });
+    expect(ids(p3.items)).toEqual(['i3']);
+    expect(p3.nextCursor).toBeNull();
   });
 
   it('orders undated items by the created_at fallback (sort_at)', async () => {
@@ -201,6 +208,23 @@ describe('SupabaseDataSource reads', () => {
 });
 
 describe('SupabaseDataSource dispatch + writes', () => {
+  it('writes item-state mutations through the set_item_state RPC', async () => {
+    const env = setup();
+    await env.ds.getHomeItems(); // hydrate
+
+    // Hiding i6 locally writes through to the server...
+    env.ds.stateStore.set('i6', 'hidden', true);
+    await Promise.resolve();
+    expect(env.fake.rpcCalls).toContainEqual({
+      name: 'set_item_state',
+      params: { p_item_id: 'i6', p_hidden: true },
+    });
+
+    // ...so the next feed read (server truth via feed_items) no longer surfaces it.
+    const page = await env.ds.getHomeItems();
+    expect(ids(page.items)).not.toContain('i6');
+  });
+
   it('discover invokes the edge function and maps candidates', async () => {
     const env = setup();
     env.fake.invokeResult.current = {
