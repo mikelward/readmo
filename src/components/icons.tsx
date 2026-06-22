@@ -152,6 +152,16 @@ export function ArrowBack(props: IconProps) {
   );
 }
 
+// ---- Back to top (vertical_align_top) -------------------------------------
+
+export function VerticalAlignTop(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M240-760v-80h480v80H240Zm200 640v-446L336-462l-56-58 200-200 200 200-56 58-104-104v446h-80Z" />
+    </MaterialIcon>
+  );
+}
+
 // ---- More (more_vert) -----------------------------------------------------
 
 export function MoreVert(props: IconProps) {

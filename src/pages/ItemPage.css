@@ -81,10 +81,6 @@
   background: var(--rm-accent);
 }
 
-.reader__bottombar .reader__action--primary {
-  flex: 1 1 auto;
-}
-
 .reader__action--active {
   color: var(--rm-accent);
 }
@@ -114,6 +110,12 @@
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2);
   padding: 4px;
   z-index: 40;
+}
+
+/* In the bottom bar the menu opens upward so it isn't clipped off-screen. */
+.reader__more-menu--up {
+  top: auto;
+  bottom: calc(100% + 4px);
 }
 
 .reader__more-item {

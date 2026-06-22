@@ -7,6 +7,7 @@ import { useWideViewport } from '../hooks/useWideViewport';
 import { useShareItem } from '../hooks/useShareItem';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { formatAge, formatDisplayDomain, isSafeHttpUrl } from '../lib/itemMeta';
+import type { Feed, Item, ItemState, ItemStateField } from '../lib/types';
 import { TooltipButton } from '../components/TooltipButton';
 import {
   ArrowBack,
@@ -19,8 +20,193 @@ import {
   PushPinFilled,
   PushPinOutline,
   Share as ShareIcon,
+  VerticalAlignTop,
 } from '../components/icons';
 import './ItemPage.css';
+
+interface ReaderToolbarProps {
+  /** Where the bar sits. The bottom copy suffixes its test ids so the two
+   * toolbars don't collide. */
+  placement: 'top' | 'bottom';
+  item: Item;
+  feed: Feed;
+  state: ItemState;
+  wide: boolean;
+  onBack: () => void;
+  openOriginal: () => void;
+  toggle: (field: ItemStateField) => void;
+  set: (field: ItemStateField, value: boolean) => void;
+  markDone: () => void;
+  share: (item: { title: string; url: string }) => void;
+}
+
+function ReaderToolbar({
+  placement,
+  item,
+  feed,
+  state,
+  wide,
+  onBack,
+  openOriginal,
+  toggle,
+  set,
+  markDone,
+  share,
+}: ReaderToolbarProps) {
+  const [moreOpen, setMoreOpen] = useState(false);
+  const sfx = placement === 'bottom' ? '-bottom' : '';
+
+  return (
+    <div className={`reader__${placement}bar`}>
+      {placement === 'bottom' ? (
+        <button
+          type="button"
+          className="reader__back"
+          aria-label="Back to top"
+          data-testid="reader-back-to-top"
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+        >
+          <VerticalAlignTop />
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="reader__back"
+          aria-label="Back"
+          onClick={onBack}
+        >
+          <ArrowBack />
+        </button>
+      )}
+
+      <div className="reader__actions" role="toolbar" aria-label="Article actions">
+        <TooltipButton
+          type="button"
+          className="reader__action reader__action--primary"
+          tooltip="Open original"
+          aria-label="Open original article"
+          onClick={openOriginal}
+          data-testid={`open-original${sfx}`}
+        >
+          <OpenInNew />
+          <span className="reader__action-label">Open original</span>
+        </TooltipButton>
+
+        <TooltipButton
+          type="button"
+          className={'reader__action' + (state.pinned ? ' reader__action--active' : '')}
+          tooltip={state.pinned ? 'Unpin' : 'Pin'}
+          aria-label={state.pinned ? 'Unpin' : 'Pin'}
+          aria-pressed={state.pinned}
+          onClick={() => toggle('pinned')}
+          data-testid={`reader-pin${sfx}`}
+        >
+          {state.pinned ? <PushPinFilled /> : <PushPinOutline />}
+        </TooltipButton>
+
+        <TooltipButton
+          type="button"
+          className={'reader__action' + (state.done ? ' reader__action--active' : '')}
+          tooltip={state.done ? 'Unmark done' : 'Done'}
+          aria-label={state.done ? 'Unmark done' : 'Done'}
+          aria-pressed={state.done}
+          onClick={() => (state.done ? set('done', false) : markDone())}
+          data-testid={`reader-done${sfx}`}
+        >
+          {state.done ? <CheckCircleFilled /> : <CheckCircleOutline />}
+        </TooltipButton>
+
+        {wide ? (
+          <>
+            <TooltipButton
+              type="button"
+              className={
+                'reader__action' + (state.favorite ? ' reader__action--active' : '')
+              }
+              tooltip={state.favorite ? 'Unfavorite' : 'Favorite'}
+              aria-label={state.favorite ? 'Unfavorite' : 'Favorite'}
+              aria-pressed={state.favorite}
+              onClick={() => toggle('favorite')}
+              data-testid={`reader-favorite${sfx}`}
+            >
+              {state.favorite ? <FavoriteFilled /> : <FavoriteOutline />}
+            </TooltipButton>
+            <TooltipButton
+              type="button"
+              className="reader__action"
+              tooltip="Share"
+              aria-label="Share"
+              onClick={() => share({ title: item.title, url: item.url })}
+              data-testid={`reader-share${sfx}`}
+            >
+              <ShareIcon />
+            </TooltipButton>
+          </>
+        ) : null}
+
+        <div className="reader__more">
+          <TooltipButton
+            type="button"
+            className="reader__action"
+            tooltip="More"
+            aria-label="More actions"
+            aria-haspopup="menu"
+            aria-expanded={moreOpen}
+            onClick={() => setMoreOpen((o) => !o)}
+            data-testid={`reader-more${sfx}`}
+          >
+            <MoreVert />
+          </TooltipButton>
+          {moreOpen ? (
+            <div
+              className={
+                'reader__more-menu' +
+                (placement === 'bottom' ? ' reader__more-menu--up' : '')
+              }
+              role="menu"
+              onMouseLeave={() => setMoreOpen(false)}
+            >
+              {!wide ? (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="reader__more-item"
+                    onClick={() => {
+                      setMoreOpen(false);
+                      toggle('favorite');
+                    }}
+                  >
+                    {state.favorite ? 'Unfavorite' : 'Favorite'}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="reader__more-item"
+                    onClick={() => {
+                      setMoreOpen(false);
+                      share({ title: item.title, url: item.url });
+                    }}
+                  >
+                    Share
+                  </button>
+                </>
+              ) : null}
+              <Link
+                to={`/feed/${feed.id}`}
+                role="menuitem"
+                className="reader__more-item"
+                onClick={() => setMoreOpen(false)}
+              >
+                Open feed
+              </Link>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function ItemPage() {
   const { id = '' } = useParams();
@@ -31,7 +217,6 @@ export function ItemPage() {
   const online = useOnlineStatus();
 
   const { state, set, toggle } = useItemState(id);
-  const [moreOpen, setMoreOpen] = useState(false);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['item', id],
@@ -56,6 +241,8 @@ export function ItemPage() {
     set('done', true); // also clears pinned via the mutation shield
     navigate(-1);
   }, [set, navigate]);
+
+  const goBack = useCallback(() => navigate(-1), [navigate]);
 
   // Reader keyboard shortcuts: o open original, p pin, f favorite, d done.
   useEffect(() => {
@@ -103,144 +290,22 @@ export function ItemPage() {
   const { item, feed } = data;
   const source = feed.title || formatDisplayDomain(item.url);
 
-  const actionBar = (
-    <div className="reader__actions" role="toolbar" aria-label="Article actions">
-      <TooltipButton
-        type="button"
-        className="reader__action reader__action--primary"
-        tooltip="Open original"
-        aria-label="Open original article"
-        onClick={openOriginal}
-        data-testid="open-original"
-      >
-        <OpenInNew />
-        <span className="reader__action-label">Open original</span>
-      </TooltipButton>
-
-      <TooltipButton
-        type="button"
-        className={'reader__action' + (state.pinned ? ' reader__action--active' : '')}
-        tooltip={state.pinned ? 'Unpin' : 'Pin'}
-        aria-label={state.pinned ? 'Unpin' : 'Pin'}
-        aria-pressed={state.pinned}
-        onClick={() => toggle('pinned')}
-        data-testid="reader-pin"
-      >
-        {state.pinned ? <PushPinFilled /> : <PushPinOutline />}
-      </TooltipButton>
-
-      <TooltipButton
-        type="button"
-        className={'reader__action' + (state.done ? ' reader__action--active' : '')}
-        tooltip={state.done ? 'Unmark done' : 'Done'}
-        aria-label={state.done ? 'Unmark done' : 'Done'}
-        aria-pressed={state.done}
-        onClick={() => (state.done ? set('done', false) : markDone())}
-        data-testid="reader-done"
-      >
-        {state.done ? <CheckCircleFilled /> : <CheckCircleOutline />}
-      </TooltipButton>
-
-      {wide ? (
-        <>
-          <TooltipButton
-            type="button"
-            className={
-              'reader__action' + (state.favorite ? ' reader__action--active' : '')
-            }
-            tooltip={state.favorite ? 'Unfavorite' : 'Favorite'}
-            aria-label={state.favorite ? 'Unfavorite' : 'Favorite'}
-            aria-pressed={state.favorite}
-            onClick={() => toggle('favorite')}
-            data-testid="reader-favorite"
-          >
-            {state.favorite ? <FavoriteFilled /> : <FavoriteOutline />}
-          </TooltipButton>
-          <TooltipButton
-            type="button"
-            className="reader__action"
-            tooltip="Share"
-            aria-label="Share"
-            onClick={() => share({ title: item.title, url: item.url })}
-            data-testid="reader-share"
-          >
-            <ShareIcon />
-          </TooltipButton>
-        </>
-      ) : null}
-
-      <div className="reader__more">
-        <TooltipButton
-          type="button"
-          className="reader__action"
-          tooltip="More"
-          aria-label="More actions"
-          aria-haspopup="menu"
-          aria-expanded={moreOpen}
-          onClick={() => setMoreOpen((o) => !o)}
-          data-testid="reader-more"
-        >
-          <MoreVert />
-        </TooltipButton>
-        {moreOpen ? (
-          <div
-            className="reader__more-menu"
-            role="menu"
-            onMouseLeave={() => setMoreOpen(false)}
-          >
-            {!wide ? (
-              <>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="reader__more-item"
-                  onClick={() => {
-                    setMoreOpen(false);
-                    toggle('favorite');
-                  }}
-                >
-                  {state.favorite ? 'Unfavorite' : 'Favorite'}
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="reader__more-item"
-                  onClick={() => {
-                    setMoreOpen(false);
-                    share({ title: item.title, url: item.url });
-                  }}
-                >
-                  Share
-                </button>
-              </>
-            ) : null}
-            <Link
-              to={`/feed/${feed.id}`}
-              role="menuitem"
-              className="reader__more-item"
-              onClick={() => setMoreOpen(false)}
-            >
-              Open feed
-            </Link>
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
+  const toolbarProps = {
+    item,
+    feed,
+    state,
+    wide,
+    onBack: goBack,
+    openOriginal,
+    toggle,
+    set,
+    markDone,
+    share,
+  } as const;
 
   return (
     <article className="reader">
-      <div className="reader__topbar">
-        <button
-          type="button"
-          className="reader__back"
-          aria-label="Back"
-          onClick={() => navigate(-1)}
-        >
-          <ArrowBack />
-        </button>
-        {actionBar}
-      </div>
+      <ReaderToolbar placement="top" {...toolbarProps} />
 
       <header className="reader__header">
         <Link to={`/feed/${feed.id}`} className="reader__source">
@@ -279,15 +344,7 @@ export function ItemPage() {
         </div>
       )}
 
-      <div className="reader__bottombar">
-        <button
-          type="button"
-          className="reader__action reader__action--primary"
-          onClick={() => window.scrollTo({ top: 0 })}
-        >
-          Back to top
-        </button>
-      </div>
+      <ReaderToolbar placement="bottom" {...toolbarProps} />
     </article>
   );
 }
