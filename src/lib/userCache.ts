@@ -9,6 +9,9 @@
 
 const RQ_CACHE_BASE = 'readmo:rq-cache';
 const ITEM_STATE_BASE = 'readmo:item-state';
+// The uid that last booted the app, so a boot can detect an account switch that
+// completed via a full-page redirect/reload (no in-tab transition observed).
+const LAST_UID_KEY = 'readmo:last-uid';
 
 // The named Workbox runtime caches (see vite.config.ts runtimeCaching). These
 // are not per-user prefixed yet, so a purge deletes them wholesale; the next
@@ -42,5 +45,36 @@ export async function clearUserCaches(uid: string | null): Promise<void> {
     await Promise.all(
       WORKBOX_CACHES.map((name) => caches.delete(name).catch(() => false)),
     );
+  }
+}
+
+function readLastUid(): string | null {
+  try {
+    return window.localStorage.getItem(LAST_UID_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Boot-time reconciliation (call before first paint). If the app is booting as a
+ * different user than last time — e.g. an OAuth/account switch that completed via
+ * a full-page redirect, so no in-tab transition fired — purge the previous user's
+ * persisted stores and the named Workbox runtime caches before rendering, so the
+ * NetworkFirst data cache can't serve the previous user's REST responses offline.
+ * Always records the current uid as last-seen.
+ */
+export async function reconcileUserCachesOnBoot(
+  currentUid: string | null,
+): Promise<void> {
+  const last = readLastUid();
+  if (last !== currentUid) {
+    await clearUserCaches(last);
+  }
+  try {
+    if (currentUid) window.localStorage.setItem(LAST_UID_KEY, currentUid);
+    else window.localStorage.removeItem(LAST_UID_KEY);
+  } catch {
+    // ignore (storage unavailable/denied)
   }
 }
