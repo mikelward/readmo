@@ -2,17 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from './useAuth';
 import { clearUserCaches } from '../lib/userCache';
-
-/** Full reload so the app re-boots with the new user's scoped cache keys
- * (main.tsx keys the persister + data source from the boot uid). Guarded for
- * test/SSR environments where navigation isn't available. */
-function reloadApp(): void {
-  try {
-    if (typeof window !== 'undefined') window.location.reload();
-  } catch {
-    /* navigation unavailable (jsdom/SSR) */
-  }
-}
+import { reloadApp } from '../lib/reload';
 
 /**
  * Per-user cache scoping (AGENTS guardrail #8). Returns `true` while an auth

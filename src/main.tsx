@@ -10,7 +10,11 @@ import { DataSourceProvider } from './lib/data/context';
 import { MockDataSource } from './lib/data/MockDataSource';
 import { applyTheme, getStoredTheme } from './lib/theme';
 import { getActiveUid } from './hooks/useAuth';
-import { rqCacheKey, itemStateKey } from './lib/userCache';
+import {
+  itemStateKey,
+  reconcileUserCachesOnBoot,
+  rqCacheKey,
+} from './lib/userCache';
 import './styles/global.css';
 
 // Bump to invalidate the persisted query cache on a breaking shape change.
@@ -56,23 +60,29 @@ applyTheme(getStoredTheme());
 
 const dataSource = new MockDataSource(itemStateKey(bootUid));
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <PersistQueryClientProvider
-      client={queryClient}
-      persistOptions={{
-        persister,
-        maxAge: PERSIST_MAX_AGE,
-        buster: CACHE_BUSTER,
-      }}
-    >
-      <DataSourceProvider source={dataSource}>
-        <ToastProvider>
-          <BrowserRouter>
-            <App />
-          </BrowserRouter>
-        </ToastProvider>
-      </DataSourceProvider>
-    </PersistQueryClientProvider>
-  </StrictMode>,
-);
+// If this boot is a different user than last time (e.g. an account switch via a
+// full-page redirect/reload, where no in-tab transition was observed), purge the
+// previous user's persisted stores + Workbox runtime caches BEFORE first paint,
+// then render. Same-user boots skip the purge and hydrate their own cache.
+void reconcileUserCachesOnBoot(bootUid).finally(() => {
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <PersistQueryClientProvider
+        client={queryClient}
+        persistOptions={{
+          persister,
+          maxAge: PERSIST_MAX_AGE,
+          buster: CACHE_BUSTER,
+        }}
+      >
+        <DataSourceProvider source={dataSource}>
+          <ToastProvider>
+            <BrowserRouter>
+              <App />
+            </BrowserRouter>
+          </ToastProvider>
+        </DataSourceProvider>
+      </PersistQueryClientProvider>
+    </StrictMode>,
+  );
+});

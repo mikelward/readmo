@@ -5,30 +5,22 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAuth } from './useAuth';
 import { useUserCacheScope } from './useUserCacheScope';
 import { itemStateKey, rqCacheKey } from '../lib/userCache';
+import { reloadApp } from '../lib/reload';
+
+// Mock the reload wrapper so we don't have to touch jsdom's non-configurable
+// window.location.
+vi.mock('../lib/reload', () => ({ reloadApp: vi.fn() }));
 
 const DEMO_UID = 'mock:demo@readmo.app';
 
 describe('useUserCacheScope', () => {
-  let reloadSpy: ReturnType<typeof vi.fn>;
-  const realLocation = window.location;
-
   beforeEach(() => {
     window.localStorage.clear();
     vi.stubGlobal('caches', { delete: vi.fn().mockResolvedValue(true) });
-    reloadSpy = vi.fn();
-    // window.location.reload is non-configurable in jsdom; swap the whole object.
-    Object.defineProperty(window, 'location', {
-      configurable: true,
-      value: { reload: reloadSpy },
-    });
+    vi.mocked(reloadApp).mockClear();
   });
   afterEach(() => {
     vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-    Object.defineProperty(window, 'location', {
-      configurable: true,
-      value: realLocation,
-    });
   });
 
   it('gates rendering, purges the departing user, and reloads on sign-out', async () => {
@@ -64,6 +56,6 @@ describe('useUserCacheScope', () => {
     expect(caches.delete).toHaveBeenCalledWith('readmo-images');
     expect(caches.delete).toHaveBeenCalledWith('readmo-favicons');
     // ...then the app reloads to re-key the data source/persister.
-    await waitFor(() => expect(reloadSpy).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(reloadApp).toHaveBeenCalledTimes(1));
   });
 });

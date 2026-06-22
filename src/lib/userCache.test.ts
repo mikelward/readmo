@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearUserCaches, itemStateKey, rqCacheKey } from './userCache';
+import {
+  clearUserCaches,
+  itemStateKey,
+  reconcileUserCachesOnBoot,
+  rqCacheKey,
+} from './userCache';
 
 describe('cache key derivation', () => {
   it('keys by uid and falls back to the base key when signed out', () => {
@@ -47,5 +52,43 @@ describe('clearUserCaches', () => {
       });
     await expect(clearUserCaches('u1')).resolves.toBeUndefined();
     spy.mockRestore();
+  });
+});
+
+describe('reconcileUserCachesOnBoot', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.stubGlobal('caches', { delete: vi.fn().mockResolvedValue(true) });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('purges the previous user when booting under a different uid', async () => {
+    window.localStorage.setItem('readmo:last-uid', 'old');
+    window.localStorage.setItem(rqCacheKey('old'), 'blob');
+    window.localStorage.setItem(itemStateKey('old'), 'state');
+
+    await reconcileUserCachesOnBoot('new');
+
+    expect(window.localStorage.getItem(rqCacheKey('old'))).toBeNull();
+    expect(window.localStorage.getItem(itemStateKey('old'))).toBeNull();
+    expect(caches.delete).toHaveBeenCalledWith('readmo-data');
+    // Records the new boot uid for next time.
+    expect(window.localStorage.getItem('readmo:last-uid')).toBe('new');
+  });
+
+  it('does not purge when booting under the same uid', async () => {
+    window.localStorage.setItem('readmo:last-uid', 'same');
+    window.localStorage.setItem(rqCacheKey('same'), 'keep');
+
+    await reconcileUserCachesOnBoot('same');
+
+    expect(window.localStorage.getItem(rqCacheKey('same'))).toBe('keep');
+    expect(caches.delete).not.toHaveBeenCalled();
+  });
+
+  it('clears the recorded uid when booting signed-out', async () => {
+    window.localStorage.setItem('readmo:last-uid', 'old');
+    await reconcileUserCachesOnBoot(null);
+    expect(window.localStorage.getItem('readmo:last-uid')).toBeNull();
   });
 });
