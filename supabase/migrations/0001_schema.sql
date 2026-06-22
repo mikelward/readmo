@@ -64,17 +64,13 @@ create table if not exists public.items (
   -- than create a duplicate.
   content_hash  text,
   created_at    timestamptz not null default now(),
-  -- Effective sort key: feeds that omit/garble dates leave published_at null, so
-  -- we fall back to created_at (fetch time) to keep newly-fetched undated items
-  -- at the top instead of buried. Matches the client's `published_at ?? created_at`.
-  sort_at       timestamptz not null generated always as (coalesce(published_at, created_at)) stored,
   -- De-dup key per SPEC.md "De-dup on (feed_id, guid)".
   unique (feed_id, guid)
 );
 
--- The hot feed query drives from items by (feed_id, sort_at desc).
-create index if not exists items_feed_sort_idx
-  on public.items (feed_id, sort_at desc);
+-- The hot feed query drives from items by (feed_id, published_at desc).
+create index if not exists items_feed_published_idx
+  on public.items (feed_id, published_at desc);
 
 -- ---------------------------------------------------------------------------
 -- subscriptions — user ↔ feed. PK(user_id, feed_id) is the natural key.
