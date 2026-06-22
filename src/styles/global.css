@@ -173,7 +173,9 @@
   --rm-success: #6bd08a;
 
   --rm-hide-bg: #3a4a45;
-  --rm-pin-bg: var(--rm-accent-strong);
+  /* Deep teal (not the bright accent-strong) so the swipe hint's white label
+     stays legible — accent-strong #7ee3d8 is near-white. ~5:1 on #fff. */
+  --rm-pin-bg: #0e7c74;
 
   /* Keep the brand tile a constant teal across modes for recognizability. */
   --rm-brand-tile: #0e7c74;
@@ -208,7 +210,9 @@
     --rm-success: #6bd08a;
 
     --rm-hide-bg: #3a4a45;
-    --rm-pin-bg: var(--rm-accent-strong);
+    /* See the explicit dark-turquoise block: keep the pin hint dark enough
+       for the white swipe label. */
+    --rm-pin-bg: #0e7c74;
 
     --rm-brand-tile: #0e7c74;
     --rm-brand-fg: #f1f9f7;
