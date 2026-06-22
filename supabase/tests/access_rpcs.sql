@@ -22,7 +22,8 @@ delete from auth.users where id in (
   '22222222-2222-2222-2222-222222222222');
 delete from public.feeds where id in (
   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-  'dddddddd-dddd-dddd-dddd-dddddddddddd');
+  'dddddddd-dddd-dddd-dddd-dddddddddddd',
+  'ffffffff-ffff-ffff-ffff-ffffffffffff');
 
 insert into auth.users (id) values
   ('11111111-1111-1111-1111-111111111111'),  -- attacker
@@ -41,6 +42,14 @@ insert into public.feeds (id, url, site_url, title) values
 insert into public.items (id, feed_id, guid, title) values
   ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
    'dddddddd-dddd-dddd-dddd-dddddddddddd', 'guid-2', 'Public Article');
+-- Secret-backed feed: PUBLIC url + a tokenized secret_url that the poller fetches.
+insert into public.feeds (id, url, secret_url, site_url, title) values
+  ('ffffffff-ffff-ffff-ffff-ffffffffffff',
+   'https://news.example/feed', 'https://news.example/feed?token=XYZ',
+   'https://news.example', 'Tokenized Feed');
+insert into public.items (id, feed_id, guid, title) values
+  ('99999999-9999-9999-9999-999999999999',
+   'ffffffff-ffff-ffff-ffff-ffffffffffff', 'guid-3', 'Token-only Article');
 
 -- ===== Test 1: direct INSERT escalation by UUID is BLOCKED (grant revoked) ==
 do $$
@@ -181,4 +190,34 @@ begin
     where item_id='eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee' and favorite;
   if n <> 1 then raise exception 'FAIL T9: RPC flag update broken'; end if;
   raise notice 'PASS T9: set_item_state still performs flag writes';
+end $$;
+
+-- ===== Test 10: subscribing with only the PUBLIC url of a secret-backed feed
+-- is refused (the content is fetched with someone else's token). =============
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  begin
+    perform public.subscribe_to_feed('https://news.example/feed');   -- public url only
+    raise exception 'FAIL T10: subscribe accepted the public url of a secret-backed feed';
+  exception when insufficient_privilege then
+    raise notice 'PASS T10: subscribe refused without the tokenized URL';
+  end;
+  select count(*) into n from public.items where id='99999999-9999-9999-9999-999999999999';
+  if n <> 0 then raise exception 'FAIL T10b: token-only item visible without the token'; end if;
+  raise notice 'PASS T10b: token-only item still invisible';
+end $$;
+
+-- ===== Test 11: presenting the tokenized fetch URL DOES grant access ========
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','22222222-2222-2222-2222-222222222222', true);  -- victim/token holder
+  set local role authenticated;
+  perform public.subscribe_to_feed('https://news.example/feed?token=XYZ');  -- the secret
+  select count(*) into n from public.items where id='99999999-9999-9999-9999-999999999999';
+  if n <> 1 then raise exception 'FAIL T11: token holder cannot see the feed'; end if;
+  raise notice 'PASS T11: presenting the tokenized URL grants access';
 end $$;

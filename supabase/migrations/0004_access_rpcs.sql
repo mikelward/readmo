@@ -24,12 +24,19 @@
 -- ===========================================================================
 -- subscribe_to_feed — the ONLY way a client may create a subscription.
 --
--- Authorization proof = POSSESSION OF THE URL. The caller supplies the feed
--- URL (exactly what DataSource.subscribe(feedUrl) already has); we find-or-
--- create the shared feed by its UNIQUE url and subscribe auth.uid() to it. A
--- caller who knows only a feed's opaque UUID cannot reach this path (it takes a
--- url, and url is never exposed to clients — see 0002), so they can no longer
--- self-grant a subscription to a private/tokenized feed.
+-- Authorization proof = POSSESSION OF THE FETCH URL. The caller supplies the
+-- feed URL (exactly what DataSource.subscribe(feedUrl) already has); we
+-- find-or-create the shared feed and subscribe auth.uid() to it. A caller who
+-- knows only a feed's opaque UUID cannot reach this path (it takes a url, and
+-- url is never exposed to clients — see 0002), so they cannot self-grant a
+-- subscription to a private feed.
+--
+-- The match is on the FETCH url, not just `url`: a feed may be secret-backed,
+-- where `url` is the public/canonical identity and `secret_url` holds the
+-- tokenized fetch URL that poll/refresh actually use (`secret_url ?? url`, see
+-- 0001 + the poller). For such a row the caller MUST present `secret_url`;
+-- presenting only the public `url` is refused, so a caller who merely guesses
+-- the public address can't attach to content fetched with another user's token.
 --
 -- SECURITY DEFINER so it can insert into feeds/subscriptions (both have client
 -- INSERT revoked); `set search_path = ''` + fully-qualified names is the
@@ -56,14 +63,34 @@ begin
     raise exception 'feed url required' using errcode = '22023';
   end if;
 
-  -- Find-or-create the shared feed row. New feeds get the default
-  -- next_fetch_at = now(), so the poller picks them up on its next pass and
-  -- fills in title/site_url/health.
-  insert into public.feeds (url)
-  values (v_url)
-  on conflict (url) do nothing;
+  -- Authorize against an existing row by the FETCH url: the public `url` only
+  -- when the row carries no secret, or the `secret_url` itself for a
+  -- secret-backed row. Presenting just the public url of a secret-backed feed
+  -- matches nothing here and is rejected below.
+  select id into v_feed_id
+  from public.feeds
+  where (secret_url is null and url = v_url)
+     or (secret_url = v_url)
+  limit 1;
 
-  select id into v_feed_id from public.feeds where url = v_url;
+  if v_feed_id is null then
+    -- No authorized row. Create one — a freshly pasted (possibly tokenized)
+    -- URL lands in `url` with secret_url null, so possession of that url is the
+    -- proof. New feeds get next_fetch_at = now(), so the poller fills in
+    -- title/site_url/health on its next pass. If `url` already exists, the
+    -- conflict means a secret-backed row with this PUBLIC url is present and
+    -- the caller lacks the token → refuse rather than hand out access.
+    insert into public.feeds (url)
+    values (v_url)
+    on conflict (url) do nothing
+    returning id into v_feed_id;
+
+    if v_feed_id is null then
+      raise exception
+        'feed requires its tokenized fetch URL, not the public url'
+        using errcode = '42501';
+    end if;
+  end if;
 
   -- Idempotent: re-subscribing is a no-op that still returns the feed.
   insert into public.subscriptions (user_id, feed_id, folder)
