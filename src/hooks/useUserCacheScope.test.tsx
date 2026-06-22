@@ -58,4 +58,35 @@ describe('useUserCacheScope', () => {
     // ...then the app reloads to re-key the data source/persister.
     await waitFor(() => expect(reloadApp).toHaveBeenCalledTimes(1));
   });
+
+  it('does not purge the anonymous scope on sign-in (preserves legacy stores)', async () => {
+    const queryClient = new QueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () => ({ transitioning: useUserCacheScope(), auth: useAuth() }),
+      { wrapper },
+    );
+
+    // Ensure a signed-out starting point (may be a no-op depending on prior
+    // module state), then clear the mocks so we measure only the sign-in.
+    act(() => result.current.auth.signOut());
+    await Promise.resolve();
+    vi.mocked(reloadApp).mockClear();
+    (caches.delete as ReturnType<typeof vi.fn>).mockClear();
+
+    // Legacy unscoped stores present at the base keys (upgrade-while-signed-out).
+    window.localStorage.setItem(rqCacheKey(null), 'legacy-rq');
+    window.localStorage.setItem(itemStateKey(null), 'legacy-state');
+
+    act(() => result.current.auth.signIn());
+
+    // The anonymous scope is NOT purged — the boot reconcile migrates it.
+    expect(window.localStorage.getItem(rqCacheKey(null))).toBe('legacy-rq');
+    expect(window.localStorage.getItem(itemStateKey(null))).toBe('legacy-state');
+    expect(caches.delete).not.toHaveBeenCalled();
+    // Still reloads so the boot path re-keys + migrates.
+    await waitFor(() => expect(reloadApp).toHaveBeenCalledTimes(1));
+  });
 });
