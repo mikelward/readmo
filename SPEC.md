@@ -204,7 +204,7 @@ live.
 
 - **Frontend:** React + TS + Vite on Vercel (same as newshacker).
 - **Supabase:** Postgres (all relational data); Auth (social OAuth — Google /
-  GitHub / Discord, Apple deferred, no password storage); Row-Level Security (every per-user
+  Discord, Apple deferred, no password storage); Row-Level Security (every per-user
   table gated on `auth.uid()` — the DB-enforced analog of newshacker's
   "fail closed, verify against the source of truth" `/admin` discipline);
   scheduled Edge Functions (`pg_cron` + an Edge Function) for the poller.
@@ -383,7 +383,7 @@ loopback/link-local/private/metadata targets and redirects to them.
 
 ### Auth (Supabase social OAuth)
 
-- Sign in with Google / GitHub / Discord (Apple deferred). No password handled by us. Sessions
+- Sign in with Google / Discord (Apple deferred). No password handled by us. Sessions
   are Supabase's HTTP-only refresh-token cookies; the access token is attached
   to API/DB calls.
 - First launch (no session) routes to a clean sign-in screen (one-liner +
@@ -394,7 +394,7 @@ loopback/link-local/private/metadata targets and redirects to them.
   32px avatar (OAuth picture, falling back to an initial-on-color disc —
   deterministic, offline, zero requests); tap → popover with name, link to
   settings, "Sign out". Not in the drawer.
-- **Implementation status.** Real Supabase OAuth (Google / GitHub / Discord) is wired
+- **Implementation status.** Real Supabase OAuth (Google / Discord) is wired
   behind the existing `useAuth` / `getActiveUid` shape: when
   `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` are present the buttons start
   the real redirect and the session drives the header chip + per-user cache

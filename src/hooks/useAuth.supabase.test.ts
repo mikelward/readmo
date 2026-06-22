@@ -111,9 +111,9 @@ describe('useAuth (Supabase configured)', () => {
       avatarUrl: 'https://a/x.png',
     });
 
-    act(() => result.current.signIn('github', '/pinned'));
+    act(() => result.current.signIn('discord', '/pinned'));
     expect(h.fakeAuth.signInWithOAuth).toHaveBeenCalledWith({
-      provider: 'github',
+      provider: 'discord',
       options: { redirectTo: `${window.location.origin}/pinned` },
     });
 

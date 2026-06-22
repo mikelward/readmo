@@ -47,15 +47,8 @@ describe('SignInPage', () => {
   it('falls back to home when there is no saved location', async () => {
     const user = userEvent.setup();
     renderAt({ pathname: '/signin' });
-    await user.click(screen.getByRole('button', { name: /continue with github/i }));
-    expect(screen.getByTestId('location')).toHaveTextContent('/');
-  });
-
-  it('signs in via Discord and lands at the saved deep link', async () => {
-    const user = userEvent.setup();
-    renderAt({ pathname: '/signin', state: { from: { pathname: '/folder/news' } } });
     await user.click(screen.getByRole('button', { name: /continue with discord/i }));
-    expect(screen.getByTestId('location')).toHaveTextContent('/folder/news');
+    expect(screen.getByTestId('location')).toHaveTextContent('/');
   });
 
   it('redirects an already-signed-in user off /signin to the saved target', () => {

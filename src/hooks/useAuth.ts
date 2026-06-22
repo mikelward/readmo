@@ -9,7 +9,7 @@ import { AUTH_STORAGE_KEY, getSupabase, isSupabaseConfigured } from '../lib/supa
 // existing tests and backend-less local/mock dev keep working and the app is
 // never stranded at /signin.
 
-export type OAuthProvider = 'google' | 'github' | 'discord';
+export type OAuthProvider = 'google' | 'discord';
 
 export interface AuthUser {
   /** Stable subject id used to scope on-device caches (guardrail #8). Supabase
