@@ -117,9 +117,14 @@ export class ItemStateOutbox {
   observeServerVersions(rows: Iterable<readonly [ItemId, number]>): void {
     this.hydrated = true;
     for (const [id, version] of rows) {
-      if (!this.queue.has(id) && !this.inFlight.has(id)) {
-        this.serverVersion.set(id, version);
-      }
+      if (this.queue.has(id) || this.inFlight.has(id)) continue;
+      // Monotonic: the server `version` only ever increases, so a lower observed
+      // value is a stale read (e.g. a select that began before an in-flight write
+      // committed and returned after). Ignoring it stops a stale hydrate from
+      // rewinding a version a successful send just recorded — which would make
+      // the next edit base on an old version and false-conflict.
+      const known = this.serverVersion.get(id);
+      if (known == null || version >= known) this.serverVersion.set(id, version);
     }
   }
 
