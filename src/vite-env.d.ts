@@ -7,6 +7,10 @@ interface ImportMetaEnv {
   /** Supabase anon key. Public (RLS-gated); safe to ship to the client. The
    * service-role key must NEVER be exposed as a VITE_* variable. */
   readonly VITE_SUPABASE_ANON_KEY?: string;
+  // Fallbacks provisioned by the Supabase↔Vercel integration (public names).
+  readonly NEXT_PUBLIC_SUPABASE_URL?: string;
+  readonly NEXT_PUBLIC_SUPABASE_ANON_KEY?: string;
+  readonly NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY?: string;
 }
 
 interface ImportMeta {

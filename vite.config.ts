@@ -28,6 +28,11 @@ const TEST_BUILD_COMMIT_TIME = '2026-01-01T00:00:00.000Z';
 const buildCommitTime = isTest ? TEST_BUILD_COMMIT_TIME : readCommitTime();
 
 export default defineConfig({
+  // Expose VITE_* (our own) and NEXT_PUBLIC_* (what the Supabase↔Vercel
+  // integration provisions) to the client bundle. NEXT_PUBLIC_ is public by
+  // convention, so this is safe; we deliberately do NOT add the `SUPABASE_`
+  // prefix, which would leak SERVICE_ROLE/SECRET/JWT/POSTGRES_* secrets.
+  envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
   define: {
     __BUILD_COMMIT_TIME__: JSON.stringify(buildCommitTime),
   },
