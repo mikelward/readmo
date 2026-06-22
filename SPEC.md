@@ -222,7 +222,8 @@ feeds         (id, url UNIQUE, secret_url, site_url, title, etag,
                fetch_interval_s, error_count, last_error)             -- shared across users
 items         (id, feed_id FK, guid, url, title, author, published_at,
                content_html, summary, enclosures, content_hash,
-               created_at)                                            -- shared; UNIQUE(feed_id, guid)
+               created_at,
+               sort_at = coalesce(published_at, created_at))          -- shared; UNIQUE(feed_id, guid)
 subscriptions (user_id FK, feed_id FK, folder, title_override,
                muted bool, sort, created_at)                         -- user ↔ feed
 item_state    (user_id FK, item_id FK,
@@ -252,7 +253,10 @@ folders       (user_id FK, name, sort)
   `WHERE NOT COALESCE(is.done, false) AND NOT COALESCE(is.hidden, false)`;
   the Opened fade reads `COALESCE(is.opened, false)`; Pinned items are
   collected by a separate small query (`item_state.pinned = true` for the user)
-  and prepended. Index `subscriptions(user_id)`, `items(feed_id, published_at)`,
+  and prepended. Newest-first sorts on `sort_at` (= `coalesce(published_at,
+  created_at)`, a stored generated column) so feeds that omit/garble dates still
+  surface freshly-fetched items at the top instead of burying them. Index
+  `subscriptions(user_id)`, `items(feed_id, sort_at desc)`,
   and `item_state(user_id, item_id)` (plus partial indexes on
   `item_state(user_id) WHERE pinned` / `WHERE done` / `WHERE hidden`) to keep
   the join cheap. A write happens only when the user actually pins/favorites/

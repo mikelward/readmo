@@ -100,6 +100,31 @@ describe('SupabaseDataSource reads', () => {
     expect(p2.nextCursor).toBeNull();
   });
 
+  it('orders undated items by the created_at fallback (sort_at)', async () => {
+    const tables = seed();
+    // An undated item (null published_at) fetched most recently.
+    tables.items.push({
+      id: 'i-undated', feed_id: 'feed-b', guid: 'g-und', url: 'https://x/und',
+      title: 'Undated latest', author: null, published_at: null,
+      content_html: '', summary: null, enclosures: [], content_hash: null,
+      created_at: iso(28),
+    });
+    const { ds } = setup(tables);
+    const page = await ds.getHomeItems();
+    // sort_at = published_at ?? created_at, so the undated item (day 28) sorts
+    // above i6 (day 6) and i3 (day 3); i2 is the pinned prepend.
+    expect(ids(page.items)).toEqual(['i2', 'i-undated', 'i6', 'i3']);
+  });
+
+  it('excludes Done/Hidden/Pinned client-side when the server filter is skipped', async () => {
+    const env2 = setup();
+    env2.fake.ignoreNotInFilter(); // simulate the exclusion set exceeding the cap
+    const page = await env2.ds.getHomeItems();
+    // The client-side floor still keeps archived/hidden/pinned out of the body
+    // (and pinned isn't duplicated): same visible result as the server-filtered path.
+    expect(ids(page.items)).toEqual(['i2', 'i6', 'i3']);
+  });
+
   it('getItem / getItemsByIds map and preserve order', async () => {
     const one = await env.ds.getItem('i3');
     expect(one?.item.title).toBe('Beta three');

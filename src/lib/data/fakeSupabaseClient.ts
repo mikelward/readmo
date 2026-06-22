@@ -53,7 +53,7 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
   constructor(
     private readonly table: string,
     private readonly store: FakeTables,
-    private readonly control: { failSelectOnce: Set<string> },
+    private readonly control: { failSelectOnce: Set<string>; ignoreNotIn: boolean },
   ) {
     this.rows = store[table] ?? [];
   }
@@ -82,6 +82,9 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
   }
 
   not(col: string, op: string, value: string): this {
+    // Simulate the server skipping the `not in` filter (e.g. exclusion set over
+    // the cap), so the data source's client-side floor can be exercised.
+    if (this.control.ignoreNotIn) return this;
     if (op === 'in') {
       const set = parseInList(value);
       this.filters.push((r) => !set.has(String(r[col])));
@@ -128,12 +131,18 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
     return this.rows.filter((r) => this.filters.every((f) => f(r)));
   }
 
+  // Emulates the `sort_at` generated column (coalesce(published_at, created_at)).
+  private valueOf(row: Row, col: string): unknown {
+    if (col === 'sort_at') return row.published_at ?? row.created_at;
+    return row[col];
+  }
+
   private sorted(rows: Row[]): Row[] {
     if (this.orders.length === 0) return rows;
     return [...rows].sort((a, b) => {
       for (const { col, ascending, nullsFirst } of this.orders) {
-        const av = a[col];
-        const bv = b[col];
+        const av = this.valueOf(a, col);
+        const bv = this.valueOf(b, col);
         const aNull = av === null || av === undefined;
         const bNull = bv === null || bv === undefined;
         if (aNull || bNull) {
@@ -207,18 +216,24 @@ export function makeFakeSupabase(tables: FakeTables): {
   /** Make the next `select` on `table` return an error once (transient-failure
    * simulation). */
   failSelectOnce: (table: string) => void;
+  /** Make `.not('…','in',…)` a no-op, simulating the server-side exclusion filter
+   * being skipped (exclusion set over the cap). */
+  ignoreNotInFilter: () => void;
 } {
   const store: FakeTables = {};
   for (const [k, v] of Object.entries(tables)) store[k] = v.map((r) => ({ ...r }));
   const invokeCalls: InvokeCall[] = [];
   const invokeResult = { current: { data: null as unknown, error: null as unknown } };
-  const control = { failSelectOnce: new Set<string>() };
+  const control = { failSelectOnce: new Set<string>(), ignoreNotIn: false };
 
   return {
     store,
     invokeCalls,
     invokeResult,
     failSelectOnce: (table: string) => control.failSelectOnce.add(table),
+    ignoreNotInFilter: () => {
+      control.ignoreNotIn = true;
+    },
     client: {
       from: (table: string) => new FakeQuery(table, store, control),
       functions: {
