@@ -51,6 +51,13 @@ describe('SignInPage', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/');
   });
 
+  it('signs in via Discord and lands at the saved deep link', async () => {
+    const user = userEvent.setup();
+    renderAt({ pathname: '/signin', state: { from: { pathname: '/folder/news' } } });
+    await user.click(screen.getByRole('button', { name: /continue with discord/i }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/folder/news');
+  });
+
   it('redirects an already-signed-in user off /signin to the saved target', () => {
     // Signed in (mock default): no buttons, straight to the deep-link target.
     window.localStorage.removeItem(MOCK_SIGNED_OUT_KEY);

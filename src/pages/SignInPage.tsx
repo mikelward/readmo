@@ -9,8 +9,8 @@ interface FromState {
 }
 
 /** Clean sign-in landing (SPEC.md *Auth*). When Supabase is configured the
- * buttons start the real Google/GitHub OAuth redirect; otherwise they use the
- * mock sign-in that flips state immediately. Deep links round-trip: RequireAuth
+ * buttons start the real Google/GitHub/Discord OAuth redirect; otherwise they
+ * use the mock sign-in that flips state immediately. Deep links round-trip: RequireAuth
  * stashes the requested location in `state.from`, and we land the user back
  * there after signing in. */
 export function SignInPage() {
@@ -57,6 +57,13 @@ export function SignInPage() {
             onClick={() => handleSignIn('github')}
           >
             Continue with GitHub
+          </button>
+          <button
+            type="button"
+            className="signin__btn"
+            onClick={() => handleSignIn('discord')}
+          >
+            Continue with Discord
           </button>
         </div>
         <p className="signin__privacy">
