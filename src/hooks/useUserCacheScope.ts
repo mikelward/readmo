@@ -29,10 +29,17 @@ export function useUserCacheScope(): boolean {
     if (uid === prevUid.current) return;
     const departing = prevUid.current;
     prevUid.current = uid;
-    // Empty the in-memory cache, then purge the departing user's on-device data
-    // and reload so the new session boots with correctly-scoped keys.
+    // Empty the in-memory cache, then reload so the new session boots with
+    // correctly-scoped keys (and the boot reconcile migrates/purges as needed).
     queryClient.clear();
-    void clearUserCaches(departing).finally(reloadApp);
+    // Only purge a real departing USER's persisted scope. The anonymous (null)
+    // scope holds no other user's private data, and on an upgrade-while-signed-out
+    // it still holds the legacy unscoped stores that the post-reload boot migrates
+    // into the signed-in user's keys — purging it here would delete that data
+    // before migration. The boot reconcile handles the anonymous Workbox purge.
+    const purge =
+      departing !== null ? clearUserCaches(departing) : Promise.resolve();
+    void purge.finally(reloadApp);
   }, [uid, queryClient]);
 
   return transitioning;
