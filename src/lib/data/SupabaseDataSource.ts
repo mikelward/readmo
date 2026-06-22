@@ -9,6 +9,7 @@ import {
   type Subscription,
 } from '../types';
 import { getSupabase } from '../supabase/client';
+import { OUTBOX_SUFFIX } from '../userCache';
 import { ItemStateStore, localStoragePersistence } from './itemState';
 import {
   ItemStateOutbox,
@@ -132,7 +133,7 @@ export class SupabaseDataSource implements DataSource {
         // (permanent); a thrown/network error is caught by the outbox as transient.
         return { ok: !error, permanent: Boolean(error) };
       },
-      localStorageOutboxPersistence(`${stateKey}:outbox`),
+      localStorageOutboxPersistence(`${stateKey}${OUTBOX_SUFFIX}`),
       () => {
         // Default to online unless the platform explicitly reports offline (some
         // runtimes expose `navigator` without a boolean `onLine`).
@@ -190,11 +191,12 @@ export class SupabaseDataSource implements DataSource {
         const rows = this.unwrap<ItemStateRow[]>(
           await this.sb.from('item_state').select(ITEM_STATE_COLS),
         );
-        // Pass the outbox's pending ids so the reconcile preserves un-synced
-        // local writes while clearing genuinely-stale rows.
+        // Pass the outbox's pending changed-fields so the reconcile overlays
+        // un-synced local writes onto server truth (per field) while clearing
+        // genuinely-stale rows.
         this.stateStore.hydrate(
           rows.map((r) => [r.item_id, mapItemState(r)] as [ItemId, ItemState]),
-          this.outbox.pendingIds(),
+          this.outbox.pendingChanges(),
         );
       })().catch((err) => {
         // Don't memoize a rejected promise — a transient/offline/expired-token

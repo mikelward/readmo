@@ -5,6 +5,7 @@ import {
   type ItemState,
   type ItemStateField,
 } from '../types';
+import type { ChangedFields } from './itemStateOutbox';
 
 /**
  * Apply a single field mutation to an item's state, enforcing the
@@ -69,6 +70,39 @@ export function withRetention(
   }
   if (state.opened && expired(state.openedAt, now)) {
     next = { ...next, opened: false, openedAt: null };
+  }
+  return next;
+}
+
+/**
+ * Overlay only the *pending* (un-synced) fields onto the authoritative server
+ * row, so a hydrate adopts independent fields another device changed while still
+ * preserving the local optimistic write that hasn't reached the server yet.
+ * Prefers the local snapshot's values (real action timestamps); falls back to
+ * re-applying the queued field changes when there's no local mirror. Stays
+ * consistent with the exclusivity rules because the outbox's changed-set is
+ * itself closed under them (a Pin diff carries the cleared Done/Hidden too).
+ */
+function mergePending(
+  srv: ItemState,
+  local: ItemState | undefined,
+  changed: ChangedFields,
+  now: number,
+): ItemState {
+  if (local) {
+    const next: ItemState = {
+      ...srv,
+      version: Math.max(srv.version, local.version),
+    };
+    for (const f of Object.keys(changed) as ItemStateField[]) {
+      next[f] = local[f];
+      next[`${f}At` as const] = local[`${f}At` as const];
+    }
+    return next;
+  }
+  let next = srv;
+  for (const [f, v] of Object.entries(changed)) {
+    next = applyMutation(next, f as ItemStateField, v as boolean, now);
   }
   return next;
 }
@@ -212,25 +246,28 @@ export class ItemStateStore {
 
   /**
    * Reconcile the local store against the authoritative server `item_state`
-   * rows. The server is the source of truth, EXCEPT for items with an un-synced
-   * pending write (`pendingIds`, from the outbox): those keep their optimistic
-   * local value so a hydrate that races an in-flight write doesn't wipe it.
-   * Local rows the server didn't return AND that aren't pending are genuinely
-   * stale (the item_state row was reset/expired elsewhere) and are dropped — the
-   * pending guard is what makes that clearing safe (no data-loss race). Persists
-   * + notifies once if anything changed. Used by SupabaseDataSource after
-   * fetching the caller's rows.
+   * rows. The server is the source of truth field-by-field, EXCEPT for the
+   * specific fields with an un-synced pending write (`pending`, the outbox's
+   * changed-fields per item): those keep their optimistic local value so a
+   * hydrate that races an in-flight write neither wipes the user's change nor
+   * masks an independent field another device changed. Local rows the server
+   * didn't return AND that aren't pending are genuinely stale (the item_state
+   * row was reset/expired elsewhere) and are dropped — the pending guard is what
+   * makes that clearing safe (no data-loss race). Persists + notifies once if
+   * anything changed. Used by SupabaseDataSource after fetching the caller's rows.
    */
   hydrate(
     rows: Array<[ItemId, ItemState]>,
-    pendingIds: Iterable<ItemId> = [],
+    pending: ReadonlyMap<ItemId, ChangedFields> = new Map(),
+    now: number = Date.now(),
   ): void {
-    const pending = new Set(pendingIds);
     const serverIds = new Set(rows.map(([id]) => id));
     const next: Record<ItemId, ItemState> = {};
-    // Server rows win unless the item has a pending local write.
+    // Server rows win unless the item has a pending local write — then overlay
+    // just the pending fields onto server truth.
     for (const [id, srv] of rows) {
-      next[id] = pending.has(id) ? (this.map[id] ?? srv) : srv;
+      const changed = pending.get(id);
+      next[id] = changed ? mergePending(srv, this.map[id], changed, now) : srv;
     }
     // Keep local-only rows only while a write for them is still pending.
     for (const id of Object.keys(this.map)) {

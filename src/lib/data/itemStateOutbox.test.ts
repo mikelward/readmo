@@ -103,6 +103,33 @@ describe('ItemStateOutbox', () => {
     expect(h.outbox.pendingIds()).toEqual(['a']);
   });
 
+  it('reports an id as pending while its send is in flight', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const sent: string[] = [];
+    const outbox = new ItemStateOutbox(
+      async (id) => {
+        sent.push(id);
+        await gate; // hold the send open
+        return { ok: true };
+      },
+      memPersistence(),
+      () => true,
+      () => {},
+    );
+    outbox.enqueue('a', { pinned: true });
+    await tick();
+    // Send started but hasn't resolved — must still count as pending so a racing
+    // hydrate preserves the optimistic local row instead of wiping it.
+    expect(sent).toEqual(['a']);
+    expect(outbox.pendingIds()).toEqual(['a']);
+    expect(outbox.pendingChanges().get('a')).toEqual({ pinned: true });
+
+    release();
+    await tick();
+    expect(outbox.pendingIds()).toEqual([]);
+  });
+
   it('drops a permanently-rejected write and notifies for re-reconcile', async () => {
     h.setResult({ ok: false, permanent: true });
     h.outbox.enqueue('a', { pinned: true });
