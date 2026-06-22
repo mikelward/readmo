@@ -276,3 +276,40 @@ Deno.test({
     assertEquals(text, body);
   },
 });
+
+// Chunk data split across two TCP writes exercises the streaming chunk decoder's
+// mid-chunk path (chunkRemaining spanning reads) — it must reassemble, not stall
+// or buffer the whole advertised size before emitting.
+Deno.test({
+  name: 'IP-pinned fetch reassembles a chunk delivered in multiple TCP segments',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const listener = Deno.listen({ port: 0, hostname: '127.0.0.1' });
+    const port = (listener.addr as Deno.NetAddr).port;
+    (async () => {
+      try {
+        for await (const conn of listener) {
+          const buf = new Uint8Array(1024);
+          await conn.read(buf);
+          const enc = new TextEncoder();
+          // One 5-byte chunk ("Hello") whose data straddles two writes.
+          await conn.write(enc.encode('HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nHel'));
+          await new Promise((r) => setTimeout(r, 20));
+          await conn.write(enc.encode('lo\r\n0\r\n\r\n'));
+          conn.close();
+        }
+      } catch {
+        /* listener closed */
+      }
+    })();
+
+    const res = await fetchViaIpPinned(
+      new URL(`http://bogus.invalid:${port}/`),
+      '127.0.0.1',
+    );
+    const text = await res.text();
+    listener.close();
+    assertEquals(text, 'Hello');
+  },
+});
