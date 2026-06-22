@@ -235,3 +235,44 @@ Deno.test({
     }
   },
 });
+
+// A raw TCP server lets us send a hand-crafted response with a malformed
+// Content-Length, which Deno.serve would otherwise normalise.
+Deno.test({
+  name: 'IP-pinned fetch ignores a malformed Content-Length (no tight loop)',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const body = 'hello-world';
+    const raw =
+      `HTTP/1.1 200 OK\r\nContent-Length: 5, 5\r\nConnection: close\r\n\r\n${body}`;
+    const listener = Deno.listen({ port: 0, hostname: '127.0.0.1' });
+    const port = (listener.addr as Deno.NetAddr).port;
+    (async () => {
+      try {
+        for await (const conn of listener) {
+          const buf = new Uint8Array(1024);
+          await conn.read(buf); // consume the request line/headers
+          await conn.write(new TextEncoder().encode(raw));
+          conn.close();
+        }
+      } catch {
+        /* listener closed */
+      }
+    })();
+
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 4000); // would fire if it hung
+    const res = await fetchViaIpPinned(
+      new URL(`http://bogus.invalid:${port}/`),
+      '127.0.0.1',
+      { signal: ac.signal },
+    );
+    // Falls back to close-delimited framing and returns the whole body, rather
+    // than spinning on NaN remaining until the deadline.
+    const text = await res.text();
+    clearTimeout(timer);
+    listener.close();
+    assertEquals(text, body);
+  },
+});
