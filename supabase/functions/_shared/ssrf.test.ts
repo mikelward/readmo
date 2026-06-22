@@ -196,6 +196,32 @@ describe('safeFetch — with injected resolver/fetch', () => {
     expect(new TextDecoder().decode(res.body)).toBe('final-body');
   });
 
+  it('cancels a redirect response body before following it', async () => {
+    // In the pinned path the body owns the socket; the loop must cancel it on a
+    // redirect or the connection leaks.
+    let cancelled = false;
+    const redirectBody = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const fetchImpl = async (url: string | URL): Promise<Response> => {
+      if (String(url) === 'https://a.example.com/') {
+        return new Response(redirectBody, {
+          status: 302,
+          headers: { location: 'https://b.example.com/final' },
+        });
+      }
+      return okResponse('final-body');
+    };
+    const res = await safeFetch('https://a.example.com/', {
+      resolve: async () => ['8.8.8.8'],
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+    expect(cancelled).toBe(true);
+    expect(new TextDecoder().decode(res.body)).toBe('final-body');
+  });
+
   it('caps the number of redirects', async () => {
     const fetchImpl = async (): Promise<Response> =>
       new Response(null, {

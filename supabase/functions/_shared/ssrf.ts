@@ -353,6 +353,10 @@ export async function safeFetch(
         if (hop === maxRedirects) {
           throw new SsrfError(`Too many redirects (> ${maxRedirects})`);
         }
+        // Release the connection backing this redirect response — in the pinned
+        // path the body owns the socket, and we never read it on a redirect, so
+        // cancel it (closes the conn) to avoid leaking sockets across hops.
+        await res.body?.cancel().catch(() => {});
         // Resolve relative redirects against the current URL, then loop — the
         // top of the loop re-runs assertSafeUrl + DNS checks on the new target.
         current = new URL(location, current).toString();
@@ -613,7 +617,6 @@ export async function fetchViaIpPinned(
     const chunked = (resHeaders.get('transfer-encoding') ?? '')
       .toLowerCase()
       .includes('chunked');
-    const clen = resHeaders.get('content-length');
     const bodyless = status === 204 || status === 304 || method === 'HEAD';
 
     if (bodyless) {
@@ -621,9 +624,22 @@ export async function fetchViaIpPinned(
       return new Response(null, { status, headers: resHeaders });
     }
 
+    // Use Content-Length for framing only when it's a single finite, non-negative
+    // integer. A malformed or duplicated value (e.g. "abc" or "5, 5") is ignored
+    // and we fall back to close-delimited framing — otherwise NaN would spin the
+    // fixed-length reader in a tight loop until the timeout.
+    let contentLength: number | null = null;
+    if (!chunked) {
+      const clen = resHeaders.get('content-length');
+      if (clen !== null) {
+        const n = Number(clen.trim());
+        if (Number.isInteger(n) && n >= 0) contentLength = n;
+      }
+    }
+
     let body: ReadableStream<Bytes> = bodyStream(reader, leftover, {
       chunked,
-      contentLength: clen != null && !chunked ? Number(clen) : null,
+      contentLength,
       close,
     });
 
