@@ -518,24 +518,32 @@ export async function fetchViaIpPinned(
   const port = parsed.port ? Number(parsed.port) : isHttps ? 443 : 80;
   const sni = parsed.hostname.replace(/^\[|\]$/g, '');
 
-  if (opts.signal?.aborted) throw new SsrfError('aborted before connect');
-  const tcp = await Deno.connect({ hostname: ip, port });
-  let conn: Deno.Conn;
-  try {
-    conn = isHttps
-      ? await Deno.startTls(tcp, { hostname: sni, caCerts: opts.caCerts })
-      : tcp;
-  } catch (err) {
-    try {
-      tcp.close();
-    } catch {
-      /* already closed */
-    }
-    throw err;
-  }
+  const signal = opts.signal;
+  if (signal?.aborted) throw new SsrfError('aborted before connect');
 
-  // Deno.connect / stream reads take no signal, so close the socket when the
-  // caller's deadline fires; that rejects any in-flight read.
+  // Bound EVERY phase (connect, TLS handshake, header read) by the deadline:
+  // closing the socket does not reliably reject a pending read/handshake, so we
+  // also race each await against a single abort rejection. One listener total.
+  const abortRejection: Promise<never> | null = signal
+    ? new Promise<never>((_, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => reject(new SsrfError('aborted (timeout)')),
+          { once: true },
+        );
+      })
+    : null;
+  // Swallow the rejection if it's never raced (avoids an unhandled rejection).
+  abortRejection?.catch(() => {});
+  const race = <T>(p: Promise<T>): Promise<T> =>
+    abortRejection ? Promise.race([p, abortRejection]) : p;
+
+  // Pass the signal to connect too, so Deno tears the socket down on abort.
+  const tcp = await race(Deno.connect({ hostname: ip, port, signal }));
+
+  // Close the socket on abort as well (frees the resource); `conn` starts as the
+  // raw TCP conn and becomes the TLS conn below — closing whichever is current.
+  let conn: Deno.Conn = tcp;
   const close = () => {
     try {
       conn.close();
@@ -543,7 +551,19 @@ export async function fetchViaIpPinned(
       /* already closed */
     }
   };
-  opts.signal?.addEventListener('abort', close, { once: true });
+  signal?.addEventListener('abort', close, { once: true });
+
+  try {
+    if (isHttps) {
+      conn = await race(
+        Deno.startTls(tcp, { hostname: sni, caCerts: opts.caCerts }),
+      );
+    }
+  } catch (err) {
+    close();
+    signal?.removeEventListener('abort', close);
+    throw err;
+  }
 
   try {
     const method = (opts.method ?? 'GET').toUpperCase();
@@ -565,7 +585,7 @@ export async function fetchViaIpPinned(
     let buf: Bytes = new Uint8Array(0);
     let headerEnd = -1;
     while (headerEnd < 0) {
-      const { value, done } = await reader.read();
+      const { value, done } = await race(reader.read());
       if (done) break;
       buf = concatBytes(buf, value);
       headerEnd = indexOfDoubleCrlf(buf);
@@ -626,7 +646,7 @@ export async function fetchViaIpPinned(
     close();
     throw err;
   } finally {
-    opts.signal?.removeEventListener('abort', close);
+    signal?.removeEventListener('abort', close);
   }
 }
 
