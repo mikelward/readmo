@@ -39,8 +39,11 @@ const ITEM_STATE_COLS =
 const SUBSCRIPTION_COLS = 'feed_id, folder, title_override, muted, sort';
 
 /** Cap on the body-exclusion id list (pinned/done/hidden) we push into a single
- * `not in (…)` filter. Beyond this the proper fix is a server-side feed RPC that
- * joins item_state; see the class note. */
+ * `not in (…)` filter (keeps the request URL bounded). Above this the server
+ * filter is skipped and feedView falls back to a client-side exclusion floor, so
+ * correctness holds (no archived/hidden/pinned leak) with only approximate
+ * paging. The eventual proper fix is a server-side feed RPC that joins
+ * item_state; see the class note. */
 const MAX_EXCLUDE_IDS = 500;
 
 function notImplemented(method: string): never {
@@ -225,8 +228,10 @@ export class SupabaseDataSource implements DataSource {
     const limit = opts?.limit ?? PAGE_SIZE;
     const offset = decodeCursor(opts?.cursor);
     const { pinnedOldestFirst, excludeFromBody } = this.partitionStateIds();
+    const excludeSet = new Set(excludeFromBody);
 
-    // Body: newest-first, excluding pinned/done/hidden, offset-paginated.
+    // Body: newest-first by sort_at (= published_at ?? created_at), excluding
+    // pinned/done/hidden, offset-paginated.
     let query = this.sb
       .from('items')
       .select(ITEM_COLS, { count: 'exact' })
@@ -235,7 +240,7 @@ export class SupabaseDataSource implements DataSource {
       query = query.not('id', 'in', `(${excludeFromBody.join(',')})`);
     }
     query = query
-      .order('published_at', { ascending: false, nullsFirst: false })
+      .order('sort_at', { ascending: false })
       .order('id', { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -244,7 +249,15 @@ export class SupabaseDataSource implements DataSource {
       count: number | null;
       error: unknown;
     };
-    const bodyRows = this.unwrap<ItemRow[]>(res);
+    // Correctness floor: never surface pinned/done/hidden in the body even when
+    // the server-side `not in` was skipped (exclusion set over MAX_EXCLUDE_IDS).
+    // In that degraded path pages may run short and total/nextCursor are
+    // approximate, but archived/hidden/pinned items never reappear or duplicate.
+    const rawRows = this.unwrap<ItemRow[]>(res);
+    const bodyRows =
+      excludeSet.size > 0
+        ? rawRows.filter((r) => !excludeSet.has(r.id))
+        : rawRows;
     const bodyTotal = res.count ?? bodyRows.length;
     const body = await this.resolveFeedItems(bodyRows);
 
@@ -337,7 +350,7 @@ export class SupabaseDataSource implements DataSource {
         .from('items')
         .select(ITEM_COLS)
         .ilike('title', pattern)
-        .order('published_at', { ascending: false, nullsFirst: false })
+        .order('sort_at', { ascending: false })
         .limit(50),
     );
 
@@ -356,16 +369,16 @@ export class SupabaseDataSource implements DataSource {
           .from('items')
           .select(ITEM_COLS)
           .in('feed_id', feedIds)
-          .order('published_at', { ascending: false, nullsFirst: false })
+          .order('sort_at', { ascending: false })
           .limit(50),
       );
     }
 
     const byId = new Map<string, ItemRow>();
     for (const r of [...titleRows, ...feedRows]) byId.set(r.id, r);
-    const merged = [...byId.values()].sort(
-      (a, b) => (Date.parse(b.published_at ?? '') || 0) - (Date.parse(a.published_at ?? '') || 0),
-    );
+    const sortMs = (r: ItemRow) =>
+      Date.parse(r.published_at ?? r.created_at ?? '') || 0;
+    const merged = [...byId.values()].sort((a, b) => sortMs(b) - sortMs(a));
     return this.resolveFeedItems(merged);
   }
 
