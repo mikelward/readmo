@@ -94,8 +94,17 @@ function mapSessionUser(u: SessionUserLike | null | undefined): AuthUser | null 
 
 let supabaseUser: AuthUser | null = null;
 let supabaseUserSeeded = false;
+// True once the first getSession()/onAuthStateChange has resolved. Drives the
+// `initializing` flag so RequireAuth can hold a protected route while a fresh
+// OAuth callback session is still being detected (rather than bouncing to
+// /signin before it lands).
+let supabaseInitialized = false;
 const supabaseListeners = new Set<() => void>();
 let subscribedToSupabase = false;
+
+function notifySupabase(): void {
+  for (const l of supabaseListeners) l();
+}
 
 function sameUser(a: AuthUser | null, b: AuthUser | null): boolean {
   if (a === b) return true;
@@ -112,12 +121,18 @@ function setSupabaseUser(next: AuthUser | null): void {
   // An authoritative value from getSession()/onAuthStateChange also satisfies
   // the seed, so a later first getSnapshot won't re-read (and clobber) it.
   supabaseUserSeeded = true;
+  const initFlip = !supabaseInitialized;
+  supabaseInitialized = true;
   // Keep the reference stable when nothing material changed so a token refresh
   // (which re-fires onAuthStateChange) doesn't churn the useSyncExternalStore
-  // snapshot.
-  if (sameUser(supabaseUser, next)) return;
+  // snapshot. Still notify if `initialized` just flipped (e.g. getSession
+  // resolved to no session: user stays null but `initializing` must update).
+  if (sameUser(supabaseUser, next)) {
+    if (initFlip) notifySupabase();
+    return;
+  }
   supabaseUser = next;
-  for (const l of supabaseListeners) l();
+  notifySupabase();
 }
 
 function ensureSupabaseSubscription(): void {
@@ -155,6 +170,10 @@ function getSupabaseUser(): AuthUser | null {
     supabaseUser = readPersistedSupabaseUser();
   }
   return supabaseUser;
+}
+
+function getSupabaseInitialized(): boolean {
+  return supabaseInitialized;
 }
 
 /** Synchronously parse the persisted Supabase session. Defensive about the
@@ -197,6 +216,10 @@ export function getActiveUid(): string | null {
 
 export function useAuth(): {
   user: AuthUser | null;
+  /** True while a configured Supabase session is still being detected (first
+   * getSession/OAuth-callback parse). Always false on the mock path. Lets gates
+   * hold instead of treating "not yet known" as "signed out". */
+  initializing: boolean;
   signIn: (provider?: OAuthProvider, redirectPath?: string) => void;
   signOut: () => void;
 } {
@@ -207,6 +230,14 @@ export function useAuth(): {
     configured ? getSupabaseUser : getMockUser,
     () => null,
   );
+
+  // Reactive init flag (configured path only); the same subscription drives it.
+  const initialized = useSyncExternalStore(
+    configured ? subscribeSupabase : subscribeMock,
+    configured ? getSupabaseInitialized : () => true,
+    () => true,
+  );
+  const initializing = configured && !initialized;
 
   const signIn = useCallback(
     (provider: OAuthProvider = 'google', redirectPath?: string) => {
@@ -229,5 +260,5 @@ export function useAuth(): {
     else setSignedOut(true);
   }, [configured]);
 
-  return { user, signIn, signOut };
+  return { user, initializing, signIn, signOut };
 }

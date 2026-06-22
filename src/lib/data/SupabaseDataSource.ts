@@ -142,7 +142,13 @@ export class SupabaseDataSource implements DataSource {
         this.stateStore.hydrate(
           rows.map((r) => [r.item_id, mapItemState(r)] as [ItemId, ItemState]),
         );
-      })();
+      })().catch((err) => {
+        // Don't memoize a rejected promise — a transient/offline/expired-token
+        // failure would otherwise be replayed to every later read forever. Clear
+        // it so the next read retries.
+        this.hydration = null;
+        throw err;
+      });
     }
     return this.hydration;
   }
@@ -456,6 +462,12 @@ export class SupabaseDataSource implements DataSource {
       body: feedId ? { feedId } : {},
     });
     if (error) throw error instanceof Error ? error : new Error(String(error));
+    // A refresh/poll updates feeds_public (title, parked/error health), so the
+    // permanent feed cache is now stale. Drop it (coarse-grained; a per-feed
+    // update can come with the live write path) so reads re-fetch fresh
+    // metadata.
+    this.feedCache.clear();
+    this.subsCache = null;
   }
 
   async retryParkedFeed(_feedId: FeedId): Promise<void> {
