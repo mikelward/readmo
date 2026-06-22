@@ -346,6 +346,10 @@ export async function safeFetch(
 
       // Handle redirects ourselves so each Location is re-validated.
       if (res.status >= 300 && res.status < 400) {
+        // Release the socket backing this redirect response up front — we never
+        // read a redirect body, and in the pinned path it owns the conn. Do this
+        // before any throw so an invalid/oversized 3xx can't leak the connection.
+        await res.body?.cancel().catch(() => {});
         const location = res.headers.get('location');
         if (!location) {
           throw new SsrfError(`Redirect ${res.status} without Location header`);
@@ -353,10 +357,6 @@ export async function safeFetch(
         if (hop === maxRedirects) {
           throw new SsrfError(`Too many redirects (> ${maxRedirects})`);
         }
-        // Release the connection backing this redirect response — in the pinned
-        // path the body owns the socket, and we never read it on a redirect, so
-        // cancel it (closes the conn) to avoid leaking sockets across hops.
-        await res.body?.cancel().catch(() => {});
         // Resolve relative redirects against the current URL, then loop — the
         // top of the loop re-runs assertSafeUrl + DNS checks on the new target.
         current = new URL(location, current).toString();
@@ -677,6 +677,10 @@ function bodyStream(
   let pending = initial;
   let remaining = framing.contentLength;
   let finished = false;
+  // Chunked decode state, carried across pulls so a single chunk is streamed in
+  // bounded slices rather than buffered whole.
+  let chunkRemaining = 0; // data bytes left in the current chunk
+  let awaitingTrailer = false; // need to consume the CRLF after a chunk's data
 
   const finish = (c: ReadableStreamDefaultController<Bytes>) => {
     if (finished) return;
@@ -709,27 +713,55 @@ function bodyStream(
       try {
         if (finished) return;
         if (framing.chunked) {
-          let nl = indexOfCrlf(pending);
-          while (nl < 0) {
-            if (!(await fill(pending.length + 1))) {
+          // Consume the CRLF that terminated the previous chunk's data.
+          if (awaitingTrailer) {
+            if (!(await fill(2))) {
               finish(controller);
               return;
             }
-            nl = indexOfCrlf(pending);
+            pending = pending.subarray(2);
+            awaitingTrailer = false;
           }
-          const size = parseInt(
-            new TextDecoder().decode(pending.subarray(0, nl)).split(';')[0],
-            16,
-          );
-          pending = pending.subarray(nl + 2);
-          if (!Number.isFinite(size)) throw new SsrfError('bad chunk size');
-          if (size === 0) {
-            finish(controller);
-            return;
+          // Parse the next chunk's size line when we're between chunks.
+          if (chunkRemaining === 0) {
+            let nl = indexOfCrlf(pending);
+            while (nl < 0) {
+              if (pending.length > 1024) {
+                throw new SsrfError('chunk size line too long');
+              }
+              if (!(await fill(pending.length + 1))) {
+                finish(controller);
+                return;
+              }
+              nl = indexOfCrlf(pending);
+            }
+            const size = parseInt(
+              new TextDecoder().decode(pending.subarray(0, nl)).split(';')[0],
+              16,
+            );
+            pending = pending.subarray(nl + 2);
+            if (!Number.isInteger(size) || size < 0) {
+              throw new SsrfError('bad chunk size');
+            }
+            if (size === 0) {
+              finish(controller); // last chunk
+              return;
+            }
+            chunkRemaining = size;
           }
-          if (!(await fill(size + 2))) throw new SsrfError('truncated chunk');
-          controller.enqueue(pending.subarray(0, size));
-          pending = pending.subarray(size + 2); // skip the chunk's trailing CRLF
+          // Emit only what's already buffered (or one read), bounded by the
+          // chunk — so readCapped enforces maxBytes incrementally instead of
+          // letting a huge advertised chunk buffer unbounded first.
+          if (pending.length === 0) {
+            const got = await next();
+            if (got.length === 0) throw new SsrfError('truncated chunk');
+            pending = got;
+          }
+          const take = Math.min(chunkRemaining, pending.length);
+          controller.enqueue(pending.subarray(0, take));
+          pending = pending.subarray(take);
+          chunkRemaining -= take;
+          if (chunkRemaining === 0) awaitingTrailer = true;
         } else if (remaining !== null) {
           if (remaining <= 0) {
             finish(controller);
