@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/renderWithProviders';
@@ -17,6 +17,10 @@ function renderHome(source: MockDataSource) {
 }
 
 describe('ItemList', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('renders the first page of items with the sticky toolbar', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     renderHome(source);
@@ -25,6 +29,20 @@ describe('ItemList', () => {
     });
     expect(screen.getByTestId('undo-btn')).toBeInTheDocument();
     expect(screen.getByTestId('sweep-btn')).toBeInTheDocument();
+  });
+
+  it('has a Back to top button in the bottom toolbar that scrolls to the top', async () => {
+    const user = userEvent.setup();
+    const scrollToSpy = vi.fn();
+    vi.stubGlobal('scrollTo', scrollToSpy);
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderHome(source);
+    await screen.findAllByTestId('item-row');
+
+    const backToTop = screen.getByTestId('back-to-top');
+    expect(backToTop).toHaveAccessibleName(/back to top/i);
+    await user.click(backToTop);
+    expect(scrollToSpy).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
   });
 
   it('prepends a pinned item to the top of the list', async () => {

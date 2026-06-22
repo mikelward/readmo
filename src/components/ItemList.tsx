@@ -113,6 +113,8 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
           </button>
         </div>
       ) : null}
+
+      <ListToolbar placement="bottom" />
     </div>
   );
 }

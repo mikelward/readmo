@@ -1,9 +1,23 @@
 .list-toolbar {
   position: sticky;
-  top: var(--rm-header-h);
   z-index: 10;
   background: var(--rm-bg);
+}
+
+.list-toolbar--top {
+  top: var(--rm-header-h);
   border-bottom: 1px solid var(--rm-border);
+}
+
+/* The bottom copy mirrors the top bar but pins to the foot of the viewport,
+   so Back to top is always reachable without a separate floating button. */
+.list-toolbar--bottom {
+  bottom: 0;
+  border-top: 1px solid var(--rm-border);
+}
+
+.list-toolbar--bottom .list-toolbar__row {
+  padding-bottom: max(4px, env(safe-area-inset-bottom));
 }
 
 .list-toolbar__row {

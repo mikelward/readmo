@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { useDataSource } from '../lib/data/context';
 import { useFeedBar } from './FeedBarContext';
 import { TooltipButton } from './TooltipButton';
+import { VerticalAlignTop } from './icons';
 import './ListToolbar.css';
 
 const MS_VIEWBOX = '0 -960 960 960';
@@ -28,9 +29,27 @@ function SweepIcon() {
   );
 }
 
-/** Sticky list toolbar: right-aligned Undo + Sweep (Hide unpinned). The RSS
- * analog of newshacker's Undo + Sweep (SPEC.md *List toolbar*). */
-export function ListToolbar() {
+function scrollToTop() {
+  // Browsers that honor prefers-reduced-motion fall back to an instant scroll.
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+interface Props {
+  /** Where the bar sits. The bottom copy mirrors the top bar but leads with a
+   * Back to top button in the left slot, matching the reader's two bars
+   * (SPEC.md *List toolbar*). Defaults to the top. */
+  placement?: 'top' | 'bottom';
+  /** Whether to render the Undo + Sweep actions. List views with no sweepable
+   * selection (library, search) pass false so their bottom bar is Back to top
+   * only. */
+  actions?: boolean;
+}
+
+/** Sticky list toolbar: Back to top (bottom bar only) on the left, then
+ * right-aligned Undo + Sweep (Hide unpinned). The RSS analog of newshacker's
+ * Undo + Sweep (SPEC.md *List toolbar*). Rendered at both the top and bottom of
+ * a list so Back to top is always within reach without a separate button. */
+export function ListToolbar({ placement = 'top', actions = true }: Props = {}) {
   const ds = useDataSource();
   const store = ds.stateStore;
   const { sweep, sweepCount } = useFeedBar();
@@ -44,32 +63,46 @@ export function ListToolbar() {
   const canSweep = !!sweep && sweepCount > 0;
 
   return (
-    <section className="list-toolbar" aria-label="List actions">
+    <section className={`list-toolbar list-toolbar--${placement}`} aria-label="List actions">
       <div className="list-toolbar__row" role="toolbar">
-        <div className="list-toolbar__right">
+        {placement === 'bottom' ? (
           <TooltipButton
             type="button"
             className="list-toolbar__button"
-            data-testid="undo-btn"
-            onClick={canUndo ? () => store.undoLast() : undefined}
-            disabled={!canUndo}
-            tooltip={canUndo ? 'Undo hide' : 'Nothing to undo'}
-            aria-label={canUndo ? 'Undo hide' : 'Nothing to undo'}
+            data-testid="back-to-top"
+            onClick={scrollToTop}
+            tooltip="Back to top"
+            aria-label="Back to top"
           >
-            <UndoIcon />
+            <VerticalAlignTop />
           </TooltipButton>
-          <TooltipButton
-            type="button"
-            className="list-toolbar__button"
-            data-testid="sweep-btn"
-            onClick={canSweep ? sweep : undefined}
-            disabled={!canSweep}
-            tooltip={canSweep ? 'Hide unpinned' : 'Nothing to hide'}
-            aria-label={canSweep ? 'Hide unpinned' : 'Nothing to hide'}
-          >
-            <SweepIcon />
-          </TooltipButton>
-        </div>
+        ) : null}
+        {actions ? (
+          <div className="list-toolbar__right">
+            <TooltipButton
+              type="button"
+              className="list-toolbar__button"
+              data-testid={`undo-btn${placement === 'bottom' ? '-bottom' : ''}`}
+              onClick={canUndo ? () => store.undoLast() : undefined}
+              disabled={!canUndo}
+              tooltip={canUndo ? 'Undo hide' : 'Nothing to undo'}
+              aria-label={canUndo ? 'Undo hide' : 'Nothing to undo'}
+            >
+              <UndoIcon />
+            </TooltipButton>
+            <TooltipButton
+              type="button"
+              className="list-toolbar__button"
+              data-testid={`sweep-btn${placement === 'bottom' ? '-bottom' : ''}`}
+              onClick={canSweep ? sweep : undefined}
+              disabled={!canSweep}
+              tooltip={canSweep ? 'Hide unpinned' : 'Nothing to hide'}
+              aria-label={canSweep ? 'Hide unpinned' : 'Nothing to hide'}
+            >
+              <SweepIcon />
+            </TooltipButton>
+          </div>
+        ) : null}
       </div>
     </section>
   );

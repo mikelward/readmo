@@ -2,7 +2,6 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { AppHeader } from './components/AppHeader';
 import { ScrollToTop } from './components/ScrollToTop';
-import { BackToTopButton } from './components/BackToTopButton';
 import { KeyboardShortcutsOverlay } from './components/KeyboardShortcutsOverlay';
 import { FeedBarProvider } from './components/FeedBarContext';
 import { useAuth } from './hooks/useAuth';
@@ -34,10 +33,6 @@ function RequireAuth({ children }: { children: ReactNode }) {
 }
 
 export default function App() {
-  // The reader carries its own sticky bottom toolbar whose leading slot is a
-  // Back to top button, so the global button would duplicate it there. Keep it
-  // for the feed/library list views.
-  const showBackToTop = !useLocation().pathname.startsWith('/item/');
   // Gate rendering across an auth transition: while the previous user's caches
   // are being purged and the app reloads, paint nothing so the next user can't
   // briefly see the previous user's cached content (guardrail #8).
@@ -73,7 +68,6 @@ export default function App() {
           />
         </Routes>
       </main>
-      {showBackToTop ? <BackToTopButton /> : null}
       <KeyboardShortcutsOverlay />
     </FeedBarProvider>
   );
