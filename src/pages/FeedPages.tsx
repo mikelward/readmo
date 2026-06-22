@@ -1,5 +1,5 @@
 import { useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useHomeFeed } from '../hooks/useHomeFeed';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
@@ -55,11 +55,22 @@ export function FolderPage() {
 export function FeedPage() {
   const { feedId = '' } = useParams();
   const ds = useDataSource();
+  const queryClient = useQueryClient();
   const { data: feed } = useQuery({
     queryKey: ['feed-meta', feedId],
     queryFn: () => ds.getFeed(feedId),
   });
   useDocumentTitle(feed ? `${feed.title} · readmo` : 'readmo');
+
+  // Un-park, then refetch the badge's own query plus the drawer's feed-health
+  // list (both read a cloned Feed, so they go stale until invalidated).
+  const retry = useMutation({
+    mutationFn: () => ds.retryParkedFeed(feedId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['feed-meta', feedId] });
+      queryClient.invalidateQueries({ queryKey: ['subscriptions'] });
+    },
+  });
 
   return (
     <>
@@ -70,7 +81,8 @@ export function FeedPage() {
             type="button"
             className="page-header__badge"
             title={feed.lastError ?? 'Feed parked after repeated failures'}
-            onClick={() => ds.retryParkedFeed(feedId)}
+            onClick={() => retry.mutate()}
+            disabled={retry.isPending}
           >
             Feed has errors · Retry now
           </button>
