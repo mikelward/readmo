@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
-import { buildUpstreamUrl, isServeableImageType } from './img.ts';
+import { buildAnonHeaders, buildUpstreamUrl, isServeableImageType } from './img.ts';
 
 describe('img proxy — buildUpstreamUrl', () => {
   const base = 'https://abcd1234.supabase.co';
@@ -30,6 +30,21 @@ describe('img proxy — buildUpstreamUrl', () => {
     expect(buildUpstreamUrl(base, data)).toBe(
       `https://abcd1234.supabase.co/functions/v1/img?url=${encodeURIComponent(data)}`,
     );
+  });
+});
+
+describe('img proxy — buildAnonHeaders', () => {
+  it('returns Authorization and apikey headers when a key is provided', () => {
+    const headers = buildAnonHeaders('my-anon-key');
+    expect(headers).toEqual({
+      Authorization: 'Bearer my-anon-key',
+      apikey: 'my-anon-key',
+    });
+  });
+
+  it('returns an empty object when no key is provided', () => {
+    expect(buildAnonHeaders(undefined)).toEqual({});
+    expect(buildAnonHeaders('')).toEqual({});
   });
 });
 
