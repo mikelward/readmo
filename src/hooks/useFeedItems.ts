@@ -35,7 +35,7 @@ export function useFeedItems(viewKey: string, fetchPage: FetchPage) {
   // and filtering inside the DataSource).
   useEffect(() => {
     return ds.stateStore.subscribe(() => {
-      queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
+      void queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
     });
   }, [ds, queryClient, viewKey]);
 
