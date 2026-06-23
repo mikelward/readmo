@@ -94,20 +94,20 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
         </div>
       ) : null}
 
-      {hasMore ? (
-        <div className="item-list__more">
-          <button
-            type="button"
-            data-testid="more-btn"
-            onClick={() => fetchMore()}
-            disabled={isFetchingMore}
-          >
-            {isFetchingMore ? 'Loading…' : 'More'}
-          </button>
-        </div>
-      ) : null}
-
-      <ListToolbar placement="bottom" />
+      <ListToolbar
+        placement="bottom"
+        // Only offer More once the feed is populated. Until the first page
+        // lands (loading skeletons, error/retry, or an empty result) hasMore is
+        // false, so an unconditional More would flash a disabled "No more items"
+        // under the skeletons or retry UI even though the feed isn't actually
+        // exhausted. Matches newshacker, whose footer renders only on a
+        // populated feed.
+        more={
+          items.length > 0
+            ? { hasMore, isFetching: isFetchingMore, onMore: () => fetchMore() }
+            : undefined
+        }
+      />
     </div>
   );
 }

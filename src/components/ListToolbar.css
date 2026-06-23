@@ -70,3 +70,41 @@
 .list-toolbar__button:not(:disabled):active {
   background: var(--rm-border);
 }
+
+/* "More" (load next page) on feed bottom bars. Stretches to fill the gap
+   between Back to top and the Undo/Sweep group (the right group's margin-left:
+   auto still pins those to the trailing edge). */
+.list-toolbar__more {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--rm-tap);
+  padding: 8px 16px;
+  border: 1px solid var(--rm-border-strong);
+  border-radius: var(--rm-radius);
+  background: var(--rm-bg-card);
+  color: var(--rm-accent);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+@media (pointer: fine) {
+  .list-toolbar__more {
+    min-height: 36px;
+  }
+}
+
+@media (hover: hover) {
+  .list-toolbar__more:not(:disabled):hover {
+    background: var(--rm-bg);
+  }
+}
+
+.list-toolbar__more:not(:disabled):active {
+  background: var(--rm-border);
+}
+
+.list-toolbar__more:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
