@@ -173,7 +173,7 @@ make deploy
 # Or deploy individually:
 supabase functions deploy discover --import-map supabase/functions/import_map.json
 supabase functions deploy refresh  --import-map supabase/functions/import_map.json
-supabase functions deploy poll     --import-map supabase/functions/import_map.json
+supabase functions deploy poll     --import-map supabase/functions/import_map.json --no-verify-jwt
 supabase functions deploy img      --import-map supabase/functions/import_map.json --no-verify-jwt
 ```
 
