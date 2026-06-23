@@ -1,9 +1,14 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { ItemList } from './ItemList';
 import { MockDataSource } from '../lib/data/MockDataSource';
+import {
+  installIntersectionObserverMock,
+  setVisibilityForTest,
+  uninstallIntersectionObserverMock,
+} from '../test/intersectionObserver';
 
 function renderHome(source: MockDataSource) {
   return renderWithProviders(
@@ -17,7 +22,15 @@ function renderHome(source: MockDataSource) {
 }
 
 describe('ItemList', () => {
+  // Sweep hides only rows fully in the viewport, tracked via an
+  // IntersectionObserver that jsdom lacks — the mock reports every observed
+  // row as fully visible by default (see intersectionObserver.ts).
+  beforeEach(() => {
+    installIntersectionObserverMock();
+  });
+
   afterEach(() => {
+    uninstallIntersectionObserverMock();
     vi.unstubAllGlobals();
   });
 
@@ -92,6 +105,48 @@ describe('ItemList', () => {
     await user.click(screen.getByTestId('undo-btn'));
     await waitFor(() => {
       expect(screen.getAllByTestId('item-row').length).toBeGreaterThan(0);
+    });
+  });
+
+  it('Sweep only hides rows fully in the viewport, leaving off-screen rows', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderHome(source);
+    const rows = await screen.findAllByTestId('item-row');
+
+    // Drop the last row below the "fully visible" threshold, as if it were
+    // scrolled partway off-screen.
+    const offScreen = rows[rows.length - 1];
+    const offScreenTitle =
+      within(offScreen).getByTestId('item-title').textContent;
+    act(() => {
+      setVisibilityForTest(offScreen.closest('li')!, 0.4);
+    });
+
+    await user.click(screen.getByTestId('sweep-btn'));
+
+    // The off-screen row survives; it's the only row left.
+    await waitFor(() => {
+      const titles = screen
+        .getAllByTestId('item-title')
+        .map((n) => n.textContent);
+      expect(titles).toEqual([offScreenTitle]);
+    });
+  });
+
+  it('disables Sweep when no row is fully visible', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderHome(source);
+    const rows = await screen.findAllByTestId('item-row');
+
+    act(() => {
+      for (const row of rows) {
+        setVisibilityForTest(row.closest('li')!, 0.5);
+      }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sweep-btn')).toBeDisabled();
     });
   });
 });

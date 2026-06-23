@@ -24,3 +24,22 @@ export function measureStickyInset(): number {
   }
   return Math.max(0, Math.ceil(bottom));
 }
+
+// How far the sticky *bottom* list toolbar (`.list-toolbar--bottom`, pinned at
+// `bottom: 0` — see ListToolbar.css) intrudes up from the bottom of the
+// viewport. Unlike newshacker — whose feed footer is `position: relative` and
+// never overlaps rows — readmo pins the bottom toolbar to the viewport foot, so
+// a row tucked behind it is *not* fully visible. The sweep IntersectionObserver
+// shrinks its root's bottom edge by this value so such a row isn't swept.
+//
+// When the toolbar is pinned, its top sits at `viewportHeight - height`, so the
+// intrusion is its height. When it's still in normal flow below the fold its
+// top is past the viewport bottom, yielding a negative intrusion that clamps to
+// 0 — nothing to exclude. (Codex P2 on PR #44.)
+export function measureStickyBottomInset(): number {
+  if (typeof document === 'undefined' || typeof window === 'undefined') return 0;
+  const el = document.querySelector('.list-toolbar--bottom');
+  if (!el) return 0;
+  const rect = el.getBoundingClientRect();
+  return Math.max(0, Math.ceil(window.innerHeight - rect.top));
+}

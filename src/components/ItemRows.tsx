@@ -20,6 +20,10 @@ interface Props {
   /** Per-item inverse action that replaces the default Pin button (library
    * views: Unpin / Unfavorite / …). */
   rightAction?: (feedItem: FeedItem) => RightAction;
+  /** Feed views pass a per-id callback ref (from {@link useInViewIds}) so the
+   * row's `<li>` is observed for viewport visibility — Sweep hides only the
+   * rows fully in view. Omitted by library/search/offline, which don't sweep. */
+  getRowRef?: (id: FeedItem['item']['id']) => (el: HTMLElement | null) => void;
 }
 
 /** The shared body of a list view: loading skeletons, the empty state, or the
@@ -33,6 +37,7 @@ export function ItemRows({
   enableSwipe = false,
   listRef,
   rightAction,
+  getRowRef,
 }: Props) {
   const share = useShareItem();
 
@@ -57,7 +62,12 @@ export function ItemRows({
   return (
     <ul className="item-list__rows" ref={listRef}>
       {items.map((fi) => (
-        <li key={fi.item.id} className="item-list__row">
+        <li
+          key={fi.item.id}
+          className="item-list__row"
+          data-item-id={fi.item.id}
+          ref={getRowRef?.(fi.item.id)}
+        >
           <ItemRow
             feedItem={fi}
             enableSwipe={enableSwipe}

@@ -558,9 +558,14 @@ loopback/link-local/private/metadata targets and redirects to them.
    comments. See *Reader view*.
 
 6. **List toolbar** — sticky below the header: right-aligned **Undo** +
-   **Sweep unpinned** (Hide unpinned). Sweep plays the single slide-out and
-   commits on animation end; Undo restores the last hide / swipe / sweep batch.
-   Same component/behavior as newshacker.
+   **Sweep unpinned** (Hide unpinned). Sweep hides only the unpinned rows that
+   are **fully visible right now** — not the whole loaded list — so scrolling
+   past content and tapping the broom can't dismiss rows off-screen. A row
+   counts as visible iff its bounding box sits entirely inside the viewport
+   minus the sticky chrome (header + toolbar), tracked by an
+   IntersectionObserver whose `rootMargin` shrinks the top by that inset; the
+   button disables when nothing unpinned is fully visible. Undo restores the
+   last hide / swipe / sweep batch. Same component/behavior as newshacker.
 
 7. **Bottom action bar** — Back-to-top + More + Undo + Sweep on feed footers;
    Back-to-top only on library footers. Same slot order.
