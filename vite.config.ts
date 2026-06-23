@@ -43,9 +43,9 @@ function git(args: string): string {
   }
 }
 
-function gitRun(args: string): void {
+function gitRun(args: string, timeout = 30_000): void {
   try {
-    execSync(`git ${args}`, { stdio: 'ignore' });
+    execSync(`git ${args}`, { stdio: 'ignore', timeout });
   } catch {
     // ignore — caller checks the result via git()
   }
@@ -60,8 +60,11 @@ function readBuildInfo(): BuildInfo {
     7,
   );
   const branch = env.VERCEL_GIT_COMMIT_REF || git('rev-parse --abbrev-ref HEAD');
+  // Vercel clones at depth ~10; unshallow so rev-list --count is accurate.
+  // Capped at 30 s — on timeout/failure the re-check below returns 'true'
+  // and commitCount stays 0, hiding the row rather than showing a wrong count.
   if (git('rev-parse --is-shallow-repository') === 'true') {
-    gitRun('fetch --unshallow');
+    gitRun('fetch --unshallow', 30_000);
   }
   const commitCount =
     git('rev-parse --is-shallow-repository') === 'true'

@@ -70,8 +70,11 @@ describe('summarizeBuild', () => {
 });
 
 describe('buildInfoRows', () => {
+  // now = 4h after commitTime, 3h after buildTime
+  const now = new Date('2026-06-23T04:00:00.000Z');
+
   it('includes every populated field', () => {
-    const rows = buildInfoRows(makeInfo());
+    const rows = buildInfoRows(makeInfo(), now);
     const labels = rows.map((r) => r.label);
     expect(labels).toEqual([
       'Environment',
@@ -84,6 +87,12 @@ describe('buildInfoRows', () => {
     ]);
   });
 
+  it('formats commitTime and buildTime as relative time', () => {
+    const rows = buildInfoRows(makeInfo(), now);
+    expect(rows.find((r) => r.label === 'Committed')?.value).toBe('4h');
+    expect(rows.find((r) => r.label === 'Built')?.value).toBe('3h');
+  });
+
   it('omits rows whose value is missing', () => {
     const rows = buildInfoRows(
       makeInfo({
@@ -94,12 +103,13 @@ describe('buildInfoRows', () => {
         commitTime: '',
         buildTime: '',
       }),
+      now,
     );
     expect(rows.map((r) => r.label)).toEqual(['Environment']);
   });
 
   it('shows "unknown" when the environment is blank', () => {
-    const rows = buildInfoRows(makeInfo({ environment: '' }));
+    const rows = buildInfoRows(makeInfo({ environment: '' }), now);
     expect(rows[0]).toEqual({ label: 'Environment', value: 'unknown' });
   });
 });
