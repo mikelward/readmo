@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useStateBucket } from '../hooks/useItemState';
+import { resolveSavedItems } from '../lib/offlineItems';
 import type { ItemStateField } from '../lib/types';
 import { ItemRows } from './ItemRows';
 
@@ -25,12 +26,16 @@ export function LibraryItemList({
   emptyLabel,
 }: Props) {
   const ds = useDataSource();
+  const queryClient = useQueryClient();
   const store = ds.stateStore;
   const ids = useStateBucket(field);
 
   const query = useQuery({
     queryKey: ['library', field, ids.join(',')],
-    queryFn: () => ds.getItemsByIds(ids),
+    // Falls back to the per-item caches warmed by useOfflineCacheLock when the
+    // batch fetch fails offline, so /pinned and /favorites list their items
+    // without connectivity (same as /offline).
+    queryFn: () => resolveSavedItems(ds, queryClient, ids),
   });
 
   return (

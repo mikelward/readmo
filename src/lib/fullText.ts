@@ -13,6 +13,17 @@ export interface FullTextResult {
   contentHtml: string | null;
 }
 
+/** staleTime policy for the `['fulltext', id]` query, shared by the reader's
+ * live query and the pin-time prefetch so both behave identically: terminal
+ * outcomes (ok/empty/auth) are cached forever (re-fetching can't change them),
+ * but a transient `unreachable` stays stale so the next open/pin retries it. */
+export function fullTextStaleTime(query: {
+  state: { data?: FullTextResult };
+}): number {
+  const data = query.state.data;
+  return data && data.status !== 'unreachable' ? Infinity : 0;
+}
+
 /** Strip HTML tags and collapse whitespace to estimate the visible text length
  * of a feed body. */
 export function htmlTextLength(html: string): number {

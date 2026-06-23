@@ -12,12 +12,14 @@ import { MockDataSource } from '../lib/data/MockDataSource';
  * exercise the real data path without a network. */
 export function renderWithProviders(
   ui: ReactElement,
-  opts: { route?: string; source?: MockDataSource } = {},
+  opts: { route?: string; source?: MockDataSource; queryClient?: QueryClient } = {},
 ) {
   const source = opts.source ?? new MockDataSource(`test-${Math.random()}`);
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
-  });
+  const queryClient =
+    opts.queryClient ??
+    new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
 
   function Wrapper({ children }: { children: ReactNode }) {
     return (
@@ -35,5 +37,5 @@ export function renderWithProviders(
     );
   }
 
-  return { source, ...render(ui, { wrapper: Wrapper }) };
+  return { source, queryClient, ...render(ui, { wrapper: Wrapper }) };
 }

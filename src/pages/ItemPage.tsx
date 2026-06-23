@@ -7,7 +7,7 @@ import { useWideViewport } from '../hooks/useWideViewport';
 import { useShareItem } from '../hooks/useShareItem';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { formatAge, formatDisplayDomain, isSafeHttpUrl } from '../lib/itemMeta';
-import { looksTruncated } from '../lib/fullText';
+import { fullTextStaleTime, looksTruncated } from '../lib/fullText';
 import type { Feed, Item, ItemState, ItemStateField } from '../lib/types';
 import { TooltipButton } from '../components/TooltipButton';
 import {
@@ -227,13 +227,8 @@ export function ItemPage() {
   // Reading mode: when the feed body looks truncated, fetch the full article
   // from its source (server-side extraction). `manualTrigger` lets the user
   // request it for a feed whose body looked complete; `showFeedVersion` flips
-  // back to the feed's own body when both exist.
-  //
-  // TODO(offline): also warm full-text on PIN (pinned/favorited are the offline
-  // buckets) and persist full_content_html into the device's offline cache so a
-  // pinned-but-unopened truncated item saves the readable body, not just the
-  // feed stub. And sync that readable body across the user's devices. Both are
-  // part of the offline/sync milestone — see SPEC.md *Open questions*.
+  // back to the feed's own body when both exist. Pinning caches this query (and
+  // the item detail) for offline via usePinnedCacheLock.
   const [manualTrigger, setManualTrigger] = useState(false);
   const [showFeedVersion, setShowFeedVersion] = useState(false);
 
@@ -245,12 +240,10 @@ export function ItemPage() {
     queryKey: ['fulltext', id],
     queryFn: () => ds.fetchFullText(id),
     enabled: wantFull,
-    // Terminal outcomes (ok/empty/auth) are cached forever — re-fetching won't
-    // change them. A transient `unreachable` stays stale so reopening the reader
-    // retries it (and the in-view "Try again" forces a refetch immediately);
-    // otherwise a momentary network blip would wedge reading mode off forever.
-    staleTime: (query) =>
-      query.state.data && query.state.data.status !== 'unreachable' ? Infinity : 0,
+    // Terminal outcomes (ok/empty/auth) are cached forever; a transient
+    // `unreachable` stays stale so reopening (or the in-view "Try again")
+    // retries it. Shared with the pin-time prefetch (useFullTextPrefetch).
+    staleTime: fullTextStaleTime,
   });
 
   // Opening the reader marks the item Opened (auto), and resets the per-article
