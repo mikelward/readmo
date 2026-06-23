@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
+import { AddFeedError, type AddFeedErrorKind } from '../lib/data/DataSource';
 import { buildInfo, summarizeBuild } from '../lib/buildInfo';
 import { useTheme } from '../hooks/useTheme';
 import { useAuth } from '../hooks/useAuth';
@@ -10,6 +11,22 @@ import { useToast } from '../hooks/useToast';
 import type { Palette, Theme } from '../lib/theme';
 import './SettingsPage.css';
 import './PageHeader.css';
+
+/** User-facing copy for each way "Add a feed" can fail. Keyed by
+ * {@link AddFeedErrorKind} so every classified case has a specific message. */
+const ADD_FEED_MESSAGES: Record<AddFeedErrorKind, string> = {
+  'signed-out': 'You’re signed out. Sign in again to add feeds.',
+  'feed-auth': 'That feed requires a login, so it can’t be added.',
+  'no-feed': 'No feed found at that URL.',
+  'not-found': 'That URL could not be found (404).',
+  unreachable: 'Couldn’t reach that URL. Check the address and try again.',
+  unknown: 'Couldn’t add that feed. Please try again.',
+};
+
+function addFeedMessage(err: unknown): string {
+  if (err instanceof AddFeedError) return ADD_FEED_MESSAGES[err.kind];
+  return ADD_FEED_MESSAGES.unknown;
+}
 
 export function SettingsPage() {
   const ds = useDataSource();
@@ -34,14 +51,26 @@ export function SettingsPage() {
 
   const addFeed = useMutation({
     mutationFn: async (url: string) => {
+      // discover() already tries parsing the target itself as a feed, so an
+      // empty list means the URL is neither a feed nor advertises one. Do NOT
+      // fall back to subscribing to the raw (non-feed) URL: that stored a feed
+      // the server can only ever fetch as HTML, leaving it stuck as "Untitled
+      // feed" with no items. Surface a clear error instead.
       const candidates = await ds.discover(url);
-      const chosen = candidates[0]?.url ?? url;
+      const chosen = candidates[0]?.url;
+      if (!chosen) throw new AddFeedError('no-feed');
       return ds.subscribe(chosen);
     },
     onSuccess: (feed) => {
       setFeedUrl('');
       invalidate();
       showToast({ message: `Subscribed to ${feed.title}` });
+    },
+    onError: (err) => {
+      // Surface a specific reason to the user, and log the underlying detail
+      // (server message / status) so the exact cause is visible in devtools.
+      console.warn('Add feed failed:', err);
+      showToast({ message: addFeedMessage(err) });
     },
   });
 

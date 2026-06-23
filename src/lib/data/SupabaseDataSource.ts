@@ -1,4 +1,7 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
+import {
+  type SupabaseClient,
+  FunctionsHttpError,
+} from '@supabase/supabase-js';
 import {
   type Feed,
   type FeedId,
@@ -20,6 +23,8 @@ import {
   type DiscoveredFeed,
   type FeedListOptions,
   type Page,
+  AddFeedError,
+  type AddFeedErrorKind,
 } from './DataSource';
 import { PAGE_SIZE } from './MockDataSource';
 import {
@@ -86,6 +91,46 @@ function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
+}
+
+/**
+ * Classify an Edge Function invoke error (discover / refresh) into a typed
+ * {@link AddFeedError} so the UI can show a specific message. The function
+ * itself tags the upstream-fetch outcomes it can tell apart with a JSON
+ * `{ error, code }` body; a missing/expired JWT is rejected by the platform
+ * (verify_jwt) as a bare 401 *before* the function runs, which we read off the
+ * HTTP status.
+ */
+async function classifyFunctionError(error: unknown): Promise<AddFeedError> {
+  if (error instanceof FunctionsHttpError) {
+    const res = error.context as Response | undefined;
+    const status = res?.status;
+    let code: string | undefined;
+    let serverMsg: string | undefined;
+    try {
+      const body = (await res?.clone().json()) as
+        | { error?: string; code?: string }
+        | undefined;
+      code = body?.code;
+      serverMsg = body?.error;
+    } catch {
+      /* non-JSON body (e.g. the platform's bare 401) — fall back to status */
+    }
+    const byCode: Record<string, AddFeedErrorKind> = {
+      auth: 'feed-auth',
+      'not-found': 'not-found',
+      unreachable: 'unreachable',
+    };
+    if (code && byCode[code]) return new AddFeedError(byCode[code], serverMsg);
+    // Platform auth layer: the caller's JWT is missing/expired.
+    if (status === 401 || status === 403)
+      return new AddFeedError('signed-out', serverMsg);
+    return new AddFeedError('unreachable', serverMsg ?? `HTTP ${status ?? '?'}`);
+  }
+  // FunctionsFetchError / FunctionsRelayError / anything else: we couldn't even
+  // reach the function.
+  const msg = error instanceof Error ? error.message : String(error);
+  return new AddFeedError('unreachable', msg);
 }
 
 /**
@@ -481,7 +526,9 @@ export class SupabaseDataSource implements DataSource {
     const { data, error } = await this.sb.functions.invoke('discover', {
       body: { url: clean },
     });
-    if (error) throw error instanceof Error ? error : new Error(String(error));
+    // Distinguish "couldn't reach / not a feed / needs auth / signed out" so
+    // the UI can say which, rather than one opaque failure.
+    if (error) throw await classifyFunctionError(error);
     const candidates =
       (data as { candidates?: unknown })?.candidates ?? [];
     if (!Array.isArray(candidates)) return [];
