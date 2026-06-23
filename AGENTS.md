@@ -79,7 +79,9 @@ src/
                    context.tsx       — React context/provider for the source
                    seed.ts           — seed/fixture data for the mock
   pages/         route-level views (feed, library, reader, settings, signin)
-  styles/        global.css with the --rm-* design tokens
+  styles/        global.css with the --rm-* design tokens (e.g.
+                 --rm-accent: #3a4ec4, --rm-bg, --rm-text, --rm-read) —
+                 use the tokens; don't hard-code colors
   types/         ambient/build type declarations
 public/          PWA icons + manifest assets (generated; see below)
 scripts/         dev one-shots (generate-icons.mjs)
@@ -119,6 +121,12 @@ build/routing/deploy.
 
 ## Testing expectations
 
+- **The test environment is Vitest + jsdom.** Pure-logic tests that need Node
+  instead opt in per-file with a docblock pragma at the top:
+
+  ```ts
+  // @vitest-environment node
+  ```
 - **Fix any preexisting test failures as the *first* commit of the series.**
   If `npm test` is already red when you start a task, don't stack your work
   on top of a broken baseline. Land the fix first, on its own commit. If the
