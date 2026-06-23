@@ -58,15 +58,25 @@ Deno.serve(async (req: Request) => {
     if (targetCode) return feedErrorResponse(targetCode);
 
     // Otherwise treat it as HTML and probe each candidate. If NONE validate but
-    // some failed with an informative status (a login-gated or dead advertised
-    // RSS URL), surface that reason instead of a blanket "no feed found".
+    // an *advertised* candidate failed with an informative reason (a login-gated
+    // or dead RSS URL the page explicitly points at), surface that instead of a
+    // blanket "no feed found".
     const candidates = discoverFromHtml(body, res.url);
     const validated = [];
     let candidateFail: 'auth' | 'not-found' | 'unreachable' | null = null;
     for (const c of candidates as FeedCandidate[]) {
       const { feed, status } = await tryParse(c.url);
-      if (feed) validated.push(feed);
-      else candidateFail = mergeFail(candidateFail, codeForStatus(status));
+      if (feed) {
+        validated.push(feed);
+        continue;
+      }
+      // Only <link>-advertised candidates (type set) drive a specific failure.
+      // Speculative path fallbacks (/feed, /rss, … with type === null) miss
+      // routinely on ordinary no-feed sites, so their 404s/timeouts must NOT
+      // turn a normal page into "not found"/"unreachable" — leave it no-feed.
+      if (c.type != null) {
+        candidateFail = mergeFail(candidateFail, candidateFailCode(status));
+      }
     }
     if (validated.length === 0 && candidateFail) return feedErrorResponse(candidateFail);
     return json({ candidates: validated });
@@ -127,6 +137,17 @@ function codeForStatus(status: number | null): 'auth' | 'not-found' | 'unreachab
   if (status === 404 || status === 410) return 'not-found';
   if (status >= 400) return 'unreachable';
   return null;
+}
+
+/** Failure code for an *advertised* candidate we couldn't turn into a feed.
+ * A null status means the fetch threw before any response existed (DNS failure,
+ * timeout, SSRF block, oversized body) → `unreachable`. A reachable 2xx that
+ * simply didn't parse is NOT a failure (null) — the page just has no feed
+ * there. 4xx/5xx map via codeForStatus. */
+function candidateFailCode(status: number | null): 'auth' | 'not-found' | 'unreachable' | null {
+  if (status === null) return 'unreachable';
+  if (status >= 200 && status < 300) return null;
+  return codeForStatus(status);
 }
 
 /** Keep the most actionable failure reason across candidates: a login wall is
