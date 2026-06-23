@@ -586,7 +586,12 @@ loopback/link-local/private/metadata targets and redirects to them.
    exhausted message), then is enabled while another page is available and a
    disabled **"No more items"** once the feed is exhausted, so reaching the end
    is explicit feedback rather than a vanished button. Matches newshacker's
-   footer.
+   footer. Because our bottom bar is **pinned to the viewport foot** (newshacker's
+   is a relative footer), a freshly loaded page would otherwise grow the list
+   off-screen below the fold; so tapping **More** scrolls the **first row of the
+   new page to just below the sticky top chrome** (header + top toolbar) once it
+   renders, making More a real pager — you keep reading from where the new page
+   begins instead of hunting for it.
 
 8. **Pull-to-refresh** — re-runs the view's fetch **and** force-checks for a
    newer bundle. Identical to newshacker.

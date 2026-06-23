@@ -235,6 +235,8 @@ describe('ItemList', () => {
 
   it('More loads the next page, then disables as "No more items" when exhausted', async () => {
     const user = userEvent.setup();
+    // The pager scrolls the new page into view (jsdom lacks scrollTo).
+    vi.stubGlobal('scrollTo', vi.fn());
     const source = new MockDataSource(`test-${Math.random()}`);
     const items = (await source.getHomeItems()).items;
     const total = items.length;
@@ -259,5 +261,36 @@ describe('ItemList', () => {
     const more = screen.getByTestId('more-btn');
     expect(more).toHaveTextContent('No more items');
     expect(more).toBeDisabled();
+  });
+
+  it('More scrolls the first row of the new page into view', async () => {
+    const user = userEvent.setup();
+    const scrollToSpy = vi.fn();
+    vi.stubGlobal('scrollTo', scrollToSpy);
+    // The bottom toolbar is pinned to the viewport foot, so the appended page
+    // lands below the fold; the pager scrolls it up using the anchor row's
+    // page-relative top (rect.top + scrollY − top chrome). With no chrome
+    // measured and scrollY pinned at 1000, the target is exactly scrollY.
+    Object.defineProperty(window, 'scrollY', { value: 1000, configurable: true });
+
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const items = (await source.getHomeItems()).items;
+    expect(items.length).toBeGreaterThan(4);
+    renderPaged(source, items, 4);
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('item-row')).toHaveLength(4);
+    });
+    // Nothing scrolls until the reader taps More.
+    expect(scrollToSpy).not.toHaveBeenCalled();
+
+    await user.click(screen.getByTestId('more-btn'));
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('item-row')).toHaveLength(8);
+    });
+    await waitFor(() => {
+      expect(scrollToSpy).toHaveBeenCalledWith({ top: 1000, behavior: 'smooth' });
+    });
   });
 });
