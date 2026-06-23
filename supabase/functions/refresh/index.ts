@@ -13,12 +13,14 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { parseFeed } from '../_shared/parser.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
+import { corsHeaders, preflight } from '../_shared/cors.ts';
 
 const USER_AGENT = 'Readmo/1.0 (+https://readmo.app)';
 // Debounce window: skip a forced refetch if the feed was fetched within this.
 const DEBOUNCE_S = 60;
 
 Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') return preflight();
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
 
   // Authenticate the caller (forwarded JWT) so we only refresh feeds the user
@@ -133,6 +135,6 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...corsHeaders },
   });
 }

@@ -14,8 +14,10 @@
 import { discoverFromHtml, redditFeedFor, type FeedCandidate } from '../_shared/discover.ts';
 import { parseFeed } from '../_shared/parser.ts';
 import { safeFetch, SsrfError } from '../_shared/ssrf.ts';
+import { corsHeaders, preflight } from '../_shared/cors.ts';
 
 Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') return preflight();
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
 
   let url: string;
@@ -94,6 +96,6 @@ async function tryParse(candidateUrl: string, prefetchedBody?: string) {
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...corsHeaders },
   });
 }
