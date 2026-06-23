@@ -69,7 +69,13 @@ function setBottomFor(el: HTMLElement, bottom: number) {
 
 function Probe({ onMeasure }: { onMeasure: (n: number) => void }) {
   const inset = useStickyInset();
-  onMeasure(inset);
+  onMeasure(inset.top);
+  return null;
+}
+
+function BottomProbe({ onMeasure }: { onMeasure: (n: number) => void }) {
+  const inset = useStickyInset();
+  onMeasure(inset.bottom);
   return null;
 }
 
@@ -151,6 +157,19 @@ describe('useStickyInset', () => {
       window.dispatchEvent(new Event('scroll'));
     });
     expect(seen.at(-1)).toBe(104);
+  });
+
+  it('reports the bottom toolbar intrusion from the viewport foot', () => {
+    Object.defineProperty(window, 'innerHeight', {
+      value: 768,
+      configurable: true,
+    });
+    // Bottom toolbar pinned at the foot: bottom=768 → top=720 (height 48),
+    // so it intrudes 48px up from the viewport bottom.
+    mountSticky('list-toolbar list-toolbar--bottom', 768);
+    const seen: number[] = [];
+    render(<BottomProbe onMeasure={(n) => seen.push(n)} />);
+    expect(seen.at(-1)).toBe(48);
   });
 
   it('disconnects the observer on unmount', () => {

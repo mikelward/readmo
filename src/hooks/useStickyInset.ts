@@ -1,11 +1,23 @@
 import { useEffect, useState } from 'react';
-import { measureStickyInset } from '../lib/stickyInset';
+import {
+  measureStickyBottomInset,
+  measureStickyInset,
+} from '../lib/stickyInset';
 
-// Live `measureStickyInset()` value: the combined bottom of the
+export interface StickyInset {
+  /** Combined bottom of the sticky chrome at the top (header + toolbar). */
+  top: number;
+  /** Intrusion of the sticky bottom toolbar up from the viewport foot. */
+  bottom: number;
+}
+
+// Live sticky-inset values: `top` is the combined bottom of the
 // sticky chrome at the top of the viewport (`.app-header` +
-// `.list-toolbar`). Used by `StoryList` to set the sweep
-// IntersectionObserver's `rootMargin` so rows behind the sticky
-// strips are not counted as fully visible.
+// `.list-toolbar`); `bottom` is the intrusion of the sticky bottom
+// toolbar (`.list-toolbar--bottom`) up from the viewport foot. Used
+// by `useInViewIds` to set the sweep IntersectionObserver's
+// `rootMargin` so rows behind either sticky strip are not counted as
+// fully visible.
 //
 // Re-measures on four triggers:
 // 1. mount (so the initial value reflects the real layout, not
@@ -36,11 +48,22 @@ import { measureStickyInset } from '../lib/stickyInset';
 // All four Codex P2 comments on PR #299 trace to the inset
 // staying stale relative to what the user can actually see; this
 // hook is the single source of truth that fixes them.
-export function useStickyInset(): number {
-  const [inset, setInset] = useState<number>(() => measureStickyInset());
+export function useStickyInset(): StickyInset {
+  const [inset, setInset] = useState<StickyInset>(() => ({
+    top: measureStickyInset(),
+    bottom: measureStickyBottomInset(),
+  }));
 
   useEffect(() => {
-    const update = () => setInset(measureStickyInset());
+    const update = () =>
+      setInset((prev) => {
+        const top = measureStickyInset();
+        const bottom = measureStickyBottomInset();
+        // Skip the state update (and the downstream IO recreation) when nothing
+        // actually changed — the scroll path fires this every frame.
+        if (prev.top === top && prev.bottom === bottom) return prev;
+        return { top, bottom };
+      });
     update();
     window.addEventListener('resize', update);
     let rafId: number | null = null;
@@ -55,7 +78,11 @@ export function useStickyInset(): number {
     let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver !== 'undefined') {
       ro = new ResizeObserver(update);
-      for (const selector of ['.app-header', '.list-toolbar']) {
+      for (const selector of [
+        '.app-header',
+        '.list-toolbar',
+        '.list-toolbar--bottom',
+      ]) {
         const el = document.querySelector(selector);
         if (el) ro.observe(el);
       }
