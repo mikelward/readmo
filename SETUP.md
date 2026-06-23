@@ -201,6 +201,21 @@ The functions:
 | `refresh` | `POST /functions/v1/refresh` | On-demand fetch for the caller's subscribed feed(s); debounced. |
 | `img` | `GET /functions/v1/img?url=…` | SSRF-hardened image proxy (privacy + offline images). |
 
+> **Same-origin `/api/img` shim (Vercel).** Sanitized `content_html` points
+> every `<img src>` at the same-origin path `/api/img?url=…` (not the Supabase
+> URL directly) so the browser only talks to our origin and the service worker
+> can cache the bytes offline. The thin Vercel Edge Function `api/img.ts` backs
+> that route: it forwards `/api/img` to `…/functions/v1/img`, reading the
+> Supabase origin from the `SUPABASE_URL` env var (falls back to
+> `VITE_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`, matching the client in
+> `src/lib/supabase/client.ts`). It never fetches the user-supplied `url`
+> itself — that
+> stays inside the SSRF-hardened `img` function. Make sure `SUPABASE_URL` is
+> set in the Vercel project env. Cost/reliability: negligible — one extra
+> same-region hop (Vercel → Supabase) on a cache miss, well within Vercel's
+> free Edge invocation tier; on misconfig it returns `503` and images fall back
+> to the broken-image placeholder (no crash).
+
 ---
 
 ## 7. Schedule the poller (pg_cron, ~5 min)
