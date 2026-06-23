@@ -182,7 +182,9 @@ describe('SupabaseDataSource reads', () => {
     const entries = Object.fromEntries(env.ds.stateStore.entries());
     expect(entries['i2']?.pinned).toBe(true);
     expect(entries['i4']?.done).toBe(true);
-    expect(entries['i1']?.hidden).toBe(true);
+    // i1 had hidden=true/done=false — hydrate migrates it to done=true/hidden=false
+    expect(entries['i1']?.done).toBe(true);
+    expect(entries['i1']?.hidden).toBe(false);
   });
 
   it('search matches item title and feed title, deduped + newest-first', async () => {
