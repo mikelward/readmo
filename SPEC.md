@@ -575,7 +575,15 @@ loopback/link-local/private/metadata targets and redirects to them.
    last hide / swipe / sweep batch. Same component/behavior as newshacker.
 
 7. **Bottom action bar** — Back-to-top + More + Undo + Sweep on feed footers;
-   Back-to-top only on library footers. Same slot order.
+   Back-to-top only on library footers. Same slot order. **More lives in the
+   bottom toolbar itself** (not a separate control above it): it stretches the
+   middle slot between Back-to-top and the Undo/Sweep group. It appears once
+   the feed is **populated** (not during the loading skeletons, the error/retry
+   state, or an empty result — those would otherwise flash a misleading
+   exhausted message), then is enabled while another page is available and a
+   disabled **"No more items"** once the feed is exhausted, so reaching the end
+   is explicit feedback rather than a vanished button. Matches newshacker's
+   footer.
 
 8. **Pull-to-refresh** — re-runs the view's fetch **and** force-checks for a
    newer bundle. Identical to newshacker.

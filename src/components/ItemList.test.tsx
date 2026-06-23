@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { ItemList } from './ItemList';
 import { MockDataSource } from '../lib/data/MockDataSource';
+import type { FeedItem } from '../lib/types';
 import {
   installIntersectionObserverMock,
   setVisibilityForTest,
@@ -19,6 +20,28 @@ function renderHome(source: MockDataSource) {
     />,
     { source },
   );
+}
+
+let viewKeySeq = 0;
+
+// Render a feed paged into fixed-size chunks so the More button's enabled →
+// "No more items" transition is exercisable (the seed feed fits in one page).
+function renderPaged(source: MockDataSource, items: FeedItem[], pageSize: number) {
+  const fetchPage = vi.fn((cursor: string | null) => {
+    const offset = cursor ? Number(cursor) : 0;
+    const slice = items.slice(offset, offset + pageSize);
+    const next = offset + pageSize < items.length ? String(offset + pageSize) : null;
+    return Promise.resolve({ items: slice, nextCursor: next, total: items.length });
+  });
+  const utils = renderWithProviders(
+    <ItemList
+      viewKey={`paged-${viewKeySeq++}`}
+      fetchPage={fetchPage}
+      emptyLabel="All caught up."
+    />,
+    { source },
+  );
+  return { ...utils, fetchPage };
 }
 
 describe('ItemList', () => {
@@ -148,5 +171,93 @@ describe('ItemList', () => {
     await waitFor(() => {
       expect(screen.getByTestId('sweep-btn')).toBeDisabled();
     });
+  });
+
+  it('renders the More button inside the bottom toolbar', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const page = await source.getHomeItems();
+    const { container } = renderPaged(source, page.items, 5);
+    await screen.findAllByTestId('item-row');
+
+    const more = screen.getByTestId('more-btn');
+    expect(more).toHaveTextContent('More');
+    expect(more.closest('.list-toolbar--bottom')).not.toBeNull();
+    // It's the only More entry point — no standalone control above the bar.
+    expect(container.querySelector('.item-list__more')).toBeNull();
+  });
+
+  it('does not show the More button until the first page lands', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const items = (await source.getHomeItems()).items;
+    // Hold the first page open so the list stays in its loading state.
+    let release: (page: {
+      items: FeedItem[];
+      nextCursor: string | null;
+      total: number;
+    }) => void = () => {};
+    const fetchPage = vi.fn(
+      () =>
+        new Promise<{
+          items: FeedItem[];
+          nextCursor: string | null;
+          total: number;
+        }>((resolve) => {
+          release = resolve;
+        }),
+    );
+    renderWithProviders(
+      <ItemList viewKey={`pending-${viewKeySeq++}`} fetchPage={fetchPage} />,
+      { source },
+    );
+
+    // Skeletons are up; no exhausted-feed message should flash under them.
+    await screen.findByTestId('back-to-top');
+    expect(screen.queryByTestId('more-btn')).toBeNull();
+
+    act(() => release({ items, nextCursor: null, total: items.length }));
+
+    await screen.findAllByTestId('item-row');
+    expect(screen.getByTestId('more-btn')).toHaveTextContent('No more items');
+  });
+
+  it('does not show the More button when the first page errors', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const fetchPage = vi.fn(() => Promise.reject(new Error('boom')));
+    renderWithProviders(
+      <ItemList viewKey={`err-${viewKeySeq++}`} fetchPage={fetchPage} />,
+      { source },
+    );
+
+    // Error/retry UI, not an exhausted-feed message.
+    await screen.findByText(/couldn’t load items/i);
+    expect(screen.queryByTestId('more-btn')).toBeNull();
+  });
+
+  it('More loads the next page, then disables as "No more items" when exhausted', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const items = (await source.getHomeItems()).items;
+    const total = items.length;
+    const pageSize = 4;
+    expect(total).toBeGreaterThan(pageSize); // need at least one More click
+    renderPaged(source, items, pageSize);
+
+    let shown = Math.min(pageSize, total);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('item-row')).toHaveLength(shown);
+    });
+
+    // Page through to the end; each click reveals the next chunk.
+    while (shown < total) {
+      await user.click(screen.getByTestId('more-btn'));
+      shown = Math.min(shown + pageSize, total);
+      await waitFor(() => {
+        expect(screen.getAllByTestId('item-row')).toHaveLength(shown);
+      });
+    }
+
+    const more = screen.getByTestId('more-btn');
+    expect(more).toHaveTextContent('No more items');
+    expect(more).toBeDisabled();
   });
 });

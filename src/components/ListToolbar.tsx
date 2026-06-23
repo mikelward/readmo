@@ -34,6 +34,18 @@ function scrollToTop() {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
+/** Drives the bottom bar's "More" button. Feed views pass this so loading the
+ * next page lives in the toolbar next to Back to top / Undo / Sweep instead of
+ * a separate control (SPEC.md *Bottom action bar*). The button is always shown
+ * when present — enabled while another page is available, then a disabled
+ * "No more items" once the feed is exhausted, so reaching the end is explicit
+ * feedback rather than a vanished control. Library views omit it. */
+export interface MoreAction {
+  hasMore: boolean;
+  isFetching: boolean;
+  onMore: () => void;
+}
+
 interface Props {
   /** Where the bar sits. The bottom copy mirrors the top bar but leads with a
    * Back to top button in the left slot, matching the reader's two bars
@@ -43,13 +55,21 @@ interface Props {
    * selection (library, search) pass false so their bottom bar is Back to top
    * only. */
   actions?: boolean;
+  /** Feed bottom bars pass this to render the "More" (load next page) button
+   * between Back to top and the Undo/Sweep group. Omit on the top bar and on
+   * library footers. */
+  more?: MoreAction;
 }
 
 /** Sticky list toolbar: Back to top (bottom bar only) on the left, then
  * right-aligned Undo + Sweep (Hide unpinned). The RSS analog of newshacker's
  * Undo + Sweep (SPEC.md *List toolbar*). Rendered at both the top and bottom of
  * a list so Back to top is always within reach without a separate button. */
-export function ListToolbar({ placement = 'top', actions = true }: Props = {}) {
+export function ListToolbar({
+  placement = 'top',
+  actions = true,
+  more,
+}: Props = {}) {
   const ds = useDataSource();
   const store = ds.stateStore;
   const { sweep, sweepCount } = useFeedBar();
@@ -76,6 +96,22 @@ export function ListToolbar({ placement = 'top', actions = true }: Props = {}) {
           >
             <VerticalAlignTop />
           </TooltipButton>
+        ) : null}
+        {more ? (
+          <button
+            type="button"
+            className="list-toolbar__more"
+            data-testid="more-btn"
+            onClick={more.hasMore ? more.onMore : undefined}
+            disabled={!more.hasMore || more.isFetching}
+            aria-disabled={!more.hasMore || undefined}
+          >
+            {more.isFetching
+              ? 'Loading…'
+              : more.hasMore
+                ? 'More'
+                : 'No more items'}
+          </button>
         ) : null}
         {actions ? (
           <div className="list-toolbar__right">
