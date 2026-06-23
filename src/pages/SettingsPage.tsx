@@ -103,10 +103,12 @@ export function SettingsPage() {
       if (curatedName && !hasRealTitle) {
         await ds.setTitleOverride(feed.id, curatedName).catch(() => {});
       }
-      // Always trigger a second refresh: subscribe() fires one internally, but
-      // the edge function may process the fetch asynchronously and return before
-      // items are stored. The second call here picks them up once they're ready.
-      await ds.refresh(feed.id).catch(() => {});
+      // Fire a background refresh in case the edge function processed the first
+      // one asynchronously and items aren't stored yet. Don't await — subscribe()
+      // already called refresh internally, and blocking here would delay the toast
+      // by a full fetch timeout when the publisher is unreachable. The .then()
+      // invalidate picks up any items that arrive after the toast is shown.
+      ds.refresh(feed.id).then(() => invalidate()).catch(() => {});
       invalidate();
       const displayName = hasRealTitle ? feed.title : (curatedName ?? feed.title);
       showToast({ message: `Subscribed to ${displayName}` });
