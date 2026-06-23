@@ -509,15 +509,28 @@ export class SupabaseDataSource implements DataSource {
   }
 
   async getFeed(feedId: FeedId): Promise<Feed | null> {
+    let feed: Feed;
     const cached = this.feedCache.get(feedId);
-    if (cached) return cached;
-    const row = this.unwrap<FeedPublicRow | null>(
-      await this.sb.from('feeds_public').select(FEED_COLS).eq('id', feedId).maybeSingle(),
-    );
-    if (!row) return null;
-    const feed = mapFeed(row);
-    this.feedCache.set(feed.id, feed);
-    return feed;
+    if (cached) {
+      feed = cached;
+    } else {
+      const row = this.unwrap<FeedPublicRow | null>(
+        await this.sb.from('feeds_public').select(FEED_COLS).eq('id', feedId).maybeSingle(),
+      );
+      if (!row) return null;
+      feed = mapFeed(row);
+      this.feedCache.set(feed.id, feed);
+    }
+    // Apply the user's title override from their subscription so the FeedPage
+    // shows the display name rather than the raw feed title (or "Untitled feed").
+    // Don't update feedCache with the override — the cache stores unadjusted metadata.
+    const subRow = await this.sb
+      .from('subscriptions')
+      .select('title_override')
+      .eq('feed_id', feedId)
+      .maybeSingle();
+    const titleOverride = (subRow.data as { title_override: string | null } | null)?.title_override;
+    return titleOverride ? { ...feed, title: titleOverride } : { ...feed };
   }
 
   async discover(url: string): Promise<DiscoveredFeed[]> {
