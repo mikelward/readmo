@@ -8,6 +8,16 @@ import type { AddFeedErrorKind } from '../lib/data/DataSource';
 import { SettingsPage } from './SettingsPage';
 import { POPULAR_FEEDS } from '../lib/popularFeeds';
 
+/** A source whose subscribe() returns a feed with no siteUrl or meaningful
+ * title — simulating a silent server-side refresh failure (the edge function
+ * ran but couldn't reach the feed, so title/site_url stayed null in the DB). */
+class RefreshFailSource extends MockDataSource {
+  async subscribe(feedUrl: string): ReturnType<MockDataSource['subscribe']> {
+    const feed = await super.subscribe(feedUrl);
+    return { ...feed, siteUrl: null, url: '', title: 'Untitled feed' };
+  }
+}
+
 /** A source whose discovery finds nothing — the case where the input is a
  * plain web page that neither is a feed nor advertises one. */
 class NoFeedSource extends MockDataSource {
@@ -81,6 +91,22 @@ describe('SettingsPage — popular feed autocomplete', () => {
     await user.click(screen.getByRole('button', { name: /^Add$/ }));
     await screen.findByText(/^Subscribed to /);
     expect(discoverSpy).not.toHaveBeenCalled();
+  });
+
+  it('uses the curated name as title override when the server refresh fails to populate the feed', async () => {
+    const user = userEvent.setup();
+    const source = new RefreshFailSource(`test-${Math.random()}`);
+    renderWithProviders(<SettingsPage />, { source });
+    const input = screen.getByLabelText('Feed URL') as HTMLInputElement;
+    await user.type(input, 'ap news');
+    await user.click(await screen.findByText('AP News'));
+    await user.click(screen.getByRole('button', { name: /^Add$/ }));
+    // Toast should use the known name, not "Untitled feed".
+    await screen.findByText(/^Subscribed to AP News/);
+    // Subscription list should show the curated name, not "Untitled feed".
+    await waitFor(() => {
+      expect(screen.getByText('AP News')).toBeTruthy();
+    });
   });
 
   it('closes the dropdown on Escape', async () => {

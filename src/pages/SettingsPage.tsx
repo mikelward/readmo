@@ -42,6 +42,9 @@ export function SettingsPage() {
   const suggestionsId = useId();
   // True when feedUrl was filled from the curated list; skip discover in that case.
   const isFromSuggestion = useRef(false);
+  // Display name of the curated suggestion that was selected, so we can use it
+  // as a title override if the server-side refresh fails to populate the feed.
+  const selectedSuggestionName = useRef<string | null>(null);
 
   const suggestions = feedUrl.trim().length > 0
     ? POPULAR_FEEDS.filter((f) => {
@@ -81,10 +84,21 @@ export function SettingsPage() {
       if (!chosen) throw new AddFeedError('no-feed');
       return ds.subscribe(chosen);
     },
-    onSuccess: (feed) => {
+    onSuccess: async (feed) => {
+      const curated = selectedSuggestionName.current;
+      selectedSuggestionName.current = null;
       setFeedUrl('');
-      invalidate();
-      showToast({ message: `Subscribed to ${feed.title}` });
+      // If the server-side refresh didn't populate the feed (site_url stayed null,
+      // meaning the feed URL couldn't be fetched right now), fall back to the
+      // known curated name so the subscription never shows as "Untitled feed".
+      if (curated && !feed.siteUrl) {
+        await ds.setTitleOverride(feed.id, curated).catch(() => {});
+        invalidate();
+        showToast({ message: `Subscribed to ${curated} — posts will appear after the first sync` });
+      } else {
+        invalidate();
+        showToast({ message: `Subscribed to ${feed.title}` });
+      }
     },
     onError: (err) => {
       // Surface a specific reason to the user, and log the underlying detail
@@ -152,6 +166,7 @@ export function SettingsPage() {
               }
               onChange={(e) => {
                 isFromSuggestion.current = false;
+                selectedSuggestionName.current = null;
                 setFeedUrl(e.target.value);
                 setShowSuggestions(true);
                 setActiveIdx(-1);
@@ -172,6 +187,7 @@ export function SettingsPage() {
                 } else if (e.key === 'Enter' && activeIdx >= 0) {
                   e.preventDefault();
                   isFromSuggestion.current = true;
+                  selectedSuggestionName.current = suggestions[activeIdx].name;
                   setFeedUrl(suggestions[activeIdx].feedUrl);
                   setShowSuggestions(false);
                   setActiveIdx(-1);
@@ -201,6 +217,7 @@ export function SettingsPage() {
                     onMouseDown={(e) => {
                       e.preventDefault();
                       isFromSuggestion.current = true;
+                      selectedSuggestionName.current = feed.name;
                       setFeedUrl(feed.feedUrl);
                       setShowSuggestions(false);
                       setActiveIdx(-1);
