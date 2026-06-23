@@ -197,7 +197,10 @@ export class MockDataSource implements DataSource {
 
   async getFeed(feedId: FeedId): Promise<Feed | null> {
     const feed = this.feeds.get(feedId);
-    return feed ? { ...feed } : null;
+    if (!feed) return null;
+    const sub = this.subs.get(feedId);
+    const title = sub?.titleOverride ?? feed.title;
+    return { ...feed, title };
   }
 
   async discover(url: string): Promise<DiscoveredFeed[]> {

@@ -93,19 +93,19 @@ export function SettingsPage() {
     onSuccess: async ({ feed, curatedName }) => {
       selectedSuggestionName.current = null;
       setFeedUrl('');
-      // If the server-side refresh didn't populate the feed (site_url stayed
-      // null), the built-in refresh inside subscribe() failed silently. Set the
-      // curated name as an override so it never shows as "Untitled feed", then
-      // trigger a fresh refresh so items appear without waiting for the cron.
-      if (curatedName && !feed.siteUrl && feed.title === 'Untitled feed') {
+      // If the feed came back untitled (the RSS fetch inside subscribe() hasn't
+      // completed yet or failed), pin the curated display name so it never shows
+      // as "Untitled feed".
+      if (curatedName && feed.title === 'Untitled feed') {
         await ds.setTitleOverride(feed.id, curatedName).catch(() => {});
-        await ds.refresh(feed.id).catch(() => {});
-        invalidate();
-        showToast({ message: `Subscribed to ${curatedName}` });
-      } else {
-        invalidate();
-        showToast({ message: `Subscribed to ${feed.title}` });
       }
+      // Always trigger a second refresh: subscribe() fires one internally, but
+      // the edge function may process the fetch asynchronously and return before
+      // items are stored. The second call here picks them up once they're ready.
+      await ds.refresh(feed.id).catch(() => {});
+      invalidate();
+      const displayName = feed.title === 'Untitled feed' ? (curatedName ?? feed.title) : feed.title;
+      showToast({ message: `Subscribed to ${displayName}` });
     },
     onError: (err) => {
       // Surface a specific reason to the user, and log the underlying detail
