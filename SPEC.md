@@ -311,6 +311,17 @@ folders       (user_id FK, name, sort)
 
 ### Feed discovery
 
+- The Settings **Add a feed** input shows a filtered autocomplete dropdown as
+  the user types. Suggestions come from a curated list of popular feeds
+  (`src/lib/popularFeeds.ts`); each entry carries a display name, direct feed
+  URL, and category. Matching is case-insensitive substring on either the name
+  or the feed URL; up to 8 suggestions are shown. Selecting a suggestion fills
+  the feed URL directly into the input and bypasses the HTML-discovery step —
+  the known feed URL is submitted straight to `subscribe()`. This also avoids
+  bot-blocking issues for popular sites whose homepages reject programmatic
+  requests (the RSS endpoint itself is almost always accessible). The dropdown
+  is keyboard-navigable: ArrowDown/Up move focus, Enter selects, Escape closes.
+
 - `POST /api/discover { url }` accepts a site or feed URL; for an HTML page,
   parse `<link rel="alternate" type="application/rss+xml|atom+xml|json">` and
   common fallbacks (`/feed`, `/rss`, `/atom.xml`, `/feed.json`); validate by
