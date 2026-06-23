@@ -34,14 +34,19 @@ function scrollToTop() {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-/** Drives the bottom bar's "More" button. Feed views pass this so loading the
- * next page lives in the toolbar next to Back to top / Undo / Sweep instead of
- * a separate control (SPEC.md *Bottom action bar*). The button is always shown
- * when present — enabled while another page is available, then a disabled
- * "No more items" once the feed is exhausted, so reaching the end is explicit
- * feedback rather than a vanished control. Library views omit it. */
+/** Drives the bottom bar's "More" button. Feed views pass this so paging lives
+ * in the toolbar next to Back to top / Undo / Sweep instead of a separate
+ * control (SPEC.md *Bottom action bar*). Because the bottom bar is pinned to
+ * the viewport foot, "More" is a pager: tapping it scrolls the next chunk of
+ * loaded rows into view, or fetches the next page once the end is in view — see
+ * {@link ItemList}. It's enabled (`canAdvance`) while anything is left to reveal
+ * or fetch, then a disabled "No more items" once the feed end is reached, so
+ * exhaustion is explicit feedback rather than a vanished control. Library views
+ * omit it. */
 export interface MoreAction {
-  hasMore: boolean;
+  /** Whether tapping does anything — unseen rows below the fold or a fetchable
+   * page. False only at the true end of the feed. */
+  canAdvance: boolean;
   isFetching: boolean;
   onMore: () => void;
 }
@@ -102,13 +107,13 @@ export function ListToolbar({
             type="button"
             className="list-toolbar__more"
             data-testid="more-btn"
-            onClick={more.hasMore ? more.onMore : undefined}
-            disabled={!more.hasMore || more.isFetching}
-            aria-disabled={!more.hasMore || undefined}
+            onClick={more.canAdvance ? more.onMore : undefined}
+            disabled={!more.canAdvance || more.isFetching}
+            aria-disabled={!more.canAdvance || undefined}
           >
             {more.isFetching
               ? 'Loading…'
-              : more.hasMore
+              : more.canAdvance
                 ? 'More'
                 : 'No more items'}
           </button>

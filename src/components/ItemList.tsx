@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDataSource } from '../lib/data/context';
 import { useFeedItems, type FetchPage } from '../hooks/useFeedItems';
 import { useInViewIds } from '../hooks/useInViewIds';
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
-import { measureTopChromeHeight } from '../lib/stickyInset';
+import { measureStickyBottomInset, measureTopChromeHeight } from '../lib/stickyInset';
 import { checkForServiceWorkerUpdate } from '../lib/swUpdate';
 import { ItemRows } from './ItemRows';
 import { ListToolbar } from './ListToolbar';
@@ -37,20 +37,54 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
   const { registerSweep } = useFeedBar();
   const { inViewIds, getRowRef } = useInViewIds();
 
-  // The bottom toolbar (with "More") is pinned to the viewport foot, so loading
-  // the next page appends rows *below* the current scroll position — the reader
-  // sees nothing change. After a More tap, advance the view so the first row of
-  // the new page lands just below the sticky top chrome, turning "More" into a
-  // real pager instead of a button that silently grows an off-screen list.
-  // We anchor on the last row before the tap (ids are stable across a plain
-  // page fetch — no state change reorders them) and scroll to its successor
-  // once the new page has rendered.
+  // The bottom toolbar (with "More") is pinned to the viewport foot, so it's
+  // always on screen — `hasMore` alone (another *page* is fetchable) can't drive
+  // it, or it flashes "No more items" while loaded rows still sit below the fold
+  // (the reader isn't at the end, they just haven't scrolled there). So "More"
+  // is a pager: while the bottom of the loaded list is off-screen it scrolls a
+  // page down to reveal more rows; once the list end is in view and another page
+  // exists it fetches that page (and the effect below scrolls its first row up);
+  // only when the end is reached *and* nothing more can be fetched does it
+  // settle into a disabled "No more items".
+  const [atListEnd, setAtListEnd] = useState(false);
+
+  useEffect(() => {
+    const check = () => {
+      const doc = document.documentElement;
+      // Within 2px of the maximum scroll offset = the foot of the list is in
+      // view (the sub-pixel slack avoids a sticky "More" at exact bottom).
+      setAtListEnd(window.scrollY + window.innerHeight >= doc.scrollHeight - 2);
+    };
+    check();
+    window.addEventListener('scroll', check, { passive: true });
+    window.addEventListener('resize', check);
+    return () => {
+      window.removeEventListener('scroll', check);
+      window.removeEventListener('resize', check);
+    };
+    // Re-measure when the row count changes — a new page grows the document.
+  }, [items.length]);
+
+  // Anchors the fetch-and-scroll path: the id of the last row before a tap that
+  // triggers a fetch (ids are stable across a plain page fetch — no state change
+  // reorders them), so the effect below can scroll the page's first row up once
+  // it renders.
   const pendingAnchorId = useRef<string | null>(null);
 
   const handleMore = useCallback(() => {
+    // Bottom of the loaded list still below the fold → page down to it.
+    if (!atListEnd) {
+      const page =
+        window.innerHeight - measureTopChromeHeight() - measureStickyBottomInset();
+      // Browsers honoring prefers-reduced-motion fall back to an instant scroll.
+      window.scrollBy({ top: Math.max(page, 200), behavior: 'smooth' });
+      return;
+    }
+    // At the end with another page available → fetch it; the effect scrolls its
+    // first row just below the top chrome once it lands.
     pendingAnchorId.current = items[items.length - 1]?.item.id ?? null;
     fetchMore();
-  }, [items, fetchMore]);
+  }, [atListEnd, items, fetchMore]);
 
   useEffect(() => {
     const anchorId = pendingAnchorId.current;
@@ -139,7 +173,13 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
         // populated feed.
         more={
           items.length > 0
-            ? { hasMore, isFetching: isFetchingMore, onMore: handleMore }
+            ? {
+                // Enabled while there's anything left to reveal — unseen loaded
+                // rows below the fold, or another fetchable page at the end.
+                canAdvance: !atListEnd || hasMore,
+                isFetching: isFetchingMore,
+                onMore: handleMore,
+              }
             : undefined
         }
       />

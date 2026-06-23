@@ -55,6 +55,15 @@ describe('ItemList', () => {
   afterEach(() => {
     uninstallIntersectionObserverMock();
     vi.unstubAllGlobals();
+    // Reset scroll geometry to jsdom defaults so each test starts with the
+    // "More" pager at the foot of the list (scrollY 0 + innerHeight ≥
+    // scrollHeight 0 → atListEnd). Tests that exercise paging set their own.
+    Object.defineProperty(window, 'innerHeight', { value: 768, configurable: true });
+    Object.defineProperty(window, 'scrollY', { value: 0, configurable: true });
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      value: 0,
+      configurable: true,
+    });
   });
 
   it('renders the first page of items with the sticky toolbar', async () => {
@@ -292,5 +301,48 @@ describe('ItemList', () => {
     await waitFor(() => {
       expect(scrollToSpy).toHaveBeenCalledWith({ top: 1000, behavior: 'smooth' });
     });
+  });
+
+  it('More pages down through loaded rows, then settles on "No more items" at the foot', async () => {
+    const user = userEvent.setup();
+    const scrollBySpy = vi.fn();
+    vi.stubGlobal('scrollBy', scrollBySpy);
+    vi.stubGlobal('scrollTo', vi.fn());
+
+    // The whole feed is loaded (one page, nothing more to fetch) but it's taller
+    // than the viewport, so its foot sits below the fold. The pinned "More" must
+    // not claim the feed is exhausted — it should offer to scroll down.
+    Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
+    Object.defineProperty(window, 'scrollY', { value: 0, configurable: true });
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      value: 2400,
+      configurable: true,
+    });
+
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const items = (await source.getHomeItems()).items;
+    renderPaged(source, items, items.length); // one page holds everything
+
+    await screen.findAllByTestId('item-row');
+
+    const more = screen.getByTestId('more-btn');
+    expect(more).toHaveTextContent('More');
+    expect(more).toBeEnabled();
+
+    // Tapping scrolls a page down rather than fetching (there's no next page).
+    await user.click(more);
+    expect(scrollBySpy).toHaveBeenCalledWith(
+      expect.objectContaining({ behavior: 'smooth' }),
+    );
+
+    // Once scrolled to the foot, "More" settles into a disabled "No more items".
+    Object.defineProperty(window, 'scrollY', { value: 1600, configurable: true });
+    act(() => {
+      window.dispatchEvent(new Event('scroll'));
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('more-btn')).toHaveTextContent('No more items');
+    });
+    expect(screen.getByTestId('more-btn')).toBeDisabled();
   });
 });
