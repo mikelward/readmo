@@ -59,6 +59,10 @@ export function FeedPage() {
   const { data: feed } = useQuery({
     queryKey: ['feed-meta', feedId],
     queryFn: () => ds.getFeed(feedId),
+    // Always re-fetch on mount so a title override applied during subscribe (or
+    // any server-side rename) is reflected immediately on navigation, rather
+    // than waiting out the default 5-minute staleTime from the persisted cache.
+    refetchOnMount: 'always',
   });
   useDocumentTitle(feed ? `${feed.title} · readmo` : 'readmo');
 
