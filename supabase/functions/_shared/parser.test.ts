@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { parseFeed, absolutizeUrl, toIso, contentHash } from './parser.ts';
+import { parseFeed, parseFeedBody, absolutizeUrl, toIso, contentHash } from './parser.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (name: string) =>
@@ -183,5 +183,36 @@ describe('helpers', () => {
     expect(contentHash('a', 'b')).toBe(contentHash('a', 'b'));
     expect(contentHash('a', 'b')).not.toBe(contentHash('a', 'c'));
     expect(contentHash('a')).toMatch(/^[0-9a-f]{8}$/);
+  });
+});
+
+const MINIMAL_RSS = `<?xml version="1.0"?><rss version="2.0"><channel><title>T</title><item><title>I</title><link>https://ex.com/1</link><guid>g1</guid></item></channel></rss>`;
+const HTML_PAGE = `<!DOCTYPE html><html><head><title>Bot check</title></head><body>Checking your browser</body></html>`;
+
+describe('parseFeedBody', () => {
+  it('accepts valid RSS with correct content-type', () => {
+    const result = parseFeedBody(MINIMAL_RSS, 'https://ex.com/feed', 'application/rss+xml');
+    expect(result.feedTitle).toBe('T');
+    expect(result.items).toHaveLength(1);
+  });
+
+  it('accepts mislabelled-but-valid RSS served as text/html', () => {
+    // Publisher misconfiguration: valid RSS body, wrong content-type.
+    // Should parse successfully instead of throwing.
+    const result = parseFeedBody(MINIMAL_RSS, 'https://ex.com/feed', 'text/html; charset=utf-8');
+    expect(result.feedTitle).toBe('T');
+    expect(result.items).toHaveLength(1);
+  });
+
+  it('rejects bot-challenge HTML page (empty parse + text/html)', () => {
+    expect(() =>
+      parseFeedBody(HTML_PAGE, 'https://ex.com/feed', 'text/html; charset=utf-8')
+    ).toThrow('non-feed response');
+  });
+
+  it('throws parse error (not html-specific) for garbage body with non-html content-type', () => {
+    expect(() =>
+      parseFeedBody('not xml or json at all$$$$', 'https://ex.com/feed', 'application/xml')
+    ).toThrow();
   });
 });

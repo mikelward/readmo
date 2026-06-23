@@ -16,7 +16,7 @@
 // @ts-nocheck — this file runs under Deno, not node/tsc. The _shared modules
 // it imports ARE type-checked + unit-tested.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { parseFeed } from '../_shared/parser.ts';
+import { parseFeedBody } from '../_shared/parser.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
 
@@ -80,7 +80,10 @@ async function pollOne(supabase: any, feed: any): Promise<void> {
   const fetchUrl: string = feed.secret_url ?? feed.url;
 
   // Conditional GET: a 304 is free — bump last_fetched_at and stop.
-  const headers: Record<string, string> = { 'User-Agent': USER_AGENT };
+  const headers: Record<string, string> = {
+    'User-Agent': USER_AGENT,
+    'Accept': 'application/rss+xml, application/atom+xml, application/feed+json, application/json, application/rdf+xml, application/xml, text/xml, */*;q=0.8',
+  };
   if (feed.etag) headers['If-None-Match'] = feed.etag;
   if (feed.last_modified) headers['If-Modified-Since'] = feed.last_modified;
 
@@ -100,9 +103,13 @@ async function pollOne(supabase: any, feed: any): Promise<void> {
   if (res.status >= 400) {
     throw new Error(`HTTP ${res.status}`);
   }
-
+  const ct = res.headers.get('content-type') ?? '';
   const body = new TextDecoder().decode(res.body);
-  const parsed = parseFeed(body, fetchUrl);
+  // parseFeedBody parses first; the HTML guard fires only when the parse yields
+  // nothing and the content-type confirms it's an HTML page (bot-challenge /
+  // paywall redirect). Mislabelled-but-valid feeds (real RSS served as
+  // text/html) are accepted if parseFeed extracts a title or items.
+  const parsed = parseFeedBody(body, fetchUrl, ct);
 
   // Upsert feed-level metadata (title, site_url, new validators).
   await supabase
