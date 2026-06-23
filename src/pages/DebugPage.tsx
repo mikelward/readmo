@@ -58,12 +58,24 @@ export function DebugPage() {
   const [cacheNames, setCacheNames] = useState<string[]>([]);
 
   useEffect(() => {
-    if (!configured) return;
+    // Wait until auth has settled — pinging while a configured session is still
+    // initializing (e.g. landing here as an OAuth callback) would run as anon and
+    // report a false 42501/empty. The `cancelled` guard also drops a slower
+    // earlier ping so it can't overwrite the result of the authenticated re-run.
+    if (!configured || initializing) return;
+    let cancelled = false;
     setItemState({ status: 'checking' });
     setFeedsPublic({ status: 'checking' });
-    void ping('item_state').then(setItemState);
-    void ping('feeds_public').then(setFeedsPublic);
-  }, [configured, user]);
+    void ping('item_state').then((r) => {
+      if (!cancelled) setItemState(r);
+    });
+    void ping('feeds_public').then((r) => {
+      if (!cancelled) setFeedsPublic(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [configured, initializing, user]);
 
   useEffect(() => {
     if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
