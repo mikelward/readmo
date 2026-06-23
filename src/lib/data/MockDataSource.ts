@@ -11,6 +11,7 @@ import {
   ItemStateStore,
   localStoragePersistence,
 } from './itemState';
+import type { FullTextResult } from '../fullText';
 import {
   type DataSource,
   type DiscoveredFeed,
@@ -162,6 +163,25 @@ export class MockDataSource implements DataSource {
       .map((it) => this.toFeedItem(it))
       .filter((fi): fi is FeedItem => fi !== null)
       .sort((a, b) => (order.get(a.item.id)! - order.get(b.item.id)!));
+  }
+
+  async fetchFullText(id: ItemId): Promise<FullTextResult> {
+    const item = this.items.find((it) => it.id === id);
+    if (!item) return { status: 'unreachable', contentHtml: null };
+    // Cache hit — return the already-"extracted" body.
+    if (item.fullContentHtml) {
+      return { status: 'ok', contentHtml: item.fullContentHtml };
+    }
+    // Simulate server-side extraction: expand the feed stub into a fuller body
+    // and cache it on the (shared) item, mirroring how the real source persists
+    // the extracted HTML so a second open is served from cache.
+    const full =
+      `${item.contentHtml}` +
+      `<p>This is the full article text, fetched in reading mode because the ` +
+      `feed only carried a short excerpt. It continues well past what the feed ` +
+      `provided, with the complete body of “${item.title}”.</p>`;
+    item.fullContentHtml = full;
+    return { status: 'ok', contentHtml: full };
   }
 
   async search(query: string): Promise<FeedItem[]> {

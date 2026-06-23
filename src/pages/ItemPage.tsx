@@ -7,6 +7,7 @@ import { useWideViewport } from '../hooks/useWideViewport';
 import { useShareItem } from '../hooks/useShareItem';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { formatAge, formatDisplayDomain, isSafeHttpUrl } from '../lib/itemMeta';
+import { looksTruncated } from '../lib/fullText';
 import type { Feed, Item, ItemState, ItemStateField } from '../lib/types';
 import { TooltipButton } from '../components/TooltipButton';
 import {
@@ -223,10 +224,42 @@ export function ItemPage() {
     queryFn: () => ds.getItem(id),
   });
 
-  // Opening the reader marks the item Opened (auto).
+  // Reading mode: when the feed body looks truncated, fetch the full article
+  // from its source (server-side extraction). `manualTrigger` lets the user
+  // request it for a feed whose body looked complete; `showFeedVersion` flips
+  // back to the feed's own body when both exist.
+  //
+  // TODO(offline): also warm full-text on PIN (pinned/favorited are the offline
+  // buckets) and persist full_content_html into the device's offline cache so a
+  // pinned-but-unopened truncated item saves the readable body, not just the
+  // feed stub. And sync that readable body across the user's devices. Both are
+  // part of the offline/sync milestone — see SPEC.md *Open questions*.
+  const [manualTrigger, setManualTrigger] = useState(false);
+  const [showFeedVersion, setShowFeedVersion] = useState(false);
+
+  const cachedFull = data?.item.fullContentHtml ?? null;
+  const truncated = data ? looksTruncated(data.item) : false;
+  const wantFull = !!data && !cachedFull && online && (truncated || manualTrigger);
+
+  const fullQuery = useQuery({
+    queryKey: ['fulltext', id],
+    queryFn: () => ds.fetchFullText(id),
+    enabled: wantFull,
+    // Terminal outcomes (ok/empty/auth) are cached forever — re-fetching won't
+    // change them. A transient `unreachable` stays stale so reopening the reader
+    // retries it (and the in-view "Try again" forces a refetch immediately);
+    // otherwise a momentary network blip would wedge reading mode off forever.
+    staleTime: (query) =>
+      query.state.data && query.state.data.status !== 'unreachable' ? Infinity : 0,
+  });
+
+  // Opening the reader marks the item Opened (auto), and resets the per-article
+  // reading-mode view state when navigating between items.
   useEffect(() => {
     if (data) set('opened', true);
-    // Only when the item first resolves.
+    setManualTrigger(false);
+    setShowFeedVersion(false);
+    // Only when the item first resolves / changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.item.id]);
 
@@ -290,6 +323,18 @@ export function ItemPage() {
   const { item, feed } = data;
   const source = feed.title || formatDisplayDomain(item.url);
 
+  // Resolve the reading-mode body. Prefer the cached/fetched full article, but
+  // let the user flip back to the feed's own body when both exist.
+  const fetched = fullQuery.data;
+  const fullHtml = cachedFull ?? (fetched?.status === 'ok' ? fetched.contentHtml : null);
+  const showReading = !!fullHtml && !showFeedVersion;
+  const bodyHtml = showReading ? fullHtml : item.contentHtml;
+  const fetchingFull = fullQuery.isFetching && !fullHtml;
+  // A non-"ok" result (paywall/teaser/unreachable) — only worth surfacing once
+  // we have nothing better than the feed body to show.
+  const fullFailed = !fullHtml && fetched != null && fetched.status !== 'ok';
+  const canGetFull = !fullHtml && !fetchingFull && !wantFull && online;
+
   const toolbarProps = {
     item,
     feed,
@@ -331,14 +376,62 @@ export function ItemPage() {
         </div>
       </header>
 
-      {item.contentHtml ? (
+      <div className="reader__modebar">
+        {fetchingFull ? (
+          <span className="reader__mode-note" data-testid="fulltext-loading">
+            Loading full article…
+          </span>
+        ) : fullHtml && item.contentHtml ? (
+          <button
+            type="button"
+            className="reader__mode-toggle"
+            data-testid="reader-view-toggle"
+            onClick={() => setShowFeedVersion((v) => !v)}
+          >
+            {showReading ? 'Show feed version' : 'Show reading view'}
+          </button>
+        ) : fullFailed ? (
+          <>
+            <span className="reader__mode-note" data-testid="fulltext-error">
+              {fetched?.status === 'auth'
+                ? 'This article needs you to sign in — open the original.'
+                : fetched?.status === 'empty'
+                  ? 'No readable version found — showing the feed version.'
+                  : 'Couldn’t load the full article — showing the feed version.'}
+            </span>
+            {fetched?.status === 'unreachable' ? (
+              <button
+                type="button"
+                className="reader__mode-toggle"
+                data-testid="fulltext-retry"
+                onClick={() => void fullQuery.refetch()}
+              >
+                Try again
+              </button>
+            ) : null}
+          </>
+        ) : canGetFull ? (
+          <button
+            type="button"
+            className="reader__mode-toggle"
+            data-testid="fulltext-get"
+            onClick={() => setManualTrigger(true)}
+          >
+            Get full article
+          </button>
+        ) : null}
+      </div>
+
+      {bodyHtml ? (
         <div
           className="reader__body"
-          // Content is sanitized server-side before storage (SPEC.md *Feed
-          // fetching & parsing*); the mock seed is trusted local HTML.
-          dangerouslySetInnerHTML={{ __html: item.contentHtml }}
+          // Content is sanitized server-side before storage (the feed body by the
+          // poller, the full-article body by the fulltext function; SPEC.md *Feed
+          // fetching & parsing* / *Full-text reading mode*). The mock seed is
+          // trusted local HTML.
+          dangerouslySetInnerHTML={{ __html: bodyHtml }}
         />
-      ) : (
+      ) : fetchingFull ? null : (
         <div className="reader__state">
           <p>No content — open the original.</p>
         </div>

@@ -311,6 +311,38 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(env.fake.invokeCalls).toContainEqual({ name: 'discover', body: { url: 'x.com' } });
   });
 
+  it('fetchFullText invokes the fulltext function and returns the extracted body', async () => {
+    const env = setup();
+    env.fake.invokeResult.current = {
+      data: { status: 'ok', contentHtml: '<p>Full article</p>' },
+      error: null,
+    };
+    const result = await env.ds.fetchFullText('i1');
+    expect(result).toEqual({ status: 'ok', contentHtml: '<p>Full article</p>' });
+    expect(env.fake.invokeCalls).toContainEqual({ name: 'fulltext', body: { itemId: 'i1' } });
+  });
+
+  it('fetchFullText passes through a soft status with no content', async () => {
+    const env = setup();
+    env.fake.invokeResult.current = {
+      data: { status: 'auth', contentHtml: null },
+      error: null,
+    };
+    expect(await env.ds.fetchFullText('i1')).toEqual({ status: 'auth', contentHtml: null });
+  });
+
+  it('fetchFullText degrades an invoke error to unreachable', async () => {
+    const env = setup();
+    env.fake.invokeResult.current = { data: null, error: new Error('boom') };
+    expect(await env.ds.fetchFullText('i1')).toEqual({ status: 'unreachable', contentHtml: null });
+  });
+
+  it('fetchFullText treats an unknown status as unreachable', async () => {
+    const env = setup();
+    env.fake.invokeResult.current = { data: { status: 'weird' }, error: null };
+    expect(await env.ds.fetchFullText('i1')).toEqual({ status: 'unreachable', contentHtml: null });
+  });
+
   it('refresh invokes the edge function with the feed id', async () => {
     const env = setup();
     await env.ds.refresh('feed-a');

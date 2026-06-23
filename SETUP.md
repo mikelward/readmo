@@ -176,6 +176,7 @@ make migrate
 # Or deploy individually:
 supabase functions deploy discover --import-map supabase/functions/import_map.json
 supabase functions deploy refresh  --import-map supabase/functions/import_map.json
+supabase functions deploy fulltext --import-map supabase/functions/import_map.json
 supabase functions deploy poll     --import-map supabase/functions/import_map.json --no-verify-jwt
 supabase functions deploy img      --import-map supabase/functions/import_map.json --no-verify-jwt
 ```
@@ -185,8 +186,9 @@ supabase functions deploy img      --import-map supabase/functions/import_map.js
 > tag can't send an `Authorization` header — with JWT verification on (the
 > default) every image would 401. It's safe to expose: the function only relays
 > `image/*` through the SSRF-hardened `safeFetch` (no auth-bearing logic, no DB
-> writes). The other three keep JWT verification **on** — `discover`/`refresh`
-> run as the calling user, and `poll` checks the service-role bearer itself.
+> writes). The others keep JWT verification **on** — `discover`/`refresh`/
+> `fulltext` run as the calling user (RLS-scoped), and `poll` checks the
+> service-role bearer itself.
 
 > If you prefer a project-level config, add the same `imports` map to a
 > `supabase/functions/deno.json` and reference it via `--config`; the
@@ -199,6 +201,7 @@ The functions:
 | `poll` | scheduled (cron) | Polls due feeds with ≥1 subscriber, conditional GET via `safeFetch`, parse → sanitize → upsert, adaptive backoff + circuit breaker. Service role. |
 | `discover` | `POST /functions/v1/discover` | Discover + validate feed candidates from a site/feed URL (incl. Reddit `.rss`). |
 | `refresh` | `POST /functions/v1/refresh` | On-demand fetch for the caller's subscribed feed(s); debounced. |
+| `fulltext` | `POST /functions/v1/fulltext` | Reading mode: fetch + extract (Readability) + sanitize the full article for a truncated item, cache it on the shared row. RLS-scoped to the caller. |
 | `img` | `GET /functions/v1/img?url=…` | SSRF-hardened image proxy (privacy + offline images). |
 
 > **Same-origin `/api/img` shim (Vercel).** Sanitized `content_html` points

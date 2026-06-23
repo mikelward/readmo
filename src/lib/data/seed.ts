@@ -150,6 +150,7 @@ export const SEED_ITEMS: Item[] = SPECS.map((spec, i) => ({
   publishedAt: Date.now() - spec.agoHours * HOUR,
   contentHtml: spec.body,
   summary: null,
+  fullContentHtml: null,
   enclosures: [],
 }));
 

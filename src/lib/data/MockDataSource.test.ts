@@ -118,3 +118,27 @@ describe('MockDataSource library + subscriptions', () => {
     }
   });
 });
+
+describe('MockDataSource fetchFullText', () => {
+  it('returns an expanded reading-mode body and caches it on the item', async () => {
+    const ds = fresh();
+    const first = await ds.fetchFullText('item-1');
+    expect(first.status).toBe('ok');
+    expect(first.contentHtml).toContain('full article text');
+
+    // Cached on the shared item, so a re-read carries it and a second fetch is
+    // served from cache (identical body).
+    const fi = await ds.getItem('item-1');
+    expect(fi?.item.fullContentHtml).toBe(first.contentHtml);
+    const second = await ds.fetchFullText('item-1');
+    expect(second.contentHtml).toBe(first.contentHtml);
+  });
+
+  it('reports unreachable for an unknown item', async () => {
+    const ds = fresh();
+    expect(await ds.fetchFullText('nope')).toEqual({
+      status: 'unreachable',
+      contentHtml: null,
+    });
+  });
+});
