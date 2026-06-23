@@ -39,8 +39,10 @@ Deno.serve(async (req: Request) => {
     }
     console.log('[poll] auth ok');
 
-    const supabase = createClient(Deno.env.get('SUPABASE_URL')!, serviceKey);
-    console.log('[poll] supabase client created');
+    const supabase = createClient(Deno.env.get('SUPABASE_URL')!, serviceKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    console.log('[poll] supabase client created, key prefix:', serviceKey.slice(0, 20));
 
     const { data: feeds, error } = await supabase
       .from('feeds')
