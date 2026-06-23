@@ -12,7 +12,7 @@ deploy-refresh:
 	supabase functions deploy refresh --import-map $(IMPORT_MAP)
 
 deploy-poll:
-	supabase functions deploy poll --import-map $(IMPORT_MAP)
+	supabase functions deploy poll --import-map $(IMPORT_MAP) --no-verify-jwt
 
 deploy-img:
 	supabase functions deploy img --import-map $(IMPORT_MAP) --no-verify-jwt
