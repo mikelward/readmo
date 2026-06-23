@@ -540,14 +540,21 @@ export class SupabaseDataSource implements DataSource {
     }
     // Apply the user's title override from their subscription so the FeedPage
     // shows the display name rather than the raw feed title (or "Untitled feed").
-    // Don't update feedCache with the override — the cache stores unadjusted metadata.
+    // Write the override-applied feed back to feedCache so a subsequent
+    // resolveFeedItems() / ensureFeeds() call that finds this id already cached
+    // also gets the correct display title.
     const subRow = await this.sb
       .from('subscriptions')
       .select('title_override')
       .eq('feed_id', feedId)
       .maybeSingle();
     const titleOverride = (subRow.data as { title_override: string | null } | null)?.title_override;
-    return titleOverride ? { ...feed, title: titleOverride } : { ...feed };
+    if (titleOverride) {
+      const overridden = { ...feed, title: titleOverride };
+      this.feedCache.set(feedId, overridden);
+      return overridden;
+    }
+    return { ...feed };
   }
 
   async discover(url: string): Promise<DiscoveredFeed[]> {
