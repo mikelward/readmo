@@ -60,10 +60,13 @@ describe('measureStickyInset', () => {
     expect(measureStickyInset()).toBe(104);
   });
 
-  it('ceils a sub-pixel bottom', () => {
+  it('floors a sub-pixel bottom so a flush row is not clipped', () => {
+    // Rounding the inset up would shrink the sweep root past where the chrome
+    // actually ends, clipping a row sitting flush below it and dropping it
+    // under the 0.999 visibility cutoff — the grayed-out-Sweep regression.
     makeStickyEl('app-header', 56.4);
     makeStickyEl('list-toolbar', 104.2);
-    expect(measureStickyInset()).toBe(105);
+    expect(measureStickyInset()).toBe(104);
   });
 
   it('clamps a negative bottom (scrolled-off element) to 0', () => {
@@ -105,9 +108,13 @@ describe('measureStickyBottomInset', () => {
     expect(measureStickyBottomInset()).toBe(0);
   });
 
-  it('ceils a sub-pixel intrusion', () => {
+  it('floors a sub-pixel intrusion so the flush last row stays sweepable', () => {
+    // The last unpinned row sits flush above the bottom toolbar. Ceiling the
+    // intrusion would shrink the root's bottom edge ~1px into that row, pushing
+    // its visibility ratio below 0.999 so Sweep counts zero sweepable rows and
+    // grays out — exactly the reported bug. Floor leaves the flush row intact.
     setInnerHeight(768);
     makeStickyEl('list-toolbar list-toolbar--bottom', 767.6); // top = 719.6
-    expect(measureStickyBottomInset()).toBe(Math.ceil(768 - 719.6));
+    expect(measureStickyBottomInset()).toBe(Math.floor(768 - 719.6));
   });
 });
