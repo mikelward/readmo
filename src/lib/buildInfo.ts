@@ -3,6 +3,8 @@
 // the injected global so callers import a typed value and the display logic
 // stays pure + unit-testable.
 
+import { formatTimeAgo } from './format';
+
 export interface BuildInfo {
   /** 'production' | 'preview' | 'development' (Vercel) or 'local'. */
   environment: string;
@@ -51,11 +53,12 @@ export function summarizeBuild(info: BuildInfo): string {
 /**
  * Label/value rows for the build section of /debug. Rows whose value is
  * missing are omitted so a shallow checkout doesn't render blank fields.
+ * Pass `now` in tests to keep relative-time assertions deterministic.
  */
-export function buildInfoRows(info: BuildInfo): Array<{
-  label: string;
-  value: string;
-}> {
+export function buildInfoRows(
+  info: BuildInfo,
+  now: Date = new Date(),
+): Array<{ label: string; value: string }> {
   const rows: Array<{ label: string; value: string }> = [
     { label: 'Environment', value: info.environment || 'unknown' },
   ];
@@ -68,10 +71,16 @@ export function buildInfoRows(info: BuildInfo): Array<{
     rows.push({ label: 'Message', value: info.commitSubject });
   }
   if (info.commitTime) {
-    rows.push({ label: 'Committed', value: info.commitTime });
+    rows.push({
+      label: 'Committed',
+      value: formatTimeAgo(Math.floor(new Date(info.commitTime).getTime() / 1000), now),
+    });
   }
   if (info.buildTime) {
-    rows.push({ label: 'Built', value: info.buildTime });
+    rows.push({
+      label: 'Built',
+      value: formatTimeAgo(Math.floor(new Date(info.buildTime).getTime() / 1000), now),
+    });
   }
   return rows;
 }
