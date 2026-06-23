@@ -453,6 +453,17 @@ loopback/link-local/private/metadata targets and redirects to them.
   keying (`getActiveUid` reads the persisted session synchronously at boot);
   when those env vars are absent the app falls back to the mock demo user so
   tests and backend-less local dev still work. Apple sign-in stays deferred.
+- **Operator signup notification.** When a new user is created (`auth.users`
+  insert), an `AFTER INSERT` trigger (migration `0012`) fire-and-forget posts
+  the new row to the `notify-signup` Edge Function via `pg_net`; the function
+  emails the operator (default `mikel@mikelward.com`, override
+  `SIGNUP_NOTIFY_TO`) over SMTP. It is server-only and off the user's critical
+  path — `pg_net` returns immediately, so the notifier can never delay or block
+  signup, and the trigger no-ops until the SMTP secrets + Vault config are set
+  (SETUP.md §9). The user-supplied email is treated as untrusted: it is forced
+  to a single line before being placed in the subject/body, so it can't inject
+  SMTP headers (guardrail #6). Not user-visible. Cost/reliability: negligible —
+  see the External services table in `CLAUDE.md` and SETUP.md §10.
 
 ### Sync (server is the source of truth)
 
