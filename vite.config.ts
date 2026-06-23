@@ -46,7 +46,13 @@ const buildCommitTime = isTest ? TEST_BUILD_COMMIT_TIME : readCommitTime();
 const buildSha = isTest
   ? '0000000000000000000000000000000000000000'
   : process.env.VERCEL_GIT_COMMIT_SHA || git('rev-parse HEAD');
-const buildCommitCount = isTest ? '0' : git('rev-list --count HEAD');
+// `git rev-list --count HEAD` on a SHALLOW clone (Vercel's default checkout)
+// counts only the commits in the shallow window — e.g. 1 — which would make
+// every production deploy render the same bogus build number. Only trust the
+// count on a full clone; otherwise leave it '' so the label falls back to the
+// short SHA.
+const isShallow = isTest || git('rev-parse --is-shallow-repository') === 'true';
+const buildCommitCount = isTest || isShallow ? '' : git('rev-list --count HEAD');
 const buildRef = isTest
   ? 'test'
   : process.env.VERCEL_GIT_COMMIT_REF || git('rev-parse --abbrev-ref HEAD');

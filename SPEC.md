@@ -646,6 +646,7 @@ they live in the overflow. (No Upvote — RSS has no votes.)
 | `/search` | search over feed + item titles |
 | `/settings` | subscriptions, folders, OPML, theme, account |
 | `/signin` | OAuth sign-in (unauthenticated landing) |
+| `/debug` | diagnostics (build id, backend mode + project ref, auth, live DB read pings, service-worker/cache); open to everyone for now, renders only public info (never keys) |
 
 ---
 
