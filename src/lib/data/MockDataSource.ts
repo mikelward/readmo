@@ -62,7 +62,9 @@ export class MockDataSource implements DataSource {
   private toFeedItem(item: Item): FeedItem | null {
     const feed = this.feeds.get(item.feedId);
     if (!feed) return null;
-    return { item, feed };
+    const sub = this.subs.get(item.feedId);
+    const title = sub?.titleOverride ?? feed.title;
+    return { item, feed: title !== feed.title ? { ...feed, title } : feed };
   }
 
   /** Build the ordered list for a feed view: pinned first (oldest pin first,

@@ -297,14 +297,31 @@ export class SupabaseDataSource implements DataSource {
     if (missing.length === 0) return;
     // Batch the metadata lookup too: a library/search result can span hundreds
     // of distinct feeds, which would otherwise be one unbounded feeds_public IN.
-    const batches = await Promise.all(
-      chunk(missing, ID_LOOKUP_CHUNK).map(async (c) =>
-        this.unwrap<FeedPublicRow[]>(
-          await this.sb.from('feeds_public').select(FEED_COLS).in('id', c),
+    const [feedBatches, subBatches] = await Promise.all([
+      Promise.all(
+        chunk(missing, ID_LOOKUP_CHUNK).map(async (c) =>
+          this.unwrap<FeedPublicRow[]>(
+            await this.sb.from('feeds_public').select(FEED_COLS).in('id', c),
+          ),
         ),
       ),
-    );
-    for (const row of batches.flat()) this.feedCache.set(row.id, mapFeed(row));
+      // Load overrides in the same pass so item-row feed labels (home/folder
+      // views) show the subscription display name, not the raw feed title.
+      Promise.all(
+        chunk(missing, ID_LOOKUP_CHUNK).map((c) =>
+          this.sb.from('subscriptions').select('feed_id,title_override').in('feed_id', c),
+        ),
+      ),
+    ]);
+    for (const row of feedBatches.flat()) this.feedCache.set(row.id, mapFeed(row));
+    for (const result of subBatches) {
+      for (const sub of (result.data ?? []) as Array<{ feed_id: string; title_override: string | null }>) {
+        if (sub.title_override) {
+          const feed = this.feedCache.get(sub.feed_id);
+          if (feed) this.feedCache.set(sub.feed_id, { ...feed, title: sub.title_override });
+        }
+      }
+    }
   }
 
   /** Map item rows to FeedItems, loading any feeds not already cached. */
