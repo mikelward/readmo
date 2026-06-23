@@ -855,6 +855,32 @@ keys differ; the strategies map one-to-one:
   `QuotaExceededError`).
 - `networkMode: 'offlineFirst'` globally (true cache miss rejects fast → offline
   UI, not a hung skeleton). Same rationale.
+- **Bounded Supabase requests.** `offlineFirst` only governs React Query's own
+  retry pausing; it does not bound the underlying request. On a cache *miss* the
+  service worker's NetworkFirst awaits the network (its ~10s timeout only falls
+  back on a cache *hit*), so a lie-fi connection could leave a read pending
+  indefinitely — and because `SupabaseDataSource` memoizes the in-flight
+  `item_state` hydration, one hung request wedged the whole feed on its loading
+  skeletons. The Supabase client therefore wraps `global.fetch` in `supabaseFetch`,
+  which caps **reads** at 15s (just past the SW's cache-fallback window): GET
+  requests on `/rest/v1/` (what the SW mediates, since Workbox runtime caching is
+  GET-only) *plus* the `feed_items` read RPC (a POST, but the primary
+  home/folder/feed read, so it must be bounded too). A hung read aborts → the read
+  rejects → React Query shows the offline/retry UI and resumes on reconnect, and
+  the memoized hydration clears so the next read retries. The cap is scoped to
+  reads only; deliberately left uncapped: **write RPCs/table writes** (POST
+  `rpc/set_item_state`, `rpc/subscribe_to_feed`, DELETE/PATCH on `subscriptions`)
+  — aborting
+  a slow-but-committing write would make the item-state outbox retry on a stale
+  base version (permanent conflict / dropped edit) or surface a spurious error,
+  so the outbox's own retry/durability is the right bound; **Edge Functions**
+  (`/functions/v1/` — refresh, discover, fulltext), which legitimately run longer
+  than a read; and **auth** (`/auth/v1/`), where a capped token-refresh timeout
+  would surface as a failed `getSession()` → the user is nulled →
+  `useUserCacheScope` treats it as a sign-out and purges the offline cache,
+  turning a transient blip into a spurious sign-out. Every request still flows
+  through `trackedFetch`, so a real network failure (or read timeout) flips the
+  Offline pill.
 - `CACHE_BUSTER` wipes the persisted blob on schema change; the outbox and
   Supabase data are unaffected (server is canonical).
 - **All client caches are scoped to the signed-in user and purged on account

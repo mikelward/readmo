@@ -69,6 +69,10 @@ export function reportFetchFailure(err: unknown) {
 }
 
 function isNetworkError(err: unknown): boolean {
+  // A request we timed out ourselves (see trackedFetch's bounded fetch) means
+  // the network didn't answer in time — treat it as offline-right-now so the
+  // pill flips and React Query pauses retries until connectivity returns.
+  if (err instanceof DOMException && err.name === 'TimeoutError') return true;
   // AbortError is a caller cancelling the request (React Query does
   // this when a query is superseded), not a signal about connectivity.
   if (err instanceof DOMException && err.name === 'AbortError') return false;
