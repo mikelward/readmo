@@ -243,6 +243,20 @@ describe('SupabaseDataSource reads', () => {
       expect(fi.feed.title).toBe('Beta Renamed');
     }
   });
+
+  it('setTitleOverride evicts feedCache so the next getFeedItems sees the new override', async () => {
+    // Warm the cache for feed-a first (simulates subscribe()'s getFeed() call).
+    await env.ds.getFeed('feed-a');
+    // Now set a title override — this should evict the cached (raw-title) entry.
+    env.fake.store.subscriptions.find((s) => s.feed_id === 'feed-a')!.title_override = 'Post-Subscribe Override';
+    await env.ds.setTitleOverride('feed-a', 'Post-Subscribe Override');
+    // getFeedItems must re-fetch and apply the override despite the prior cache hit.
+    const page = await env.ds.getFeedItems('feed-a');
+    expect(page.items.length).toBeGreaterThan(0);
+    for (const fi of page.items) {
+      expect(fi.feed.title).toBe('Post-Subscribe Override');
+    }
+  });
 });
 
 describe('SupabaseDataSource dispatch + writes', () => {

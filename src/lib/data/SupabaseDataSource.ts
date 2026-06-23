@@ -632,6 +632,10 @@ export class SupabaseDataSource implements DataSource {
       .update({ title_override: title })
       .eq('feed_id', feedId);
     if (error) throw error instanceof Error ? error : new Error(String(error));
+    // Evict from cache so the next ensureFeeds() re-fetches with the new override
+    // applied. Without this, a warmed cache (e.g. from subscribe()'s getFeed())
+    // would cause resolveFeedItems() to skip the override query for this feed.
+    this.feedCache.delete(feedId);
   }
 
   async refresh(feedId?: FeedId): Promise<void> {
