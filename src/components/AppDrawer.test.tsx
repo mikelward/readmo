@@ -29,6 +29,16 @@ describe('AppDrawer', () => {
     expect(screen.getByText('App')).toBeInTheDocument();
   });
 
+  it('orders sections with Feeds under Library and Appearance below the feed nav', () => {
+    renderDrawer();
+    const headings = Array.from(
+      screen.getByRole('dialog').querySelectorAll('.app-drawer__heading'),
+    ).map((el) => el.textContent);
+    // Folders is hidden when none exist, so the seed mock shows:
+    // Home, Library, Feeds, Appearance, App.
+    expect(headings).toEqual(['Home', 'Library', 'Feeds', 'Appearance', 'App']);
+  });
+
   it('calls onClose when backdrop is clicked', async () => {
     const user = userEvent.setup();
     const { onClose } = renderDrawer();
