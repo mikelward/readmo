@@ -9,11 +9,11 @@ interface FromState {
 }
 
 const DEMO_ROWS = [
-  { source: 'The Verge', title: 'The best phones of the year, ranked', age: '1h', domain: 'theverge.com', read: false },
-  { source: 'BBC News', title: 'Climate summit ends with landmark agreement', age: '2h', domain: 'bbc.com', read: false },
-  { source: 'Reddit', title: 'r/technology: EU passes sweeping AI transparency law', age: '3h', domain: 'reddit.com', read: true },
-  { source: 'Hacker News', title: "Ask HN: What's your note-taking setup in 2025?", age: '5h', domain: 'news.ycombinator.com', read: true },
-  { source: 'Ars Technica', title: 'The browser engine that refused to die', age: '7h', domain: 'arstechnica.com', read: true },
+  { source: 'BBC News', title: 'Climate summit ends with landmark agreement', age: '1h', domain: 'bbc.com', read: false },
+  { source: 'NBC News', title: 'What the new federal budget means for your family', age: '2h', domain: 'nbcnews.com', read: false },
+  { source: 'Vox', title: 'Why your grocery bill keeps going up', age: '3h', domain: 'vox.com', read: false },
+  { source: 'Reddit r/popular', title: 'My dad just retired after 40 years — proud of him', age: '4h', domain: 'reddit.com', read: true },
+  { source: 'The Verge', title: 'The best phones of the year, ranked', age: '6h', domain: 'theverge.com', read: true },
 ];
 
 /** Clean sign-in landing (SPEC.md *Auth*). When Supabase is configured the
