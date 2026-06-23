@@ -173,12 +173,15 @@
     flex-direction: row;
     align-items: stretch;
     justify-content: center;
-    padding: 48px 24px;
+    /* no extra padding — panels fill the 720px app-main column */
+    padding: 40px 0;
     gap: 0;
   }
 
   .signin__hero {
-    max-width: 440px;
+    /* flex-grow fills leftover space; max-width keeps it from dominating */
+    flex: 1 1 0;
+    max-width: 360px;
     max-height: none;
     border-bottom: none;
     border-right: 1px solid var(--rm-border);
@@ -191,9 +194,10 @@
   }
 
   .signin__card {
+    flex: 0 0 auto;
+    width: 320px;
     align-self: center;
-    border-left: none;
-    padding: 40px 36px;
+    padding: 40px 32px;
     border: 1px solid var(--rm-border);
     border-left: none;
     border-radius: 0 var(--rm-radius) var(--rm-radius) 0;
