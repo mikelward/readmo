@@ -71,7 +71,7 @@ Deno.serve(async (req: Request) => {
         const result = await probeHtml(jinaHtml, target);
         if (result.validated.length > 0) return json({ candidates: result.validated });
         if (result.candidateFail) return feedErrorResponse(result.candidateFail);
-        return json({ candidates: [] });
+        return feedErrorResponse(targetCode);
       }
       return feedErrorResponse(targetCode);
     }
