@@ -8,6 +8,15 @@ interface FromState {
   from?: { pathname?: string; search?: string; hash?: string };
 }
 
+const DEMO_ROWS = [
+  { source: 'Ars Technica', title: 'The browser engine that refused to die', age: '2h', domain: 'arstechnica.com', read: false },
+  { source: 'The Verge', title: 'Inside the lab building next-gen solar cells', age: '3h', domain: 'theverge.com', read: false },
+  { source: 'Hacker News', title: 'Ask HN: What's your note-taking setup in 2025?', age: '4h', domain: 'news.ycombinator.com', read: true },
+  { source: 'MIT Tech Review', title: 'Why AI still can't reason about time', age: '6h', domain: 'technologyreview.com', read: true },
+  { source: 'Wired', title: 'The quiet return of long-form internet', age: '8h', domain: 'wired.com', read: false },
+  { source: 'CSS Tricks', title: 'Container queries are finally everywhere', age: '10h', domain: 'css-tricks.com', read: true },
+];
+
 /** Clean sign-in landing (SPEC.md *Auth*). When Supabase is configured the
  * buttons start the real Google/Discord OAuth redirect; otherwise they use the
  * mock sign-in that flips state immediately. Deep links round-trip: RequireAuth
@@ -37,6 +46,26 @@ export function SignInPage() {
 
   return (
     <div className="signin">
+      <div className="signin__hero" aria-hidden="true">
+        <div className="signin__mock-header">
+          <span className="signin__mock-logo">readmo</span>
+          <span className="signin__mock-pill">All feeds</span>
+        </div>
+        <ul className="signin__mock-feed">
+          {DEMO_ROWS.map((row, i) => (
+            <li key={i} className={`signin__mock-row${row.read ? ' signin__mock-row--read' : ''}`}>
+              <div className="signin__mock-row-body">
+                <span className="signin__mock-source">{row.source}</span>
+                <span className="signin__mock-title">{row.title}</span>
+                <span className="signin__mock-meta">{row.age} · {row.domain}</span>
+              </div>
+              <div className="signin__mock-action" />
+            </li>
+          ))}
+        </ul>
+        <div className="signin__mock-fade" />
+      </div>
+
       <div className="signin__card">
         <div className="signin__brand">readmo</div>
         <p className="signin__tagline">
