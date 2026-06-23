@@ -38,7 +38,7 @@ Deno.serve(async (req: Request) => {
     // reliably advertise the feed).
     const reddit = redditFeedFor(target);
     if (reddit) {
-      const feed = await tryParse(reddit);
+      const { feed } = await tryParse(reddit);
       if (feed) return json({ candidates: [feed] });
     }
 
@@ -47,36 +47,28 @@ Deno.serve(async (req: Request) => {
     const body = new TextDecoder().decode(res.body);
 
     // If the target parses as a feed, offer it directly.
-    const asFeed = await tryParse(res.url, body);
+    const { feed: asFeed } = await tryParse(res.url, body);
     if (asFeed) return json({ candidates: [asFeed] });
 
     // Not a feed itself. If the fetch didn't actually succeed, report WHY
     // rather than falling through to a misleading "no feed found": a
     // login-gated feed (401/403), a dead URL (404/410), or any other non-2xx.
     // The `code` lets the client pick the right message (see classifyFunctionError).
-    if (res.status === 401 || res.status === 403) {
-      return json(
-        { error: "That feed requires a login, so it can't be added.", code: 'auth' },
-        422,
-      );
-    }
-    if (res.status === 404 || res.status === 410) {
-      return json({ error: 'That URL could not be found.', code: 'not-found' }, 422);
-    }
-    if (res.status >= 400) {
-      return json(
-        { error: `That URL returned HTTP ${res.status}.`, code: 'unreachable' },
-        502,
-      );
-    }
+    const targetCode = codeForStatus(res.status);
+    if (targetCode) return feedErrorResponse(targetCode);
 
-    // Otherwise treat it as HTML and probe each candidate.
+    // Otherwise treat it as HTML and probe each candidate. If NONE validate but
+    // some failed with an informative status (a login-gated or dead advertised
+    // RSS URL), surface that reason instead of a blanket "no feed found".
     const candidates = discoverFromHtml(body, res.url);
     const validated = [];
+    let candidateFail: 'auth' | 'not-found' | 'unreachable' | null = null;
     for (const c of candidates as FeedCandidate[]) {
-      const feed = await tryParse(c.url);
+      const { feed, status } = await tryParse(c.url);
       if (feed) validated.push(feed);
+      else candidateFail = mergeFail(candidateFail, codeForStatus(status));
     }
+    if (validated.length === 0 && candidateFail) return feedErrorResponse(candidateFail);
     return json({ candidates: validated });
   } catch (err) {
     // SSRF-blocked (private/loopback address) or any fetch/parse failure: the
@@ -89,33 +81,76 @@ Deno.serve(async (req: Request) => {
   }
 });
 
-/** Fetch (if needed) + parse a candidate; return a summary or null on failure. */
+/** Fetch (if needed) + parse a candidate. Returns `{ feed }` on success, else
+ * `{ feed: null, status }` carrying the upstream HTTP status (when we got one)
+ * so the caller can tell a login-gated/dead candidate apart from a reachable
+ * page that simply isn't a feed. `status` is null when we never reached a
+ * response (network error / SSRF block) or when the body was prefetched. */
 async function tryParse(candidateUrl: string, prefetchedBody?: string) {
+  let status: number | null = null;
   try {
     let body = prefetchedBody;
     let finalUrl = candidateUrl;
     if (body == null) {
       const res = await safeFetch(candidateUrl, { timeoutMs: 10_000 });
-      if (res.status >= 400) return null;
+      status = res.status;
+      if (res.status >= 400) return { feed: null, status };
       body = new TextDecoder().decode(res.body);
       finalUrl = res.url;
     }
     const parsed = parseFeed(body, finalUrl);
     return {
-      feedUrl: finalUrl,
-      title: parsed.feedTitle,
-      siteUrl: parsed.siteUrl,
-      // A small sample so the UI can preview before subscribing (SPEC.md
-      // "Add feed … shows title + a sample of recent items").
-      sample: parsed.items.slice(0, 5).map((i) => ({
-        title: i.title,
-        url: i.url,
-        publishedAt: i.publishedAt,
-      })),
+      feed: {
+        feedUrl: finalUrl,
+        title: parsed.feedTitle,
+        siteUrl: parsed.siteUrl,
+        // A small sample so the UI can preview before subscribing (SPEC.md
+        // "Add feed … shows title + a sample of recent items").
+        sample: parsed.items.slice(0, 5).map((i) => ({
+          title: i.title,
+          url: i.url,
+          publishedAt: i.publishedAt,
+        })),
+      },
+      status,
     };
   } catch {
-    return null;
+    return { feed: null, status };
   }
+}
+
+/** Map an upstream HTTP status to the client error `code`, or null when the
+ * status isn't itself a failure (e.g. 200 that just didn't parse as a feed). */
+function codeForStatus(status: number | null): 'auth' | 'not-found' | 'unreachable' | null {
+  if (status == null) return null;
+  if (status === 401 || status === 403) return 'auth';
+  if (status === 404 || status === 410) return 'not-found';
+  if (status >= 400) return 'unreachable';
+  return null;
+}
+
+/** Keep the most actionable failure reason across candidates: a login wall is
+ * more useful to surface than a dead URL, which beats a generic 5xx. */
+function mergeFail(
+  a: 'auth' | 'not-found' | 'unreachable' | null,
+  b: 'auth' | 'not-found' | 'unreachable' | null,
+): 'auth' | 'not-found' | 'unreachable' | null {
+  const rank = { auth: 3, 'not-found': 2, unreachable: 1 } as const;
+  if (!b) return a;
+  if (!a) return b;
+  return rank[b] > rank[a] ? b : a;
+}
+
+/** The error response for a classified discovery failure (matches the client's
+ * classifyFunctionError mapping). */
+function feedErrorResponse(code: 'auth' | 'not-found' | 'unreachable'): Response {
+  if (code === 'auth') {
+    return json({ error: "That feed requires a login, so it can't be added.", code }, 422);
+  }
+  if (code === 'not-found') {
+    return json({ error: 'That URL could not be found.', code }, 422);
+  }
+  return json({ error: "That URL couldn't be reached.", code }, 502);
 }
 
 function json(body: unknown, status = 200): Response {
