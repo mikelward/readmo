@@ -13,6 +13,16 @@
 // max of the bottoms is correct in both states; a header-only inset
 // caused Sweep to swallow rows hidden behind the toolbar after the
 // toolbar became sticky (Codex on PR #299).
+//
+// Round the inset *down*: shrinking the root by more than the chrome
+// truly intrudes pushes the visibility boundary into the adjacent row,
+// clipping a flush row by up to ~1px. Combined with the strict 0.999
+// ratio cutoff in `useInViewIds`, that sub-pixel clip drops a fully
+// visible row below the cutoff — Sweep then sees zero sweepable rows
+// and grays out even though the reader can see an unpinned row. Floor
+// never over-shrinks, so a flush row stays fully visible; the <1px of
+// slack it leaves (a row up to a pixel behind the chrome counting as
+// visible) is imperceptible.
 export function measureStickyInset(): number {
   if (typeof document === 'undefined') return 0;
   let bottom = 0;
@@ -22,7 +32,7 @@ export function measureStickyInset(): number {
     const rect = el.getBoundingClientRect();
     if (rect.bottom > bottom) bottom = rect.bottom;
   }
-  return Math.max(0, Math.ceil(bottom));
+  return Math.max(0, Math.floor(bottom));
 }
 
 // How far the sticky *bottom* list toolbar (`.list-toolbar--bottom`, pinned at
@@ -36,10 +46,17 @@ export function measureStickyInset(): number {
 // intrusion is its height. When it's still in normal flow below the fold its
 // top is past the viewport bottom, yielding a negative intrusion that clamps to
 // 0 — nothing to exclude. (Codex P2 on PR #44.)
+//
+// Round *down* for the same reason as `measureStickyInset`: ceiling the
+// intrusion shrinks the root's bottom edge by up to ~1px more than the toolbar
+// actually covers, clipping the last unpinned row that sits flush above the
+// toolbar below the 0.999 ratio cutoff — Sweep then grays out on a row the
+// reader can plainly see. Floor never over-shrinks, so the flush row stays
+// sweepable.
 export function measureStickyBottomInset(): number {
   if (typeof document === 'undefined' || typeof window === 'undefined') return 0;
   const el = document.querySelector('.list-toolbar--bottom');
   if (!el) return 0;
   const rect = el.getBoundingClientRect();
-  return Math.max(0, Math.ceil(window.innerHeight - rect.top));
+  return Math.max(0, Math.floor(window.innerHeight - rect.top));
 }
