@@ -113,12 +113,31 @@ async function probeHtml(html: string, baseUrl: string) {
   return { validated, candidateFail };
 }
 
+const JINA_MAX_BYTES = 4 * 1024 * 1024; // 4 MiB — enough for any HTML head
+
 /** Fetch a page via Jina Reader (r.jina.ai) to bypass bot-blocking.
- * Returns the raw HTML string on success, null if Jina is not configured
- * or the request fails. The target URL is already SSRF-validated. */
+ * Returns the raw HTML string on success, null if Jina is not configured,
+ * the request fails, or the URL looks like it could carry auth secrets.
+ *
+ * Security notes:
+ * - URLs with a query string are skipped: query params often carry auth
+ *   tokens (e.g. ?token=…) and must not be forwarded to a third party.
+ * - The response body is capped at JINA_MAX_BYTES to prevent memory
+ *   exhaustion from a large or slow Jina response.
+ * - The fetch target is always the fixed host r.jina.ai (not user-
+ *   controlled), so redirect-based SSRF is not a concern here. */
 async function fetchViaJina(target: string): Promise<string | null> {
   const apiKey = Deno.env.get('JINA_API_KEY');
   if (!apiKey) return null;
+
+  // Don't send URLs with query parameters to a third party — they may carry
+  // auth tokens or other secrets.
+  try {
+    if (new URL(target).search !== '') return null;
+  } catch {
+    return null;
+  }
+
   try {
     const res = await fetch(`https://r.jina.ai/${target}`, {
       headers: {
@@ -129,7 +148,23 @@ async function fetchViaJina(target: string): Promise<string | null> {
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return null;
-    return await res.text();
+
+    // Read body with a size cap to prevent memory exhaustion.
+    const reader = res.body?.getReader();
+    if (!reader) return await res.text();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done || !value) break;
+      total += value.byteLength;
+      if (total > JINA_MAX_BYTES) { reader.cancel(); return null; }
+      chunks.push(value);
+    }
+    const out = new Uint8Array(total);
+    let off = 0;
+    for (const c of chunks) { out.set(c, off); off += c.byteLength; }
+    return new TextDecoder().decode(out);
   } catch {
     return null;
   }
