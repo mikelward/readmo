@@ -10,7 +10,7 @@
 
 // @ts-nocheck — runs under Deno, not node/tsc.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { parseFeed } from '../_shared/parser.ts';
+import { parseFeedBody } from '../_shared/parser.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
 import { corsHeaders, preflight } from '../_shared/cors.ts';
@@ -88,12 +88,15 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
   }
 
   const res = await safeFetch(feed.secret_url ?? feed.url, {
-    headers: { 'User-Agent': USER_AGENT },
+    headers: {
+      'User-Agent': USER_AGENT,
+      'Accept': 'application/rss+xml, application/atom+xml, application/feed+json, application/json, application/rdf+xml, application/xml, text/xml, */*;q=0.8',
+    },
     timeoutMs: 10_000,
   });
   if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
-
-  const parsed = parseFeed(new TextDecoder().decode(res.body), feed.url);
+  const ct = res.headers.get('content-type') ?? '';
+  const parsed = parseFeedBody(new TextDecoder().decode(res.body), feed.url, ct);
   await service
     .from('feeds')
     .update({
