@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/renderWithProviders';
@@ -68,6 +68,19 @@ describe('SettingsPage — popular feed autocomplete', () => {
     // After Enter, the input should have the first suggestion's feedUrl.
     const apFeed = POPULAR_FEEDS.find((f) => f.name === 'AP News')!;
     expect(input.value).toBe(apFeed.feedUrl);
+  });
+
+  it('subscribes directly without calling discover when a suggestion is selected', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const discoverSpy = vi.spyOn(source, 'discover');
+    renderWithProviders(<SettingsPage />, { source });
+    const input = screen.getByLabelText('Feed URL') as HTMLInputElement;
+    await user.type(input, 'ap news');
+    await user.click(await screen.findByText('AP News'));
+    await user.click(screen.getByRole('button', { name: /^Add$/ }));
+    await screen.findByText(/^Subscribed to /);
+    expect(discoverSpy).not.toHaveBeenCalled();
   });
 
   it('closes the dropdown on Escape', async () => {
