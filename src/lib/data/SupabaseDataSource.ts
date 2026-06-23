@@ -646,14 +646,22 @@ export class SupabaseDataSource implements DataSource {
   }
 
   async refresh(feedId?: FeedId): Promise<void> {
-    const { error } = await this.sb.functions.invoke('refresh', {
+    const { error, data } = await this.sb.functions.invoke('refresh', {
       body: feedId ? { feedId } : {},
     });
     if (error) throw error instanceof Error ? error : new Error(String(error));
     // A refresh/poll updates feeds_public (title, parked/error health), so the
-    // permanent feed cache is now stale. Drop it (coarse-grained; a per-feed
-    // update can come with the live write path) so reads re-fetch fresh metadata.
+    // permanent feed cache is now stale. Clear before the failure check so that
+    // any partial server-side metadata write (e.g. title updated but item upsert
+    // failed) is reflected on the next getFeed() call rather than hidden behind
+    // the pre-refresh cached value.
     this.feedCache.clear();
+    // For a targeted single-feed refresh, treat { refreshed: 0, debounced: 0 }
+    // as failure: it means refreshOne threw and the outer catch swallowed it.
+    // refreshed: 0 + debounced: 1 is fine — the feed was recently fetched.
+    if (feedId && data?.refreshed === 0 && data?.debounced === 0) {
+      throw new Error('feed refresh failed');
+    }
   }
 
   async retryParkedFeed(feedId: FeedId): Promise<void> {

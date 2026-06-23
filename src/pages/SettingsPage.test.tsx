@@ -162,4 +162,24 @@ describe('SettingsPage — Add a feed', () => {
       expect((await source.getSubscriptions()).length).toBe(before + 1);
     });
   });
+
+  it('shows the real feed title in the subscription list after subscribing via URL (non-curated)', async () => {
+    // Regression: feed-meta invalidation must happen unconditionally, not only
+    // when a curated title override is applied.  A subscribe via typed URL that
+    // returns a proper title from the server should appear in the list without
+    // the user having to reload.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderWithProviders(<SettingsPage />, { source });
+
+    await addFeed('https://example.com/rss');
+
+    await screen.findByText(/^Subscribed to /);
+    // The subscriptions list re-renders; the server-returned title must appear
+    // rather than staying blank or showing "Untitled feed".
+    await waitFor(() => {
+      expect(screen.queryByText('Untitled feed')).toBeNull();
+    });
+    const subs = await source.getSubscriptions();
+    expect(subs.length).toBeGreaterThan(0);
+  });
 });

@@ -315,6 +315,18 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(env.fake.invokeCalls).toContainEqual({ name: 'refresh', body: { feedId: 'feed-a' } });
   });
 
+  it('refresh throws when the edge function reports refreshed: 0 and debounced: 0 for a single feed', async () => {
+    const env = setup();
+    env.fake.invokeResult.current = { data: { refreshed: 0, debounced: 0 }, error: null };
+    await expect(env.ds.refresh('feed-a')).rejects.toThrow('feed refresh failed');
+  });
+
+  it('refresh does not throw when the feed was debounced (refreshed: 0, debounced: 1)', async () => {
+    const env = setup();
+    env.fake.invokeResult.current = { data: { refreshed: 0, debounced: 1 }, error: null };
+    await expect(env.ds.refresh('feed-a')).resolves.toBeUndefined();
+  });
+
   it('refresh invalidates cached feed metadata', async () => {
     const env = setup();
     expect((await env.ds.getFeed('feed-a'))?.title).toBe('Alpha Blog');

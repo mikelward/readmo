@@ -97,13 +97,14 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
   if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
   const ct = res.headers.get('content-type') ?? '';
   const parsed = parseFeedBody(new TextDecoder().decode(res.body), feed.url, ct);
-  await service
+  const { error: metaError } = await service
     .from('feeds')
     .update({
       title: parsed.feedTitle,
       site_url: parsed.siteUrl,
     })
     .eq('id', feed.id);
+  if (metaError) throw new Error(`feed meta update failed: ${metaError.message}`);
   const rows = parsed.items.map((it) => ({
     feed_id: feed.id,
     guid: it.guid,
@@ -125,10 +126,16 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
       .upsert(rows, { onConflict: 'feed_id,guid' });
     if (upsertError) throw new Error(`item upsert failed: ${upsertError.message}`);
   }
-  await service
+  // Validators (etag/last_modified) are written only after items are stored.
+  // Writing them before the upsert would cause the next cron poll to send
+  // If-None-Match / If-Modified-Since and receive a 304, permanently skipping
+  // items that were never actually persisted.
+  const { error: scheduleError } = await service
     .from('feeds')
     .update({
       last_fetched_at: new Date().toISOString(),
+      etag: res.headers.get('etag'),
+      last_modified: res.headers.get('last-modified'),
       // Mirror the poller's success path: a successful manual refresh clears the
       // circuit breaker (error_count/last_error) and reschedules, so "Retry now"
       // on a parked feed actually un-parks it instead of leaving the badge stuck.
@@ -139,6 +146,7 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
       ).toISOString(),
     })
     .eq('id', feed.id);
+  if (scheduleError) throw new Error(`feed schedule update failed: ${scheduleError.message}`);
   return true;
 }
 
