@@ -93,10 +93,14 @@ export function SettingsPage() {
     onSuccess: async ({ feed, curatedName }) => {
       selectedSuggestionName.current = null;
       setFeedUrl('');
-      // If the feed came back untitled (the RSS fetch inside subscribe() hasn't
-      // completed yet or failed), pin the curated display name so it never shows
-      // as "Untitled feed".
-      if (curatedName && feed.title === 'Untitled feed') {
+      // If the feed came back without a real title (RSS fetch hasn't completed or
+      // failed), pin the curated display name. "No real title" means the title is
+      // the literal fallback string OR mapFeed's site_url fallback (row.title was
+      // null so mapFeed used site_url, e.g. "nytimes.com").
+      const hasRealTitle = curatedName
+        ? feed.title !== 'Untitled feed' && feed.title !== feed.siteUrl
+        : false;
+      if (curatedName && !hasRealTitle) {
         await ds.setTitleOverride(feed.id, curatedName).catch(() => {});
       }
       // Always trigger a second refresh: subscribe() fires one internally, but
@@ -104,7 +108,7 @@ export function SettingsPage() {
       // items are stored. The second call here picks them up once they're ready.
       await ds.refresh(feed.id).catch(() => {});
       invalidate();
-      const displayName = feed.title === 'Untitled feed' ? (curatedName ?? feed.title) : feed.title;
+      const displayName = hasRealTitle ? feed.title : (curatedName ?? feed.title);
       showToast({ message: `Subscribed to ${displayName}` });
     },
     onError: (err) => {
