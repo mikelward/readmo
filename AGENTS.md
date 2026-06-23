@@ -92,6 +92,15 @@ The data layer is abstracted behind **`src/lib/data/DataSource.ts`**.
 without touching callers — build features against the interface, not a concrete
 source.
 
+## External services
+
+Per guardrail #5, cost and reliability are documented here for every
+third-party call the app makes.
+
+| Service | Purpose | Cost | Rate limits | Latency | Failure mode |
+|---|---|---|---|---|---|
+| **Jina Reader** (`r.jina.ai`) | Fallback HTML fetch for bot-blocked discovery (403 responses). Configured via `JINA_API_KEY` Supabase secret; skipped silently if absent. | Free tier: 1 M tokens/month (~500–1000 page fetches). Paid from ~$0.02/1 M tokens. A single discovery fetch is typically 10–100 K tokens. | Free tier: ~200 req/min. | +1–5 s added to a 403-path discovery (on top of the failed direct fetch). The Jina call is not on the happy path so normal discovery is unaffected. | On timeout, non-2xx, or body-size-cap hit, `fetchViaJina` returns `null` and the original `auth` error is surfaced to the user — no change in behavior from today. |
+
 ## Dev commands
 
 | Command | What it does |
