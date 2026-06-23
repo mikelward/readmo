@@ -224,6 +224,25 @@ describe('SupabaseDataSource reads', () => {
     const feed = await env.ds.getFeed('feed-a');
     expect(feed?.title).toBe('Cached Override');
   });
+
+  it('getFeedItems applies title_override in FeedItem.feed so item-row labels show the display name', async () => {
+    env.fake.store.subscriptions.find((s) => s.feed_id === 'feed-a')!.title_override = 'Alpha Renamed';
+    const page = await env.ds.getFeedItems('feed-a');
+    expect(page.items.length).toBeGreaterThan(0);
+    for (const fi of page.items) {
+      expect(fi.feed.title).toBe('Alpha Renamed');
+    }
+  });
+
+  it('getHomeItems applies title_override in FeedItem.feed', async () => {
+    env.fake.store.subscriptions.find((s) => s.feed_id === 'feed-b')!.title_override = 'Beta Renamed';
+    const page = await env.ds.getHomeItems();
+    const betaItems = page.items.filter((fi) => fi.feed.id === 'feed-b');
+    expect(betaItems.length).toBeGreaterThan(0);
+    for (const fi of betaItems) {
+      expect(fi.feed.title).toBe('Beta Renamed');
+    }
+  });
 });
 
 describe('SupabaseDataSource dispatch + writes', () => {

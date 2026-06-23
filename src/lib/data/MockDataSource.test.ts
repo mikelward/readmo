@@ -107,4 +107,14 @@ describe('MockDataSource library + subscriptions', () => {
     expect(feed?.title).not.toBeNull();
     expect(feed?.title).not.toBe(''); // has a real seed title
   });
+
+  it('getFeedItems applies title_override in FeedItem.feed so item-row labels show the display name', async () => {
+    const ds = fresh();
+    await ds.setTitleOverride('feed-verge', 'Verge Renamed');
+    const page = await ds.getFeedItems('feed-verge');
+    expect(page.items.length).toBeGreaterThan(0);
+    for (const fi of page.items) {
+      expect(fi.feed.title).toBe('Verge Renamed');
+    }
+  });
 });
