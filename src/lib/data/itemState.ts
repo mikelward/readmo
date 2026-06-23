@@ -287,7 +287,15 @@ export class ItemStateStore {
     // just the pending fields onto server truth.
     for (const [id, srv] of rows) {
       const changed = pending.get(id);
-      next[id] = changed ? mergePending(srv, this.map[id], changed, now) : srv;
+      const merged = changed ? mergePending(srv, this.map[id], changed, now) : srv;
+      // Migrate pre-merge hidden rows that arrive from the server: same logic
+      // as the constructor migration so Supabase-hydrated hidden=true/done=false
+      // rows don't stay invisible with /hidden removed.
+      if (merged.hidden && !merged.done && !expired(merged.hiddenAt, now)) {
+        next[id] = { ...applyMutation(merged, 'done', true, now), hidden: false, hiddenAt: null };
+      } else {
+        next[id] = merged;
+      }
     }
     // Keep local-only rows only while a write for them is still pending.
     for (const id of Object.keys(this.map)) {
