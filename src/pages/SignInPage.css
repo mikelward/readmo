@@ -14,8 +14,8 @@
   background: var(--rm-bg-card);
   border-bottom: 1px solid var(--rm-border);
   overflow: hidden;
-  /* cap height so it feels like a peek, not an app clone */
-  max-height: 340px;
+  /* shrink on short viewports (e.g. iPhone SE) so the sign-in card stays above the fold */
+  max-height: min(340px, 35vh);
   flex-shrink: 0;
 }
 
