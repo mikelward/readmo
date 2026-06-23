@@ -162,6 +162,61 @@ describe('parseFeed — relative-URL absolutization', () => {
   });
 });
 
+describe('entity decoding in plain-text fields', () => {
+  // fast-xml-parser only resolves the five predefined XML entities; numeric
+  // references and HTML named entities survive into title/author/feedTitle,
+  // which the UI renders as escaped plain text. The parser must decode them so
+  // the stored value is the actual character — not a literal "&#8217;".
+  const rss = (channelExtra: string, itemExtra: string) =>
+    parseFeed(
+      `<?xml version="1.0"?><rss version="2.0"><channel>${channelExtra}` +
+        `<item>${itemExtra}<link>https://ex.com/1</link><guid>g1</guid></item>` +
+        `</channel></rss>`,
+      'https://ex.com/feed',
+    );
+
+  it('decodes a numeric decimal reference (&#8217;) in an item title', () => {
+    const { items } = rss('<title>Feed</title>', '<title>Something&#8217;s off</title>');
+    expect(items[0].title).toBe('Something’s off');
+  });
+
+  it('decodes a numeric hex reference (&#x2019;) in an item title', () => {
+    const { items } = rss('<title>Feed</title>', '<title>It&#x2019;s here</title>');
+    expect(items[0].title).toBe('It’s here');
+  });
+
+  it('decodes HTML named entities (&rsquo;, &nbsp;) the XML parser leaves raw', () => {
+    const { items } = rss('<title>Feed</title>', '<title>O&rsquo;Brien&nbsp;wins</title>');
+    expect(items[0].title).toBe('O’Brien wins');
+  });
+
+  it('decodes a double-encoded entity (&amp;#8217;) down to the character', () => {
+    // The publisher HTML-encoded then XML-escaped the ampersand. The XML parser
+    // un-escapes the outer &amp; to "&#8217;"; we must finish the job.
+    const { items } = rss('<title>Feed</title>', '<title>Don&amp;#8217;t panic</title>');
+    expect(items[0].title).toBe('Don’t panic');
+  });
+
+  it('decodes entities in the feed title and the author byline', () => {
+    const { feedTitle, items } = rss(
+      '<title>Tom &amp; Jerry&#8217;s Blog</title>',
+      '<title>Post</title><dc:creator>Jos&#xe9; Garc&#237;a</dc:creator>',
+    );
+    expect(feedTitle).toBe('Tom & Jerry’s Blog');
+    expect(items[0].author).toBe('José García');
+  });
+
+  it('does NOT entity-decode the HTML body (entities stay meaningful for render)', () => {
+    // The body is sanitized and rendered as HTML, where the browser decodes
+    // entities. Decoding here would turn escaped code samples into live tags.
+    const { items } = rss(
+      '<title>Feed</title>',
+      '<title>T</title><description>5 &amp;lt; 10 &amp;#8217;</description>',
+    );
+    expect(items[0].contentHtml).toBe('5 &lt; 10 &#8217;');
+  });
+});
+
 describe('helpers', () => {
   it('absolutizeUrl resolves relative against base and passes absolute through', () => {
     expect(absolutizeUrl('/a', 'https://h.com/x/y')).toBe('https://h.com/a');

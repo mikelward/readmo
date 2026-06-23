@@ -307,6 +307,13 @@ folders       (user_id FK, name, sort)
 - Parse RSS 2.0, Atom, RSS 1.0/RDF, JSON Feed into a normalized item shape
   `{ guid, url, title, author, publishedAt, contentHtml, summary, enclosures }`
   (maintained parser, e.g. `fast-xml-parser` + a normalizer).
+- **Decode HTML entities in plain-text fields** (`title`, `author`,
+  `feedTitle`) before storing. `fast-xml-parser` only resolves the five
+  predefined XML entities, so numeric references (`&#8217;`) and HTML named
+  entities (`&rsquo;`, `&nbsp;`) — plus the leftover from a double-encoded
+  `&amp;#8217;` — would otherwise survive into fields the UI renders as escaped
+  plain text and show up literally. `contentHtml` is **not** decoded here: it's
+  HTML, where entities are meaningful and the browser decodes them on render.
 - **Sanitize** `contentHtml` server-side (DOMPurify/sanitize-html) before
   storing — strip scripts/handlers/disallowed tags, absolutize relative URLs
   against the item URL, force `rel="noopener"`. Never store/serve raw
