@@ -22,6 +22,14 @@
 -- auth.uid()), but we mirror feeds' anon+authenticated grant for parity.
 grant select on public.items to anon, authenticated;
 
+-- feeds_public is the display-safe VIEW the client actually reads for feed
+-- metadata (ensureFeeds / getFeed) — 0002 created it but never granted it, so
+-- without this the feed list, home item resolution, and single-feed metadata
+-- still 42501 even after the table grants above. It's security_invoker, so the
+-- caller's feeds RLS + the 0002 safe-column grant still apply (no extra
+-- exposure); this just permits selecting the view itself.
+grant select on public.feeds_public to anon, authenticated;
+
 -- Per-user tables. Writes are RPC-only (item_state) or column-scoped (the
 -- subscriptions UPDATE grant in 0004); here we restore the reads and the
 -- client-driven deletes the policies already allow (unsubscribe; folder
