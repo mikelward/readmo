@@ -42,6 +42,7 @@ Deno.serve(async (req: Request) => {
   const service = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    { auth: { autoRefreshToken: false, persistSession: false } },
   );
 
   // Resolve which feeds to refresh — scoped to the caller's subscriptions via
