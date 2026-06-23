@@ -50,9 +50,10 @@
 
 .settings__suggestion {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
-  padding: 9px 14px;
+  padding: 0 14px;
+  min-height: var(--rm-tap);
   cursor: pointer;
   user-select: none;
 }
