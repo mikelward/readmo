@@ -93,4 +93,18 @@ describe('MockDataSource library + subscriptions', () => {
     const byFeed = await ds.search('NASA');
     expect(byFeed.length).toBeGreaterThan(0);
   });
+
+  it('getFeed applies title_override from the subscription', async () => {
+    const ds = fresh();
+    await ds.setTitleOverride('feed-verge', 'My Verge');
+    const feed = await ds.getFeed('feed-verge');
+    expect(feed?.title).toBe('My Verge');
+  });
+
+  it('getFeed returns the raw feed title when title_override is null', async () => {
+    const ds = fresh();
+    const feed = await ds.getFeed('feed-verge');
+    expect(feed?.title).not.toBeNull();
+    expect(feed?.title).not.toBe(''); // has a real seed title
+  });
 });

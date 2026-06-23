@@ -205,6 +205,25 @@ describe('SupabaseDataSource reads', () => {
     expect(feed?.url).toBe('https://b.example.com');
     expect(feed?.title).toBe('Beta News');
   });
+
+  it('getFeed applies subscription title_override over the raw feed title', async () => {
+    env.fake.store.subscriptions.find((s) => s.feed_id === 'feed-a')!.title_override = 'My Custom Name';
+    const feed = await env.ds.getFeed('feed-a');
+    expect(feed?.title).toBe('My Custom Name');
+  });
+
+  it('getFeed falls back to the raw feed title when title_override is null', async () => {
+    const feed = await env.ds.getFeed('feed-a');
+    expect(feed?.title).toBe('Alpha Blog');
+  });
+
+  it('getFeed applies title_override even when the feed is cached', async () => {
+    // Warm the feedCache via a prior call.
+    await env.ds.getFeed('feed-a');
+    env.fake.store.subscriptions.find((s) => s.feed_id === 'feed-a')!.title_override = 'Cached Override';
+    const feed = await env.ds.getFeed('feed-a');
+    expect(feed?.title).toBe('Cached Override');
+  });
 });
 
 describe('SupabaseDataSource dispatch + writes', () => {
