@@ -40,6 +40,8 @@ export function SettingsPage() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [activeIdx, setActiveIdx] = useState(-1);
   const suggestionsId = useId();
+  // True when feedUrl was filled from the curated list; skip discover in that case.
+  const isFromSuggestion = useRef(false);
 
   const suggestions = feedUrl.trim().length > 0
     ? POPULAR_FEEDS.filter((f) => {
@@ -62,6 +64,13 @@ export function SettingsPage() {
 
   const addFeed = useMutation({
     mutationFn: async (url: string) => {
+      // Curated suggestions have a known, validated feed URL — subscribe directly
+      // and skip the discover round-trip so a discover outage or bot-block on the
+      // site's homepage can't prevent subscribing to a well-known feed.
+      if (isFromSuggestion.current) {
+        isFromSuggestion.current = false;
+        return ds.subscribe(url);
+      }
       // discover() already tries parsing the target itself as a feed, so an
       // empty list means the URL is neither a feed nor advertises one. Do NOT
       // fall back to subscribing to the raw (non-feed) URL: that stored a feed
@@ -142,6 +151,7 @@ export function SettingsPage() {
                 activeIdx >= 0 ? `${suggestionsId}-${activeIdx}` : undefined
               }
               onChange={(e) => {
+                isFromSuggestion.current = false;
                 setFeedUrl(e.target.value);
                 setShowSuggestions(true);
                 setActiveIdx(-1);
@@ -161,6 +171,7 @@ export function SettingsPage() {
                   setActiveIdx((i) => Math.max(i - 1, -1));
                 } else if (e.key === 'Enter' && activeIdx >= 0) {
                   e.preventDefault();
+                  isFromSuggestion.current = true;
                   setFeedUrl(suggestions[activeIdx].feedUrl);
                   setShowSuggestions(false);
                   setActiveIdx(-1);
@@ -189,6 +200,7 @@ export function SettingsPage() {
                     }
                     onMouseDown={(e) => {
                       e.preventDefault();
+                      isFromSuggestion.current = true;
                       setFeedUrl(feed.feedUrl);
                       setShowSuggestions(false);
                       setActiveIdx(-1);
