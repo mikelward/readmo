@@ -60,6 +60,7 @@ Deno.serve(async (req: Request) => {
   if (error) return json({ error: error.message }, 500);
 
   let processed = 0;
+  const errors: string[] = [];
   for (const feed of feeds ?? []) {
     // TODO(PR2, P2 — subscriber filter): the SELECT above must also require
     // EXISTS (subscriptions for this feed). Without it, feeds keep being polled
@@ -71,12 +72,18 @@ Deno.serve(async (req: Request) => {
     try {
       await pollOne(supabase, feed);
       processed++;
+      console.log(`[poll] ok feed=${feed.id} url=${feed.url}`);
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`${feed.id}: ${msg}`);
+      console.error(`[poll] error feed=${feed.id} url=${feed.url}:`, msg);
       await recordFailure(supabase, feed, err);
     }
   }
 
-  return json({ processed, considered: feeds?.length ?? 0 });
+  const considered = feeds?.length ?? 0;
+  console.log(`[poll] done processed=${processed} considered=${considered} errors=${errors.length}`);
+  return json({ processed, considered });
 });
 
 async function pollOne(supabase: any, feed: any): Promise<void> {

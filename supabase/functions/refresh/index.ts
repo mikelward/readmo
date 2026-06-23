@@ -58,13 +58,21 @@ Deno.serve(async (req: Request) => {
     try {
       // refreshOne enforces the DEBOUNCE_S throttle and reports whether it
       // actually hit the publisher, so spamming refresh doesn't inflate counts.
-      if (await refreshOne(service, feed_id)) refreshed++;
-      else debounced++;
-    } catch {
+      if (await refreshOne(service, feed_id)) {
+        refreshed++;
+        console.log(`[refresh] ok feed=${feed_id}`);
+      } else {
+        debounced++;
+        console.log(`[refresh] debounced feed=${feed_id}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[refresh] error feed=${feed_id}:`, msg);
       /* per-feed isolation: one bad feed doesn't fail the request */
     }
   }
 
+  console.log(`[refresh] done refreshed=${refreshed} debounced=${debounced}`);
   return json({ refreshed, debounced, debounceSeconds: DEBOUNCE_S });
 });
 
