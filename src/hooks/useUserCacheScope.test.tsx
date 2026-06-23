@@ -16,6 +16,9 @@ const DEMO_UID = 'mock:demo@readmo.app';
 describe('useUserCacheScope', () => {
   beforeEach(() => {
     window.localStorage.clear();
+    // Start signed-in so prevUid initialises to DEMO_UID and transitioning
+    // begins false (reloadApp is mocked so a real reload never resets it).
+    window.localStorage.setItem('readmo:mock-signed-in', '1');
     vi.stubGlobal('caches', { delete: vi.fn().mockResolvedValue(true) });
     vi.mocked(reloadApp).mockClear();
   });
@@ -69,8 +72,8 @@ describe('useUserCacheScope', () => {
       { wrapper },
     );
 
-    // Establish a signed-out starting point and let that transition fully
-    // settle (purge + reload), then clear the mocks so we measure only the
+    // Sign out to reach the signed-out starting point, let that transition
+    // fully settle (purge + reload), then clear mocks so we measure only the
     // sign-in that follows.
     act(() => result.current.auth.signOut());
     await waitFor(() => expect(reloadApp).toHaveBeenCalled());

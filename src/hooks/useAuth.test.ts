@@ -7,16 +7,19 @@ const DEMO_UID = 'mock:demo@readmo.app';
 describe('getActiveUid', () => {
   beforeEach(() => window.localStorage.clear());
 
-  it('returns the demo uid when signed in and null when signed out', () => {
-    expect(getActiveUid()).toBe(DEMO_UID);
-    window.localStorage.setItem('readmo:mock-signed-out', '1');
+  it('returns null when signed out and the demo uid when signed in', () => {
     expect(getActiveUid()).toBeNull();
+    window.localStorage.setItem('readmo:mock-signed-in', '1');
+    expect(getActiveUid()).toBe(DEMO_UID);
   });
 });
 
 describe('useAuth', () => {
+  beforeEach(() => window.localStorage.clear());
+
   it('exposes a stable uid across sign-out / sign-in', () => {
     const { result } = renderHook(() => useAuth());
+    expect(result.current.user).toBeNull();
     act(() => result.current.signIn());
 
     const uid = result.current.user?.uid;

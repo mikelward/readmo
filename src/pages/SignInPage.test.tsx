@@ -5,10 +5,9 @@ import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '../components/Toast';
 import { SignInPage } from './SignInPage';
 
-// The mock auth path is signed-in (demo user) by default; these flows test the
-// sign-in action, so start signed-out so the new "already signed-in -> redirect"
-// guard doesn't fire before the click.
-const MOCK_SIGNED_OUT_KEY = 'readmo:mock-signed-out';
+// The mock auth path is signed-out by default; the "already signed-in" test
+// sets this key to simulate a returning user.
+const MOCK_SIGNED_IN_KEY = 'readmo:mock-signed-in';
 
 // Echoes the current path so we can assert where sign-in landed the user.
 function LocationProbe() {
@@ -30,9 +29,6 @@ function renderAt(entry: { pathname: string; state?: unknown }) {
 }
 
 describe('SignInPage', () => {
-  beforeEach(() => {
-    window.localStorage.setItem(MOCK_SIGNED_OUT_KEY, '1');
-  });
   afterEach(() => {
     window.localStorage.clear();
   });
@@ -59,8 +55,7 @@ describe('SignInPage', () => {
   });
 
   it('redirects an already-signed-in user off /signin to the saved target', () => {
-    // Signed in (mock default): no buttons, straight to the deep-link target.
-    window.localStorage.removeItem(MOCK_SIGNED_OUT_KEY);
+    window.localStorage.setItem(MOCK_SIGNED_IN_KEY, '1');
     renderAt({ pathname: '/signin', state: { from: { pathname: '/folder/tech' } } });
     expect(screen.getByTestId('location')).toHaveTextContent('/folder/tech');
     expect(screen.queryByRole('button', { name: /continue with/i })).toBeNull();
