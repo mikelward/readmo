@@ -3,6 +3,7 @@ import { useDataSource } from '../lib/data/context';
 import { useFeedItems, type FetchPage } from '../hooks/useFeedItems';
 import { useInViewIds } from '../hooks/useInViewIds';
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
+import { checkForServiceWorkerUpdate } from '../lib/swUpdate';
 import { ItemRows } from './ItemRows';
 import { ListToolbar } from './ListToolbar';
 import { PullToRefresh } from './PullToRefresh';
@@ -60,7 +61,7 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
     <div className="item-list">
       <ListToolbar />
 
-      <PullToRefresh onRefresh={refetch}>
+      <PullToRefresh onRefresh={async () => { await refetch(); await checkForServiceWorkerUpdate(); }}>
         {isError ? (
           <div className="item-list__state" role="alert">
             <p>Couldn’t load items.</p>
