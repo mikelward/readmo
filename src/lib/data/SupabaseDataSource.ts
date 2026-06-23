@@ -523,10 +523,13 @@ export class SupabaseDataSource implements DataSource {
   async subscribe(feedUrl: string, folder?: string | null): Promise<Feed> {
     const feed = await this.subscribeOnly(feedUrl, folder);
     // SPEC *Polling → On-demand*: adding a feed triggers an immediate
-    // server-side fetch so items/metadata appear without waiting for the cron
-    // (debounced server-side). Fire-and-forget — don't block the Add on a poll.
-    void this.refresh(feed.id);
-    return feed;
+    // server-side fetch so items/metadata appear without waiting for the cron.
+    // Await the refresh so the caller gets back items + correct title/site_url.
+    // Swallow errors — a failed poll still leaves the subscription in place.
+    await this.refresh(feed.id).catch(() => {});
+    // feedCache was cleared by refresh(); re-fetch so we return the updated title.
+    const updated = await this.getFeed(feed.id).catch(() => null);
+    return updated ?? feed;
   }
 
   async unsubscribe(feedId: FeedId): Promise<void> {

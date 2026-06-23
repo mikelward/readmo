@@ -27,6 +27,7 @@ export function SettingsPage() {
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['subscriptions'] });
     queryClient.invalidateQueries({ queryKey: ['folders'] });
+    queryClient.invalidateQueries({ queryKey: ['feed'] });
   };
 
   const addFeed = useMutation({
