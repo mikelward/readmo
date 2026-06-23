@@ -33,6 +33,34 @@ export interface DiscoveredFeed {
 }
 
 /**
+ * Why "Add a feed" couldn't complete, so the UI can show a specific message
+ * instead of a single opaque failure. Distinguishes the two very different
+ * "auth" cases the user asked us to separate:
+ *   - `signed-out`  — the caller isn't authenticated to Readmo (the discover/
+ *     refresh Edge Functions verify the JWT); the fix is to sign in again.
+ *   - `feed-auth`   — the *target* feed itself is gated (the publisher returned
+ *     401/403); a private/login-only feed can't be added.
+ */
+export type AddFeedErrorKind =
+  | 'signed-out'
+  | 'feed-auth'
+  | 'no-feed' // reachable, but neither a feed nor advertising one
+  | 'not-found' // the URL 404/410'd
+  | 'unreachable' // network/DNS/timeout/SSRF-blocked/5xx
+  | 'unknown';
+
+/** A classified "Add a feed" failure (discover or subscribe). `kind` drives the
+ * user-facing copy; `message` carries the underlying detail for logs. */
+export class AddFeedError extends Error {
+  readonly kind: AddFeedErrorKind;
+  constructor(kind: AddFeedErrorKind, message?: string) {
+    super(message ?? kind);
+    this.name = 'AddFeedError';
+    this.kind = kind;
+  }
+}
+
+/**
  * Everything the Readmo UI needs from a backend. PR1 ships `MockDataSource`
  * (seeded, offline, localStorage state) behind this interface; PR2 ships
  * `SupabaseDataSource` with the identical surface so no UI code changes when

@@ -50,6 +50,26 @@ Deno.serve(async (req: Request) => {
     const asFeed = await tryParse(res.url, body);
     if (asFeed) return json({ candidates: [asFeed] });
 
+    // Not a feed itself. If the fetch didn't actually succeed, report WHY
+    // rather than falling through to a misleading "no feed found": a
+    // login-gated feed (401/403), a dead URL (404/410), or any other non-2xx.
+    // The `code` lets the client pick the right message (see classifyFunctionError).
+    if (res.status === 401 || res.status === 403) {
+      return json(
+        { error: "That feed requires a login, so it can't be added.", code: 'auth' },
+        422,
+      );
+    }
+    if (res.status === 404 || res.status === 410) {
+      return json({ error: 'That URL could not be found.', code: 'not-found' }, 422);
+    }
+    if (res.status >= 400) {
+      return json(
+        { error: `That URL returned HTTP ${res.status}.`, code: 'unreachable' },
+        502,
+      );
+    }
+
     // Otherwise treat it as HTML and probe each candidate.
     const candidates = discoverFromHtml(body, res.url);
     const validated = [];
@@ -59,8 +79,13 @@ Deno.serve(async (req: Request) => {
     }
     return json({ candidates: validated });
   } catch (err) {
-    if (err instanceof SsrfError) return json({ error: err.message }, 400);
-    return json({ error: err instanceof Error ? err.message : String(err) }, 502);
+    // SSRF-blocked (private/loopback address) or any fetch/parse failure: the
+    // URL couldn't be reached. Tag it so the client says so.
+    if (err instanceof SsrfError) return json({ error: err.message, code: 'unreachable' }, 400);
+    return json(
+      { error: err instanceof Error ? err.message : String(err), code: 'unreachable' },
+      502,
+    );
   }
 });
 
