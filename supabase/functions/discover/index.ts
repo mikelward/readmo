@@ -35,7 +35,7 @@ Deno.serve(async (req: Request) => {
   }
   if (typeof url !== 'string' || !url) return json({ error: 'Missing url' }, 400);
 
-  console.log(`[discover] url=${url}`);
+  try { console.log(`[discover] host=${new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `https://${url}`).host}`); } catch { console.log('[discover] invalid url'); }
   try {
     // The settings form accepts bare site names (e.g. "example.com"), so
     // normalize a missing scheme to https:// before anything touches the URL —
@@ -47,7 +47,7 @@ Deno.serve(async (req: Request) => {
     const reddit = redditFeedFor(target);
     if (reddit) {
       const { feed } = await tryParse(reddit);
-      if (feed) { console.log(`[discover] ok reddit feed=${feed.feedUrl}`); return json({ candidates: [feed] }); }
+      if (feed) { console.log(`[discover] ok path=reddit`); return json({ candidates: [feed] }); }
     }
 
     // Fetch the target. It may itself be a feed or an HTML page.
@@ -56,7 +56,7 @@ Deno.serve(async (req: Request) => {
 
     // If the target parses as a feed, offer it directly.
     const { feed: asFeed } = await tryParse(res.url, body);
-    if (asFeed) { console.log(`[discover] ok direct feed=${asFeed.feedUrl}`); return json({ candidates: [asFeed] }); }
+    if (asFeed) { console.log(`[discover] ok path=direct`); return json({ candidates: [asFeed] }); }
 
     // Not a feed itself. If the fetch didn't actually succeed, report WHY
     // rather than falling through to a misleading "no feed found": a
@@ -70,9 +70,9 @@ Deno.serve(async (req: Request) => {
       const jinaHtml = await fetchViaJina(target);
       if (jinaHtml !== null) {
         const result = await probeHtml(jinaHtml, target);
-        if (result.validated.length > 0) { console.log(`[discover] ok jina candidates=${result.validated.length}`); return json({ candidates: result.validated }); }
-        if (result.candidateFail) { console.error(`[discover] jina candidateFail=${result.candidateFail}`); return feedErrorResponse(result.candidateFail); }
-        console.error(`[discover] jina no candidates code=${targetCode}`);
+        if (result.validated.length > 0) { console.log(`[discover] ok path=jina candidates=${result.validated.length}`); return json({ candidates: result.validated }); }
+        if (result.candidateFail) { console.error(`[discover] error path=jina candidateFail=${result.candidateFail}`); return feedErrorResponse(result.candidateFail); }
+        console.error(`[discover] error path=jina code=${targetCode}`);
         return feedErrorResponse(targetCode);
       }
       console.error(`[discover] error code=${targetCode} (no jina)`);
@@ -86,13 +86,16 @@ Deno.serve(async (req: Request) => {
       console.error(`[discover] no feeds candidateFail=${result.candidateFail}`);
       return feedErrorResponse(result.candidateFail);
     }
-    console.log(`[discover] ok html candidates=${result.validated.length}`);
+    console.log(`[discover] ok path=html candidates=${result.validated.length}`);
     return json({ candidates: result.validated });
   } catch (err) {
     // SSRF-blocked (private/loopback address) or any fetch/parse failure: the
     // URL couldn't be reached. Tag it so the client says so.
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[discover] error:`, msg);
+    // Redact URLs from error messages before logging — assertSafeUrl formats
+    // errors as "Invalid URL: <url>" and the URL may carry auth tokens.
+    const redacted = msg.replace(/https?:\/\/\S+/g, '<url>');
+    console.error(`[discover] error:`, redacted);
     if (err instanceof SsrfError) return json({ error: err.message, code: 'unreachable' }, 400);
     return json({ error: msg, code: 'unreachable' }, 502);
   }

@@ -67,7 +67,8 @@ Deno.serve(async (req: Request) => {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[refresh] error feed=${feed_id}:`, msg);
+      const redacted = msg.replace(/https?:\/\/\S+/g, '<url>');
+      console.error(`[refresh] error feed=${feed_id}:`, redacted);
       /* per-feed isolation: one bad feed doesn't fail the request */
     }
   }

@@ -72,11 +72,12 @@ Deno.serve(async (req: Request) => {
     try {
       await pollOne(supabase, feed);
       processed++;
-      console.log(`[poll] ok feed=${feed.id} url=${feed.url}`);
+      console.log(`[poll] ok feed=${feed.id}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`${feed.id}: ${msg}`);
-      console.error(`[poll] error feed=${feed.id} url=${feed.url}:`, msg);
+      const redacted = msg.replace(/https?:\/\/\S+/g, '<url>');
+      errors.push(`${feed.id}: ${redacted}`);
+      console.error(`[poll] error feed=${feed.id}:`, redacted);
       await recordFailure(supabase, feed, err);
     }
   }
