@@ -303,6 +303,75 @@ describe('ItemList', () => {
     });
   });
 
+  it('Sweep works while a next-page fetch is in flight', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('scrollTo', vi.fn());
+
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const pageSize = 4;
+    // Capture the page-1 titles before anything is swept, so we can assert
+    // they're gone afterwards.
+    const page1 = await source.getHomeItems({ limit: pageSize });
+    expect(page1.nextCursor).not.toBeNull(); // need a second page for isFetchingMore
+    const page1Titles = page1.items.map((fi) => fi.item.title);
+
+    // Gate on the page-2 fetch so we can interleave a sweep while it's in
+    // flight. Page-1 fetches (cursor = null) always resolve immediately via
+    // the real source so the refetch after sweep returns correctly-filtered
+    // data (the real source reads stateStore at call time).
+    let releaseNextPage: (() => void) | null = null;
+    const fetchPage = vi.fn((cursor: string | null) => {
+      if (cursor === null) {
+        return source.getHomeItems({ limit: pageSize });
+      }
+      return new Promise<Awaited<ReturnType<typeof source.getHomeItems>>>((resolve) => {
+        releaseNextPage = () =>
+          void source.getHomeItems({ cursor, limit: pageSize }).then(resolve);
+      });
+    });
+
+    renderWithProviders(
+      <ItemList
+        viewKey={`sweep-mid-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+
+    // Wait for page 1.
+    await waitFor(() => {
+      expect(screen.getAllByTestId('item-row')).toHaveLength(pageSize);
+    });
+
+    // Trigger fetchNextPage — jsdom scrollHeight is 0 so atListEnd is true,
+    // which means "More" goes directly to fetchMore() (not scroll behavior).
+    await user.click(screen.getByTestId('more-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('more-btn')).toHaveTextContent('Loading…');
+    });
+
+    // Sweep while fetchNextPage is in flight.
+    expect(screen.getByTestId('sweep-btn')).toBeEnabled();
+    await user.click(screen.getByTestId('sweep-btn'));
+
+    // Release the held page-2 fetch. TanStack Query v5 defaults cancelRefetch
+    // to true, so the in-flight fetchNextPage is cancelled when invalidateQueries
+    // fires and a fresh page-1 refetch starts. Even if the release fires first,
+    // the stale result is discarded.
+    act(() => { releaseNextPage?.(); });
+
+    // The page-1 titles that were swept must not remain visible.
+    await waitFor(() => {
+      const visible = screen
+        .queryAllByTestId('item-title')
+        .map((el) => el.textContent);
+      for (const title of page1Titles) {
+        expect(visible).not.toContain(title);
+      }
+    });
+  });
+
   it('More pages down through loaded rows, then settles on "No more items" at the foot', async () => {
     const user = userEvent.setup();
     const scrollBySpy = vi.fn();
