@@ -19,7 +19,7 @@ const LIST_SHORTCUTS: Shortcut[] = [
   { keys: ['Space'], description: 'Open the row actions menu' },
   { keys: ['o'], description: 'Open the original article in a new tab' },
   { keys: ['p'], description: 'Pin or unpin the item' },
-  { keys: ['d'], description: 'Hide (dismiss) the item' },
+  { keys: ['d'], description: 'Mark item done (dismiss)' },
   { keys: ['?'], description: 'Show this help' },
   { keys: ['Esc'], description: 'Close menus or this help' },
 ];

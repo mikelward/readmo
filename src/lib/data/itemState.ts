@@ -200,7 +200,9 @@ export class ItemStateStore {
     const now = Date.now();
     const map: typeof loaded = {};
     for (const [id, state] of Object.entries(loaded)) {
-      if (state.hidden && !state.done) {
+      if (state.hidden && !state.done && !expired(state.hiddenAt, now)) {
+        // Skip rows whose hiddenAt is already past the TTL — they would have
+        // expired and reappeared anyway; don't convert them into permanent Done.
         // Also clear hidden/hiddenAt so "Unmark done" / "Forget all" on the
         // Done page leaves the item fully visible again rather than re-hiding it.
         map[id] = { ...applyMutation(state, 'done', true, now), hidden: false, hiddenAt: null };

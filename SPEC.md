@@ -51,11 +51,11 @@ copy it:
   retention. See *Item state model* below.
 - **Pinned prepended to the top of every feed**, rendered once, oldest-pinned
   first; pinning a body row keeps its position; **Sweep** consolidates.
-- **Swipe gestures** — swipe-right = Hide, swipe-left = Pin, rubber-band
-  shields with outcome labels.
-- **Library views** — `/pinned`, `/favorites`, `/done`, `/hidden`, `/opened`,
+- **Swipe gestures** — swipe-right = Done (dismiss), swipe-left = Pin,
+  rubber-band shields with outcome labels.
+- **Library views** — `/pinned`, `/favorites`, `/done`, `/opened`,
   reusing the feed row with the right-side button swapped to the view's
-  inverse action.
+  inverse action. (No `/hidden` route — dismissal goes directly to Done.)
 - **List toolbar** (sticky Undo + Sweep) and **bottom action bar**
   (Back-to-top + More + Undo + Sweep).
 - **Thread/reader action bar** discipline, **pull-to-refresh**, **keyboard
@@ -118,7 +118,7 @@ Everything else about the visual system mirrors newshacker.
   inner (brand mark + wordmark, Offline pill, Search) keeps the 720px
   article column max-width so it aligns with the list below. Safe-area
   insets reserve space for landscape-iPhone notches on the edge controls.
-- **Navigation drawer sections:** Home (feed picker — All subscriptions or a folder), Library (Pinned / Favorites / Done / Hidden / Opened / Offline), Appearance (mode + palette segmented controls), Folders (folder nav, hidden when none exist), Feeds (subscription list), App (Settings, Debug).
+- **Navigation drawer sections:** Home (feed picker — All subscriptions or a folder), Library (Pinned / Favorites / Done / Opened / Offline), Appearance (mode + palette segmented controls), Folders (folder nav, hidden when none exist), Feeds (subscription list), App (Settings, Debug).
 - **Dark mode:** full light/dark/system via tokens.
 - **Palette:** four color families selectable in the drawer's Appearance section (and also in Settings), orthogonal to the
   light/dark/**mode** axis — **Ink** (default, the monochrome ink-on-paper above),
@@ -165,14 +165,14 @@ the only difference is they're DB columns instead of localStorage keys.
   target and break the fewer-targets rule. On `/favorites` the row's
   right-side slot carries a filled heart that unfavorites. Never swept, never
   expired.
-- **Done (✓)** — your **completion log**. Mark done from the **reader view**;
-  on `/done` the row carries a filled check that unmarks done. Marking Done
-  also **unpins** (Pin is the queue, Done is where items go when they leave
-  it; mutually exclusive). Done items are filtered out of every feed
-  (permanent, unlike Hidden's TTL).
-- **Hidden** — dismiss (not interested). Hide via swipe-right or the row menu.
-  Hidden items are filtered from every feed and surface only on `/hidden`
-  (a 7-day recovery view). Same semantics as newshacker.
+- **Done (✓)** — your **completion log** and the **dismiss action**. Mark done
+  from the row menu, swipe-right, or the reader view action bar; on `/done` the
+  row carries a filled check that unmarks done. Marking Done also **unpins**
+  (Pin is the queue, Done is where items go when they leave it; mutually
+  exclusive). Done items are filtered out of every feed (permanent). The
+  `hidden` DB column is retained for backward compat but the UI routes all
+  dismissals through `done`; legacy `hidden=true` rows are migrated to
+  `done=true` on first load.
 - **Opened** — auto, set when you open an item. Fades the title (`--rm-read`),
   shows on `/opened` (7-day history). "Mark unread" in the row menu clears it.
   (newshacker's "N new comments" badge does **not** apply — RSS items don't
@@ -181,22 +181,16 @@ the only difference is they're DB columns instead of localStorage keys.
 **Shields (identical to newshacker):**
 
 - **Pin shields against every swipe.** On a pinned row both swipe directions
-  are suppressed (swipe-right Hide and swipe-left Pin — the latter because
+  are suppressed (swipe-right Done and swipe-left Pin — the latter because
   re-pinning would re-stamp the timestamp and reorder the pinned list). The
-  row-menu "Hide" item is hidden on pinned rows. A pinned item leaves the list
+  row-menu "Done" item is hidden on pinned rows. A pinned item leaves the list
   only via **Done** (normal lifecycle, also unpins) or **Unpin** (explicit).
-- **Hide shields against Pin.** On a hidden row, swipe-left and the menu "Pin"
-  are suppressed — pinning an already-hidden item would reintroduce a
-  pin ∩ hidden collision.
 - **Suppressed swipes rubber-band, don't silently absorb** — the row tracks
   the finger and snaps back; the revealed edge label names the outcome
-  (`Pinned` on both edges of a pinned row; `Hidden` on a hidden row's
-  swipe-left; otherwise `Hide` / `Pin`). Same `useSwipeToDismiss`
-  fall-through-to-`setOffset(0)` mechanism.
-- **Enforcement at the mutation layer, not just the UI** (newshacker enforces
-  in its store hooks; Readmo enforces in the write path / DB): pinning removes
-  Done and Hidden; hiding removes Pinned; marking Done removes Pinned. Hide ↔
-  Done may coexist (Done's filter supersedes Hide's anyway).
+  (`Pinned` on both edges of a pinned row; otherwise `Done` / `Pin`). Same
+  `useSwipeToDismiss` fall-through-to-`setOffset(0)` mechanism.
+- **Enforcement at the mutation layer, not just the UI**: pinning removes Done;
+  marking Done removes Pinned.
 
 **Retention (same as newshacker "Retention today"):** Favorite, Pinned, and
 Done are **permanent**; Hidden and Opened expire after **7 days**. (Revisit
@@ -563,24 +557,24 @@ loopback/link-local/private/metadata targets and redirects to them.
 3. **Item row** — see *Item row layout*. Right-side button = **Pin/Unpin** on
    feed views; the view-contextual inverse on library views.
 
-4. **Library views** — `/pinned`, `/favorites`, `/done`, `/hidden`, `/opened`,
+4. **Library views** — `/pinned`, `/favorites`, `/done`, `/opened`,
    reusing the feed row with the right-side button swapped to the view's
    inverse action (filled, accent-colored). Per-view "Forget all" toolbar on
-   `/done`, `/opened`, `/hidden`; none on `/favorites`/`/pinned`. `/hidden` is
-   the recovery view (drops items also opened). Same as newshacker.
+   `/done` and `/opened`; none on `/favorites`/`/pinned`. No `/hidden` route —
+   swipe-right and sweep both set Done directly.
 
 5. **Reader view** — `/item/:id` — the article, with the action bar. No
    comments. See *Reader view*.
 
 6. **List toolbar** — sticky below the header: right-aligned **Undo** +
-   **Sweep unpinned** (Hide unpinned). Sweep hides only the unpinned rows that
+   **Sweep unpinned** (Mark all done). Sweep marks done only the unpinned rows that
    are **fully visible right now** — not the whole loaded list — so scrolling
    past content and tapping the broom can't dismiss rows off-screen. A row
    counts as visible iff its bounding box sits entirely inside the viewport
    minus the sticky chrome (header + toolbar), tracked by an
    IntersectionObserver whose `rootMargin` shrinks the top by that inset; the
    button disables when nothing unpinned is fully visible. Undo restores the
-   last hide / swipe / sweep batch. Same component/behavior as newshacker.
+   last done / swipe / sweep batch. Same component/behavior as newshacker.
 
 7. **Bottom action bar** — Back-to-top + More + Undo + Sweep on feed footers;
    Back-to-top only on library footers. Same slot order. **More lives in the

@@ -80,7 +80,7 @@ describe('<KeyboardShortcutsOverlay>', () => {
     expect(overlay).toHaveTextContent(/Next item/);
     expect(overlay).toHaveTextContent(/Open the reader/);
     expect(overlay).toHaveTextContent(/Pin or unpin/);
-    expect(overlay).toHaveTextContent(/Hide \(dismiss\)/);
+    expect(overlay).toHaveTextContent(/Mark item done \(dismiss\)/);
     // No comments/votes in Readmo.
     expect(overlay).not.toHaveTextContent(/comment/i);
   });
