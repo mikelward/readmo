@@ -863,6 +863,19 @@ keys differ; the strategies map one-to-one:
   `content_html` + referenced images in the persisted cache at pin time, so
   `/pinned` works offline.
 - **Favoriting** calls `prefetchFavoriteStory` — same for `/favorites`.
+- **Offline reader cache (`useOfflineCacheLock`).** Mounted once at the app root,
+  it tracks the offline buckets (**pinned OR favorited**, matching `/offline`)
+  via the shared item-state store and, while an item is bucketed, holds its
+  reader queries — `['item', id]` (detail + sanitized feed body) and, for
+  truncated feeds, `['fulltext', id]` (the extracted reading body) — in the
+  persisted cache so the item reads offline. An idle (`enabled:false`)
+  `QueryObserver` per query blocks GC while bucketed and re-locks from hydrated
+  state on mount (so a reload doesn't drop them); an entry is evicted only once
+  the item is in NO bucket (so unpinning an item that's still favorited keeps its
+  cache). It reacts to every pin/favorite path centrally, and `/offline` lists
+  these items from the warmed per-item caches when its batch fetch fails offline.
+  **Standalone images and cross-device sync are not yet wired** — see *Open
+  questions*.
 - Pinned/Favorite cache entries lock at `gcTime: Infinity` while the state
   holds and re-lock on cross-tab change / rehydrate / late image fetch (the
   `subscribeToPinnedCacheLocking` pattern). Never evicted while pinned/favorited.
@@ -949,16 +962,18 @@ keys differ; the strategies map one-to-one:
   with usage data (same standing TODO as newshacker).
 - **Realtime sync** — ship in MVP or rely on refetch-on-focus + PTR? (Leaning
   defer.)
-- **Full-text fetch — shipped (lazy, on open).** Readability extraction for
-  truncated feeds is now the reader default (see *Reader view → Full-text reading
-  mode*), keyed off a per-item truncation heuristic rather than a per-feed
-  opt-in. It fetches **only when the reader is opened** (no eager/poller
-  prefetch). Deferred follow-ups:
-  - **TODO — fetch + persist the readable article for offline on pin.** Pinned
-    (and favorited) items are the offline buckets; today pinning an *unopened*
-    truncated item saves only the feed stub. On pin, trigger `fetchFullText`
-    and persist `full_content_html` into the device's offline cache alongside
-    `content_html` + proxied images, so the saved copy is the reading version.
+- **Full-text fetch — shipped (lazy on open + cached on pin).** Readability
+  extraction for truncated feeds is the reader default (see *Reader view →
+  Full-text reading mode*), keyed off a per-item truncation heuristic rather than
+  a per-feed opt-in. It fetches when the reader is opened, and **pinning or
+  favoriting caches the item detail + reading body for offline** and evicts when
+  the item leaves both buckets (`useOfflineCacheLock`; see *Prefetch on
+  Pin/Favorite*). Deferred follow-ups:
+  - **TODO — lock proxied standalone images too.** `useOfflineCacheLock` covers
+    the `['item']`/`['fulltext']` queries for pinned/favorited items; the
+    referenced `/api/img` image bytes aren't pinned in the cache yet, so an
+    offline reader may show broken images. Fold image prefetch/locking into the
+    same subscriber.
   - **TODO — sync the readable version across a user's devices.** The extracted
     body is cached on the shared `items` row server-side, so any device that
     *re-reads* the item gets it; the offline/IndexedDB copy is currently

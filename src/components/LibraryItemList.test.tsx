@@ -1,17 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
+import { PushPinFilled } from './icons';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { MockDataSource } from '../lib/data/MockDataSource';
-import { OfflinePage } from './OfflinePage';
+import { LibraryItemList } from './LibraryItemList';
 
-describe('OfflinePage', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it('lists items from the warmed per-item cache when the batch fetch fails offline', async () => {
+describe('LibraryItemList', () => {
+  it('lists pinned items from the warmed per-item cache when the batch fetch fails offline', async () => {
     // Source whose batch fetch fails (Supabase offline) but whose getItem still
     // seeds the per-item cache (as useOfflineCacheLock does).
     class OfflineBatchSource extends MockDataSource {
@@ -25,26 +21,21 @@ describe('OfflinePage', () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
-    // Warm the per-item cache the way the lock would.
     const seed = new MockDataSource(`seed-${Math.random()}`);
     queryClient.setQueryData(['item', 'item-1'], await seed.getItem('item-1'));
 
-    renderWithProviders(<OfflinePage />, { route: '/offline', source, queryClient });
+    renderWithProviders(
+      <LibraryItemList
+        field="pinned"
+        actionLabel="Unpin"
+        actionIcon={<PushPinFilled />}
+        emptyLabel="No pinned items."
+      />,
+      { route: '/pinned', source, queryClient },
+    );
 
     expect(
       await screen.findByText('A foldable phone that actually folds flat, finally'),
     ).toBeInTheDocument();
-  });
-
-  it('has a Back to top button in the bottom toolbar that scrolls to the top', async () => {
-    const user = userEvent.setup();
-    const scrollToSpy = vi.fn();
-    vi.stubGlobal('scrollTo', scrollToSpy);
-    renderWithProviders(<OfflinePage />, { route: '/offline' });
-
-    const backToTop = await screen.findByTestId('back-to-top');
-    expect(backToTop).toHaveAccessibleName(/back to top/i);
-    await user.click(backToTop);
-    expect(scrollToSpy).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
   });
 });

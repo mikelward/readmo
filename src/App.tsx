@@ -6,6 +6,7 @@ import { KeyboardShortcutsOverlay } from './components/KeyboardShortcutsOverlay'
 import { FeedBarProvider } from './components/FeedBarContext';
 import { useAuth } from './hooks/useAuth';
 import { useUserCacheScope } from './hooks/useUserCacheScope';
+import { useOfflineCacheLock } from './hooks/useOfflineCacheLock';
 import { HomePage, FolderPage, FeedPage } from './pages/FeedPages';
 import {
   PinnedPage,
@@ -37,6 +38,9 @@ function RequireAuth({ children }: { children: ReactNode }) {
 }
 
 export default function App() {
+  // Keep pinned/favorited items' reader queries cached for offline (lock while
+  // bucketed, evict when neither). Mounted once here so it tracks state app-wide.
+  useOfflineCacheLock();
   // Gate rendering across an auth transition: while the previous user's caches
   // are being purged and the app reloads, paint nothing so the next user can't
   // briefly see the previous user's cached content (guardrail #8).
