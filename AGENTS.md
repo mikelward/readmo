@@ -62,8 +62,9 @@ guardrails — read them before opening a PR.
    what newshacker does. Diverge only for the documented RSS-specific reasons:
    no comments/votes, server-side data, accounts/sync.
 
-10. **Branching:** one topic per `claude/<short-topic>` branch off `main`; one
-    commit per logical surviving change; PRs ready for review.
+10. **Branching:** one topic per `<agent>/<short-topic>` branch off `main`; one
+    commit per logical surviving change; PRs ready for review. See *Branching*
+    below for the full rules.
 
 ## Project layout
 
@@ -106,3 +107,73 @@ source.
 
 Run `lint`, `typecheck`, and `test` before every PR; add `build` when you touch
 build/routing/deploy.
+
+## Testing expectations
+
+- **Fix any preexisting test failures as the *first* commit of the series.**
+  If `npm test` is already red when you start a task, don't stack your work
+  on top of a broken baseline. Land the fix first, on its own commit. If the
+  failure is genuinely unrelated and out of scope, say so in the first
+  response and confirm with the user before skipping past it — don't silently
+  report a task "done" with the tree still red.
+- **Avoid racy / flaky tests.** Never paper over a timing race with
+  `await new Promise(r => setTimeout(r, 500))`, a retry loop, or a bumped
+  `findBy*` timeout. If a test depends on ordering, make the ordering
+  explicit: resolve a controlled promise, advance fake timers, wrap in
+  `act(...)`, or hold the in-flight fetch open behind a gate you release from
+  the test. A test that passes "most of the time" is broken; rewrite it or
+  fix the underlying cause.
+
+## Safe vs. risky actions
+
+- Safe: edit files, add dependencies, run tests, run the dev server,
+  creating new `<agent>/<short-topic>` feature branches, creating PRs via
+  `mcp__github__create_pull_request` once the user has asked you to open one
+  (and for subsequent follow-up PRs in the same thread — don't keep
+  re-asking), `git push --force-with-lease` to your own live feature branch
+  after a rebase (this is normal hygiene, not a risky action), and the
+  Copilot-review round-trip on your own PRs:
+  `mcp__github__request_copilot_review`,
+  `mcp__github__add_reply_to_pull_request_comment`, and
+  `mcp__github__resolve_review_thread` (currently broken via MCP — see
+  *Copilot reviews* below).
+- Ask first before: force-pushing to `main`/`master` or to a merged branch,
+  rewriting history on shared branches, deleting branches you didn't create,
+  changing Vercel/Supabase project settings, changing CI secrets, adding
+  paid/third-party services.
+
+## Branching
+
+- **Branch naming.** Feature branches are prefixed with the agent's own short name: `<agent>/<short-topic>` (e.g. `claude/...` for Claude Code). Human contributors pick a name that identifies them.
+- **Workflow.** `<agent>/<short-topic>` branch off `origin/main` → PR → merge via rebase or squash. One topic per branch. Follow-up work after a merge goes on a new branch. Never commit to `main` / `master`.
+- **One commit per logical surviving change on the branch.** Rewrite unmerged commits freely (squash, amend, reorder, split with `git rebase -i` / `git reset --soft`) so each landing commit is one coherent change, with fix-ups and review responses folded into the commit they belong to. A PR can be a single commit or a short series — but review-fix noise doesn't survive into `main`.
+- **Check state before you push or branch.** Query the branch's PR via the GitHub MCP first.
+  - No PR yet, or PR open → `git push` (`--force-with-lease` to your own feature branch after a rebase is fine; don't ask).
+  - PR merged / closed → don't push. Merge-path hygiene: `git fetch origin`, cut a fresh `<agent>/<short-topic>` branch off `origin/main`, announce the switch.
+- **Merge cue (`merged` / `I merged` / `landed` / merge webhook) runs hygiene *before* engaging with the rest of the message.**
+- Creating new `<agent>/<short-topic>` branches and creating PRs via `mcp__github__create_pull_request` (once the user has asked for one in the thread) are safe — don't re-ask.
+- Sandbox git proxy can't delete branches (HTTP 403). Flag it and move on; auto-delete-on-merge handles GitHub's side.
+- **After every push and after every merge, report the resulting HEAD SHA** so the operator can verify which build is deployed. Format: `pushed <short-sha>` after a push; `merged at <short-sha>` after a merge webhook. 7-char prefix is fine. Mention it once per push.
+- End every reply with the open-PR link (or `.../compare/main...<branch>` until a PR exists). Never link to a closed or merged PR.
+
+## Copilot reviews
+
+- **Always request a GitHub Copilot review automatically.** Immediately after `mcp__github__create_pull_request` succeeds, call `mcp__github__request_copilot_review` on the new PR. Don't ask first — this is a safe action.
+- **Re-request a Copilot review after your last push.** Whenever a `git push` updates an open PR's head, call `mcp__github__request_copilot_review` so the new commits get reviewed. If you do several back-to-back pushes, only request the review after the final push.
+- **Address Copilot comments automatically — don't wait to be asked.** When a Copilot review lands, treat each comment like a real review note: read it, decide whether it's a real issue or a false positive, and if it's real, fix it in the same PR. Fold the fix into the commit it belongs to (rebase / `--fixup`) rather than tacking on an "address review" commit, per the *one commit per logical surviving change* rule. Group several small fixes into one commit when they share a topic.
+- **Reply to (and, when possible, resolve) every addressed Copilot comment** via `mcp__github__add_reply_to_pull_request_comment`. Do this for each addressed comment, not in bulk.
+- **Don't resolve threads you haven't addressed.** If you disagree with a suggestion or are deferring it, leave the thread open and reply explaining why.
+- **Order of operations on a push that addresses review comments:** (1) push the fix commit, (2) reply on each addressed thread referencing the new sha, (3) re-request the Copilot review.
+- **Known limitation: `resolve_review_thread` is currently broken via MCP.** The thread node ID (`PRRT_*`) is stripped from `get_review_comments` responses, so `resolve_review_thread` can't be called. Post the reply via `mcp__github__add_reply_to_pull_request_comment` and skip the resolve step — flag in the end-of-turn summary that the threads are replied-but-unresolved so the user can resolve them in the GitHub UI.
+
+## Pull requests and reviews
+
+- Open PRs ready for review (not draft) unless asked otherwise.
+- When a feature has multiple open PRs, list **every** open PR by URL,
+  one per line — the "View PR" chip sticks to the first link and hides
+  the rest (anthropics/claude-code#46625).
+
+## CI
+
+- After pushing, **wait for CI** before claiming a change works in any environment you can't test locally. Webhooks deliver — don't poll.
+- Report significant CI timing regressions (rule of thumb: >25% or >30s on a job under ~5min). Name the likely cause.
