@@ -19,6 +19,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { parseFeedBody } from '../_shared/parser.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
+console.log('[poll] module loaded');
 
 const USER_AGENT = 'Readmo/1.0 (+https://readmo.app)';
 const BATCH_SIZE = 25;
