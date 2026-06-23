@@ -208,8 +208,14 @@ create extension if not exists pg_cron;
 create extension if not exists pg_net;
 
 -- Invoke the poll Edge Function every 5 minutes.
--- Replace <ref> and the service-role JWT (store the JWT via Vault in
--- production rather than inlining it).
+-- Replace <ref> with your Supabase project ref (the subdomain of your project URL).
+-- The service-role key is read from Supabase Vault (stored as 'service_role_key').
+-- Note: ALTER DATABASE SET app.* is not available on managed Supabase instances,
+-- so current_setting() cannot be used here — use the Vault subquery instead.
+
+-- To reschedule (e.g. to update the URL or key): unschedule first, then re-create.
+-- select cron.unschedule('readmo-poll');
+
 select cron.schedule(
   'readmo-poll',
   '*/5 * * * *',
@@ -217,8 +223,12 @@ select cron.schedule(
   select net.http_post(
     url     := 'https://<ref>.supabase.co/functions/v1/poll',
     headers := jsonb_build_object(
-      'Authorization', 'Bearer ' || current_setting('app.service_role_key', true),
-      'Content-Type',  'application/json'
+      'Authorization', 'Bearer ' || (
+        select decrypted_secret
+        from vault.decrypted_secrets
+        where name = 'service_role_key'
+      ),
+      'Content-Type', 'application/json'
     ),
     body    := '{}'::jsonb
   );
