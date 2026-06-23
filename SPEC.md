@@ -820,8 +820,14 @@ content. Closest mirror of newshacker.
 - **PTR force-checks for updates** (`registration.update()`, reload on
   `controllerchange`) since the browser only re-checks `/sw.js` on full
   navigation and our PTR overrides native swipe-to-reload. `src/lib/swUpdate.ts`.
-- **Passive surfaces:** `controllerchange` → "New version available · Reload"
-  toast; `visibilitychange`-after-≥30s passive `registration.update()` ping.
+- **Passive surfaces** (`src/components/AppUpdateWatcher.tsx`, mounted at the
+  app root): `controllerchange` → sticky "New version available · Reload" toast;
+  `visibilitychange`-after-≥30s passive `registration.update()` ping
+  (`pingServiceWorkerForUpdate` in `src/lib/swUpdate.ts`). A first-ever-install
+  guard keyed on `readmo:sw:installed` suppresses the spurious toast on the
+  initial SW activation but still surfaces it after hard-reloads /
+  session-restore / iOS PWA relaunches (transient null controller despite a
+  prior install); it fails open when storage is unavailable.
 - Disabled in `npm run dev`.
 
 ### Caching strategy

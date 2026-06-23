@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { AppHeader } from './components/AppHeader';
+import { AppUpdateWatcher } from './components/AppUpdateWatcher';
 import { ScrollToTop } from './components/ScrollToTop';
 import { KeyboardShortcutsOverlay } from './components/KeyboardShortcutsOverlay';
 import { FeedBarProvider } from './components/FeedBarContext';
@@ -43,6 +44,7 @@ export default function App() {
   if (useUserCacheScope()) return null;
   return (
     <FeedBarProvider>
+      <AppUpdateWatcher />
       <ScrollToTop />
       <AppHeader />
       <main className="app-main">
