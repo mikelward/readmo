@@ -102,8 +102,10 @@ export function SettingsPage() {
         : false;
       if (curatedName && !hasRealTitle) {
         await ds.setTitleOverride(feed.id, curatedName).catch(() => {});
-        queryClient.invalidateQueries({ queryKey: ['feed-meta', feed.id] });
       }
+      // Always invalidate feed-meta so FeedPage re-fetches the post-subscribe title
+      // regardless of whether a curated override was applied.
+      queryClient.invalidateQueries({ queryKey: ['feed-meta', feed.id] });
       // Fire a background refresh in case the edge function processed the first
       // one asynchronously and items aren't stored yet. Don't await — subscribe()
       // already called refresh internally, and blocking here would delay the toast
