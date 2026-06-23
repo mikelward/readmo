@@ -51,6 +51,112 @@ describe('extractArticle', () => {
     expect(result!.contentHtml).toContain('https://example.com/more');
   });
 
+  it('drops navigation link menus but keeps the article prose', () => {
+    // A link-dense list like the BBC homepage's "Home / News / Sport …" bar.
+    const navList =
+      '<ul><li><a href="/">Home</a></li><li><a href="/news">News</a></li>' +
+      '<li><a href="/sport">Sport</a></li><li><a href="/weather">Weather</a></li>' +
+      '<li><a href="/iplayer">iPlayer</a></li></ul>';
+    const result = extractArticle(
+      pageWith(navList + LONG_BODY),
+      'https://example.com/news/the-headline',
+    );
+    expect(result).not.toBeNull();
+    expect(result!.contentHtml).toContain('genuine article about feed readers');
+    // The link menu and its entries are gone.
+    expect(result!.contentHtml).not.toMatch(/>Weather</);
+    expect(result!.contentHtml).not.toMatch(/href="\/iplayer"/);
+  });
+
+  it('keeps a link roundup whose entries read like article titles', () => {
+    // A listicle/resource-roundup body: a link-dense list, but each entry is a
+    // full headline rather than a short menu label, so it's article content.
+    const roundup =
+      '<ul>' +
+      '<li><a href="/a">How to self-host your photo library in 2026</a></li>' +
+      '<li><a href="/b">The complete guide to feed readers and reading modes</a></li>' +
+      '<li><a href="/c">Why truncated RSS excerpts are so frustrating to read</a></li>' +
+      '</ul>';
+    const result = extractArticle(
+      pageWith(LONG_BODY + roundup),
+      'https://example.com/news/the-headline',
+    );
+    expect(result).not.toBeNull();
+    expect(result!.contentHtml).toContain('self-host your photo library');
+    expect(result!.contentHtml).toMatch(/href="https:\/\/example\.com\/c"/);
+  });
+
+  it('keeps a genuine content list (few/no links) in the article', () => {
+    const contentList =
+      '<ul><li>First key takeaway about feed readers.</li>' +
+      '<li>Second key takeaway about reading modes.</li>' +
+      '<li>Third key takeaway about truncated excerpts.</li></ul>';
+    const result = extractArticle(
+      pageWith(LONG_BODY + contentList),
+      'https://example.com/news/the-headline',
+    );
+    expect(result).not.toBeNull();
+    expect(result!.contentHtml).toContain('First key takeaway');
+    expect(result!.contentHtml).toContain('Third key takeaway');
+  });
+
+  // A page whose article body opens with a heading Readability keeps (an <h2>),
+  // repeating the feed item's title — the case the screenshot showed, where the
+  // headline appears once as the reader's own <h1> and again inside the body.
+  const DUP_TITLE = 'Have World Cup changes made group stage games unfair?';
+  function pageWithBodyHeading(): string {
+    return `<!doctype html><html><head><title>Sport — BBC</title></head>
+      <body>
+        <article>
+          <h2>${DUP_TITLE}</h2>
+          ${LONG_BODY}
+        </article>
+      </body></html>`;
+  }
+
+  it('drops the body heading when it duplicates the feed item title', () => {
+    const result = extractArticle(
+      pageWithBodyHeading(),
+      'https://example.com/sport/world-cup',
+      DUP_TITLE,
+    );
+    expect(result).not.toBeNull();
+    // The duplicate heading is gone, but the prose remains.
+    expect(result!.contentHtml).not.toContain(DUP_TITLE);
+    expect(result!.contentHtml).toContain('genuine article about feed readers');
+  });
+
+  it('matches case/punctuation-insensitively against the title', () => {
+    const result = extractArticle(
+      pageWithBodyHeading(),
+      'https://example.com/sport/world-cup',
+      // Trailing whitespace + different case still counts as a duplicate.
+      '  have world cup changes made group stage games unfair?  ',
+    );
+    expect(result).not.toBeNull();
+    expect(result!.contentHtml).not.toContain(DUP_TITLE);
+  });
+
+  it('keeps the body heading when it does not match the title', () => {
+    const result = extractArticle(
+      pageWithBodyHeading(),
+      'https://example.com/sport/world-cup',
+      'A completely different headline',
+    );
+    expect(result).not.toBeNull();
+    expect(result!.contentHtml).toContain(DUP_TITLE);
+  });
+
+  it('keeps a section heading that differs from the title', () => {
+    const result = extractArticle(
+      pageWith('<h2>Background</h2>' + LONG_BODY),
+      'https://example.com/news/the-headline',
+    );
+    expect(result).not.toBeNull();
+    // A non-title heading is article content and must survive.
+    expect(result!.contentHtml).toMatch(/<h2[^>]*>\s*Background\s*<\/h2>/i);
+  });
+
   it('returns null for a too-thin body (paywall teaser / cookie wall)', () => {
     const result = extractArticle(
       pageWith('<p>Subscribe to read the rest of this story.</p>'),
