@@ -19,7 +19,6 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { parseFeedBody } from '../_shared/parser.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
-console.log('[poll] module loaded');
 
 const USER_AGENT = 'Readmo/1.0 (+https://readmo.app)';
 const BATCH_SIZE = 25;
@@ -29,44 +28,55 @@ const MAX_INTERVAL_S = 6 * 60 * 60; // 6 h — backoff ceiling (SPEC.md)
 const CIRCUIT_BREAKER_FAILS = 8; // park the feed after N consecutive failures
 
 Deno.serve(async (req: Request) => {
-  try {
-    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    console.log('[poll] handler invoked, serviceKey present:', !!serviceKey);
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-    if ((req.headers.get('Authorization') ?? '') !== `Bearer ${serviceKey}`) {
-      console.log('[poll] auth failed');
-      return json({ error: 'Unauthorized' }, 401);
-    }
-    console.log('[poll] auth ok');
-
-    const supabase = createClient(Deno.env.get('SUPABASE_URL')!, serviceKey, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    });
-    console.log('[poll] supabase client created, key prefix:', serviceKey.slice(0, 20));
-
-    const { data: feeds, error } = await supabase
-      .from('feeds')
-      .select('id, url, secret_url, etag, last_modified, fetch_interval_s, error_count')
-      .lte('next_fetch_at', new Date().toISOString())
-      .limit(BATCH_SIZE);
-    console.log('[poll] feeds query done, error:', error?.message, 'count:', feeds?.length);
-    if (error) return json({ error: error.message }, 500);
-
-    let processed = 0;
-    for (const feed of feeds ?? []) {
-      try {
-        await pollOne(supabase, feed);
-        processed++;
-      } catch (err) {
-        await recordFailure(supabase, feed, err);
-      }
-    }
-
-    return json({ processed, considered: feeds?.length ?? 0 });
-  } catch (err) {
-    console.error('[poll] unhandled error:', err);
-    return json({ error: String(err) }, 500);
+  // Cron-only: this endpoint polls with the service role (RLS bypass), so it
+  // must reject anyone who isn't the scheduler. The pg_cron job sends the
+  // service-role key as a Bearer token (see SETUP.md); require it before we
+  // ever touch the service client, otherwise any holder of a valid project JWT
+  // could trigger service-role polling and hammer publishers / run up cost.
+  if ((req.headers.get('Authorization') ?? '') !== `Bearer ${serviceKey}`) {
+    return json({ error: 'Unauthorized' }, 401);
   }
+
+  // Service-role client — the poller writes shared feeds/items and BYPASSES
+  // RLS. Disable autoRefreshToken/persistSession so the client doesn't drop
+  // the service key. The service key is a server-only secret (never shipped
+  // to clients).
+  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, serviceKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  // Select feeds due for a poll that have >= 1 subscriber. Doing the
+  // subscriber check keeps poll cost proportional to *subscribed distinct
+  // feeds*, not all feeds ever added.
+  // TODO(deploy): move this to a SQL function / view for the subscriber join;
+  // sketch shown inline for clarity.
+  const { data: feeds, error } = await supabase
+    .from('feeds')
+    .select('id, url, secret_url, etag, last_modified, fetch_interval_s, error_count')
+    .lte('next_fetch_at', new Date().toISOString())
+    .limit(BATCH_SIZE);
+  if (error) return json({ error: error.message }, 500);
+
+  let processed = 0;
+  for (const feed of feeds ?? []) {
+    // TODO(PR2, P2 — subscriber filter): the SELECT above must also require
+    // EXISTS (subscriptions for this feed). Without it, feeds keep being polled
+    // after their last subscriber leaves — for abandoned private/tokenized
+    // feeds the server keeps calling the publisher and retaining content no one
+    // can read, and poll cost scales with all feeds ever added instead of the
+    // distinct *subscribed* feeds the spec promises. Move the join into the
+    // query (or a SQL view) when this goes live. See PR #1 review (codex P2).
+    try {
+      await pollOne(supabase, feed);
+      processed++;
+    } catch (err) {
+      await recordFailure(supabase, feed, err);
+    }
+  }
+
+  return json({ processed, considered: feeds?.length ?? 0 });
 });
 
 async function pollOne(supabase: any, feed: any): Promise<void> {
