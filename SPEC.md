@@ -321,6 +321,12 @@ folders       (user_id FK, name, sort)
   bot-blocking issues for popular sites whose homepages reject programmatic
   requests (the RSS endpoint itself is almost always accessible). The dropdown
   is keyboard-navigable: ArrowDown/Up move focus, Enter selects, Escape closes.
+  If the server-side refresh fails to populate the feed's title/`site_url` (the
+  edge function runs but can't reach the feed), the client sets a
+  `title_override` on the subscription using the curated display name, so the
+  subscription always appears with its correct name rather than "Untitled feed".
+  The curated name is captured at the moment the user submits the form, not
+  later, so a concurrent autocomplete interaction can't corrupt the override.
 
 - `POST /api/discover { url }` accepts a site or feed URL; for an HTML page,
   parse `<link rel="alternate" type="application/rss+xml|atom+xml|json">` and

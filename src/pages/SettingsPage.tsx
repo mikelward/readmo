@@ -67,12 +67,17 @@ export function SettingsPage() {
 
   const addFeed = useMutation({
     mutationFn: async (url: string) => {
+      // Capture the curated name synchronously before any await so it can't be
+      // overwritten by the user selecting a different suggestion while this
+      // request is in-flight.
+      const curatedName = isFromSuggestion.current ? selectedSuggestionName.current : null;
       // Curated suggestions have a known, validated feed URL — subscribe directly
       // and skip the discover round-trip so a discover outage or bot-block on the
       // site's homepage can't prevent subscribing to a well-known feed.
       if (isFromSuggestion.current) {
         isFromSuggestion.current = false;
-        return ds.subscribe(url);
+        const feed = await ds.subscribe(url);
+        return { feed, curatedName };
       }
       // discover() already tries parsing the target itself as a feed, so an
       // empty list means the URL is neither a feed nor advertises one. Do NOT
@@ -82,19 +87,19 @@ export function SettingsPage() {
       const candidates = await ds.discover(url);
       const chosen = candidates[0]?.url;
       if (!chosen) throw new AddFeedError('no-feed');
-      return ds.subscribe(chosen);
+      const feed = await ds.subscribe(chosen);
+      return { feed, curatedName };
     },
-    onSuccess: async (feed) => {
-      const curated = selectedSuggestionName.current;
+    onSuccess: async ({ feed, curatedName }) => {
       selectedSuggestionName.current = null;
       setFeedUrl('');
       // If the server-side refresh didn't populate the feed (site_url stayed null,
       // meaning the feed URL couldn't be fetched right now), fall back to the
       // known curated name so the subscription never shows as "Untitled feed".
-      if (curated && !feed.siteUrl) {
-        await ds.setTitleOverride(feed.id, curated).catch(() => {});
+      if (curatedName && !feed.siteUrl) {
+        await ds.setTitleOverride(feed.id, curatedName).catch(() => {});
         invalidate();
-        showToast({ message: `Subscribed to ${curated} — posts will appear after the first sync` });
+        showToast({ message: `Subscribed to ${curatedName} — posts will appear after the first sync` });
       } else {
         invalidate();
         showToast({ message: `Subscribed to ${feed.title}` });
