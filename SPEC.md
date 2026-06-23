@@ -314,6 +314,14 @@ folders       (user_id FK, name, sort)
   parse `<link rel="alternate" type="application/rss+xml|atom+xml|json">` and
   common fallbacks (`/feed`, `/rss`, `/atom.xml`, `/feed.json`); validate by
   fetching+parsing each candidate before offering it.
+- Discovery reports *why* a URL yields no feed so the client shows a specific
+  message instead of a blanket "no feed found": a `code` of `auth`
+  (login-gated — the feed/site returned 401/403), `not-found` (404/410), or
+  `unreachable` (network / timeout / SSRF-blocked / 5xx). This applies to the
+  submitted URL **and** to each advertised candidate, so a public page whose
+  advertised RSS URL is dead or paywalled surfaces that reason rather than
+  "no feed found"; only a reachable page with genuinely no discoverable feed is
+  reported as no feed.
 - **Reddit is a first-class supported source** (Reddit no longer offers open
   API access, but every listing exposes Atom over RSS by appending `.rss`).
   Discovery recognizes `reddit.com` URLs and derives the feed form rather than
@@ -479,7 +487,12 @@ loopback/link-local/private/metadata targets and redirects to them.
 
 1. **Subscriptions & organization**
    - **Add feed** by URL or site URL → discovery → confirm (shows title + a
-     sample of recent items before subscribing).
+     sample of recent items before subscribing). If the input resolves to no
+     feed it is **refused with a specific reason** — never silently subscribed
+     to a non-feed URL (which would sit as an empty "Untitled feed" with no
+     items). The surfaced reasons are: no feed found, the URL was not found
+     (404), the feed/site requires a login, the URL couldn't be reached
+     (network / blocked / 5xx), or you're signed out.
    - **OPML import/export** (table-stakes RSS courtesy — never trap a user's
      list).
    - **Folders/categories**, per-feed title override, drag-to-sort.
