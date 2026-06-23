@@ -35,6 +35,25 @@ export function measureStickyInset(): number {
   return Math.max(0, Math.floor(bottom));
 }
 
+// Combined height of the chrome that pins to the *top* of the viewport — the
+// <AppHeader> plus the top <ListToolbar> (`.list-toolbar--top`). Unlike
+// `measureStickyInset`, which reports the chrome's *current* on-screen bottom
+// (and so collapses to the header alone once the top toolbar has scrolled out
+// of view), this sums the elements' layout heights regardless of scroll
+// position. The "More" pager uses it to land the first row of a freshly loaded
+// page just below the chrome that will re-stick once we scroll up to it — if we
+// used the current inset while scrolled to the foot, the offset would omit the
+// toolbar and tuck that row behind it (ItemList *More pager*).
+export function measureTopChromeHeight(): number {
+  if (typeof document === 'undefined') return 0;
+  let height = 0;
+  for (const selector of ['.app-header', '.list-toolbar--top']) {
+    const el = document.querySelector(selector);
+    if (el instanceof HTMLElement) height += el.offsetHeight;
+  }
+  return height;
+}
+
 // How far the sticky *bottom* list toolbar (`.list-toolbar--bottom`, pinned at
 // `bottom: 0` — see ListToolbar.css) intrudes up from the bottom of the
 // viewport. Unlike newshacker — whose feed footer is `position: relative` and

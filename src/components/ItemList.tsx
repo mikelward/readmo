@@ -1,8 +1,9 @@
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useDataSource } from '../lib/data/context';
 import { useFeedItems, type FetchPage } from '../hooks/useFeedItems';
 import { useInViewIds } from '../hooks/useInViewIds';
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
+import { measureTopChromeHeight } from '../lib/stickyInset';
 import { checkForServiceWorkerUpdate } from '../lib/swUpdate';
 import { ItemRows } from './ItemRows';
 import { ListToolbar } from './ListToolbar';
@@ -35,6 +36,36 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
   const listRef = useListKeyboardNav();
   const { registerSweep } = useFeedBar();
   const { inViewIds, getRowRef } = useInViewIds();
+
+  // The bottom toolbar (with "More") is pinned to the viewport foot, so loading
+  // the next page appends rows *below* the current scroll position — the reader
+  // sees nothing change. After a More tap, advance the view so the first row of
+  // the new page lands just below the sticky top chrome, turning "More" into a
+  // real pager instead of a button that silently grows an off-screen list.
+  // We anchor on the last row before the tap (ids are stable across a plain
+  // page fetch — no state change reorders them) and scroll to its successor
+  // once the new page has rendered.
+  const pendingAnchorId = useRef<string | null>(null);
+
+  const handleMore = useCallback(() => {
+    pendingAnchorId.current = items[items.length - 1]?.item.id ?? null;
+    fetchMore();
+  }, [items, fetchMore]);
+
+  useEffect(() => {
+    const anchorId = pendingAnchorId.current;
+    if (anchorId === null) return;
+    const anchorIndex = items.findIndex((fi) => fi.item.id === anchorId);
+    // Wait until the appended page has rendered (a row now follows the anchor).
+    if (anchorIndex === -1 || anchorIndex >= items.length - 1) return;
+    pendingAnchorId.current = null;
+    const firstNewId = items[anchorIndex + 1].item.id;
+    const row = document.querySelector(`[data-item-id="${firstNewId}"]`);
+    if (!(row instanceof HTMLElement)) return;
+    const top = row.getBoundingClientRect().top + window.scrollY - measureTopChromeHeight();
+    // Browsers honoring prefers-reduced-motion fall back to an instant scroll.
+    window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+  }, [items]);
 
   // Sweepable rows = unpinned rows the reader can *currently see* (Done/Hidden
   // are already filtered out by the DataSource). Sweep hides only the
@@ -108,7 +139,7 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
         // populated feed.
         more={
           items.length > 0
-            ? { hasMore, isFetching: isFetchingMore, onMore: () => fetchMore() }
+            ? { hasMore, isFetching: isFetchingMore, onMore: handleMore }
             : undefined
         }
       />

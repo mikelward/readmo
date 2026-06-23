@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { measureStickyBottomInset, measureStickyInset } from './stickyInset';
+import {
+  measureStickyBottomInset,
+  measureStickyInset,
+  measureTopChromeHeight,
+} from './stickyInset';
 
 // Regression for the Codex review on PR #299: with the list toolbar
 // sticky-pinned just below the header, the sweep IntersectionObserver's
@@ -30,6 +34,48 @@ function makeStickyEl(className: string, bottom: number): HTMLElement {
   document.body.appendChild(el);
   return el;
 }
+
+function makeEl(className: string, offsetHeight: number): HTMLElement {
+  const el = document.createElement('div');
+  el.className = className;
+  Object.defineProperty(el, 'offsetHeight', {
+    value: offsetHeight,
+    configurable: true,
+  });
+  document.body.appendChild(el);
+  return el;
+}
+
+describe('measureTopChromeHeight', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('returns 0 when no top chrome is mounted', () => {
+    expect(measureTopChromeHeight()).toBe(0);
+  });
+
+  it('sums the header and top toolbar layout heights', () => {
+    makeEl('app-header', 56);
+    makeEl('list-toolbar list-toolbar--top', 44);
+    expect(measureTopChromeHeight()).toBe(100);
+  });
+
+  it('ignores the bottom toolbar — only the top one pins below the header', () => {
+    makeEl('app-header', 56);
+    makeEl('list-toolbar list-toolbar--top', 44);
+    makeEl('list-toolbar list-toolbar--bottom', 44);
+    expect(measureTopChromeHeight()).toBe(100);
+  });
+
+  it('reports the full height regardless of scroll position', () => {
+    // offsetHeight is layout height, not on-screen position, so the toolbar
+    // still counts even when scrolled out of view at the foot of the list.
+    makeEl('app-header', 56);
+    makeEl('list-toolbar list-toolbar--top', 44);
+    expect(measureTopChromeHeight()).toBe(100);
+  });
+});
 
 describe('measureStickyInset', () => {
   afterEach(() => {
