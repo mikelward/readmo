@@ -1,21 +1,132 @@
 .signin {
   min-height: calc(100vh - var(--rm-header-h));
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 24px;
+  gap: 0;
 }
 
+/* ── Hero mockup ───────────────────────────────────────────── */
+.signin__hero {
+  position: relative;
+  width: 100%;
+  max-width: 560px;
+  background: var(--rm-bg-card);
+  border-bottom: 1px solid var(--rm-border);
+  overflow: hidden;
+  /* cap height so it feels like a peek, not an app clone */
+  max-height: 340px;
+  flex-shrink: 0;
+}
+
+.signin__mock-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--rm-border);
+  background: var(--rm-bg-elevated);
+}
+
+.signin__mock-logo {
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--rm-text);
+}
+
+.signin__mock-pill {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--rm-meta);
+  background: var(--rm-bg);
+  border: 1px solid var(--rm-border);
+  border-radius: 20px;
+  padding: 2px 10px;
+}
+
+.signin__mock-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.signin__mock-row {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--rm-border);
+  gap: 12px;
+  min-height: var(--rm-tap);
+}
+
+.signin__mock-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.signin__mock-source {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--rm-meta);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.signin__mock-title {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--rm-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.signin__mock-row--read .signin__mock-title {
+  color: var(--rm-read);
+}
+
+.signin__mock-meta {
+  font-size: 0.72rem;
+  color: var(--rm-meta);
+}
+
+.signin__mock-action {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1.5px solid var(--rm-border-strong);
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+
+/* gradient fade at the bottom of the hero */
+.signin__mock-fade {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 80px;
+  background: linear-gradient(to bottom, transparent, var(--rm-bg-card));
+  pointer-events: none;
+}
+
+/* ── Sign-in card ──────────────────────────────────────────── */
 .signin__card {
+  width: 100%;
   max-width: 380px;
   text-align: center;
+  padding: 32px 24px 40px;
 }
 
 .signin__brand {
   font-size: 2rem;
   font-weight: 800;
   letter-spacing: -0.02em;
-  color: var(--rm-accent);
+  color: var(--rm-text);
 }
 
 .signin__tagline {
@@ -45,7 +156,7 @@
 
 @media (hover: hover) {
   .signin__btn:hover {
-    border-color: var(--rm-accent);
+    border-color: var(--rm-text);
   }
 }
 
@@ -54,4 +165,38 @@
   color: var(--rm-meta);
   margin-top: 20px;
   line-height: 1.5;
+}
+
+/* ── Desktop: side-by-side ─────────────────────────────────── */
+@media (min-width: 720px) {
+  .signin {
+    flex-direction: row;
+    align-items: stretch;
+    justify-content: center;
+    padding: 48px 24px;
+    gap: 0;
+  }
+
+  .signin__hero {
+    max-width: 440px;
+    max-height: none;
+    border-bottom: none;
+    border-right: 1px solid var(--rm-border);
+    border-radius: var(--rm-radius) 0 0 var(--rm-radius);
+    align-self: flex-start;
+  }
+
+  .signin__mock-fade {
+    height: 120px;
+  }
+
+  .signin__card {
+    align-self: center;
+    border-left: none;
+    padding: 40px 36px;
+    border: 1px solid var(--rm-border);
+    border-left: none;
+    border-radius: 0 var(--rm-radius) var(--rm-radius) 0;
+    background: var(--rm-bg-card);
+  }
 }
