@@ -102,6 +102,7 @@ export function SettingsPage() {
         : false;
       if (curatedName && !hasRealTitle) {
         await ds.setTitleOverride(feed.id, curatedName).catch(() => {});
+        queryClient.invalidateQueries({ queryKey: ['feed-meta', feed.id] });
       }
       // Fire a background refresh in case the edge function processed the first
       // one asynchronously and items aren't stored yet. Don't await — subscribe()
