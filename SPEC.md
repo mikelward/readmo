@@ -120,14 +120,19 @@ Everything else about the visual system mirrors newshacker.
   insets reserve space for landscape-iPhone notches on the edge controls.
 - **Navigation drawer sections:** Home (feed picker — All subscriptions or a folder), Library (Pinned / Favorites / Done / Hidden / Opened / Offline), Appearance (mode + palette segmented controls), Folders (folder nav, hidden when none exist), Feeds (subscription list), App (Settings, Debug).
 - **Dark mode:** full light/dark/system via tokens.
-- **Palette:** two color families selectable in the drawer's Appearance section (and also in Settings), orthogonal to the
-  light/dark/**mode** axis — **Ink** (default, the monochrome ink-on-paper above)
-  and **Turquoise** (a soft turquoise: teal accent `--rm-accent: #0e7c74` light /
-  `#5ed6c9` dark on faintly turquoise-tinted paper; both clear 4.5:1). Mode drives
+- **Palette:** three color families selectable in the drawer's Appearance section (and also in Settings), orthogonal to the
+  light/dark/**mode** axis — **Ink** (default, the monochrome ink-on-paper above),
+  **Turquoise** (a soft turquoise: teal accent `--rm-accent: #0e7c74` light /
+  `#5ed6c9` dark on faintly turquoise-tinted paper), and **Indigo** (a deep
+  indigo accent `--rm-accent: #4338ca` light / `#a5b4fc` dark on faintly
+  indigo-tinted paper); all clear 4.5:1. Mode drives
   the `data-theme` attribute, palette drives `data-palette`; each palette ships
   its own light and dark variants. The brand mark's tile follows the palette
-  (ink tile by default, teal under Turquoise) via the `--rm-brand-tile` /
-  `--rm-brand-fg` tokens.
+  (ink tile by default, teal under Turquoise, indigo under Indigo) via the
+  `--rm-brand-tile` / `--rm-brand-fg` tokens. In the drawer the palette picker
+  renders each option as a two-tone color **swatch** (paper background + accent,
+  split on the diagonal) rather than a text label, with the active palette's
+  swatch ringed; Settings keeps the text buttons.
 - Icons inlined monochrome SVG (Material Symbols, `fill="currentColor"`), no
   icon font / runtime request.
 

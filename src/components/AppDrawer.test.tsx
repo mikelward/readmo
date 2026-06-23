@@ -72,12 +72,30 @@ describe('AppDrawer', () => {
   });
 
   describe('Appearance — palette', () => {
-    it('renders Ink and Turquoise buttons', () => {
+    it('renders Ink, Turquoise, and Indigo buttons', () => {
       renderDrawer();
       const group = screen.getByRole('radiogroup', { name: 'Palette' });
       expect(group).toBeInTheDocument();
       expect(screen.getByRole('radio', { name: 'Ink' })).toBeInTheDocument();
       expect(screen.getByRole('radio', { name: 'Turquoise' })).toBeInTheDocument();
+      expect(screen.getByRole('radio', { name: 'Indigo' })).toBeInTheDocument();
+    });
+
+    it('shows each palette as a color swatch rather than a text label', () => {
+      renderDrawer();
+      const ink = screen.getByRole('radio', { name: 'Ink' });
+      // The button name comes from aria-label; its visible content is a swatch.
+      expect(ink).not.toHaveTextContent('Ink');
+      expect(ink.querySelector('.app-drawer__swatch')).not.toBeNull();
+    });
+
+    it('selects the indigo palette when its swatch is clicked', async () => {
+      const user = userEvent.setup();
+      const setSpy = vi.spyOn(themeLib, 'setStoredPalette').mockImplementation(() => {});
+      const { onClose } = renderDrawer();
+      await user.click(screen.getByRole('radio', { name: 'Indigo' }));
+      expect(setSpy).toHaveBeenCalledWith('indigo');
+      expect(onClose).not.toHaveBeenCalled();
     });
 
     it('marks stored palette as checked', () => {

@@ -1,10 +1,12 @@
 import { useEffect } from 'react';
+import type { CSSProperties } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useHomeFeed } from '../hooks/useHomeFeed';
 import { useTheme } from '../hooks/useTheme';
 import type { Theme, Palette } from '../lib/theme';
+import { PALETTE_LABELS, PALETTE_SWATCHES } from '../lib/theme';
 import { TooltipButton } from './TooltipButton';
 import './AppDrawer.css';
 
@@ -36,10 +38,25 @@ const THEME_OPTIONS: Array<{ value: Theme; label: string; path: string }> = [
   { value: 'system', label: 'System', path: SYSTEM_PATH },
 ];
 
-const PALETTE_OPTIONS: Array<{ value: Palette; label: string }> = [
-  { value: 'ink', label: 'Ink' },
-  { value: 'turquoise', label: 'Turquoise' },
-];
+const PALETTE_OPTIONS: Array<{ value: Palette; label: string }> = (
+  Object.keys(PALETTE_LABELS) as Palette[]
+).map((value) => ({ value, label: PALETTE_LABELS[value] }));
+
+/** A two-tone disc previewing a palette: paper background + accent, split on
+ * the diagonal. Colors come from PALETTE_SWATCHES so the swatch shows each
+ * palette's identity regardless of which one is currently applied. */
+function PaletteSwatch({ palette }: { palette: Palette }) {
+  const { bg, accent } = PALETTE_SWATCHES[palette];
+  return (
+    <span
+      className="app-drawer__swatch"
+      style={
+        { '--rm-swatch-bg': bg, '--rm-swatch-accent': accent } as CSSProperties
+      }
+      aria-hidden="true"
+    />
+  );
+}
 
 const LIBRARY_LINKS = [
   { to: '/pinned', label: 'Pinned' },
@@ -168,11 +185,11 @@ export function AppDrawer({ open, onClose }: Props) {
                 aria-checked={palette === opt.value}
                 tooltip={opt.label}
                 aria-label={opt.label}
-                className="app-drawer__segmented-btn app-drawer__segmented-btn--text"
+                className="app-drawer__segmented-btn"
                 data-active={palette === opt.value || undefined}
                 onClick={(e) => { e.stopPropagation(); setPalette(opt.value); }}
               >
-                {opt.label}
+                <PaletteSwatch palette={opt.value} />
               </TooltipButton>
             ))}
           </div>

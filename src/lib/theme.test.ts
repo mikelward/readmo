@@ -180,6 +180,12 @@ describe('palette', () => {
     );
   });
 
+  it('setStoredPalette persists indigo and sets data-palette', () => {
+    setStoredPalette('indigo');
+    expect(window.localStorage.getItem(PALETTE_STORAGE_KEY)).toBe('indigo');
+    expect(document.documentElement.getAttribute('data-palette')).toBe('indigo');
+  });
+
   it('setStoredPalette("ink") clears the attribute and the key', () => {
     setStoredPalette('turquoise');
     setStoredPalette('ink');
@@ -217,6 +223,11 @@ describe('palette', () => {
     expect(meta.content).toBe('#f1f9f7');
     applyThemeColorMeta('dark', 'turquoise');
     expect(meta.content).toBe('#0f1a18');
+    // indigo light/dark
+    applyThemeColorMeta('light', 'indigo');
+    expect(meta.content).toBe('#f5f5fb');
+    applyThemeColorMeta('dark', 'indigo');
+    expect(meta.content).toBe('#14141f');
   });
 
   it('setStoredPalette repaints the meta color for the current mode', () => {
