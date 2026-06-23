@@ -1,18 +1,19 @@
 /*
- * Readmo design tokens — "ink on paper" (default) + an opt-in "turquoise"
- * palette.
+ * Readmo design tokens — "ink on paper" (default) plus opt-in "turquoise" and
+ * "indigo" palettes.
  *
  * Two orthogonal axes:
- *   - Mode (light/dark/system) → the `data-theme` attribute on <html>.
- *   - Palette (ink/turquoise)  → the `data-palette` attribute on <html>.
+ *   - Mode (light/dark/system)        → the `data-theme` attribute on <html>.
+ *   - Palette (ink/turquoise/indigo)  → the `data-palette` attribute on <html>.
  * Ink is the default palette, so it owns the bare `:root` / `[data-theme]`
- * blocks (no `data-palette`). Turquoise overrides them under
- * `:root[data-palette='turquoise']`. Each palette ships a light and a dark
+ * blocks (no `data-palette`). The other palettes override them under
+ * `:root[data-palette='…']`. Each palette ships a light and a dark
  * variant, plus a `prefers-color-scheme: dark` block for system mode.
  *
- * The ink accent (#2b2b2b light / #ececec dark) and the turquoise accent
- * (#0e7c74 light / #5ed6c9 dark) both clear 4.5:1 on their backgrounds — verify
- * any change with a contrast checker (SPEC.md *Visual design* / *Accessibility*).
+ * The ink accent (#2b2b2b light / #ececec dark), the turquoise accent
+ * (#0e7c74 light / #5ed6c9 dark), and the indigo accent (#4338ca light /
+ * #a5b4fc dark) all clear 4.5:1 on their backgrounds — verify any change with a
+ * contrast checker (SPEC.md *Visual design* / *Accessibility*).
  */
 
 :root {
@@ -219,6 +220,112 @@
 
     --rm-brand-tile: #0e7c74;
     --rm-brand-fg: #f1f9f7;
+
+    --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+
+    color-scheme: dark;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Indigo palette — deep indigo on faintly indigo-tinted paper. Opt-in via
+ * data-palette. Same structure as turquoise: a light block, an explicit dark
+ * block, and a system-dark media block, each out-specifying the ones above it.
+ * Accent #4338ca (light) / #a5b4fc (dark) both clear 4.5:1 on their backgrounds.
+ * ------------------------------------------------------------------------- */
+:root[data-palette='indigo'] {
+  --rm-accent: #4338ca;
+  --rm-accent-strong: #3730a3;
+  --rm-accent-contrast: #ffffff;
+
+  --rm-bg: #f5f5fb;
+  --rm-bg-card: #ffffff;
+  --rm-bg-elevated: #ffffff;
+  --rm-border: #e1e0f0;
+  --rm-border-strong: #cdcbe6;
+
+  --rm-text: #1a1a2e;
+  --rm-read: #4a4a5e;
+  --rm-meta: #6b6b80;
+
+  --rm-danger: #c0392b;
+  --rm-success: #2e7d46;
+
+  /* Slate-indigo dark enough for the hard-coded white swipe label
+     (.item-row__swipe-hint): ~5:1 on #fff. */
+  --rm-hide-bg: #6b6b80;
+  --rm-pin-bg: var(--rm-accent);
+
+  --rm-brand-tile: #4338ca;
+  --rm-brand-fg: #f5f5fb;
+
+  --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+
+  color-scheme: light;
+}
+
+:root[data-palette='indigo'][data-theme='dark'] {
+  --rm-accent: #a5b4fc;
+  --rm-accent-strong: #c7d2fe;
+  --rm-accent-contrast: #1e1b3a;
+
+  --rm-bg: #14141f;
+  --rm-bg-card: #1d1d2b;
+  --rm-bg-elevated: #242436;
+  --rm-border: #2c2c40;
+  --rm-border-strong: #3a3a52;
+
+  --rm-text: #ececf5;
+  --rm-read: #a8a8bd;
+  --rm-meta: #8b8ba0;
+
+  --rm-danger: #ff6b5e;
+  --rm-success: #6bd08a;
+
+  --rm-hide-bg: #46465e;
+  /* Deep indigo (not the light accent-strong) so the swipe hint's white label
+     stays legible — accent #a5b4fc is near-white. ~8:1 on #fff. */
+  --rm-pin-bg: #4338ca;
+
+  /* Keep the brand tile a constant indigo across modes for recognizability. */
+  --rm-brand-tile: #4338ca;
+  --rm-brand-fg: #f5f5fb;
+
+  --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+
+  color-scheme: dark;
+}
+
+/* Indigo + system mode + OS dark. Out-specifies the ink system-dark block
+ * (extra [data-palette] attribute) and the indigo-light block. */
+@media (prefers-color-scheme: dark) {
+  :root[data-palette='indigo']:not([data-theme='light']):not(
+      [data-theme='dark']
+    ) {
+    --rm-accent: #a5b4fc;
+    --rm-accent-strong: #c7d2fe;
+    --rm-accent-contrast: #1e1b3a;
+
+    --rm-bg: #14141f;
+    --rm-bg-card: #1d1d2b;
+    --rm-bg-elevated: #242436;
+    --rm-border: #2c2c40;
+    --rm-border-strong: #3a3a52;
+
+    --rm-text: #ececf5;
+    --rm-read: #a8a8bd;
+    --rm-meta: #8b8ba0;
+
+    --rm-danger: #ff6b5e;
+    --rm-success: #6bd08a;
+
+    --rm-hide-bg: #46465e;
+    /* See the explicit dark-indigo block: keep the pin hint dark enough
+       for the white swipe label. */
+    --rm-pin-bg: #4338ca;
+
+    --rm-brand-tile: #4338ca;
+    --rm-brand-fg: #f5f5fb;
 
     --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 
