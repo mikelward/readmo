@@ -404,10 +404,10 @@ loopback/link-local/private/metadata targets and redirects to them.
   are Supabase's HTTP-only refresh-token cookies; the access token is attached
   to API/DB calls.
 - First launch (no session) routes to the sign-in page. The page shows a
-  static feed preview (hero mockup of article rows) alongside the sign-in
+  static feed preview (hero mockup of article rows) above the sign-in
   card (tagline + OAuth buttons + short privacy disclosure) so visitors
-  understand the product before signing in. On mobile the hero stacks above
-  the card; on desktop (≥720 px) they sit side-by-side. Deep links
+  understand the product before signing in. The hero always stacks above
+  the card in a single column. Deep links
   round-trip through sign-in then land on the target.
 - **Account UI = header chip** (mirrors newshacker): one always-visible
   control, far right, 44×44+, every page. Signed out → "Sign in". Signed in →
