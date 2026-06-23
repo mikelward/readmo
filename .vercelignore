@@ -1,0 +1,5 @@
+# Vercel treats every file under api/ as a Serverless/Edge Function. Keep test
+# files out of the deployment so `api/*.test.ts` never becomes a junk endpoint
+# (and so vitest specs aren't bundled). Tests run in CI, not at deploy time.
+*.test.ts
+*.test.tsx
