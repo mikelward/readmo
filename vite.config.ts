@@ -24,8 +24,34 @@ function readCommitTime(): string {
   }
 }
 
+// Best-effort `git` capture at config-load time; '' when git is unavailable.
+function git(args: string): string {
+  try {
+    return execSync(`git ${args}`, { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .trim();
+  } catch {
+    return '';
+  }
+}
+
 const TEST_BUILD_COMMIT_TIME = '2026-01-01T00:00:00.000Z';
 const buildCommitTime = isTest ? TEST_BUILD_COMMIT_TIME : readCommitTime();
+
+// Build identity for the /debug page (and "which build am I on?"). Vercel sets
+// VERCEL_* during the build; locally we read git directly. Prefer Vercel's
+// commit SHA/ref (correct even on its shallow checkout); the commit COUNT needs
+// full history, so it may be '' on a shallow clone — the UI falls back to the
+// short SHA. None of these are secret.
+const buildSha = isTest
+  ? '0000000000000000000000000000000000000000'
+  : process.env.VERCEL_GIT_COMMIT_SHA || git('rev-parse HEAD');
+const buildCommitCount = isTest ? '0' : git('rev-list --count HEAD');
+const buildRef = isTest
+  ? 'test'
+  : process.env.VERCEL_GIT_COMMIT_REF || git('rev-parse --abbrev-ref HEAD');
+const buildEnv = isTest ? 'test' : process.env.VERCEL_ENV || 'development';
+
 
 export default defineConfig({
   // Expose VITE_* (our own) and NEXT_PUBLIC_* (what the Supabase↔Vercel
@@ -35,6 +61,10 @@ export default defineConfig({
   envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
   define: {
     __BUILD_COMMIT_TIME__: JSON.stringify(buildCommitTime),
+    __BUILD_SHA__: JSON.stringify(buildSha),
+    __BUILD_COMMIT_COUNT__: JSON.stringify(buildCommitCount),
+    __BUILD_REF__: JSON.stringify(buildRef),
+    __BUILD_ENV__: JSON.stringify(buildEnv),
   },
   plugins: [
     react(),

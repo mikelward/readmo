@@ -1,0 +1,51 @@
+.debug {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.debug h1 {
+  margin: 0 0 1rem;
+}
+
+.debug section {
+  margin-bottom: 1.5rem;
+}
+
+.debug h2 {
+  font-size: 1rem;
+  color: var(--rm-meta);
+  border-bottom: 1px solid var(--rm-border, #e5e3dc);
+  padding-bottom: 0.25rem;
+  margin: 0 0 0.5rem;
+}
+
+.debug dl {
+  display: grid;
+  grid-template-columns: minmax(8rem, max-content) 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0;
+}
+
+.debug dt {
+  color: var(--rm-meta);
+}
+
+.debug dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.debug__muted {
+  color: var(--rm-meta);
+}
+
+.debug__ok {
+  color: var(--rm-accent);
+}
+
+.debug__err {
+  color: #b3261e;
+  font-weight: 600;
+}

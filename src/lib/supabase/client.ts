@@ -28,6 +28,23 @@ export function isSupabaseConfigured(): boolean {
   return Boolean(url && anonKey);
 }
 
+/** The configured Supabase project URL (or null when unconfigured). Safe to
+ * surface — the URL is public; only the keys are sensitive. */
+export function supabaseProjectUrl(): string | null {
+  return url ?? null;
+}
+
+/** The project ref (`<ref>` in `https://<ref>.supabase.co`), or null. Handy for
+ * a diagnostics view to confirm which project the build points at. */
+export function supabaseProjectRef(): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname.split('.')[0] || null;
+  } catch {
+    return null;
+  }
+}
+
 let client: SupabaseClient | null = null;
 
 /** The shared client. Throws if called while unconfigured — callers gate on
