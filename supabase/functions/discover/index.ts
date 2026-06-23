@@ -7,6 +7,13 @@
 // offered. Discovery is the highest-risk fetch (brand-new user-supplied URL),
 // so EVERY outbound request goes through safeFetch. SPEC.md "Feed discovery".
 //
+// Bot-blocking fallback: if the direct fetch returns 403 (Cloudflare etc.),
+// we retry via Jina Reader (r.jina.ai) which uses a headless browser. Jina
+// is a fixed trusted host — the user-supplied URL only appears in the path,
+// never as the fetch target itself, so the SSRF surface is unchanged. The
+// target URL is already validated by the preceding safeFetch call.
+// Requires JINA_API_KEY env secret; skipped silently if absent.
+//
 // Thin entrypoint — discovery/parse/sanitize logic is tested in _shared.
 // Deno resolves bare specifiers via ../import_map.json.
 
@@ -55,31 +62,27 @@ Deno.serve(async (req: Request) => {
     // login-gated feed (401/403), a dead URL (404/410), or any other non-2xx.
     // The `code` lets the client pick the right message (see classifyFunctionError).
     const targetCode = codeForStatus(res.status);
+    if (targetCode === 'auth') {
+      // 403 often means bot-blocking (Cloudflare etc.) rather than a real auth
+      // wall. Try via Jina Reader — a headless-browser proxy that bypasses
+      // bot protection — before giving up.
+      const jinaHtml = await fetchViaJina(target);
+      if (jinaHtml !== null) {
+        const result = await probeHtml(jinaHtml, target);
+        if (result.validated.length > 0) return json({ candidates: result.validated });
+        if (result.candidateFail) return feedErrorResponse(result.candidateFail);
+        return json({ candidates: [] });
+      }
+      return feedErrorResponse(targetCode);
+    }
     if (targetCode) return feedErrorResponse(targetCode);
 
-    // Otherwise treat it as HTML and probe each candidate. If NONE validate but
-    // an *advertised* candidate failed with an informative reason (a login-gated
-    // or dead RSS URL the page explicitly points at), surface that instead of a
-    // blanket "no feed found".
-    const candidates = discoverFromHtml(body, res.url);
-    const validated = [];
-    let candidateFail: 'auth' | 'not-found' | 'unreachable' | null = null;
-    for (const c of candidates as FeedCandidate[]) {
-      const { feed, status } = await tryParse(c.url);
-      if (feed) {
-        validated.push(feed);
-        continue;
-      }
-      // Only <link>-advertised candidates (type set) drive a specific failure.
-      // Speculative path fallbacks (/feed, /rss, … with type === null) miss
-      // routinely on ordinary no-feed sites, so their 404s/timeouts must NOT
-      // turn a normal page into "not found"/"unreachable" — leave it no-feed.
-      if (c.type != null) {
-        candidateFail = mergeFail(candidateFail, candidateFailCode(status));
-      }
+    // Otherwise treat it as HTML and probe each candidate.
+    const result = await probeHtml(body, res.url);
+    if (result.validated.length === 0 && result.candidateFail) {
+      return feedErrorResponse(result.candidateFail);
     }
-    if (validated.length === 0 && candidateFail) return feedErrorResponse(candidateFail);
-    return json({ candidates: validated });
+    return json({ candidates: result.validated });
   } catch (err) {
     // SSRF-blocked (private/loopback address) or any fetch/parse failure: the
     // URL couldn't be reached. Tag it so the client says so.
@@ -90,6 +93,48 @@ Deno.serve(async (req: Request) => {
     );
   }
 });
+
+/** Discover + validate feed candidates from an HTML string.
+ * Shared between the direct path and the Jina fallback. */
+async function probeHtml(html: string, baseUrl: string) {
+  const candidates = discoverFromHtml(html, baseUrl);
+  const validated = [];
+  let candidateFail: 'auth' | 'not-found' | 'unreachable' | null = null;
+  for (const c of candidates as FeedCandidate[]) {
+    const { feed, status } = await tryParse(c.url);
+    if (feed) {
+      validated.push(feed);
+      continue;
+    }
+    if (c.type != null) {
+      candidateFail = mergeFail(candidateFail, candidateFailCode(status));
+    }
+  }
+  return { validated, candidateFail };
+}
+
+/** Fetch a page via Jina Reader (r.jina.ai) to bypass bot-blocking.
+ * Returns the raw HTML string on success, null if Jina is not configured
+ * or the request fails. The target URL is already SSRF-validated. */
+async function fetchViaJina(target: string): Promise<string | null> {
+  const apiKey = Deno.env.get('JINA_API_KEY');
+  if (!apiKey) return null;
+  try {
+    const res = await fetch(`https://r.jina.ai/${target}`, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'X-Return-Format': 'html',
+        'Accept': 'text/html',
+      },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
 
 /** Fetch (if needed) + parse a candidate. Returns `{ feed }` on success, else
  * `{ feed: null, status }` carrying the upstream HTTP status (when we got one)
