@@ -646,6 +646,7 @@ they live in the overflow. (No Upvote — RSS has no votes.)
 | `/search` | search over feed + item titles |
 | `/settings` | subscriptions, folders, OPML, theme, account |
 | `/signin` | OAuth sign-in (unauthenticated landing) |
+| `/debug` | build/runtime/config diagnostics; no auth gate, public/presence info only (no secrets). Headline is `<branch-leaf> <commit-count> (<short-sha>)`, e.g. `main 100 (abcdef)`. Linked from Settings → About. |
 
 ---
 
