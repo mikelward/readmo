@@ -20,6 +20,61 @@
   flex-wrap: wrap;
 }
 
+.settings__add-wrap {
+  position: relative;
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.settings__add-wrap .search-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.settings__suggestions {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 100;
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  background: var(--rm-bg-elevated);
+  border: 1px solid var(--rm-border-strong);
+  border-radius: var(--rm-radius);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  overflow-y: auto;
+  max-height: 280px;
+}
+
+.settings__suggestion {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 9px 14px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings__suggestion:hover,
+.settings__suggestion.is-active {
+  background: color-mix(in srgb, var(--rm-accent) 8%, transparent);
+}
+
+.settings__suggestion-name {
+  font-size: 0.9rem;
+  color: var(--rm-text);
+  font-weight: 500;
+}
+
+.settings__suggestion-cat {
+  font-size: 0.75rem;
+  color: var(--rm-meta);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
 .settings__btn,
 .settings__theme-btn {
   padding: 10px 16px;

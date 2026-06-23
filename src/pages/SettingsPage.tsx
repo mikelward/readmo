@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useId } from 'react';
 import { Link } from 'react-router-dom';
+import { POPULAR_FEEDS } from '../lib/popularFeeds';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { AddFeedError, type AddFeedErrorKind } from '../lib/data/DataSource';
@@ -36,6 +37,16 @@ export function SettingsPage() {
   const { showToast } = useToast();
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [feedUrl, setFeedUrl] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [activeIdx, setActiveIdx] = useState(-1);
+  const suggestionsId = useId();
+
+  const suggestions = feedUrl.trim().length > 0
+    ? POPULAR_FEEDS.filter((f) => {
+        const q = feedUrl.toLowerCase();
+        return f.name.toLowerCase().includes(q) || f.feedUrl.toLowerCase().includes(q);
+      }).slice(0, 8)
+    : [];
   useDocumentTitle('Settings · readmo');
 
   const { data: subs = [] } = useQuery({
@@ -107,24 +118,89 @@ export function SettingsPage() {
           className="settings__add"
           onSubmit={(e) => {
             e.preventDefault();
+            setShowSuggestions(false);
             if (feedUrl.trim()) addFeed.mutate(feedUrl.trim());
           }}
         >
-          <input
-            // type="text" (not "url") so the browser doesn't reject a bare
-            // site name like "example.com" before submit — discovery prepends
-            // https:// itself. inputMode hints a URL keyboard on mobile.
-            type="text"
-            inputMode="url"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            className="search-input"
-            placeholder="Site or feed URL"
-            value={feedUrl}
-            onChange={(e) => setFeedUrl(e.target.value)}
-            aria-label="Feed URL"
-          />
+          <div className="settings__add-wrap">
+            <input
+              // type="text" (not "url") so the browser doesn't reject a bare
+              // site name like "example.com" before submit — discovery prepends
+              // https:// itself. inputMode hints a URL keyboard on mobile.
+              type="text"
+              inputMode="url"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              className="search-input"
+              placeholder="Site or feed URL"
+              value={feedUrl}
+              aria-label="Feed URL"
+              aria-autocomplete="list"
+              aria-controls={suggestionsId}
+              aria-activedescendant={
+                activeIdx >= 0 ? `${suggestionsId}-${activeIdx}` : undefined
+              }
+              onChange={(e) => {
+                setFeedUrl(e.target.value);
+                setShowSuggestions(true);
+                setActiveIdx(-1);
+              }}
+              onFocus={() => setShowSuggestions(true)}
+              onBlur={() => {
+                // Delay so a click on a suggestion registers first.
+                setTimeout(() => setShowSuggestions(false), 150);
+              }}
+              onKeyDown={(e) => {
+                if (!showSuggestions || suggestions.length === 0) return;
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setActiveIdx((i) => Math.min(i + 1, suggestions.length - 1));
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setActiveIdx((i) => Math.max(i - 1, -1));
+                } else if (e.key === 'Enter' && activeIdx >= 0) {
+                  e.preventDefault();
+                  setFeedUrl(suggestions[activeIdx].feedUrl);
+                  setShowSuggestions(false);
+                  setActiveIdx(-1);
+                } else if (e.key === 'Escape') {
+                  setShowSuggestions(false);
+                  setActiveIdx(-1);
+                }
+              }}
+            />
+            {showSuggestions && suggestions.length > 0 && (
+              <ul
+                id={suggestionsId}
+                role="listbox"
+                aria-label="Feed suggestions"
+                className="settings__suggestions"
+              >
+                {suggestions.map((feed, i) => (
+                  <li
+                    key={feed.feedUrl}
+                    id={`${suggestionsId}-${i}`}
+                    role="option"
+                    aria-selected={i === activeIdx}
+                    className={
+                      'settings__suggestion' +
+                      (i === activeIdx ? ' is-active' : '')
+                    }
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setFeedUrl(feed.feedUrl);
+                      setShowSuggestions(false);
+                      setActiveIdx(-1);
+                    }}
+                  >
+                    <span className="settings__suggestion-name">{feed.name}</span>
+                    <span className="settings__suggestion-cat">{feed.category}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           <button type="submit" className="settings__btn" disabled={addFeed.isPending}>
             {addFeed.isPending ? 'Adding…' : 'Add'}
           </button>
