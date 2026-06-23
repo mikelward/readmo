@@ -97,7 +97,7 @@ export function SettingsPage() {
       // null), the built-in refresh inside subscribe() failed silently. Set the
       // curated name as an override so it never shows as "Untitled feed", then
       // trigger a fresh refresh so items appear without waiting for the cron.
-      if (curatedName && !feed.siteUrl) {
+      if (curatedName && !feed.siteUrl && feed.title === 'Untitled feed') {
         await ds.setTitleOverride(feed.id, curatedName).catch(() => {});
         await ds.refresh(feed.id).catch(() => {});
         invalidate();
