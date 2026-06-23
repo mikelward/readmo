@@ -118,8 +118,9 @@ Everything else about the visual system mirrors newshacker.
   inner (brand mark + wordmark, Offline pill, Search) keeps the 720px
   article column max-width so it aligns with the list below. Safe-area
   insets reserve space for landscape-iPhone notches on the edge controls.
+- **Navigation drawer sections:** Home (feed picker — All subscriptions or a folder), Library (Pinned / Favorites / Done / Hidden / Opened / Offline), Appearance (mode + palette segmented controls), Folders (folder nav, hidden when none exist), Feeds (subscription list), App (Settings, Debug).
 - **Dark mode:** full light/dark/system via tokens.
-- **Palette:** two color families selectable in Settings, orthogonal to the
+- **Palette:** two color families selectable in the drawer's Appearance section (and also in Settings), orthogonal to the
   light/dark/**mode** axis — **Ink** (default, the monochrome ink-on-paper above)
   and **Turquoise** (a soft turquoise: teal accent `--rm-accent: #0e7c74` light /
   `#5ed6c9` dark on faintly turquoise-tinted paper; both clear 4.5:1). Mode drives
@@ -534,7 +535,8 @@ loopback/link-local/private/metadata targets and redirects to them.
    right-actions group, suppressed on `/search`. Same placement.
 
 10. **Settings** — `/settings`: subscriptions/folders, OPML in/out, theme
-    (light/dark/system), Home picker, account/sign-out.
+    (light/dark/system), palette (Ink/Turquoise), account/sign-out. Theme and
+    palette are also accessible directly in the drawer's **Appearance** section.
 
 11. **Keyboard shortcuts** — same letter scheme (see below).
 
