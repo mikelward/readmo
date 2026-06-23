@@ -5,9 +5,10 @@ import { AUTH_STORAGE_KEY, getSupabase, isSupabaseConfigured } from '../lib/supa
 // `getActiveUid()` for boot-time cache keying.
 //
 // When Supabase is configured (VITE_SUPABASE_URL/ANON_KEY present) this is the
-// real OAuth session; otherwise it falls back to the PR1 mock demo user, so
-// existing tests and backend-less local/mock dev keep working and the app is
-// never stranded at /signin.
+// real OAuth session; otherwise it falls back to the mock path. The mock path
+// starts signed-out so unconfigured deployments (e.g. Vercel preview without
+// env vars) show the real sign-in page. Clicking a sign-in button in mock mode
+// sets a localStorage flag and lands the user in the mock app.
 
 export type OAuthProvider = 'google' | 'discord';
 
@@ -24,7 +25,7 @@ export interface AuthUser {
 // Mock path (unconfigured) — unchanged PR1 behaviour.
 // ---------------------------------------------------------------------------
 
-const STORAGE_KEY = 'readmo:mock-signed-out';
+const STORAGE_KEY = 'readmo:mock-signed-in';
 const CHANGE_EVENT = 'readmo:auth-changed';
 
 const DEMO_USER: AuthUser = {
@@ -34,7 +35,7 @@ const DEMO_USER: AuthUser = {
   avatarUrl: null,
 };
 
-function readSignedOut(): boolean {
+function readSignedIn(): boolean {
   if (typeof window === 'undefined') return false;
   try {
     return window.localStorage.getItem(STORAGE_KEY) === '1';
@@ -43,7 +44,7 @@ function readSignedOut(): boolean {
   }
 }
 
-function setSignedOut(next: boolean): void {
+function setSignedIn(next: boolean): void {
   try {
     if (next) window.localStorage.setItem(STORAGE_KEY, '1');
     else window.localStorage.removeItem(STORAGE_KEY);
@@ -66,7 +67,7 @@ function subscribeMock(cb: () => void): () => void {
 // getSnapshot must return referentially-stable values; DEMO_USER and null are
 // both constants, so React never sees a spurious snapshot change.
 function getMockUser(): AuthUser | null {
-  return readSignedOut() ? null : DEMO_USER;
+  return readSignedIn() ? DEMO_USER : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,7 +212,7 @@ function readPersistedSupabaseUser(): AuthUser | null {
  * path (main.tsx) can key caches before first paint, mirroring getStoredTheme(). */
 export function getActiveUid(): string | null {
   if (isSupabaseConfigured()) return readPersistedSupabaseUid();
-  return readSignedOut() ? null : DEMO_USER.uid;
+  return readSignedIn() ? DEMO_USER.uid : null;
 }
 
 export function useAuth(): {
@@ -249,7 +250,7 @@ export function useAuth(): {
           options: { redirectTo: `${origin}${redirectPath ?? '/'}` },
         });
       } else {
-        setSignedOut(false);
+        setSignedIn(true);
       }
     },
     [configured],
@@ -257,7 +258,7 @@ export function useAuth(): {
 
   const signOut = useCallback(() => {
     if (configured) void getSupabase().auth.signOut();
-    else setSignedOut(true);
+    else setSignedIn(false);
   }, [configured]);
 
   return { user, initializing, signIn, signOut };
