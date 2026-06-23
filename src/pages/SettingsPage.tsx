@@ -106,12 +106,8 @@ export function SettingsPage() {
       // Always invalidate feed-meta so FeedPage re-fetches the post-subscribe title
       // regardless of whether a curated override was applied.
       queryClient.invalidateQueries({ queryKey: ['feed-meta', feed.id] });
-      // Fire a background refresh in case the edge function processed the first
-      // one asynchronously and items aren't stored yet. Don't await — subscribe()
-      // already called refresh internally, and blocking here would delay the toast
-      // by a full fetch timeout when the publisher is unreachable. The .then()
-      // invalidate picks up any items that arrive after the toast is shown.
-      ds.refresh(feed.id).then(() => invalidate()).catch(() => {});
+      // subscribe() already awaits refresh() internally, so items are stored
+      // before we reach here. Invalidate to surface them in every open query.
       invalidate();
       const displayName = hasRealTitle ? feed.title : (curatedName ?? feed.title);
       showToast({ message: `Subscribed to ${displayName}` });
