@@ -583,15 +583,20 @@ loopback/link-local/private/metadata targets and redirects to them.
    middle slot between Back-to-top and the Undo/Sweep group. It appears once
    the feed is **populated** (not during the loading skeletons, the error/retry
    state, or an empty result — those would otherwise flash a misleading
-   exhausted message), then is enabled while another page is available and a
-   disabled **"No more items"** once the feed is exhausted, so reaching the end
-   is explicit feedback rather than a vanished button. Matches newshacker's
-   footer. Because our bottom bar is **pinned to the viewport foot** (newshacker's
-   is a relative footer), a freshly loaded page would otherwise grow the list
-   off-screen below the fold; so tapping **More** scrolls the **first row of the
-   new page to just below the sticky top chrome** (header + top toolbar) once it
-   renders, making More a real pager — you keep reading from where the new page
-   begins instead of hunting for it.
+   exhausted message). Because our bottom bar is **pinned to the viewport foot**
+   (newshacker's is a relative footer that you scroll down to), **More is a
+   pager, not just a page-fetch button** — it always reveals the next content
+   rather than claiming exhaustion while loaded rows still sit below the fold:
+   - **While the foot of the loaded list is below the fold**, tapping More
+     **scrolls one page down** to bring more already-loaded rows into view.
+   - **Once the list end is in view and another page is fetchable**, tapping
+     More **loads the next page** and scrolls its **first row to just below the
+     sticky top chrome** (header + top toolbar) once it renders, so you keep
+     reading from where the new page begins.
+   - **Only when the end is reached *and* nothing more can be fetched** does it
+     settle into a disabled **"No more items"** — reaching the true end is
+     explicit feedback, never shown prematurely just because the pinned bar is
+     always on screen.
 
 8. **Pull-to-refresh** — re-runs the view's fetch **and** force-checks for a
    newer bundle. Identical to newshacker.
