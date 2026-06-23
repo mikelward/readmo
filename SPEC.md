@@ -19,7 +19,7 @@
 feeds you subscribe to. You add feeds, Readmo polls them on the server, and
 you triage articles with the **exact newshacker interaction model**: a clean
 chronological feed with **Pinned** items at the top, fading **Opened**
-titles, swipe to **Hide**, **Pin** to keep in your reading list, **Favorite**
+titles, swipe to **Done** (dismiss), **Pin** to keep in your reading list, **Favorite**
 to keep forever, **Done** to complete — synced across devices and readable
 offline.
 
@@ -525,7 +525,7 @@ loopback/link-local/private/metadata targets and redirects to them.
    - **Folders/categories**, per-feed title override, drag-to-sort.
    - **Mute feed** — stays subscribed but excluded from the aggregate feed;
      still reachable on its own page. (This is per-feed; per-item dismissal is
-     **Hide**, unchanged from newshacker.)
+     **Done** (dismiss), unchanged from newshacker.)
    - **Feed-health badge** when the poller parks a feed, with "retry now".
 
 2. **Feed views (the lists)** — the chronological merge of subscription items,
@@ -620,7 +620,7 @@ Identical to newshacker's *Story row layout*; only the meta content differs
   views** it's **Pin/Unpin** (`push_pin` outline→filled). On **library views**
   it's the view's inverse: `/pinned` → Unpin, `/favorites` → Unfavorite
   (`favorite` filled), `/done` → Unmark done (`check_circle` filled),
-  `/hidden` → Unhide (`visibility_off` filled), `/opened` → Mark unread —
+  `/opened` → Mark unread —
   filled, accent-colored. Same table as newshacker's *Library views*.
 - **Reserved middle slot** — unused; same high bar for any future use.
 
@@ -636,12 +636,11 @@ pressed-state on every zone.
 
 ### Swipe gestures (same as newshacker)
 
-- **Swipe-right → Hide** (reveals `Hide`).
+- **Swipe-right → Done** (reveals `Done`).
 - **Swipe-left → Pin** (reveals `Pin`).
 - **Shields rubber-band:** pinned rows show `Pinned` on both edges and snap
-  back; hidden rows show `Hidden` on swipe-left and snap back. Same mechanism +
-  "every swipe names its outcome" rule.
-- **Undo** (toolbar) restores the last swipe/menu-hide/sweep — one level, not
+  back. Same mechanism + "every swipe names its outcome" rule.
+- **Undo** (toolbar) restores the last swipe/menu-done/sweep — one level, not
   persisted.
 
 ---
@@ -697,7 +696,6 @@ they live in the overflow. (No Upvote — RSS has no votes.)
 | `/pinned` | pinned items (active reading list) |
 | `/favorites` | favorite items (permanent) |
 | `/done` | completed items |
-| `/hidden` | recently hidden (7-day recovery) |
 | `/opened` | recently opened (7-day history) |
 | `/offline` | items cached on this device |
 | `/item/:id` | reader view |
@@ -728,7 +726,7 @@ List pages (`/`, `/folder/:name`, `/feed/:feedId`, library views):
 | `Space` | Open the row's actions menu |
 | `o` | Open the focused row's original article in a new tab |
 | `p` | Toggle Pin on the focused row |
-| `d` | Hide (dismiss) the focused row |
+| `d` | Mark done (dismiss) the focused row |
 | `?` | Help overlay · `Esc` close |
 
 Reader page (`/item/:id`):
