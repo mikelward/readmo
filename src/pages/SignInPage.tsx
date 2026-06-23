@@ -9,12 +9,11 @@ interface FromState {
 }
 
 const DEMO_ROWS = [
-  { source: 'Ars Technica', title: 'The browser engine that refused to die', age: '2h', domain: 'arstechnica.com', read: false },
-  { source: 'The Verge', title: 'Inside the lab building next-gen solar cells', age: '3h', domain: 'theverge.com', read: false },
-  { source: 'Hacker News', title: "Ask HN: What's your note-taking setup in 2025?", age: '4h', domain: 'news.ycombinator.com', read: true },
-  { source: 'MIT Tech Review', title: "Why AI still can't reason about time", age: '6h', domain: 'technologyreview.com', read: true },
-  { source: 'Wired', title: 'The quiet return of long-form internet', age: '8h', domain: 'wired.com', read: false },
-  { source: 'CSS Tricks', title: 'Container queries are finally everywhere', age: '10h', domain: 'css-tricks.com', read: true },
+  { source: 'The Verge', title: 'The best phones of the year, ranked', age: '1h', domain: 'theverge.com', read: false },
+  { source: 'BBC News', title: 'Climate summit ends with landmark agreement', age: '2h', domain: 'bbc.com', read: false },
+  { source: 'Reddit', title: 'r/technology: EU passes sweeping AI transparency law', age: '3h', domain: 'reddit.com', read: true },
+  { source: 'Hacker News', title: "Ask HN: What's your note-taking setup in 2025?", age: '5h', domain: 'news.ycombinator.com', read: true },
+  { source: 'Ars Technica', title: 'The browser engine that refused to die', age: '7h', domain: 'arstechnica.com', read: true },
 ];
 
 /** Clean sign-in landing (SPEC.md *Auth*). When Supabase is configured the
