@@ -24,6 +24,30 @@ constraint is documented in more detail.
   flags (the loser re-reconciles). Per-field versioning would let independent
   edits both land. Conservative-but-safe today. See SPEC.md §Sync.
 
+## Dev / diagnostics
+
+- **In-app debug / diagnostics page.** Add a `/debug` route (or a Settings
+  section) that surfaces, at a glance:
+  - **Build identifier** — git commit SHA and/or Vercel deployment id, injected
+    at build time (e.g. a `VITE_BUILD_SHA` / `VITE_VERCEL_GIT_COMMIT_SHA` env
+    baked into the bundle) so "which build am I on?" is answerable from the
+    running app.
+  - **Backend mode** — whether the app is running configured (Supabase) vs the
+    mock fallback (`isSupabaseConfigured()`), and the Supabase project URL/ref it
+    points at.
+  - **Auth** — the signed-in uid / provider, or signed-out.
+  - **DB connectivity** — a live, cheap authenticated read (e.g. `select 1` /
+    a count) with its status, so a `42501`/permission/JWT problem shows up
+    immediately instead of as a silent empty list.
+  - **Service worker / cache** — SW version/registration state and the named
+    cache keys.
+
+  Motivation: during the live bring-up, the slow diagnoses (mock-vs-real build,
+  the per-user-grant 403s, the CORS preflight) would each have been instant with
+  a page that just shows build id + backend mode + a DB ping. Keep it behind a
+  signed-in check; don't render secrets (only the anon/publishable key or
+  project ref, never the service-role key).
+
 ## Server RPCs
 
 - **Authenticated OPML-export RPC.** `feeds_public` exposes only `site_url`
