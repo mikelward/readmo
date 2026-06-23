@@ -137,6 +137,37 @@ describe('extractArticle', () => {
     expect(result!.contentHtml).not.toContain(DUP_TITLE);
   });
 
+  it('matches when the title differs only by internal punctuation', () => {
+    // Publishers often render a feed-title separator differently on the page (a
+    // colon in the feed vs. an em dash in the heading). Both must compare equal.
+    const heading = 'World Cup: the final showdown';
+    const page = `<!doctype html><html><head><title>Sport — BBC</title></head>
+      <body><article><h2>${heading}</h2>${LONG_BODY}</article></body></html>`;
+    const result = extractArticle(
+      page,
+      'https://example.com/sport/world-cup',
+      'World Cup — the final showdown',
+    );
+    expect(result).not.toBeNull();
+    expect(result!.contentHtml).not.toContain(heading);
+    expect(result!.contentHtml).toContain('genuine article about feed readers');
+  });
+
+  it('keeps a heading that differs from the title only by an in-word symbol', () => {
+    // "C++" must not collapse to "C": a distinct leading heading on a tech feed
+    // should survive even though it shares the rest of the words with the title.
+    const heading = 'C++ memory model explained';
+    const page = `<!doctype html><html><head><title>Dev — Blog</title></head>
+      <body><article><h2>${heading}</h2>${LONG_BODY}</article></body></html>`;
+    const result = extractArticle(
+      page,
+      'https://example.com/dev/memory',
+      'C memory model explained',
+    );
+    expect(result).not.toBeNull();
+    expect(result!.contentHtml).toContain(heading);
+  });
+
   it('keeps the body heading when it does not match the title', () => {
     const result = extractArticle(
       pageWithBodyHeading(),
