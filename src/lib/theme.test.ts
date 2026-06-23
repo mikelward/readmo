@@ -186,6 +186,12 @@ describe('palette', () => {
     expect(document.documentElement.getAttribute('data-palette')).toBe('indigo');
   });
 
+  it('setStoredPalette persists mauve and sets data-palette', () => {
+    setStoredPalette('mauve');
+    expect(window.localStorage.getItem(PALETTE_STORAGE_KEY)).toBe('mauve');
+    expect(document.documentElement.getAttribute('data-palette')).toBe('mauve');
+  });
+
   it('setStoredPalette("ink") clears the attribute and the key', () => {
     setStoredPalette('turquoise');
     setStoredPalette('ink');
@@ -228,6 +234,11 @@ describe('palette', () => {
     expect(meta.content).toBe('#f5f5fb');
     applyThemeColorMeta('dark', 'indigo');
     expect(meta.content).toBe('#14141f');
+    // mauve light/dark
+    applyThemeColorMeta('light', 'mauve');
+    expect(meta.content).toBe('#f9f1f5');
+    applyThemeColorMeta('dark', 'mauve');
+    expect(meta.content).toBe('#17151b');
   });
 
   it('setStoredPalette repaints the meta color for the current mode', () => {

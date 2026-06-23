@@ -1,19 +1,20 @@
 /*
- * Readmo design tokens — "ink on paper" (default) plus opt-in "turquoise" and
- * "indigo" palettes.
+ * Readmo design tokens — "ink on paper" (default) plus opt-in "turquoise",
+ * "indigo", and "mauve" palettes.
  *
  * Two orthogonal axes:
- *   - Mode (light/dark/system)        → the `data-theme` attribute on <html>.
- *   - Palette (ink/turquoise/indigo)  → the `data-palette` attribute on <html>.
+ *   - Mode (light/dark/system)               → the `data-theme` attribute on <html>.
+ *   - Palette (ink/turquoise/indigo/mauve)   → the `data-palette` attribute on <html>.
  * Ink is the default palette, so it owns the bare `:root` / `[data-theme]`
  * blocks (no `data-palette`). The other palettes override them under
  * `:root[data-palette='…']`. Each palette ships a light and a dark
  * variant, plus a `prefers-color-scheme: dark` block for system mode.
  *
  * The ink accent (#2b2b2b light / #ececec dark), the turquoise accent
- * (#0e7c74 light / #5ed6c9 dark), and the indigo accent (#4338ca light /
- * #a5b4fc dark) all clear 4.5:1 on their backgrounds — verify any change with a
- * contrast checker (SPEC.md *Visual design* / *Accessibility*).
+ * (#0e7c74 light / #5ed6c9 dark), the indigo accent (#4338ca light / #a5b4fc
+ * dark), and the mauve accent (#923b67 light / #e3a6cb dark) all clear 4.5:1 on
+ * their backgrounds — verify any change with a contrast checker (SPEC.md
+ * *Visual design* / *Accessibility*).
  */
 
 :root {
@@ -326,6 +327,122 @@
 
     --rm-brand-tile: #4338ca;
     --rm-brand-fg: #f5f5fb;
+
+    --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+
+    color-scheme: dark;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Mauve palette — a soothing, soft pinkish theme. Opt-in via data-palette.
+ * Same structure as turquoise/indigo: a light block, an explicit dark block,
+ * and a system-dark media block, each out-specifying the ones above it. The
+ * whole palette is built from a single mauve-pink in two values — a plum
+ * (#923b67) and its light form (#e3a6cb) — used for links, the "Open original"
+ * button, the brand tile, and the swipe pin, to keep it calm and uncluttered.
+ * Both accents clear 4.5:1 on their backgrounds.
+ *
+ * One deliberate divergence from turquoise/indigo: those freeze the brand tile
+ * to the dark accent across modes, but here the tile tracks the accent (plum in
+ * light, light mauve-pink in dark) so the logo always matches the button. The
+ * "R"/pill (`--rm-brand-fg`) flips to a dark ink in dark mode to stay legible
+ * on the light tile.
+ * ------------------------------------------------------------------------- */
+:root[data-palette='mauve'] {
+  --rm-accent: #923b67;
+  --rm-accent-strong: #76304f;
+  --rm-accent-contrast: #ffffff;
+
+  --rm-bg: #f9f1f5;
+  --rm-bg-card: #ffffff;
+  --rm-bg-elevated: #ffffff;
+  --rm-border: #ecd9e2;
+  --rm-border-strong: #e0c6d2;
+
+  --rm-text: #281d24;
+  --rm-read: #5e4a55;
+  --rm-meta: #796171;
+
+  --rm-danger: #c0392b;
+  --rm-success: #2e7d46;
+
+  /* Muted mauve-gray dark enough for the hard-coded white swipe label
+     (.item-row__swipe-hint): ~5.1:1 on #fff. */
+  --rm-hide-bg: #806775;
+  --rm-pin-bg: var(--rm-accent);
+
+  --rm-brand-tile: #923b67;
+  --rm-brand-fg: #f9f1f5;
+
+  --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+
+  color-scheme: light;
+}
+
+:root[data-palette='mauve'][data-theme='dark'] {
+  --rm-accent: #e3a6cb;
+  --rm-accent-strong: #eec3dc;
+  --rm-accent-contrast: #2a0e20;
+
+  --rm-bg: #17151b;
+  --rm-bg-card: #221d26;
+  --rm-bg-elevated: #29232e;
+  --rm-border: #332b38;
+  --rm-border-strong: #43394a;
+
+  --rm-text: #efe8ee;
+  --rm-read: #c2b2bd;
+  --rm-meta: #ad9aaa;
+
+  --rm-danger: #ff6b5e;
+  --rm-success: #6bd08a;
+
+  --rm-hide-bg: #463a48;
+  /* Deep plum (the light-mode accent) so the swipe hint's white label stays
+     legible — the dark accent #e3a6cb is near-white. ~6.9:1 on #fff. */
+  --rm-pin-bg: #923b67;
+
+  /* Tile tracks the accent so the logo matches the button; the "R" flips to a
+     dark ink to stay legible on the light tile. */
+  --rm-brand-tile: #e3a6cb;
+  --rm-brand-fg: #2a0e20;
+
+  --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+
+  color-scheme: dark;
+}
+
+/* Mauve + system mode + OS dark. Out-specifies the ink system-dark block
+ * (extra [data-palette] attribute) and the mauve-light block. */
+@media (prefers-color-scheme: dark) {
+  :root[data-palette='mauve']:not([data-theme='light']):not(
+      [data-theme='dark']
+    ) {
+    --rm-accent: #e3a6cb;
+    --rm-accent-strong: #eec3dc;
+    --rm-accent-contrast: #2a0e20;
+
+    --rm-bg: #17151b;
+    --rm-bg-card: #221d26;
+    --rm-bg-elevated: #29232e;
+    --rm-border: #332b38;
+    --rm-border-strong: #43394a;
+
+    --rm-text: #efe8ee;
+    --rm-read: #c2b2bd;
+    --rm-meta: #ad9aaa;
+
+    --rm-danger: #ff6b5e;
+    --rm-success: #6bd08a;
+
+    --rm-hide-bg: #463a48;
+    /* See the explicit dark-mauve block: keep the pin hint dark enough for the
+       white swipe label. */
+    --rm-pin-bg: #923b67;
+
+    --rm-brand-tile: #e3a6cb;
+    --rm-brand-fg: #2a0e20;
 
     --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 
