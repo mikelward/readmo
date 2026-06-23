@@ -172,13 +172,19 @@ function cleanArticleHtml(
 }
 
 /** Normalize heading/title text for duplicate comparison: lowercased, with
- * whitespace collapsed and surrounding punctuation/quotes trimmed. */
+ * every run of separator punctuation/whitespace (edge OR internal) folded to a
+ * single space and the ends trimmed. This makes the match separator-
+ * insensitive, so titles that differ only by a colon, hyphen, or em dash vs. a
+ * space — e.g. "World Cup: The Final" / "World Cup — The Final" — still compare
+ * equal. Letters/numbers (incl. accented) are kept via Unicode properties, as
+ * are a few symbols that occur *inside* words (`+ # &`: C++, C#, AT&T) so that
+ * genuinely different titles like "C++ memory model" and "C memory model" don't
+ * collapse together and drop a legitimate heading. */
 function normalizeHeading(text: string): string {
   return text
-    .replace(/\s+/g, ' ')
-    .trim()
     .toLowerCase()
-    .replace(/^[\s"'“”‘’.,:;!?-]+|[\s"'“”‘’.,:;!?-]+$/g, '');
+    .replace(/[^\p{L}\p{N}+#&]+/gu, ' ')
+    .trim();
 }
 
 /** Visible-text length of an HTML string (tags/entities/whitespace collapsed).
