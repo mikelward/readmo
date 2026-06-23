@@ -202,6 +202,27 @@ The functions:
 
 ## 7. Schedule the poller (pg_cron, ~5 min)
 
+### 7a. Store the service-role key in Vault
+
+The cron job reads the service-role key from Supabase Vault at runtime.
+Store it once via the SQL editor (find the key in Project Settings → API):
+
+```sql
+select vault.create_secret(
+  '<your-service-role-key>',  -- the long JWT from Project Settings → API
+  'service_role_key'          -- must match the name used in the cron below
+);
+```
+
+> **Dashboard alternative:** Project Settings → Vault → New secret →
+> name `service_role_key`, value = service role JWT.
+
+> **Note:** `ALTER DATABASE SET app.*` is not available on managed Supabase
+> instances, so `current_setting()` cannot carry the key — the Vault subquery
+> below is the correct approach.
+
+### 7b. Enable extensions and schedule
+
 Enable the scheduler extensions and schedule an invocation of the `poll`
 function every 5 minutes. In the SQL editor:
 
@@ -210,13 +231,8 @@ function every 5 minutes. In the SQL editor:
 create extension if not exists pg_cron;
 create extension if not exists pg_net;
 
--- Invoke the poll Edge Function every 5 minutes.
 -- Replace <ref> with your Supabase project ref (the subdomain of your project URL).
--- The service-role key is read from Supabase Vault (stored as 'service_role_key').
--- Note: ALTER DATABASE SET app.* is not available on managed Supabase instances,
--- so current_setting() cannot be used here — use the Vault subquery instead.
-
--- To reschedule (e.g. to update the URL or key): unschedule first, then re-create.
+-- To reschedule (e.g. to update the URL): unschedule first, then re-create.
 -- select cron.unschedule('readmo-poll');
 
 select cron.schedule(
