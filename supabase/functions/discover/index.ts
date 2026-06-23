@@ -130,10 +130,16 @@ async function fetchViaJina(target: string): Promise<string | null> {
   const apiKey = Deno.env.get('JINA_API_KEY');
   if (!apiKey) return null;
 
-  // Don't send URLs with query parameters to a third party — they may carry
-  // auth tokens or other secrets.
+  // Don't send URLs that could carry auth secrets to a third party:
+  // - Query string: ?token=… style secrets.
+  // - Path extension: /feeds/<secret>.xml or similar tokenized resource URLs.
+  //   Website pages that need Jina (apnews.com, theguardian.com/tech) never
+  //   have a file extension; feed/resource URLs always do.
   try {
-    if (new URL(target).search !== '') return null;
+    const parsed = new URL(target);
+    if (parsed.search !== '') return null;
+    const lastSegment = parsed.pathname.split('/').pop() ?? '';
+    if (lastSegment.includes('.')) return null;
   } catch {
     return null;
   }
