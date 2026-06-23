@@ -666,6 +666,9 @@ page's discipline is unchanged.
   or `<picture>` — are full-bleed (edge-to-edge on mobile, full feed-column
   width on desktop). Inline images inside `<p>`, `<li>`, etc. keep their
   natural size. `<figcaption>` text is inset 16px to align with body copy.
+  Direct-child `<table>` elements (Reddit and similar feeds embed a thumbnail
+  in a layout table) are reflowed as a block stack so the image leads
+  full-bleed above the text summary.
 - **Reading affordances:** comfortable measure, paper surface, light/dark,
   `prefers-reduced-motion`.
 

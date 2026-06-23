@@ -211,6 +211,27 @@
   color: var(--rm-meta);
 }
 
+/* Reddit and similar feeds wrap content in a layout <table> (image in first
+   cell, text summary in second). Reflow it to a block stack so the image
+   goes full-bleed above the text instead of beside it as a thumbnail. */
+.reader__body > table,
+.reader__body > table tbody,
+.reader__body > table tr,
+.reader__body > table td,
+.reader__body > table th {
+  display: block;
+  width: 100%;
+}
+
+.reader__body > table img {
+  display: block;
+  width: calc(100% + 32px);
+  max-width: calc(100% + 32px);
+  margin-left: -16px;
+  height: auto;
+  border-radius: 0;
+}
+
 .reader__body pre {
   overflow-x: auto;
   background: var(--rm-bg);
