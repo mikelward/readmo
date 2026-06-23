@@ -158,12 +158,12 @@ build/routing/deploy.
 
 ## Copilot reviews
 
-- **Always request a GitHub Copilot review automatically.** Immediately after `mcp__github__create_pull_request` succeeds, call `mcp__github__request_copilot_review` on the new PR. Don't ask first — this is a safe action.
-- **Re-request a Copilot review after your last push.** Whenever a `git push` updates an open PR's head, call `mcp__github__request_copilot_review` so the new commits get reviewed. If you do several back-to-back pushes, only request the review after the final push.
+Copilot reviews are triggered automatically — do not call `mcp__github__request_copilot_review`.
+
 - **Address Copilot comments automatically — don't wait to be asked.** When a Copilot review lands, treat each comment like a real review note: read it, decide whether it's a real issue or a false positive, and if it's real, fix it in the same PR. Fold the fix into the commit it belongs to (rebase / `--fixup`) rather than tacking on an "address review" commit, per the *one commit per logical surviving change* rule. Group several small fixes into one commit when they share a topic.
 - **Reply to (and, when possible, resolve) every addressed Copilot comment** via `mcp__github__add_reply_to_pull_request_comment`. Do this for each addressed comment, not in bulk.
 - **Don't resolve threads you haven't addressed.** If you disagree with a suggestion or are deferring it, leave the thread open and reply explaining why.
-- **Order of operations on a push that addresses review comments:** (1) push the fix commit, (2) reply on each addressed thread referencing the new sha, (3) re-request the Copilot review.
+- **Order of operations on a push that addresses review comments:** (1) push the fix commit, (2) reply on each addressed thread referencing the new sha.
 - **Known limitation: `resolve_review_thread` is currently broken via MCP.** The thread node ID (`PRRT_*`) is stripped from `get_review_comments` responses, so `resolve_review_thread` can't be called. Post the reply via `mcp__github__add_reply_to_pull_request_comment` and skip the resolve step — flag in the end-of-turn summary that the threads are replied-but-unresolved so the user can resolve them in the GitHub UI.
 
 ## Pull requests and reviews
