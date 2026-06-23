@@ -50,6 +50,23 @@ export function buildUpstreamUrl(
   return `${root}/functions/v1/img?url=${encodeURIComponent(target)}`;
 }
 
+/**
+ * Build the auth headers required by the Supabase edge-function gateway.
+ * Every edge function requires either `Authorization: Bearer <anon_key>` or
+ * the equivalent `apikey` header — without it the gateway returns 401 and the
+ * browser gets no image bytes. Returns an empty object when the key is absent
+ * so callers can spread safely; the upstream will 401 in that case.
+ */
+export function buildAnonHeaders(
+  anonKey: string | undefined,
+): Record<string, string> {
+  if (!anonKey) return {};
+  return {
+    Authorization: `Bearer ${anonKey}`,
+    apikey: anonKey,
+  };
+}
+
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'GET') {
     return new Response('Method not allowed', { status: 405 });
@@ -67,13 +84,21 @@ export default async function handler(req: Request): Promise<Response> {
     return new Response('Image proxy not configured', { status: 503 });
   }
 
+  // Supabase edge-function gateway requires the anon key on every request.
+  const anonKey =
+    process.env.SUPABASE_ANON_KEY ??
+    process.env.VITE_SUPABASE_ANON_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
   const target = new URL(req.url).searchParams.get('url');
   const upstream = buildUpstreamUrl(base, target);
   if (!upstream) return new Response('Missing url', { status: 400 });
 
   let res: Response;
   try {
-    res = await fetch(upstream, { headers: { Accept: 'image/*' } });
+    res = await fetch(upstream, {
+      headers: { Accept: 'image/*', ...buildAnonHeaders(anonKey) },
+    });
   } catch {
     return new Response('Proxy error', { status: 502 });
   }
