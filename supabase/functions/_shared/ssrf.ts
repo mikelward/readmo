@@ -109,7 +109,11 @@ function isBlockedV4(addr: string): boolean {
   // 192.168.0.0/16 — RFC1918 private.
   if (a === 192 && b === 168) return true;
   // 192.0.0.0/24 (IETF protocol assignments) & 192.0.2.0/24 (TEST-NET-1).
-  if (a === 192 && b === 0) return true;
+  // Scope to those two /24s by the third octet: the rest of 192.0.0.0/16 is
+  // public — notably 192.0.64.0/18 (Automattic), which carries the
+  // WordPress.com / Jetpack / Gravatar image CDN (192.0.72.0/22). Blocking the
+  // whole /16 here made the image proxy reject those hosts as "Blocked".
+  if (a === 192 && b === 0 && (o[2] === 0 || o[2] === 2)) return true;
   // 100.64.0.0/10 — carrier-grade NAT.
   if (a === 100 && b >= 64 && b <= 127) return true;
   // 198.18.0.0/15 — benchmarking.

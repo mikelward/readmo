@@ -32,11 +32,22 @@ describe('isBlockedAddress — IPv4', () => {
     expect(isBlockedAddress('255.255.255.255')).toBe(true);
   });
 
+  it('blocks 192.0.0.0/24 and 192.0.2.0/24 only (not the whole /16)', () => {
+    expect(isBlockedAddress('192.0.0.8')).toBe(true); // IETF protocol assignments
+    expect(isBlockedAddress('192.0.2.1')).toBe(true); // TEST-NET-1
+  });
+
   it('allows ordinary public IPv4', () => {
     expect(isBlockedAddress('8.8.8.8')).toBe(false);
     expect(isBlockedAddress('1.1.1.1')).toBe(false);
     expect(isBlockedAddress('93.184.216.34')).toBe(false); // example.com
     expect(isBlockedAddress('172.32.0.1')).toBe(false); // just outside 172.16/12
+    // 192.0.64.0/18 is Automattic (public); 192.0.72.0/22 is the
+    // WordPress.com / Jetpack / Gravatar image CDN, 192.0.73.0/24 Gravatar.
+    // These must NOT be caught by the 192.0.0.0/24 + 192.0.2.0/24 block.
+    expect(isBlockedAddress('192.0.73.2')).toBe(false); // www.gravatar.com
+    expect(isBlockedAddress('192.0.72.1')).toBe(false); // i0.wp.com (Jetpack)
+    expect(isBlockedAddress('192.0.77.2')).toBe(false); // WordPress.com CDN
   });
 
   it('blocks malformed literals (fail closed)', () => {
