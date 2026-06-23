@@ -192,7 +192,23 @@ export class ItemStateStore {
     | null = null;
 
   constructor(private persistence: StatePersistence) {
-    this.map = persistence.load();
+    const loaded = persistence.load();
+    // Migrate pre-merge hidden rows: any item that was dismissed via the old
+    // hidden path (hidden=true, done=false) gets done=true so it surfaces in
+    // the Done library instead of being invisible with no recovery path.
+    let migrated = false;
+    const now = Date.now();
+    const map: typeof loaded = {};
+    for (const [id, state] of Object.entries(loaded)) {
+      if (state.hidden && !state.done) {
+        map[id] = applyMutation(state, 'done', true, now);
+        migrated = true;
+      } else {
+        map[id] = state;
+      }
+    }
+    this.map = map;
+    if (migrated) persistence.save(this.map);
   }
 
   /** Register a write-through sink invoked with the changed-field diff of a
