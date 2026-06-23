@@ -92,7 +92,7 @@
 
 .app-drawer__segmented {
   display: flex;
-  gap: 4px;
+  gap: 8px;
   margin: 4px 8px 8px;
   padding: 4px;
   background: var(--rm-bg);
