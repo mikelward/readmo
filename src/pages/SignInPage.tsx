@@ -9,7 +9,7 @@ interface FromState {
 }
 
 const DEMO_ROWS = [
-  { source: 'BBC News', title: 'Climate Summit Ends With Landmark Agreement', age: '1h', domain: 'bbc.com', read: false },
+  { source: 'AP News', title: 'Climate Summit Ends With Landmark Agreement', age: '1h', domain: 'apnews.com', read: false },
   { source: 'Vox', title: 'Why Your Grocery Bill Keeps Going Up', age: '3h', domain: 'vox.com', read: false },
   { source: 'r/popular', title: 'My Dad Just Retired After 40 Years — Proud of Him', age: '4h', domain: 'reddit.com', read: true },
 ];
