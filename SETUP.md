@@ -124,6 +124,7 @@ origins and `http://localhost:5173/**` for local dev).
 | `SUPABASE_ANON_KEY` | client **and** server | No (public, RLS-gated) |
 | `SUPABASE_SERVICE_ROLE_KEY` | **server only** (Edge Functions / poller) | **Yes — never ship to client** |
 | Google / Discord client secrets | Supabase Auth config | **Yes — server only** |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_TLS` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM` / `SIGNUP_NOTIFY_TO` | **server only** (`notify-signup` function) — `supabase secrets set …`; see §9 | **`SMTP_PASSWORD` yes — never ship to client** |
 
 **Client build** (Vite) gets only `SUPABASE_URL` + `SUPABASE_ANON_KEY` as
 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` — copy `.env.example` to
@@ -146,11 +147,12 @@ Env name cannot start with SUPABASE_, skipping: SUPABASE_SERVICE_ROLE_KEY
 ```
 
 That warning is expected — there is nothing to set for deployment. Use
-`supabase secrets set` only for *custom* (non-`SUPABASE_`) names, of which this
-project has none. The service-role key is needed by hand in only two places:
-the **cron poller** (§7, passed as a bearer token) and **local**
-`supabase functions serve` (off-platform, so put the three vars in a local,
-untracked `.env`).
+`supabase secrets set` only for *custom* (non-`SUPABASE_`) names — the
+`SMTP_*` / `SIGNUP_NOTIFY_TO` values for `notify-signup` (§9) are the only ones.
+The service-role key is needed by hand in only two places: the **cron poller**
+(§7, passed as a bearer token) and **local** `supabase functions serve`
+(off-platform, so put the three vars in a local, untracked `.env`; see
+`supabase/functions/.env.example`).
 
 ---
 
@@ -179,6 +181,7 @@ supabase functions deploy refresh  --import-map supabase/functions/import_map.js
 supabase functions deploy fulltext --import-map supabase/functions/import_map.json
 supabase functions deploy poll     --import-map supabase/functions/import_map.json --no-verify-jwt
 supabase functions deploy img      --import-map supabase/functions/import_map.json --no-verify-jwt
+supabase functions deploy notify-signup --import-map supabase/functions/import_map.json --no-verify-jwt
 ```
 
 > **`img` must deploy with `--no-verify-jwt`.** It's the image proxy: the
@@ -203,6 +206,7 @@ The functions:
 | `refresh` | `POST /functions/v1/refresh` | On-demand fetch for the caller's subscribed feed(s); debounced. |
 | `fulltext` | `POST /functions/v1/fulltext` | Reading mode: fetch + extract (Readability) + sanitize the full article for a truncated item, cache it on the shared row. RLS-scoped to the caller. |
 | `img` | `GET /functions/v1/img?url=…` | SSRF-hardened image proxy (privacy + offline images). |
+| `notify-signup` | `POST /functions/v1/notify-signup` | Emails the operator over SMTP when a new user signs up. Called server-to-server by the `auth.users` insert trigger (§9); verifies the service-role bearer itself, so deploy with `--no-verify-jwt`. |
 
 > **Same-origin `/api/img` shim (Vercel).** Sanitized `content_html` points
 > every `<img src>` at the same-origin path `/api/img?url=…` (not the Supabase
@@ -305,12 +309,67 @@ These cover the feed parser (RSS 2.0 / Atom / RDF / JSON Feed + malformed +
 missing-GUID + relative-URL absolutization), the HTML sanitizer (no script /
 event-handler survives; relative URLs absolutized), the SSRF helper (rejects
 loopback/link-local/private/metadata literals and a redirect to
-`169.254.169.254`), and discovery (`<link>` autodiscovery + Reddit `.rss`
-derivation).
+`169.254.169.254`), discovery (`<link>` autodiscovery + Reddit `.rss`
+derivation), and the signup-notification email builder (subject/body, recipient
++ SMTP config resolution, and CR/LF header-injection stripping).
 
 ---
 
-## 9. Cost & reliability (rule-11)
+## 9. Enable signup email notifications (SMTP)
+
+When a new user signs up, the operator gets an email. Migration
+`0012_signup_notification.sql` adds an `AFTER INSERT` trigger on `auth.users`
+that fire-and-forget posts the new row to the `notify-signup` Edge Function via
+`pg_net`; the function sends the alert over SMTP. **The trigger no-ops until
+both the Vault config and the SMTP secrets below are set**, so signups keep
+working before (and without) any of this.
+
+### 9a. SMTP secrets
+
+Set the SMTP relay credentials (any provider — Fastmail, Gmail App Password,
+SES SMTP, …). These are custom (non-`SUPABASE_`) names, so the CLI sets them:
+
+```sh
+supabase secrets set \
+  SMTP_HOST=smtp.example.com \
+  SMTP_PORT=465 \
+  SMTP_USERNAME=alerts@example.com \
+  SMTP_PASSWORD='…' \
+  SMTP_FROM=alerts@example.com
+# Optional: SMTP_TLS=true|false (defaults: on for 465, STARTTLS for 587),
+#           SIGNUP_NOTIFY_TO=… (defaults to mikel@mikelward.com).
+```
+
+See `supabase/functions/.env.example` for the local-serve equivalent.
+
+### 9b. Vault config for the trigger
+
+The trigger reads the function base URL + the service-role bearer from Vault
+(same mechanism as the poller in §7a — `service_role_key` is already stored
+there). Add the base URL once (replace `<ref>`):
+
+```sql
+select vault.create_secret(
+  'https://<ref>.supabase.co/functions/v1',  -- no trailing slash needed
+  'functions_base_url'
+);
+```
+
+### 9c. Deploy
+
+```sh
+make migrate                 # applies 0012 (trigger + function)
+make deploy-notify-signup    # deploys the function (--no-verify-jwt)
+```
+
+Send a test signup and confirm the alert arrives. The function logs
+(`supabase functions logs notify-signup`) report `SMTP not configured`
+(misconfig → 500) or `SMTP send failed` (relay rejected → 502) without ever
+affecting account creation.
+
+---
+
+## 10. Cost & reliability (rule-11)
 
 - **Supabase free tier** (Postgres 500MB, 50k MAU, scheduled functions) is **$0**
   at this scale; Pro is ~$25/mo if it grows. Poll cost scales with **distinct
@@ -320,3 +379,10 @@ derivation).
   serves already-synced + pinned/favorited content. A flaky publisher cannot
   take the app down (per-feed isolation + circuit breaker). Egress-IP pooling
   for Reddit is **not** provisioned unless Reddit volume warrants it.
+- **Signup notifications (SMTP):** cost is **negligible** — one outbound email
+  per new account; every mainstream relay's free tier (Gmail, Fastmail,
+  SES free tier) covers signup volume many times over. It is **off the user's
+  critical path**: `pg_net` posts fire-and-forget after the insert commits, so a
+  slow/failing relay never delays or blocks signup. Failure modes — relay down
+  or rejecting (function returns 502), or secrets unset (no-op / 500) — only
+  drop the *alert*; the account is still created. No new always-on dependency.

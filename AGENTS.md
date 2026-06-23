@@ -102,6 +102,7 @@ third-party call the app makes.
 | Service | Purpose | Cost | Rate limits | Latency | Failure mode |
 |---|---|---|---|---|---|
 | **Jina Reader** (`r.jina.ai`) | Fallback HTML fetch for bot-blocked discovery (403 responses). Configured via `JINA_API_KEY` Supabase secret; skipped silently if absent. | Free tier: 1 M tokens/month (~500–1000 page fetches). Paid from ~$0.02/1 M tokens. A single discovery fetch is typically 10–100 K tokens. | Free tier: ~200 req/min. | +1–5 s added to a 403-path discovery (on top of the failed direct fetch). The Jina call is not on the happy path so normal discovery is unaffected. | On timeout, non-2xx, or body-size-cap hit, `fetchViaJina` returns `null` and the original `auth` error is surfaced to the user — no change in behavior from today. |
+| **SMTP relay** (provider-agnostic, e.g. Fastmail / Gmail / SES) | Sends the operator a "new user signed up" email from the `notify-signup` Edge Function, triggered by the `auth.users` insert trigger. Configured via `SMTP_*` Supabase secrets; trigger no-ops if unset. | **Negligible** — one email per new account; every mainstream relay's free tier covers signup volume many times over. | Provider-dependent (e.g. Gmail ~500/day); far above signup rate. | Off the critical path: `pg_net` posts fire-and-forget *after* the signup commits, so SMTP latency never delays or blocks account creation. | Relay down/rejecting → function returns 502; secrets unset → no-op/500. Only the *alert* is lost; the account is still created. |
 
 ## Dev commands
 
