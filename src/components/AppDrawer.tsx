@@ -62,7 +62,6 @@ const LIBRARY_LINKS = [
   { to: '/pinned', label: 'Pinned' },
   { to: '/favorites', label: 'Favorites' },
   { to: '/done', label: 'Done' },
-  { to: '/hidden', label: 'Hidden' },
   { to: '/opened', label: 'Opened' },
   { to: '/offline', label: 'Offline' },
 ];

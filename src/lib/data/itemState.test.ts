@@ -127,29 +127,29 @@ describe('ItemStateStore', () => {
     store.setMutationSink((id, changed) => calls.push([id, changed]));
 
     store.set('a', 'pinned', true);
-    store.hide('b'); // hidden = true (undoable)
-    store.undoLast(); // reverts b -> hidden false
+    store.hide('b'); // done = true (undoable)
+    store.undoLast(); // reverts b -> done false
     // Hydration overlays server rows and must NOT write back through the sink.
     store.hydrate([['c', { ...DEFAULT_ITEM_STATE, done: true, version: 5 }]]);
 
     expect(calls).toEqual([
       ['a', { pinned: true }],
-      ['b', { hidden: true }],
-      ['b', { hidden: false }],
+      ['b', { done: true }],
+      ['b', { done: false }],
     ]);
   });
 
-  it('undo write-through restores (only) a pin that hiding cleared', () => {
+  it('undo write-through restores (only) a pin that dismissing cleared', () => {
     const store = new ItemStateStore(memoryPersistence());
     store.set('x', 'pinned', true); // pinned
     const calls: Array<[string, Partial<Record<string, boolean>>]> = [];
     store.setMutationSink((id, changed) => calls.push([id, changed]));
-    store.hide('x'); // hiding clears pinned -> diff { hidden:true, pinned:false }
-    store.undoLast(); // restores -> diff { hidden:false, pinned:true }
+    store.hide('x'); // done clears pinned -> diff { done:true, pinned:false }
+    store.undoLast(); // restores -> diff { done:false, pinned:true }
 
     expect(calls).toEqual([
-      ['x', { pinned: false, hidden: true }],
-      ['x', { pinned: true, hidden: false }],
+      ['x', { pinned: false, done: true }],
+      ['x', { pinned: true, done: false }],
     ]);
   });
 

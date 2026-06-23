@@ -92,10 +92,10 @@ describe('ItemRow', () => {
     expect(within(menu).getByTestId('item-row-menu-hide')).toBeInTheDocument();
   });
 
-  it('suppresses Pin and Hide in the menu on a hidden row', async () => {
+  it('suppresses Done in the menu on a pinned row', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
-    source.stateStore.set('item-1', 'hidden', true);
+    source.stateStore.set('item-1', 'pinned', true);
     renderWithProviders(
       <ItemRow feedItem={FEED_ITEM} enableSwipe={false} onShare={() => {}} />,
       { source },
@@ -104,9 +104,9 @@ describe('ItemRow', () => {
     body.focus();
     await user.keyboard(' ');
     const menu = await screen.findByTestId('item-row-menu');
-    // Pinning a hidden row would clear `hidden` and reintroduce the item —
-    // suppressed per the hide-shields-pin rule.
-    expect(within(menu).queryByTestId('item-row-menu-pin')).toBeNull();
+    // Pinned rows show Unpin instead of Pin, and Done is suppressed
+    // (marking done clears pinned, which would silently unpin the item).
+    expect(within(menu).getByTestId('item-row-menu-unpin')).toBeInTheDocument();
     expect(within(menu).queryByTestId('item-row-menu-hide')).toBeNull();
     // Share is still available.
     expect(within(menu).getByTestId('item-row-menu-share')).toBeInTheDocument();

@@ -11,7 +11,6 @@ import {
   PinnedPage,
   FavoritesPage,
   DonePage,
-  HiddenPage,
   OpenedPage,
 } from './pages/LibraryPages';
 import { ItemPage } from './pages/ItemPage';
@@ -62,7 +61,6 @@ export default function App() {
                   <Route path="/pinned" element={<PinnedPage />} />
                   <Route path="/favorites" element={<FavoritesPage />} />
                   <Route path="/done" element={<DonePage />} />
-                  <Route path="/hidden" element={<HiddenPage />} />
                   <Route path="/opened" element={<OpenedPage />} />
                   <Route path="/offline" element={<OfflinePage />} />
                   <Route path="/item/:id" element={<ItemPage />} />

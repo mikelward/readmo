@@ -38,9 +38,8 @@ export function ItemRow({
   onShare,
 }: Props) {
   const { item, feed } = feedItem;
-  const { state, set, toggle } = useItemState(item.id);
+  const { state, set, toggle, hide } = useItemState(item.id);
   const pinned = state.pinned;
-  const hidden = state.hidden;
   const opened = state.opened;
 
   const title = item.title || '[untitled]';
@@ -51,7 +50,7 @@ export function ItemRow({
   const articleRef = useRef<HTMLElement>(null);
   const pointerDevice = usePointerDevice();
 
-  const handleHide = useCallback(() => set('hidden', true), [set]);
+  const handleHide = useCallback(() => hide(), [hide]);
   const handlePin = useCallback(() => set('pinned', true), [set]);
   const handleTogglePin = useCallback(() => toggle('pinned'), [toggle]);
   const handleMarkUnread = useCallback(() => set('opened', false), [set]);
@@ -89,16 +88,12 @@ export function ItemRow({
     const items: ItemRowMenuItem[] = [];
     if (pinned) {
       items.push({ key: 'unpin', label: 'Unpin', onSelect: handleTogglePin });
-    } else if (!hidden) {
-      // Pin is suppressed on hidden rows: pinning would clear `hidden` and
-      // reintroduce the item, bypassing the hide-shields-pin rule (SPEC.md
-      // *Shields*). Same reason swipe-left is blocked on a hidden row.
+    } else {
       items.push({ key: 'pin', label: 'Pin', onSelect: handlePin });
     }
-    // Hide is suppressed on pinned rows (same rule as swipe-right) and on
-    // already-hidden rows (nothing to do).
-    if (!pinned && !hidden) {
-      items.push({ key: 'hide', label: 'Hide', onSelect: handleHide });
+    // Done is suppressed on pinned rows (same rule as swipe-right).
+    if (!pinned) {
+      items.push({ key: 'hide', label: 'Done', onSelect: handleHide });
     }
     if (opened) {
       items.push({
@@ -113,7 +108,6 @@ export function ItemRow({
     return items;
   }, [
     pinned,
-    hidden,
     opened,
     onShare,
     handlePin,
@@ -181,15 +175,13 @@ export function ItemRow({
   const leftHint = pinned
     ? { label: 'Pinned', testId: 'swipe-hint-pinned-left' }
     : enableSwipe
-      ? { label: 'Hide', testId: 'swipe-hint-hide' }
+      ? { label: 'Done', testId: 'swipe-hint-done' }
       : null;
-  const rightHint = hidden
-    ? { label: 'Hidden', testId: 'swipe-hint-hidden' }
-    : pinned
-      ? { label: 'Pinned', testId: 'swipe-hint-pinned-right' }
-      : enableSwipe
-        ? { label: 'Pin', testId: 'swipe-hint-pin' }
-        : null;
+  const rightHint = pinned
+    ? { label: 'Pinned', testId: 'swipe-hint-pinned-right' }
+    : enableSwipe
+      ? { label: 'Pin', testId: 'swipe-hint-pin' }
+      : null;
 
   const pinLabel = pinned ? `Unpin ${title}` : `Pin ${title}`;
 

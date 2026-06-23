@@ -12,6 +12,8 @@ export function useItemState(id: ItemId): {
   state: ItemState;
   set: (field: ItemStateField, value: boolean) => void;
   toggle: (field: ItemStateField) => void;
+  /** Dismiss the item (marks done, records an undo point for the toolbar). */
+  hide: () => void;
 } {
   const ds = useDataSource();
   const store = ds.stateStore;
@@ -36,7 +38,11 @@ export function useItemState(id: ItemId): {
     [store, id],
   );
 
-  return { state, set, toggle };
+  const hide = useCallback(() => {
+    store.hide(id);
+  }, [store, id]);
+
+  return { state, set, toggle, hide };
 }
 
 /** Snapshot of every item's id that currently holds `field` (used by library
