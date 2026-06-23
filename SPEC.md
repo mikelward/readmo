@@ -403,9 +403,12 @@ loopback/link-local/private/metadata targets and redirects to them.
 - Sign in with Google / Discord (Apple deferred). No password handled by us. Sessions
   are Supabase's HTTP-only refresh-token cookies; the access token is attached
   to API/DB calls.
-- First launch (no session) routes to a clean sign-in screen (one-liner +
-  OAuth buttons + short privacy disclosure). Deep links round-trip through
-  sign-in then land on the target.
+- First launch (no session) routes to the sign-in page. The page shows a
+  static feed preview (hero mockup of article rows) alongside the sign-in
+  card (tagline + OAuth buttons + short privacy disclosure) so visitors
+  understand the product before signing in. On mobile the hero stacks above
+  the card; on desktop (≥720 px) they sit side-by-side. Deep links
+  round-trip through sign-in then land on the target.
 - **Account UI = header chip** (mirrors newshacker): one always-visible
   control, far right, 44×44+, every page. Signed out → "Sign in". Signed in →
   32px avatar (OAuth picture, falling back to an initial-on-color disc —

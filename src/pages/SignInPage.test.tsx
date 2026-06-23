@@ -51,6 +51,13 @@ describe('SignInPage', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/');
   });
 
+  it('renders the feed preview hero when signed out', () => {
+    renderAt({ pathname: '/signin' });
+    expect(document.querySelector('.signin__hero')).not.toBeNull();
+    const rows = document.querySelectorAll('.signin__mock-row');
+    expect(rows.length).toBeGreaterThan(0);
+  });
+
   it('redirects an already-signed-in user off /signin to the saved target', () => {
     // Signed in (mock default): no buttons, straight to the deep-link target.
     window.localStorage.removeItem(MOCK_SIGNED_OUT_KEY);
