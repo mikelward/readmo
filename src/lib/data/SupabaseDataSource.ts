@@ -11,6 +11,7 @@ import {
   type ItemState,
   type Subscription,
 } from '../types';
+import type { FullTextResult, FullTextStatus } from '../fullText';
 import { getSupabase } from '../supabase/client';
 import { OUTBOX_SUFFIX } from '../userCache';
 import { ItemStateStore, localStoragePersistence } from './itemState';
@@ -45,6 +46,12 @@ const FEED_COLS =
   'id, site_url, title, last_fetched_at, next_fetch_at, fetch_interval_s, error_count, last_error, created_at';
 const ITEM_COLS =
   'id, feed_id, guid, url, title, author, published_at, content_html, summary, enclosures, content_hash, created_at';
+// The reader (getItem) additionally needs the cached full-article body. List /
+// search / library reads deliberately OMIT it: those rows only need metadata +
+// the feed snippet, and pulling every cached full article into a 50-result
+// search or a large library bucket would bloat the payload and the persisted
+// (user-scoped) React Query cache. Only the single-item detail read fetches it.
+const ITEM_DETAIL_COLS = `${ITEM_COLS}, full_content_html`;
 const ITEM_STATE_COLS =
   'item_id, pinned, pinned_at, favorite, favorite_at, done, done_at, hidden, hidden_at, opened, opened_at, version';
 const SUBSCRIPTION_COLS = 'feed_id, folder, title_override, muted, sort';
@@ -437,11 +444,33 @@ export class SupabaseDataSource implements DataSource {
 
   async getItem(id: ItemId): Promise<FeedItem | null> {
     const row = this.unwrap<ItemRow | null>(
-      await this.sb.from('items').select(ITEM_COLS).eq('id', id).maybeSingle(),
+      await this.sb.from('items').select(ITEM_DETAIL_COLS).eq('id', id).maybeSingle(),
     );
     if (!row) return null;
     const [fi] = await this.resolveFeedItems([row]);
     return fi ?? null;
+  }
+
+  async fetchFullText(id: ItemId): Promise<FullTextResult> {
+    const { data, error } = await this.sb.functions.invoke('fulltext', {
+      body: { itemId: id },
+    });
+    // Any invoke failure (signed-out, item not visible, function error) degrades
+    // to "unreachable" so the reader simply falls back to the feed body rather
+    // than surfacing an error — reading mode is a progressive enhancement.
+    if (error) return { status: 'unreachable', contentHtml: null };
+    const rec = data as { status?: string; contentHtml?: string | null } | null;
+    const status: FullTextStatus =
+      rec?.status === 'ok' ||
+      rec?.status === 'empty' ||
+      rec?.status === 'auth' ||
+      rec?.status === 'unreachable'
+        ? rec.status
+        : 'unreachable';
+    return {
+      status,
+      contentHtml: status === 'ok' ? (rec?.contentHtml ?? null) : null,
+    };
   }
 
   async getItemsByIds(ids: ItemId[]): Promise<FeedItem[]> {

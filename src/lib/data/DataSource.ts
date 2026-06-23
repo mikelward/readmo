@@ -7,6 +7,7 @@ import type {
   ItemId,
   Subscription,
 } from '../types';
+import type { FullTextResult } from '../fullText';
 import type { ItemStateStore } from './itemState';
 
 export interface Page<T> {
@@ -82,6 +83,12 @@ export interface DataSource {
   /** Resolve arbitrary ids (used by library views, which span feeds). */
   getItemsByIds(ids: ItemId[]): Promise<FeedItem[]>;
   search(query: string): Promise<FeedItem[]>;
+  /** Fetch (or return the cached) full-article body for an item — the reader's
+   * reading-mode view for feeds that publish only a truncated stub. The server
+   * extracts the article from its source page, sanitizes it, and caches it on
+   * the shared item. Returns a typed outcome so the reader can render the right
+   * thing for a paywall/teaser/unreachable page rather than a hard failure. */
+  fetchFullText(id: ItemId): Promise<FullTextResult>;
 
   // --- Subscriptions & organization ----------------------------------------
   getSubscriptions(): Promise<Array<{ subscription: Subscription; feed: Feed }>>;

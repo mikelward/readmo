@@ -166,6 +166,45 @@
   color: var(--rm-meta);
 }
 
+/* Reading-mode bar: sits between the header and the body, carrying the
+   reading-view/feed-version toggle, the loading hint, or a fallback note. */
+.reader__modebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--rm-tap);
+  padding: 0 16px;
+}
+
+.reader__modebar:empty {
+  display: none;
+}
+
+.reader__mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--rm-tap);
+  padding: 6px 12px;
+  border: 1px solid var(--rm-border);
+  background: var(--rm-bg-card);
+  color: var(--rm-accent);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .reader__mode-toggle:hover {
+    background: var(--rm-bg);
+  }
+}
+
+.reader__mode-note {
+  font-size: 0.85rem;
+  color: var(--rm-meta);
+}
+
 .reader__body {
   padding: 8px 16px 32px;
   font-size: 15px;

@@ -43,6 +43,11 @@ export interface Item {
   publishedAt: number;
   contentHtml: string;
   summary: string | null;
+  /** Sanitized full-article HTML extracted server-side (reading mode), or null
+   * until a successful extraction has been cached. Distinct from `contentHtml`
+   * (the feed's own body, which is often a truncated stub). See
+   * `lib/fullText.ts` and the `fulltext` Edge Function. */
+  fullContentHtml: string | null;
   enclosures: Enclosure[];
 }
 

@@ -237,7 +237,8 @@ feeds         (id, url UNIQUE, secret_url, site_url, title, etag,
                last_modified, last_fetched_at, next_fetch_at,
                fetch_interval_s, error_count, last_error)             -- shared across users
 items         (id, feed_id FK, guid, url, title, author, published_at,
-               content_html, summary, enclosures, content_hash,
+               content_html, summary, full_content_html,
+               full_content_fetched_at, enclosures, content_hash,
                created_at,
                sort_at = coalesce(published_at, created_at))          -- shared; UNIQUE(feed_id, guid)
 subscriptions (user_id FK, feed_id FK, folder, title_override,
@@ -670,6 +671,32 @@ page's discipline is unchanged.
   Direct-child `<table>` elements (Reddit and similar feeds embed a thumbnail
   in a layout table) are reflowed as a block stack so the image leads
   full-bleed above the text summary.
+- **Full-text reading mode (default):** many feeds publish only a truncated
+  stub as `content_html`. When the feed body looks truncated (no body, or under
+  ~600 chars of visible text — see `src/lib/fullText.ts:looksTruncated`) the
+  reader automatically fetches the full article from its source via the
+  `fulltext` Edge Function and shows that by default, falling back to the feed
+  body. The function fetches through the SSRF-hardened helper, extracts the
+  article with Readability, **sanitizes the extracted HTML** (same path as the
+  feed body — guardrail #6; never stores/serves raw publisher HTML), and caches
+  the result on the shared item (`items.full_content_html`) so later opens — on
+  any device, for any subscriber to the same item — are served from cache.
+  - A **reading-view / feed-version toggle** appears when both bodies exist; the
+    reading view is the default. Feeds whose body is already complete are not
+    auto-fetched but offer a **"Get full article"** control.
+  - **Outcomes** (the function returns `{ status, contentHtml }`): `ok`,
+    `empty` (paywall/teaser — nothing article-like found), `auth` (publisher
+    gated the page even via the Jina fallback → the reader keeps the feed body
+    and shows "needs sign-in — open the original"), `unreachable` (fetch
+    failed). Login-gated/paywalled articles cannot be rendered by any reading
+    mode (the user's session lives only in their own browser at the publisher's
+    origin); **Open original** stays the tool for those.
+  - **Cost & reliability (guardrail #5):** the only outbound call is the
+    publisher fetch (same class as the poller) plus the existing `r.jina.ai`
+    403-fallback (already documented) — **no new paid service; cost negligible.**
+    Latency is +1–3 s on the first open of a truncated item, then cache-instant.
+    Works on most normal article sites; SPA/JS-rendered pages and paywalls fall
+    back to the feed body + Open original.
 - **Reading affordances:** comfortable measure, paper surface, light/dark,
   `prefers-reduced-motion`.
 
@@ -922,9 +949,31 @@ keys differ; the strategies map one-to-one:
   with usage data (same standing TODO as newshacker).
 - **Realtime sync** — ship in MVP or rely on refetch-on-focus + PTR? (Leaning
   defer.)
-- **Per-feed full-text fetch** — Readability extraction for feeds that truncate
-  (the only server fetch of *article* pages; opt-in per feed; through the
-  SSRF-hardened helper).
+- **Full-text fetch — shipped (lazy, on open).** Readability extraction for
+  truncated feeds is now the reader default (see *Reader view → Full-text reading
+  mode*), keyed off a per-item truncation heuristic rather than a per-feed
+  opt-in. It fetches **only when the reader is opened** (no eager/poller
+  prefetch). Deferred follow-ups:
+  - **TODO — fetch + persist the readable article for offline on pin.** Pinned
+    (and favorited) items are the offline buckets; today pinning an *unopened*
+    truncated item saves only the feed stub. On pin, trigger `fetchFullText`
+    and persist `full_content_html` into the device's offline cache alongside
+    `content_html` + proxied images, so the saved copy is the reading version.
+  - **TODO — sync the readable version across a user's devices.** The extracted
+    body is cached on the shared `items` row server-side, so any device that
+    *re-reads* the item gets it; the offline/IndexedDB copy is currently
+    per-device. Fold full-text into the offline/sync milestone so a pin on one
+    device makes the readable body available offline on the others.
+  - **TODO — invalidate cached full text when the source article changes.** The
+    poller/refresh upserts on `(feed_id, guid)` and can update `content_html`
+    without clearing `full_content_html` (the `fulltext` function is its only
+    writer), so an edited article keeps serving stale reading-mode text. Proper
+    fix depends on real edit detection — `content_hash` is currently just the
+    guid, not a body hash — so wire that up first, then clear/refresh
+    `full_content_html` when the body hash changes.
+  - Smaller: per-feed override (force on/off), poller pre-fetch for known
+    truncating feeds, and caching `empty`/`auth` outcomes (vs. only terminal
+    React-Query caching client-side today) to avoid re-fetching hopeless pages.
 - **Push notifications / Periodic Background Sync** — deferred; the poller is
   the natural trigger.
 

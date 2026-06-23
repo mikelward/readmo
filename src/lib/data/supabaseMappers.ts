@@ -70,6 +70,7 @@ export interface ItemRow {
   published_at: string | null;
   content_html: string | null;
   summary: string | null;
+  full_content_html?: string | null;
   enclosures: unknown;
   content_hash: string | null;
   created_at: string | null;
@@ -147,6 +148,7 @@ export function mapItem(row: ItemRow): Item {
     publishedAt: tsToMs(row.published_at) ?? tsToMs(row.created_at) ?? 0,
     contentHtml: row.content_html ?? '',
     summary: row.summary ?? null,
+    fullContentHtml: row.full_content_html ?? null,
     enclosures: mapEnclosures(row.enclosures),
   };
 }

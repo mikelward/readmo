@@ -18,6 +18,7 @@ const FEED_ITEM: FeedItem = {
     publishedAt: Date.now() - 2 * 60 * 60 * 1000,
     contentHtml: '<p>Body</p>',
     summary: null,
+    fullContentHtml: null,
     enclosures: [],
   },
   feed: {
