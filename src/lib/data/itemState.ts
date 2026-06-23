@@ -201,7 +201,9 @@ export class ItemStateStore {
     const map: typeof loaded = {};
     for (const [id, state] of Object.entries(loaded)) {
       if (state.hidden && !state.done) {
-        map[id] = applyMutation(state, 'done', true, now);
+        // Also clear hidden/hiddenAt so "Unmark done" / "Forget all" on the
+        // Done page leaves the item fully visible again rather than re-hiding it.
+        map[id] = { ...applyMutation(state, 'done', true, now), hidden: false, hiddenAt: null };
         migrated = true;
       } else {
         map[id] = state;
