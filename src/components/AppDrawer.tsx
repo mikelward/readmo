@@ -41,20 +41,16 @@ const PALETTE_OPTIONS: Array<{ value: Palette; label: string }> = [
   { value: 'turquoise', label: 'Turquoise' },
 ];
 
-const PRIMARY_LINKS = [
-  { to: '/', label: 'Home', end: true },
+const LIBRARY_LINKS = [
   { to: '/pinned', label: 'Pinned' },
   { to: '/favorites', label: 'Favorites' },
   { to: '/done', label: 'Done' },
   { to: '/hidden', label: 'Hidden' },
   { to: '/opened', label: 'Opened' },
   { to: '/offline', label: 'Offline' },
-  { to: '/settings', label: 'Settings' },
 ];
 
-/** Navigation drawer. Holds the primary nav, the per-folder feed list, and
- * the Home picker (swaps what `/` renders without changing the URL). The
- * drawer is navigation-only — the account chip lives in the header. */
+/** Navigation drawer — Home picker, Library, Appearance, Folders, Feeds, App. */
 export function AppDrawer({ open, onClose }: Props) {
   const ds = useDataSource();
   const { homeFeed, setHomeFeed } = useHomeFeed();
@@ -84,12 +80,57 @@ export function AppDrawer({ open, onClose }: Props) {
     <div className="app-drawer" role="dialog" aria-label="Navigation" aria-modal="true">
       <div className="app-drawer__backdrop" onClick={onClose} />
       <nav className="app-drawer__panel" onClick={onClose}>
+
         <div className="app-drawer__section">
-          {PRIMARY_LINKS.map((l) => (
+          <div className="app-drawer__heading">Home</div>
+          <NavLink
+            to="/"
+            end
+            className={({ isActive }) =>
+              'app-drawer__link' + (isActive ? ' app-drawer__link--active' : '')
+            }
+          >
+            Home
+          </NavLink>
+          <button
+            type="button"
+            className={
+              'app-drawer__link app-drawer__link--button' +
+              (homeFeed.kind === 'all' ? ' app-drawer__link--option-active' : '')
+            }
+            onClick={(e) => {
+              e.stopPropagation();
+              setHomeFeed({ kind: 'all' });
+            }}
+          >
+            All subscriptions
+          </button>
+          {folders.map((f) => (
+            <button
+              key={f.name}
+              type="button"
+              className={
+                'app-drawer__link app-drawer__link--button' +
+                (homeFeed.kind === 'folder' && homeFeed.name === f.name
+                  ? ' app-drawer__link--option-active'
+                  : '')
+              }
+              onClick={(e) => {
+                e.stopPropagation();
+                setHomeFeed({ kind: 'folder', name: f.name });
+              }}
+            >
+              {f.name}
+            </button>
+          ))}
+        </div>
+
+        <div className="app-drawer__section">
+          <div className="app-drawer__heading">Library</div>
+          {LIBRARY_LINKS.map((l) => (
             <NavLink
               key={l.to}
               to={l.to}
-              end={l.end}
               className={({ isActive }) =>
                 'app-drawer__link' + (isActive ? ' app-drawer__link--active' : '')
               }
@@ -137,53 +178,20 @@ export function AppDrawer({ open, onClose }: Props) {
           </div>
         </div>
 
-        <div className="app-drawer__section">
-          <div className="app-drawer__heading">Home feed</div>
-          <button
-            type="button"
-            className={
-              'app-drawer__link app-drawer__link--button' +
-              (homeFeed.kind === 'all' ? ' app-drawer__link--active' : '')
-            }
-            onClick={(e) => {
-              e.stopPropagation();
-              setHomeFeed({ kind: 'all' });
-            }}
-          >
-            All subscriptions
-          </button>
-          {folders.map((f) => (
-            <button
-              key={f.name}
-              type="button"
-              className={
-                'app-drawer__link app-drawer__link--button' +
-                (homeFeed.kind === 'folder' && homeFeed.name === f.name
-                  ? ' app-drawer__link--active'
-                  : '')
-              }
-              onClick={(e) => {
-                e.stopPropagation();
-                setHomeFeed({ kind: 'folder', name: f.name });
-              }}
-            >
-              {f.name}
-            </button>
-          ))}
-        </div>
-
-        <div className="app-drawer__section">
-          <div className="app-drawer__heading">Folders</div>
-          {folders.map((f) => (
-            <NavLink
-              key={f.name}
-              to={`/folder/${encodeURIComponent(f.name)}`}
-              className="app-drawer__link"
-            >
-              {f.name}
-            </NavLink>
-          ))}
-        </div>
+        {folders.length > 0 && (
+          <div className="app-drawer__section">
+            <div className="app-drawer__heading">Folders</div>
+            {folders.map((f) => (
+              <NavLink
+                key={f.name}
+                to={`/folder/${encodeURIComponent(f.name)}`}
+                className="app-drawer__link"
+              >
+                {f.name}
+              </NavLink>
+            ))}
+          </div>
+        )}
 
         <div className="app-drawer__section">
           <div className="app-drawer__heading">Feeds</div>
@@ -208,6 +216,27 @@ export function AppDrawer({ open, onClose }: Props) {
             </NavLink>
           ))}
         </div>
+
+        <div className="app-drawer__section">
+          <div className="app-drawer__heading">App</div>
+          <NavLink
+            to="/settings"
+            className={({ isActive }) =>
+              'app-drawer__link' + (isActive ? ' app-drawer__link--active' : '')
+            }
+          >
+            Settings
+          </NavLink>
+          <NavLink
+            to="/debug"
+            className={({ isActive }) =>
+              'app-drawer__link' + (isActive ? ' app-drawer__link--active' : '')
+            }
+          >
+            Debug
+          </NavLink>
+        </div>
+
       </nav>
     </div>
   );
