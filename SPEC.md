@@ -654,6 +654,10 @@ page's discipline is unchanged.
 - **Body:** the sanitized `content_html`; images lazy-load (proxied — see
   *Privacy*); relative URLs already absolutized. Enclosures render
   appropriately (`<audio>` for podcasts, image/figure, else a download link).
+  **Standalone images** — direct children of the body or wrapped in `<figure>`
+  or `<picture>` — are full-bleed (edge-to-edge on mobile, full feed-column
+  width on desktop). Inline images inside `<p>`, `<li>`, etc. keep their
+  natural size. `<figcaption>` text is inset 16px to align with body copy.
 - **Reading affordances:** comfortable measure, paper surface, light/dark,
   `prefers-reduced-motion`.
 
