@@ -167,7 +167,10 @@ Deno runtime. **You must pass the import map when serving/deploying.**
 # Local serve (one function), with the import map:
 supabase functions serve discover --import-map supabase/functions/import_map.json
 
-# Deploy each function:
+# Deploy all functions at once (uses the Makefile):
+make deploy
+
+# Or deploy individually:
 supabase functions deploy discover --import-map supabase/functions/import_map.json
 supabase functions deploy refresh  --import-map supabase/functions/import_map.json
 supabase functions deploy poll     --import-map supabase/functions/import_map.json
