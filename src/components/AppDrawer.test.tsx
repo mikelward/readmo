@@ -72,13 +72,26 @@ describe('AppDrawer', () => {
   });
 
   describe('Appearance — palette', () => {
-    it('renders Ink, Turquoise, and Indigo buttons', () => {
+    it('renders Ink, Turquoise, Indigo, and Mauve buttons', () => {
       renderDrawer();
       const group = screen.getByRole('radiogroup', { name: 'Palette' });
       expect(group).toBeInTheDocument();
       expect(screen.getByRole('radio', { name: 'Ink' })).toBeInTheDocument();
       expect(screen.getByRole('radio', { name: 'Turquoise' })).toBeInTheDocument();
       expect(screen.getByRole('radio', { name: 'Indigo' })).toBeInTheDocument();
+      expect(screen.getByRole('radio', { name: 'Mauve' })).toBeInTheDocument();
+    });
+
+    it('lays the palette swatches out as a 2-up grid, not one flex row', () => {
+      // Guardrail: keep at most a couple of tap zones per row. With four
+      // palettes a single flex row would crowd four tappables onto one line at
+      // normal drawer widths, so the palette control opts into a 2-column grid
+      // while the mode (light/dark/system) row stays a flex row.
+      renderDrawer();
+      const palette = screen.getByRole('radiogroup', { name: 'Palette' });
+      expect(palette).toHaveClass('app-drawer__segmented--grid');
+      const mode = screen.getByRole('radiogroup', { name: 'Mode' });
+      expect(mode).not.toHaveClass('app-drawer__segmented--grid');
     });
 
     it('shows each palette as a color swatch rather than a text label', () => {

@@ -176,7 +176,7 @@ export function AppDrawer({ open, onClose }: Props) {
               </TooltipButton>
             ))}
           </div>
-          <div className="app-drawer__segmented" role="radiogroup" aria-label="Palette">
+          <div className="app-drawer__segmented app-drawer__segmented--grid" role="radiogroup" aria-label="Palette">
             {PALETTE_OPTIONS.map((opt) => (
               <TooltipButton
                 key={opt.value}

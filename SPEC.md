@@ -120,19 +120,27 @@ Everything else about the visual system mirrors newshacker.
   insets reserve space for landscape-iPhone notches on the edge controls.
 - **Navigation drawer sections:** Home (feed picker — All subscriptions or a folder), Library (Pinned / Favorites / Done / Hidden / Opened / Offline), Appearance (mode + palette segmented controls), Folders (folder nav, hidden when none exist), Feeds (subscription list), App (Settings, Debug).
 - **Dark mode:** full light/dark/system via tokens.
-- **Palette:** three color families selectable in the drawer's Appearance section (and also in Settings), orthogonal to the
+- **Palette:** four color families selectable in the drawer's Appearance section (and also in Settings), orthogonal to the
   light/dark/**mode** axis — **Ink** (default, the monochrome ink-on-paper above),
   **Turquoise** (a soft turquoise: teal accent `--rm-accent: #0e7c74` light /
-  `#5ed6c9` dark on faintly turquoise-tinted paper), and **Indigo** (a deep
+  `#5ed6c9` dark on faintly turquoise-tinted paper), **Indigo** (a deep
   indigo accent `--rm-accent: #4338ca` light / `#a5b4fc` dark on faintly
-  indigo-tinted paper); all clear 4.5:1. Mode drives
+  indigo-tinted paper), and **Mauve** (a soothing soft pink: plum accent
+  `--rm-accent: #923b67` light / `#e3a6cb` dark on faintly mauve-tinted paper);
+  all clear 4.5:1. Mode drives
   the `data-theme` attribute, palette drives `data-palette`; each palette ships
   its own light and dark variants. The brand mark's tile follows the palette
-  (ink tile by default, teal under Turquoise, indigo under Indigo) via the
-  `--rm-brand-tile` / `--rm-brand-fg` tokens. In the drawer the palette picker
+  (ink tile by default, teal under Turquoise, indigo under Indigo, plum under
+  Mauve) via the `--rm-brand-tile` / `--rm-brand-fg` tokens. **Exception:** under
+  Mauve the tile tracks the *accent* across modes (plum in light, light
+  mauve-pink in dark, with a dark `--rm-brand-fg` "R") so the logo always
+  matches the "Open original" button — the other palettes instead freeze the
+  tile to one dark accent for both modes. In the drawer the palette picker
   renders each option as a two-tone color **swatch** (paper background + accent,
   split on the diagonal) rather than a text label, with the active palette's
-  swatch ringed; Settings keeps the text buttons.
+  swatch ringed, laid out as a **two-column grid** (at most two swatches per
+  row, so the four-plus palettes don't crowd a single row of tappables — the
+  mode row above stays a row of three); Settings keeps the text buttons.
 - Icons inlined monochrome SVG (Material Symbols, `fill="currentColor"`), no
   icon font / runtime request.
 
@@ -593,7 +601,7 @@ loopback/link-local/private/metadata targets and redirects to them.
    right-actions group, suppressed on `/search`. Same placement.
 
 10. **Settings** — `/settings`: subscriptions/folders, OPML in/out, theme
-    (light/dark/system), palette (Ink/Turquoise), account/sign-out. Theme and
+    (light/dark/system), palette (Ink/Turquoise/Indigo/Mauve), account/sign-out. Theme and
     palette are also accessible directly in the drawer's **Appearance** section.
 
 11. **Keyboard shortcuts** — same letter scheme (see below).

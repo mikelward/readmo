@@ -141,7 +141,7 @@ export function SettingsPage() {
   };
 
   const themes: Theme[] = ['light', 'dark', 'system'];
-  const palettes: Palette[] = ['ink', 'turquoise', 'indigo'];
+  const palettes: Palette[] = ['ink', 'turquoise', 'indigo', 'mauve'];
 
   return (
     <div className="settings">

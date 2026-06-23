@@ -92,6 +92,11 @@
 
 .app-drawer__segmented {
   display: flex;
+  /* Wrap rather than let buttons squeeze under the 44px tap floor: the mode
+     row (light/dark/system) stays one line at any realistic width, but
+     wrapping is a safety net on ultra-narrow viewports. The palette control
+     opts into a 2-up grid instead (see --grid below). */
+  flex-wrap: wrap;
   gap: 8px;
   margin: 4px 8px 8px;
   padding: 4px;
@@ -100,8 +105,22 @@
   border-radius: 8px;
 }
 
+/* Palette picker: a two-column grid so at most two swatches share a row. With
+   four palettes a single flex row would put four tappables on one line at
+   normal drawer widths; the contributor guide caps tap zones per row, so we
+   force a 2-up layout (2x2 today, growing downward as palettes are added)
+   rather than a crowded single row. */
+.app-drawer__segmented--grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+}
+
 .app-drawer__segmented-btn {
-  flex: 1 1 0;
+  /* min-width holds the 44px tap floor; flex-grow still fills the mode row on
+     normal widths. In the palette grid the flex props are inert and each grid
+     cell stretches the button to fill its column. */
+  flex: 1 1 var(--rm-tap);
+  min-width: var(--rm-tap);
   min-height: var(--rm-tap);
   padding: 8px 4px;
   display: inline-flex;

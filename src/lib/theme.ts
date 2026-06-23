@@ -7,16 +7,17 @@ export const THEME_CHANGE_EVENT = 'readmo:themeChanged';
 // drives the `data-theme` attribute; palette drives `data-palette`. `global.css`
 // combines them (e.g. `:root[data-palette='turquoise'][data-theme='dark']`).
 export type Theme = 'light' | 'dark' | 'system';
-export type Palette = 'ink' | 'turquoise' | 'indigo';
+export type Palette = 'ink' | 'turquoise' | 'indigo' | 'mauve';
 
 const THEMES: readonly Theme[] = ['light', 'dark', 'system'];
-const PALETTES: readonly Palette[] = ['ink', 'turquoise', 'indigo'];
+const PALETTES: readonly Palette[] = ['ink', 'turquoise', 'indigo', 'mauve'];
 
 // Display names for each palette, used by the drawer/settings pickers.
 export const PALETTE_LABELS: Record<Palette, string> = {
   ink: 'Ink',
   turquoise: 'Turquoise',
   indigo: 'Indigo',
+  mauve: 'Mauve',
 };
 
 // Representative light-variant colors for the palette swatch in the picker.
@@ -29,6 +30,7 @@ export const PALETTE_SWATCHES: Record<Palette, { bg: string; accent: string }> =
     ink: { bg: '#faf9f5', accent: '#2b2b2b' },
     turquoise: { bg: '#f1f9f7', accent: '#0e7c74' },
     indigo: { bg: '#f5f5fb', accent: '#4338ca' },
+    mauve: { bg: '#f9f1f5', accent: '#923b67' },
   };
 
 // Ink is the default palette, so it owns the bare `:root`/`[data-theme]` blocks
@@ -79,6 +81,7 @@ const META_THEME_COLORS: Record<Palette, Record<'light' | 'dark', string>> = {
   ink: { light: '#faf9f5', dark: '#14161c' },
   turquoise: { light: '#f1f9f7', dark: '#0f1a18' },
   indigo: { light: '#f5f5fb', dark: '#14141f' },
+  mauve: { light: '#f9f1f5', dark: '#17151b' },
 } as const;
 
 // Keep the browser's address-bar / OS-chrome tint in sync with the
