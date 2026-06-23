@@ -94,6 +94,13 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
   if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
 
   const parsed = parseFeed(new TextDecoder().decode(res.body), feed.url);
+  await service
+    .from('feeds')
+    .update({
+      title: parsed.feedTitle,
+      site_url: parsed.siteUrl,
+    })
+    .eq('id', feed.id);
   const rows = parsed.items.map((it) => ({
     feed_id: feed.id,
     guid: it.guid,
