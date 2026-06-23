@@ -681,6 +681,20 @@ page's discipline is unchanged.
   feed body — guardrail #6; never stores/serves raw publisher HTML), and caches
   the result on the shared item (`items.full_content_html`) so later opens — on
   any device, for any subscriber to the same item — are served from cache.
+  - **Tidies the extracted body** (`cleanArticleHtml` in
+    `supabase/functions/_shared/fulltext.ts`) before it is measured and
+    returned: **(a)** strips site navigation — every `<nav>` /
+    `role="navigation"` element and any link-dense list (≥3 links, ≥75% of its
+    text inside those links, and short menu-label links — average link text ≤40
+    chars, so a link roundup whose entries are article titles is kept) — since
+    Readability otherwise leaks menu bars
+    on hub/homepage URLs (e.g. the BBC homepage's "Home / News / Sport /
+    Weather" lists); and **(b)** drops the body's leading heading when it just
+    repeats the headline the reader already renders above the body (the feed
+    item title is passed into extraction; match is case/punctuation-
+    insensitive). Genuine content lists (few/no links) and section headings are
+    kept; a page that was mostly chrome now falls under the minimum article
+    length and reports `empty`.
   - A **reading-view / feed-version toggle** appears when both bodies exist; the
     reading view is the default. Feeds whose body is already complete are not
     auto-fetched but offer a **"Get full article"** control.

@@ -81,7 +81,7 @@ Deno.serve(async (req: Request) => {
   // RLS-scoped lookup: only resolves if the caller may see this item.
   const { data: item, error } = await userClient
     .from('items')
-    .select('id, feed_id, url, full_content_html')
+    .select('id, feed_id, url, title, full_content_html')
     .eq('id', itemId)
     .maybeSingle();
   if (error) return json({ error: error.message }, 400);
@@ -117,7 +117,9 @@ Deno.serve(async (req: Request) => {
     return json({ status: 'unreachable', contentHtml: null });
   }
 
-  const extracted = extractArticle(body, finalUrl);
+  // Pass the item's title so a body heading that just repeats the headline the
+  // reader already renders above the body is dropped (no duplicated title).
+  const extracted = extractArticle(body, finalUrl, item.title ?? undefined);
   if (!extracted) return json({ status: 'empty', contentHtml: null });
 
   // Sanitize the extracted body before it is stored OR returned (guardrail #6).
