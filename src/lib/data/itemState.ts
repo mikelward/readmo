@@ -294,21 +294,21 @@ export class ItemStateStore {
     return next;
   }
 
-  /** Hide one item, recording an undo point so the toolbar Undo can restore
-   * it. Distinct from `set(id, 'hidden', true)` which is not undoable. */
+  /** Dismiss one item (marks done, records an undo point). Distinct from
+   * `set(id, 'done', true)` which is not undoable. Used for swipe-right. */
   hide(id: ItemId, now: number = Date.now()): void {
     this.hideMany([id], now);
   }
 
-  /** Sweep: hide many items as a single undoable batch (oldest snapshot
-   * wins on restore). No-op when `ids` is empty. */
+  /** Sweep: dismiss many items as done in a single undoable batch. No-op
+   * when `ids` is empty. */
   hideMany(ids: ItemId[], now: number = Date.now()): void {
     if (ids.length === 0) return;
     const batch: UndoBatch = [];
     for (const id of ids) {
       const prev = this.map[id] ?? DEFAULT_ITEM_STATE;
       batch.push([id, this.map[id] ?? null]);
-      const next = applyMutation(prev, 'hidden', true, now);
+      const next = applyMutation(prev, 'done', true, now);
       this.map = { ...this.map, [id]: next };
       this.emitDiff(id, prev, next);
     }

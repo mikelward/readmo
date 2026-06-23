@@ -5,6 +5,7 @@ import { useInViewIds } from '../hooks/useInViewIds';
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
 import { ItemRows } from './ItemRows';
 import { ListToolbar } from './ListToolbar';
+import { PullToRefresh } from './PullToRefresh';
 import { useFeedBar } from './FeedBarContext';
 import './ItemList.css';
 
@@ -59,24 +60,26 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
     <div className="item-list">
       <ListToolbar />
 
-      {isError ? (
-        <div className="item-list__state" role="alert">
-          <p>Couldn’t load items.</p>
-          <button type="button" onClick={() => refetch()}>
-            Retry
-          </button>
-        </div>
-      ) : (
-        <ItemRows
-          items={items}
-          isLoading={isLoading}
-          skeletonCount={6}
-          enableSwipe
-          listRef={listRef}
-          getRowRef={getRowRef}
-          emptyLabel={emptyLabel ?? 'Nothing here yet.'}
-        />
-      )}
+      <PullToRefresh onRefresh={refetch}>
+        {isError ? (
+          <div className="item-list__state" role="alert">
+            <p>Couldn’t load items.</p>
+            <button type="button" onClick={() => refetch()}>
+              Retry
+            </button>
+          </div>
+        ) : (
+          <ItemRows
+            items={items}
+            isLoading={isLoading}
+            skeletonCount={6}
+            enableSwipe
+            listRef={listRef}
+            getRowRef={getRowRef}
+            emptyLabel={emptyLabel ?? 'Nothing here yet.'}
+          />
+        )}
+      </PullToRefresh>
 
       {/* Background-refresh status strip — only when rows are already on
           screen (SPEC.md *Feed views → Background refresh status strip*). */}
@@ -87,7 +90,7 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
       ) : null}
       {items.length > 0 && refreshFailed ? (
         <div className="item-list__refresh item-list__refresh--error" role="alert">
-          Couldn’t refresh.{' '}
+          Couldn't refresh.{' '}
           <button type="button" onClick={() => refetch()}>
             Retry
           </button>

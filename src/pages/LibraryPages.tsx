@@ -9,7 +9,6 @@ import {
   FavoriteFilled,
   MarkUnread,
   PushPinFilled,
-  VisibilityOff,
 } from '../components/icons';
 import type { ItemStateField } from '../lib/types';
 
@@ -96,19 +95,6 @@ export function DonePage() {
       actionLabel="Unmark done"
       actionIcon={<CheckCircleFilled />}
       emptyLabel="Nothing completed yet."
-      forgettable
-    />
-  );
-}
-
-export function HiddenPage() {
-  return (
-    <LibraryPage
-      title="Hidden"
-      field="hidden"
-      actionLabel="Unhide"
-      actionIcon={<VisibilityOff />}
-      emptyLabel="Nothing hidden in the last 7 days."
       forgettable
     />
   );

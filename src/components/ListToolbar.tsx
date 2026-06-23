@@ -121,8 +121,8 @@ export function ListToolbar({
               data-testid={`undo-btn${placement === 'bottom' ? '-bottom' : ''}`}
               onClick={canUndo ? () => store.undoLast() : undefined}
               disabled={!canUndo}
-              tooltip={canUndo ? 'Undo hide' : 'Nothing to undo'}
-              aria-label={canUndo ? 'Undo hide' : 'Nothing to undo'}
+              tooltip={canUndo ? 'Undo' : 'Nothing to undo'}
+              aria-label={canUndo ? 'Undo' : 'Nothing to undo'}
             >
               <UndoIcon />
             </TooltipButton>
@@ -132,8 +132,8 @@ export function ListToolbar({
               data-testid={`sweep-btn${placement === 'bottom' ? '-bottom' : ''}`}
               onClick={canSweep ? sweep : undefined}
               disabled={!canSweep}
-              tooltip={canSweep ? 'Hide unpinned' : 'Nothing to hide'}
-              aria-label={canSweep ? 'Hide unpinned' : 'Nothing to hide'}
+              tooltip={canSweep ? 'Mark all done' : 'Nothing to dismiss'}
+              aria-label={canSweep ? 'Mark all done' : 'Nothing to dismiss'}
             >
               <SweepIcon />
             </TooltipButton>
