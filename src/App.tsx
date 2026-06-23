@@ -19,6 +19,7 @@ import { SearchPage } from './pages/SearchPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { OfflinePage } from './pages/OfflinePage';
 import { SignInPage } from './pages/SignInPage';
+import { DebugPage } from './pages/DebugPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 
 /** Signed-in gate. First launch with no session routes to /signin; deep links
@@ -48,6 +49,8 @@ export default function App() {
       <main className="app-main">
         <Routes>
           <Route path="/signin" element={<SignInPage />} />
+          {/* Open to everyone (no auth gate) — diagnostics only, no secrets. */}
+          <Route path="/debug" element={<DebugPage />} />
           <Route
             path="/*"
             element={

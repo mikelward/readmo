@@ -8,13 +8,32 @@ import { VitePWA } from 'vite-plugin-pwa';
 // the unit tests need.
 const isTest = process.env.VITEST === 'true';
 
-// Captured at config-load time so /settings (and a future /debug) can show
-// "what commit is this bundle from?" without a runtime endpoint. Vercel
-// checks out via git during the build, so `git log` works there; on a
-// shallow checkout / no git we fall back to '' and the UI hides the row.
-function readCommitTime(): string {
+// Build metadata captured at config-load time so /debug (and /settings) can
+// answer "what commit is this bundle from?" without a runtime endpoint. Vercel
+// checks out via git during the build, so `git` works there, and it also sets
+// the VERCEL_* env vars we prefer when present (more reliable than git on a
+// shallow checkout). Anything we can't determine falls back to '' / 0 and the
+// UI hides that row.
+interface BuildInfo {
+  /** 'production' | 'preview' | 'development' (Vercel) or 'local'. */
+  environment: string;
+  /** Short commit SHA, or '' when git metadata is unavailable. */
+  shortSha: string;
+  /** Branch ref the bundle was built from, or ''. */
+  branch: string;
+  /** Commits reachable from HEAD (≈ "commits on main" for production), or 0. */
+  commitCount: number;
+  /** ISO commit timestamp of the deployed bundle, or ''. */
+  commitTime: string;
+  /** First line of the deployed commit's message, or ''. */
+  commitSubject: string;
+  /** ISO timestamp of when this bundle was built. */
+  buildTime: string;
+}
+
+function git(args: string): string {
   try {
-    return execSync('git log -1 --format=%cI', {
+    return execSync(`git ${args}`, {
       stdio: ['ignore', 'pipe', 'ignore'],
     })
       .toString()
@@ -24,8 +43,41 @@ function readCommitTime(): string {
   }
 }
 
-const TEST_BUILD_COMMIT_TIME = '2026-01-01T00:00:00.000Z';
-const buildCommitTime = isTest ? TEST_BUILD_COMMIT_TIME : readCommitTime();
+function readBuildInfo(): BuildInfo {
+  const env = process.env;
+  const environment =
+    env.VERCEL_ENV || (env.NODE_ENV === 'production' ? 'production' : 'local');
+  const shortSha = (env.VERCEL_GIT_COMMIT_SHA || git('rev-parse HEAD')).slice(
+    0,
+    7,
+  );
+  const branch = env.VERCEL_GIT_COMMIT_REF || git('rev-parse --abbrev-ref HEAD');
+  const commitCount = Number(git('rev-list --count HEAD')) || 0;
+  const commitTime = git('log -1 --format=%cI');
+  const commitSubject =
+    env.VERCEL_GIT_COMMIT_MESSAGE?.split('\n')[0] || git('log -1 --format=%s');
+  return {
+    environment,
+    shortSha,
+    branch,
+    commitCount,
+    commitTime,
+    commitSubject,
+    buildTime: new Date().toISOString(),
+  };
+}
+
+const TEST_BUILD_INFO: BuildInfo = {
+  environment: 'test',
+  shortSha: 'abc1234',
+  branch: 'main',
+  commitCount: 42,
+  commitTime: '2026-01-01T00:00:00.000Z',
+  commitSubject: 'Test commit',
+  buildTime: '2026-01-01T00:00:00.000Z',
+};
+
+const buildInfo = isTest ? TEST_BUILD_INFO : readBuildInfo();
 
 export default defineConfig({
   // Expose VITE_* (our own) and NEXT_PUBLIC_* (what the Supabase↔Vercel
@@ -34,7 +86,7 @@ export default defineConfig({
   // prefix, which would leak SERVICE_ROLE/SECRET/JWT/POSTGRES_* secrets.
   envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
   define: {
-    __BUILD_COMMIT_TIME__: JSON.stringify(buildCommitTime),
+    __BUILD_INFO__: JSON.stringify(buildInfo),
   },
   plugins: [
     react(),

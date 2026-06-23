@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
+import { buildInfo, summarizeBuild } from '../lib/buildInfo';
 import { useTheme } from '../hooks/useTheme';
 import { useAuth } from '../hooks/useAuth';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
@@ -211,6 +213,16 @@ export function SettingsPage() {
         ) : (
           <p>You’re signed out.</p>
         )}
+      </section>
+
+      <section className="settings__section">
+        <h2 className="settings__heading">About</h2>
+        <div className="settings__account">
+          <div className="settings__sub-url">{summarizeBuild(buildInfo)}</div>
+          <Link className="settings__btn" to="/debug">
+            Debug
+          </Link>
+        </div>
       </section>
     </div>
   );
