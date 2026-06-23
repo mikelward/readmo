@@ -66,7 +66,7 @@ const LIBRARY_LINKS = [
   { to: '/offline', label: 'Offline' },
 ];
 
-/** Navigation drawer — Home picker, Library, Appearance, Folders, Feeds, App. */
+/** Navigation drawer — Home picker, Library, Folders, Feeds, Appearance, App. */
 export function AppDrawer({ open, onClose }: Props) {
   const ds = useDataSource();
   const { homeFeed, setHomeFeed } = useHomeFeed();
@@ -156,44 +156,6 @@ export function AppDrawer({ open, onClose }: Props) {
           ))}
         </div>
 
-        <div className="app-drawer__section">
-          <div className="app-drawer__heading">Appearance</div>
-          <div className="app-drawer__segmented" role="radiogroup" aria-label="Mode">
-            {THEME_OPTIONS.map((opt) => (
-              <TooltipButton
-                key={opt.value}
-                type="button"
-                role="radio"
-                aria-checked={theme === opt.value}
-                tooltip={opt.label}
-                aria-label={opt.label}
-                className="app-drawer__segmented-btn"
-                data-active={theme === opt.value || undefined}
-                onClick={(e) => { e.stopPropagation(); setTheme(opt.value); }}
-              >
-                <ThemeIcon path={opt.path} />
-              </TooltipButton>
-            ))}
-          </div>
-          <div className="app-drawer__segmented app-drawer__segmented--grid" role="radiogroup" aria-label="Palette">
-            {PALETTE_OPTIONS.map((opt) => (
-              <TooltipButton
-                key={opt.value}
-                type="button"
-                role="radio"
-                aria-checked={palette === opt.value}
-                tooltip={opt.label}
-                aria-label={opt.label}
-                className="app-drawer__segmented-btn"
-                data-active={palette === opt.value || undefined}
-                onClick={(e) => { e.stopPropagation(); setPalette(opt.value); }}
-              >
-                <PaletteSwatch palette={opt.value} />
-              </TooltipButton>
-            ))}
-          </div>
-        </div>
-
         {folders.length > 0 && (
           <div className="app-drawer__section">
             <div className="app-drawer__heading">Folders</div>
@@ -231,6 +193,44 @@ export function AppDrawer({ open, onClose }: Props) {
               ) : null}
             </NavLink>
           ))}
+        </div>
+
+        <div className="app-drawer__section">
+          <div className="app-drawer__heading">Appearance</div>
+          <div className="app-drawer__segmented" role="radiogroup" aria-label="Mode">
+            {THEME_OPTIONS.map((opt) => (
+              <TooltipButton
+                key={opt.value}
+                type="button"
+                role="radio"
+                aria-checked={theme === opt.value}
+                tooltip={opt.label}
+                aria-label={opt.label}
+                className="app-drawer__segmented-btn"
+                data-active={theme === opt.value || undefined}
+                onClick={(e) => { e.stopPropagation(); setTheme(opt.value); }}
+              >
+                <ThemeIcon path={opt.path} />
+              </TooltipButton>
+            ))}
+          </div>
+          <div className="app-drawer__segmented app-drawer__segmented--grid" role="radiogroup" aria-label="Palette">
+            {PALETTE_OPTIONS.map((opt) => (
+              <TooltipButton
+                key={opt.value}
+                type="button"
+                role="radio"
+                aria-checked={palette === opt.value}
+                tooltip={opt.label}
+                aria-label={opt.label}
+                className="app-drawer__segmented-btn"
+                data-active={palette === opt.value || undefined}
+                onClick={(e) => { e.stopPropagation(); setPalette(opt.value); }}
+              >
+                <PaletteSwatch palette={opt.value} />
+              </TooltipButton>
+            ))}
+          </div>
         </div>
 
         <div className="app-drawer__section">

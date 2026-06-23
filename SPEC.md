@@ -118,7 +118,7 @@ Everything else about the visual system mirrors newshacker.
   inner (brand mark + wordmark, Offline pill, Search) keeps the 720px
   article column max-width so it aligns with the list below. Safe-area
   insets reserve space for landscape-iPhone notches on the edge controls.
-- **Navigation drawer sections:** Home (feed picker — All subscriptions or a folder), Library (Pinned / Favorites / Done / Opened / Offline), Appearance (mode + palette segmented controls), Folders (folder nav, hidden when none exist), Feeds (subscription list), App (Settings, Debug).
+- **Navigation drawer sections:** Home (feed picker — All subscriptions or a folder), Library (Pinned / Favorites / Done / Opened / Offline), Folders (folder nav, hidden when none exist), Feeds (subscription list), Appearance (mode + palette segmented controls), App (Settings, Debug).
 - **Dark mode:** full light/dark/system via tokens.
 - **Palette:** four color families selectable in the drawer's Appearance section (and also in Settings), orthogonal to the
   light/dark/**mode** axis — **Ink** (default, the monochrome ink-on-paper above),
