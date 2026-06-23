@@ -1,9 +1,13 @@
 IMPORT_MAP := supabase/functions/import_map.json
 
-.PHONY: deploy deploy-discover deploy-refresh deploy-poll deploy-img
+.PHONY: deploy deploy-discover deploy-refresh deploy-poll deploy-img migrate
 
-## Deploy all Edge Functions
-deploy: deploy-discover deploy-refresh deploy-poll deploy-img
+## Run pending database migrations
+migrate:
+	supabase db push
+
+## Deploy all Edge Functions (run migrate first to apply any schema changes)
+deploy: migrate deploy-discover deploy-refresh deploy-poll deploy-img
 
 deploy-discover:
 	supabase functions deploy discover --import-map $(IMPORT_MAP)
