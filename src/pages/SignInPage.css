@@ -72,8 +72,6 @@
   font-size: 0.7rem;
   font-weight: 600;
   color: var(--rm-meta);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .signin__mock-title {
