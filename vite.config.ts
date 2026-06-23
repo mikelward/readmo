@@ -43,6 +43,14 @@ function git(args: string): string {
   }
 }
 
+function gitRun(args: string): void {
+  try {
+    execSync(`git ${args}`, { stdio: 'ignore' });
+  } catch {
+    // ignore — caller checks the result via git()
+  }
+}
+
 function readBuildInfo(): BuildInfo {
   const env = process.env;
   const environment =
@@ -52,7 +60,13 @@ function readBuildInfo(): BuildInfo {
     7,
   );
   const branch = env.VERCEL_GIT_COMMIT_REF || git('rev-parse --abbrev-ref HEAD');
-  const commitCount = Number(git('rev-list --count HEAD')) || 0;
+  if (git('rev-parse --is-shallow-repository') === 'true') {
+    gitRun('fetch --unshallow');
+  }
+  const commitCount =
+    git('rev-parse --is-shallow-repository') === 'true'
+      ? 0
+      : Number(git('rev-list --count HEAD')) || 0;
   const commitTime = git('log -1 --format=%cI');
   const commitSubject =
     env.VERCEL_GIT_COMMIT_MESSAGE?.split('\n')[0] || git('log -1 --format=%s');
