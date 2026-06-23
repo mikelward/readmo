@@ -210,8 +210,11 @@ The functions:
 > `VITE_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`, matching the client in
 > `src/lib/supabase/client.ts`). It never fetches the user-supplied `url`
 > itself — that
-> stays inside the SSRF-hardened `img` function. Make sure `SUPABASE_URL` is
-> set in the Vercel project env. Cost/reliability: negligible — one extra
+> stays inside the SSRF-hardened `img` function. Both the function and the shim
+> refuse `image/svg+xml` (an SVG served same-origin can execute script as a
+> top-level document) and set `X-Content-Type-Options: nosniff` + a
+> `default-src 'none'; sandbox` CSP on the served bytes. Make sure `SUPABASE_URL`
+> is set in the Vercel project env. Cost/reliability: negligible — one extra
 > same-region hop (Vercel → Supabase) on a cache miss, well within Vercel's
 > free Edge invocation tier; on misconfig it returns `503` and images fall back
 > to the broken-image placeholder (no crash).

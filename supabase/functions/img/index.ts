@@ -18,6 +18,15 @@ import { safeFetch, SsrfError } from '../_shared/ssrf.ts';
 const ALLOWED_PREFIX = 'image/';
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
+// SVG is an image type but also an active document: `image/svg+xml` can carry
+// inline <script>, so serving it (even via the same-origin /api/img shim) is a
+// same-origin XSS vector if opened as a top-level document. Refuse it here at
+// the source; the shim enforces the same rule as defense in depth.
+function isServeableImageType(contentType: string): boolean {
+  const type = contentType.toLowerCase().trim();
+  return type.startsWith(ALLOWED_PREFIX) && !type.startsWith('image/svg');
+}
+
 Deno.serve(async (req: Request) => {
   const target = new URL(req.url).searchParams.get('url');
   if (!target) return new Response('Missing url', { status: 400 });
@@ -31,9 +40,9 @@ Deno.serve(async (req: Request) => {
     if (res.status >= 400) return new Response('Upstream error', { status: 502 });
 
     const contentType = res.headers.get('content-type') ?? '';
-    if (!contentType.startsWith(ALLOWED_PREFIX)) {
-      // Refuse non-image responses — strips beacons and blocks content
-      // smuggling through the proxy.
+    if (!isServeableImageType(contentType)) {
+      // Refuse non-image responses (and SVG) — strips beacons, blocks content
+      // smuggling, and closes the same-origin SVG-script XSS vector.
       return new Response('Not an image', { status: 415 });
     }
 
@@ -44,6 +53,10 @@ Deno.serve(async (req: Request) => {
         // Long, immutable cache — the SW also caches this (vite.config.ts
         // StaleWhileRevalidate / CacheFirst).
         'cache-control': 'public, max-age=604800, immutable',
+        // Defense in depth: stop MIME sniffing and neutralize scripts if the
+        // bytes are ever loaded as a top-level document instead of via <img>.
+        'x-content-type-options': 'nosniff',
+        'content-security-policy': "default-src 'none'; sandbox",
       },
     });
   } catch (err) {

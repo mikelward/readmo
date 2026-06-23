@@ -883,6 +883,10 @@ keys differ; the strategies map one-to-one:
   fetches through the SSRF-hardened helper, caches, and serves the bytes, so
   the publisher only sees the proxy. The proxy doubles as the offline-image
   source (*Article images* points at it) and strips third-party pixel beacons.
+  It serves only raster image types — `image/svg+xml` is **refused** (an SVG
+  served same-origin can run inline script as a top-level document) — and sets
+  `X-Content-Type-Options: nosniff` plus a `default-src 'none'; sandbox` CSP on
+  the bytes as defense in depth.
 
 ## Analytics
 

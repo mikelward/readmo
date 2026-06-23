@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
-import { buildUpstreamUrl } from './img.ts';
+import { buildUpstreamUrl, isServeableImageType } from './img.ts';
 
 describe('img proxy — buildUpstreamUrl', () => {
   const base = 'https://abcd1234.supabase.co';
@@ -30,5 +30,29 @@ describe('img proxy — buildUpstreamUrl', () => {
     expect(buildUpstreamUrl(base, data)).toBe(
       `https://abcd1234.supabase.co/functions/v1/img?url=${encodeURIComponent(data)}`,
     );
+  });
+});
+
+describe('img proxy — isServeableImageType', () => {
+  it('accepts raster image types (case- and parameter-insensitive)', () => {
+    expect(isServeableImageType('image/png')).toBe(true);
+    expect(isServeableImageType('image/jpeg')).toBe(true);
+    expect(isServeableImageType('image/webp')).toBe(true);
+    expect(isServeableImageType('IMAGE/PNG')).toBe(true);
+    expect(isServeableImageType('image/avif; charset=binary')).toBe(true);
+  });
+
+  it('rejects SVG — the same-origin script-execution vector', () => {
+    expect(isServeableImageType('image/svg+xml')).toBe(false);
+    expect(isServeableImageType('image/svg+xml; charset=utf-8')).toBe(false);
+    expect(isServeableImageType('IMAGE/SVG+XML')).toBe(false);
+    expect(isServeableImageType(' image/svg ')).toBe(false);
+  });
+
+  it('rejects non-image types and missing content-type', () => {
+    expect(isServeableImageType('text/html')).toBe(false);
+    expect(isServeableImageType('application/xml')).toBe(false);
+    expect(isServeableImageType('')).toBe(false);
+    expect(isServeableImageType(null)).toBe(false);
   });
 });

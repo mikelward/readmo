@@ -21,6 +21,21 @@
 export const config = { runtime: 'edge' };
 
 /**
+ * Whether a response content-type is an image we will serve same-origin.
+ *
+ * SVG is deliberately excluded: `image/svg+xml` can carry inline `<script>`
+ * that executes if `/api/img?url=…evil.svg` is opened as a top-level document
+ * on the Readmo origin — a same-origin XSS with access to our IndexedDB caches
+ * and Supabase session. The upstream `img` function blocks SVG too; this is the
+ * app-origin enforcement point, so it must not depend on that alone.
+ */
+export function isServeableImageType(contentType: string | null): boolean {
+  if (!contentType) return false;
+  const type = contentType.toLowerCase().trim();
+  return type.startsWith('image/') && !type.startsWith('image/svg');
+}
+
+/**
  * Build the upstream Supabase image-proxy URL from the configured base and the
  * caller-supplied target. Returns null when there is no target to proxy.
  * Pure + exported so the routing is unit-tested without a live deployment.
@@ -63,13 +78,25 @@ export default async function handler(req: Request): Promise<Response> {
     return new Response('Proxy error', { status: 502 });
   }
 
+  const contentType = res.headers.get('content-type');
+
+  // Defense in depth: never serve SVG (or any non-image) as same-origin bytes.
+  // Only gate successful responses so the upstream's own 4xx/5xx pass through
+  // with their original status instead of being masked as 415.
+  if (res.ok && !isServeableImageType(contentType)) {
+    return new Response('Unsupported image type', { status: 415 });
+  }
+
   // Pass through the status and image bytes, preserving content-type and the
   // long immutable cache-control the `img` function already sets.
   const headers = new Headers();
-  const contentType = res.headers.get('content-type');
   if (contentType) headers.set('content-type', contentType);
   const cacheControl = res.headers.get('cache-control');
   if (cacheControl) headers.set('cache-control', cacheControl);
+  // Stop MIME sniffing and neutralize any script execution if this response is
+  // ever loaded as a top-level document rather than via <img>.
+  headers.set('x-content-type-options', 'nosniff');
+  headers.set('content-security-policy', "default-src 'none'; sandbox");
 
   return new Response(res.body, { status: res.status, headers });
 }
