@@ -85,10 +85,12 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   // Supabase edge-function gateway requires the anon key on every request.
+  // Mirrors the fallback chain in src/lib/supabase/client.ts.
   const anonKey =
     process.env.SUPABASE_ANON_KEY ??
     process.env.VITE_SUPABASE_ANON_KEY ??
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
   const target = new URL(req.url).searchParams.get('url');
   const upstream = buildUpstreamUrl(base, target);
