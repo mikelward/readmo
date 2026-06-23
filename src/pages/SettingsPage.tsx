@@ -93,13 +93,15 @@ export function SettingsPage() {
     onSuccess: async ({ feed, curatedName }) => {
       selectedSuggestionName.current = null;
       setFeedUrl('');
-      // If the server-side refresh didn't populate the feed (site_url stayed null,
-      // meaning the feed URL couldn't be fetched right now), fall back to the
-      // known curated name so the subscription never shows as "Untitled feed".
+      // If the server-side refresh didn't populate the feed (site_url stayed
+      // null), the built-in refresh inside subscribe() failed silently. Set the
+      // curated name as an override so it never shows as "Untitled feed", then
+      // trigger a fresh refresh so items appear without waiting for the cron.
       if (curatedName && !feed.siteUrl) {
         await ds.setTitleOverride(feed.id, curatedName).catch(() => {});
+        await ds.refresh(feed.id).catch(() => {});
         invalidate();
-        showToast({ message: `Subscribed to ${curatedName} — posts will appear after the first sync` });
+        showToast({ message: `Subscribed to ${curatedName}` });
       } else {
         invalidate();
         showToast({ message: `Subscribed to ${feed.title}` });
