@@ -71,6 +71,20 @@ describe('networkStatus tracker', () => {
       expect(getOnline()).toBe(false);
     });
 
+    it('flips offline when a request is timed out (TimeoutError)', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          throw new DOMException('timed out', 'TimeoutError');
+        }),
+      );
+
+      await expect(trackedFetch('/x')).rejects.toMatchObject({
+        name: 'TimeoutError',
+      });
+      expect(getOnline()).toBe(false);
+    });
+
     it('ignores AbortError — a superseded request is not a connectivity signal', async () => {
       const err = new DOMException('aborted', 'AbortError');
       vi.stubGlobal(
