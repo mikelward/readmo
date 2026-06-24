@@ -24,10 +24,42 @@
   animation: toast-in 160ms ease-out;
 }
 
+.toast__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
 .toast__message {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.toast__details summary {
+  display: flex;
+  align-items: center;
+  /* Matches the sibling toast__action (32px) so the toast's controls are a
+     consistent height. Toasts are a compact, transient surface that already
+     sits below the app's 44px tap floor by design. */
+  min-height: 32px;
+  cursor: pointer;
+  color: var(--rm-toast-action);
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  user-select: none;
+}
+
+.toast__detail-text {
+  margin: 4px 0 0;
+  font-family: var(--rm-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  color: #ffd7d7;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .toast__action {

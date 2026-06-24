@@ -112,6 +112,52 @@ describe('<ToastProvider>', () => {
     expect(screen.getByText('New version available')).toBeInTheDocument();
   });
 
+  it('renders an expandable Details disclosure carrying the error detail', () => {
+    render(
+      <ToastProvider>
+        <Trigger
+          onTrigger={(t) =>
+            t.showToast({
+              message: 'No feed found at that URL.',
+              detail: 'HTTP 404 fetching https://example.com',
+              durationMs: 10_000,
+            })
+          }
+        />
+      </ToastProvider>,
+    );
+    fireEvent.click(screen.getByTestId('trigger'));
+    expect(screen.getByText('No feed found at that URL.')).toBeInTheDocument();
+    // The underlying detail is present (behind the <details> disclosure).
+    expect(screen.getByText('Details')).toBeInTheDocument();
+    expect(
+      screen.getByText('HTTP 404 fetching https://example.com'),
+    ).toBeInTheDocument();
+  });
+
+  it('gives a detail-bearing toast a longer default lifetime so it can be read', () => {
+    render(
+      <ToastProvider>
+        <Trigger
+          onTrigger={(t) =>
+            t.showToast({ message: 'Couldn’t add that feed.', detail: 'boom' })
+          }
+        />
+      </ToastProvider>,
+    );
+    fireEvent.click(screen.getByTestId('trigger'));
+    // Past the 4s default for a plain toast — a detail toast must still be up.
+    act(() => {
+      vi.advanceTimersByTime(4001);
+    });
+    expect(screen.getByText('Couldn’t add that feed.')).toBeInTheDocument();
+    // ...but it isn't sticky forever; it clears by its longer window.
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(screen.queryByText('Couldn’t add that feed.')).toBeNull();
+  });
+
   it('useToast() is a safe no-op with no provider', () => {
     function Consumer() {
       const toast = useToast();

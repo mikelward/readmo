@@ -2,6 +2,11 @@ import { createContext, useContext } from 'react';
 
 export interface ToastOptions {
   message: string;
+  /** Optional underlying detail (e.g. the server error message) shown behind a
+   * "Details" disclosure — the same text handed to console.error, so an error
+   * toast points at the cause on mobile (where the console isn't visible). A
+   * toast carrying a detail stays up longer by default so it can be expanded. */
+  detail?: string;
   actionLabel?: string;
   onAction?: () => void;
   durationMs?: number;

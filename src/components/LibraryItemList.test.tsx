@@ -38,4 +38,39 @@ describe('LibraryItemList', () => {
       await screen.findByText('A foldable phone that actually folds flat, finally'),
     ).toBeInTheDocument();
   });
+
+  it('shows the LoadError miss-state when the batch fetch fails and nothing is cached', async () => {
+    // Persisted pin id but the batch fetch throws AND no per-item cache is
+    // warmed → resolveSavedItems re-throws, so the view surfaces the failure
+    // (with the cause) instead of a misleading "No pinned items." empty label.
+    class DownSource extends MockDataSource {
+      async getItemsByIds(): Promise<never> {
+        throw new Error('backend down');
+      }
+    }
+    const source = new DownSource(`test-${Math.random()}`);
+    source.stateStore.set('item-1', 'pinned', true);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    renderWithProviders(
+      <LibraryItemList
+        field="pinned"
+        actionLabel="Unpin"
+        actionIcon={<PushPinFilled />}
+        emptyLabel="No pinned items."
+      />,
+      { route: '/pinned', source, queryClient },
+    );
+
+    // Names the failure (online → "Unexpected response loading your library")
+    // and surfaces the cause behind Details — not the empty label.
+    expect(
+      await screen.findByText(/unexpected response loading your library/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText('backend down')).toBeInTheDocument();
+    expect(screen.queryByText('No pinned items.')).toBeNull();
+  });
 });

@@ -201,6 +201,29 @@ describe('ItemPage reading mode', () => {
     expect(screen.queryByText(/isn.t saved offline/i)).not.toBeInTheDocument();
   });
 
+  it('names the action and shows the error detail when online but the read errors', async () => {
+    // Online (navigator.onLine true, no network-tracker failure), but the data
+    // layer throws — the server responded with an error. The miss state must
+    // name the action and expose the underlying message, NOT claim the server
+    // "isn't responding" (it did) or that the user is offline.
+    class ErroringSource extends MockDataSource {
+      async getItem(): Promise<FeedItem | null> {
+        throw new Error('column items.sort_at does not exist');
+      }
+    }
+    renderReader(new ErroringSource(`test-${Math.random()}`));
+
+    expect(
+      await screen.findByText(/unexpected response fetching this article/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/isn.t responding/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/isn.t saved offline/i)).not.toBeInTheDocument();
+    // The underlying cause is surfaced (behind the Details disclosure).
+    expect(
+      screen.getByText('column items.sort_at does not exist'),
+    ).toBeInTheDocument();
+  });
+
   it('respects a successful "not visible" miss while online (no stale-cache override)', async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },

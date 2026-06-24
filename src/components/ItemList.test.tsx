@@ -283,9 +283,11 @@ describe('ItemList', () => {
       { source },
     );
 
-    // Error/retry UI, not an exhausted-feed message. Online + errored reads as
-    // a server problem (e.g. an overloaded DB returning 500), not "offline".
-    await screen.findByText(/server isn’t responding/i);
+    // Error/retry UI, not an exhausted-feed message. Online + errored names the
+    // action ("Unexpected response fetching the feed list") — NOT "offline" and
+    // NOT the connectivity "isn't responding" lie, since the server did respond.
+    await screen.findByText(/unexpected response fetching the feed list/i);
+    expect(screen.queryByText(/isn’t responding/i)).toBeNull();
     expect(screen.queryByTestId('more-btn')).toBeNull();
   });
 
@@ -311,8 +313,9 @@ describe('ItemList', () => {
       { source, queryClient },
     );
 
-    // Must show the error/retry UI — NOT the empty label.
-    await screen.findByText(/server isn’t responding/i);
+    // Must show the error/retry UI — NOT the empty label. Online + errored
+    // names the action rather than blaming the connection.
+    await screen.findByText(/unexpected response fetching the feed list/i);
     expect(screen.queryByText(/all caught up/i)).toBeNull();
   });
 

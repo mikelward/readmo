@@ -34,6 +34,11 @@ export function useFeedItems(viewKey: string, fetchPage: FetchPage) {
     items,
     isLoading: query.isLoading,
     isError: query.isError,
+    // The underlying read failure (initial or background refetch). Surfaced so
+    // the view can show the *actual* error rather than a generic connectivity
+    // line, and log it to the console. `query.error` covers both isError and the
+    // background-refresh-failure case (where isError stays false).
+    error: query.error ?? null,
     // Any fetch in flight (initial, refetch, or next-page). Callers that need to
     // avoid starting a *second* fetch — e.g. the reconnect confirm in ItemList —
     // gate on this so they treat an in-flight request as the confirming one

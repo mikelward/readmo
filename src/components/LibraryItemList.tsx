@@ -1,10 +1,13 @@
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useStateBucket } from '../hooks/useItemState';
+import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { resolveSavedItems } from '../lib/offlineItems';
+import { loadFailureCopy } from '../lib/loadErrorCopy';
 import type { ItemStateField } from '../lib/types';
 import { ItemRows } from './ItemRows';
+import { LoadError } from './LoadError';
 
 interface Props {
   /** Which state bucket this view lists. */
@@ -27,6 +30,7 @@ export function LibraryItemList({
 }: Props) {
   const ds = useDataSource();
   const queryClient = useQueryClient();
+  const status = useConnectivityStatus();
   const store = ds.stateStore;
   const ids = useStateBucket(field);
 
@@ -38,9 +42,34 @@ export function LibraryItemList({
     queryFn: () => resolveSavedItems(ds, queryClient, ids),
   });
 
+  // Full error to the console (desktop); the panel below shows the friendly
+  // headline + curated detail for the mobile case.
+  useEffect(() => {
+    if (query.error) console.error('[readmo] loading the library view failed:', query.error);
+  }, [query.error]);
+
+  const libraryItems = query.data ?? [];
+  // A genuine failure with nothing to fall back to (resolveSavedItems already
+  // recovers from the offline caches, so reaching here means even that was
+  // empty). Show the same accurate miss-state the feed views use rather than a
+  // misleading empty label.
+  if (query.isError && libraryItems.length === 0) {
+    const copy = loadFailureCopy(status, query.error, {
+      action: 'loading your library',
+      noun: 'saved items',
+    });
+    return (
+      <LoadError
+        headline={copy.headline}
+        detail={copy.detail}
+        onRetry={() => query.refetch()}
+      />
+    );
+  }
+
   return (
     <ItemRows
-      items={query.data ?? []}
+      items={libraryItems}
       isLoading={query.isLoading}
       emptyLabel={emptyLabel}
       rightAction={(fi) => ({

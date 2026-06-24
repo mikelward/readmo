@@ -5,6 +5,8 @@ import { useFeedItems, type FetchPage } from '../hooks/useFeedItems';
 import { useInViewIds } from '../hooks/useInViewIds';
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
 import { measureStickyBottomInset, measureTopChromeHeight } from '../lib/stickyInset';
+import { loadFailureCopy, presentableDetail } from '../lib/loadErrorCopy';
+import { LoadError } from './LoadError';
 import { checkForServiceWorkerUpdate } from '../lib/swUpdate';
 import { ItemRows } from './ItemRows';
 import { ListToolbar } from './ListToolbar';
@@ -36,7 +38,17 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
     refetch,
     isRefreshing,
     refreshFailed,
+    error,
   } = useFeedItems(viewKey, fetchPage);
+
+  // Surface the FULL read failure in the browser console (desktop debugging) —
+  // the on-screen panel shows a friendly headline + a curated one-line detail,
+  // but the complete error object (PostgREST message, schema mismatch, RLS
+  // denial, stack) lands here. Previously this was swallowed behind generic
+  // "server isn't responding" copy.
+  useEffect(() => {
+    if (error) console.error('[readmo] fetching the feed list failed:', error);
+  }, [error]);
   const listRef = useListKeyboardNav();
   const { registerSweep } = useFeedBar();
   const { inViewIds, getRowRef } = useInViewIds();
@@ -170,20 +182,19 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
 
       <PullToRefresh onRefresh={async () => { await ds.refresh(); await refetch(); await checkForServiceWorkerUpdate(); }}>
         {showMissState ? (
-          <div className="item-list__state" role="alert">
-            {/* Say which failure it is so a server problem doesn't read as the
-                user being offline. 'offline' = the device has no network;
-                anything else (backend unreachable, or a 5xx that still
-                reached us) is a server-side problem they can only wait out. */}
-            <p>
-              {status === 'offline'
-                ? 'You’re offline. Reconnect to load items.'
-                : 'Readmo’s server isn’t responding right now — it may be busy.'}
-            </p>
-            <button type="button" onClick={() => refetch()}>
-              Retry
-            </button>
-          </div>
+          // Copy is a function of BOTH the connectivity status and the actual
+          // read error — not status alone. A reachable read that errored is a
+          // server problem to name (with a curated detail), not the connection
+          // to blame; only a truly unreachable backend gets "isn't responding".
+          (() => {
+            const { headline, detail } = loadFailureCopy(status, error, {
+              action: 'fetching the feed list',
+              noun: 'items',
+            });
+            return (
+              <LoadError headline={headline} detail={detail} onRetry={() => refetch()} />
+            );
+          })()
         ) : (
           <>
             {/* Onboarding hint sits above the rows, but only once items exist —
@@ -221,10 +232,19 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
       ) : null}
       {items.length > 0 && refreshFailed ? (
         <div className="item-list__refresh item-list__refresh--error" role="alert">
-          Couldn't refresh.{' '}
+          Couldn’t refresh.{' '}
           <button type="button" onClick={() => refetch()}>
             Retry
           </button>
+          {/* Rows are still showing (this is a background-refresh failure), so
+              keep it to one line — but tuck the curated cause behind a
+              disclosure so it's reachable on mobile too. */}
+          {presentableDetail(error) ? (
+            <details className="item-list__refresh-details">
+              <summary>Details</summary>
+              <p>{presentableDetail(error)}</p>
+            </details>
+          ) : null}
         </div>
       ) : null}
 

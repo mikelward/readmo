@@ -13,6 +13,7 @@ import { useTheme } from '../hooks/useTheme';
 import { useAuth } from '../hooks/useAuth';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useToast } from '../hooks/useToast';
+import { presentableDetail } from '../lib/loadErrorCopy';
 import type { Palette, Theme } from '../lib/theme';
 import type { Feed } from '../lib/types';
 import './SettingsPage.css';
@@ -32,6 +33,17 @@ const ADD_FEED_MESSAGES: Record<AddFeedErrorKind, string> = {
 function addFeedMessage(err: unknown): string {
   if (err instanceof AddFeedError) return ADD_FEED_MESSAGES[err.kind];
   return ADD_FEED_MESSAGES.unknown;
+}
+
+/** The underlying cause shown behind the toast's "Details" disclosure — the
+ * same text we log. AddFeedError defaults its message to the kind when no server
+ * detail was attached, which is redundant with the headline, so only surface a
+ * real underlying message. */
+function addFeedDetail(err: unknown): string | undefined {
+  if (err instanceof AddFeedError) {
+    return err.message && err.message !== err.kind ? err.message : undefined;
+  }
+  return presentableDetail(err) ?? undefined;
 }
 
 export function SettingsPage() {
@@ -150,7 +162,11 @@ export function SettingsPage() {
       // stale error over a new add) and leave the input/picker as-is to retry.
       if (feeds.length === 0) {
         if (errors[0]) console.warn('Subscribe failed:', errors[0]);
-        if (seq === discoverSeq.current) showToast({ message: addFeedMessage(errors[0]) });
+        if (seq === discoverSeq.current)
+          showToast({
+            message: addFeedMessage(errors[0]),
+            detail: addFeedDetail(errors[0]),
+          });
         return;
       }
       // If a curated feed came back without a real title (RSS fetch hasn't
@@ -191,7 +207,7 @@ export function SettingsPage() {
       // allSettled means mutationFn won't reject for a feed-level failure; this
       // is a safety net for anything unexpected.
       console.warn('Subscribe failed:', err);
-      showToast({ message: addFeedMessage(err) });
+      showToast({ message: addFeedMessage(err), detail: addFeedDetail(err) });
     },
   });
 
@@ -230,7 +246,7 @@ export function SettingsPage() {
       // mirror onSuccess so a superseded discovery's failure can't pop a stale
       // no-feed/unreachable error over the user's new add context.
       if (seq !== discoverSeq.current) return;
-      showToast({ message: addFeedMessage(err) });
+      showToast({ message: addFeedMessage(err), detail: addFeedDetail(err) });
     },
   });
 
