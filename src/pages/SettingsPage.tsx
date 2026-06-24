@@ -1,15 +1,20 @@
-import { useRef, useState, useId } from 'react';
+import { useEffect, useRef, useState, useId } from 'react';
 import { Link } from 'react-router-dom';
 import { POPULAR_FEEDS } from '../lib/popularFeeds';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
-import { AddFeedError, type AddFeedErrorKind } from '../lib/data/DataSource';
+import {
+  AddFeedError,
+  type AddFeedErrorKind,
+  type DiscoveredFeed,
+} from '../lib/data/DataSource';
 import { buildInfo, summarizeBuild } from '../lib/buildInfo';
 import { useTheme } from '../hooks/useTheme';
 import { useAuth } from '../hooks/useAuth';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useToast } from '../hooks/useToast';
 import type { Palette, Theme } from '../lib/theme';
+import type { Feed } from '../lib/types';
 import './SettingsPage.css';
 import './PageHeader.css';
 
@@ -36,10 +41,42 @@ export function SettingsPage() {
   const { user, signOut } = useAuth();
   const { showToast } = useToast();
   const fileRef = useRef<HTMLInputElement | null>(null);
+  // Pending timer for the suggestion-dropdown close-on-blur. Tracked so it can
+  // be cleared on unmount — otherwise it fires after the component is gone and
+  // calls setState on a torn-down tree (in tests: "window is not defined").
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (blurTimer.current) clearTimeout(blurTimer.current);
+  }, []);
   const [feedUrl, setFeedUrl] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [activeIdx, setActiveIdx] = useState(-1);
+  // When discovery finds more than one feed (e.g. a site advertising per-section
+  // feeds — Sport, World news — alongside its main feed), we surface a picker
+  // instead of silently subscribing to the first candidate. `picker` holds the
+  // candidates; `selected` holds the URLs the user has checked.
+  const [picker, setPicker] = useState<DiscoveredFeed[] | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const suggestionsId = useId();
+
+  // Monotonic token for the in-flight discovery request. Discovery can take
+  // seconds (fetch + probe each candidate) while the input stays editable, so a
+  // result must only be applied if it's still the latest request — otherwise a
+  // slow site-A discovery could resolve and open its picker under a since-edited
+  // site-B input. `clearPicker` bumps this, so any context change supersedes a
+  // pending discovery as well as dropping the rendered picker.
+  const discoverSeq = useRef(0);
+
+  // The picker belongs to the exact URL that produced it. Drop it (and any
+  // selection) whenever the add context changes — a new submit, a typed edit,
+  // an autocomplete pick, or cancel — so its rows and the enabled Subscribe
+  // button can never act on a feed set that no longer matches the input, and
+  // invalidate any discovery still in flight for the previous input.
+  const clearPicker = () => {
+    discoverSeq.current += 1;
+    setPicker(null);
+    setSelected(new Set());
+  };
   // True when feedUrl was filled from the curated list; skip discover in that case.
   const isFromSuggestion = useRef(false);
   // Display name of the curated suggestion that was selected, so we can use it
@@ -65,62 +102,171 @@ export function SettingsPage() {
     queryClient.invalidateQueries({ queryKey: ['feed'] });
   };
 
-  const addFeed = useMutation({
-    mutationFn: async (url: string) => {
-      // Capture the curated name synchronously before any await so it can't be
-      // overwritten by the user selecting a different suggestion while this
-      // request is in-flight.
-      const curatedName = isFromSuggestion.current ? selectedSuggestionName.current : null;
-      // Curated suggestions have a known, validated feed URL — subscribe directly
-      // and skip the discover round-trip so a discover outage or bot-block on the
-      // site's homepage can't prevent subscribing to a well-known feed.
-      if (isFromSuggestion.current) {
-        isFromSuggestion.current = false;
-        const feed = await ds.subscribe(url);
-        return { feed, curatedName };
+  // Best-effort post-subscribe bookkeeping shared by every path (curated,
+  // single-candidate, and the multi-select picker): re-fetch the title and fire
+  // a refresh retry. subscribe() awaits refresh() internally, but refresh errors
+  // are swallowed there, so this gives a failed initial fetch a second chance
+  // before the cron picks it up (up to 5 min away).
+  const settleFeed = (feed: Feed) => {
+    queryClient.invalidateQueries({ queryKey: ['feed-meta', feed.id] });
+    ds.refresh(feed.id).then(() => invalidate()).catch(() => {});
+  };
+
+  // Subscribe to one or more already-resolved feed URLs. `curatedName` only
+  // applies to the single curated-suggestion path (see the title-override note).
+  const subscribeFeeds = useMutation({
+    mutationFn: async ({
+      urls,
+      curatedName,
+      seq,
+    }: {
+      urls: string[];
+      curatedName: string | null;
+      seq: number;
+    }) => {
+      // allSettled, not all: subscribe_to_feed commits one URL at a time with no
+      // transaction spanning the selection, so a multi-feed pick where one URL
+      // conflicts/is gated must not discard the ones that did commit. Partition
+      // the outcomes and let onSuccess surface + invalidate the successes
+      // regardless of any failures.
+      const settled = await Promise.allSettled(urls.map((u) => ds.subscribe(u)));
+      const feeds: Feed[] = [];
+      const errors: unknown[] = [];
+      for (const r of settled) {
+        if (r.status === 'fulfilled') feeds.push(r.value);
+        else errors.push(r.reason);
       }
+      return { feeds, errors, curatedName, seq };
+    },
+    onSuccess: async ({ feeds, errors, curatedName, seq }) => {
+      // subscribe() awaits a publisher refresh and can take seconds, during which
+      // the input stays editable. If the user has moved on (typed a new URL,
+      // started another add) the add context is no longer ours: bumped token.
+      // Data ops below reflect what actually committed and always run; only the
+      // input/picker mutations are gated so they can't clobber the new context.
+      // The token is re-read at each use (never snapshot) because an awaited
+      // setTitleOverride below can let the user supersede us mid-handler.
+      // Nothing committed: surface the failure (only if still current, to avoid a
+      // stale error over a new add) and leave the input/picker as-is to retry.
+      if (feeds.length === 0) {
+        if (errors[0]) console.warn('Subscribe failed:', errors[0]);
+        if (seq === discoverSeq.current) showToast({ message: addFeedMessage(errors[0]) });
+        return;
+      }
+      // If a curated feed came back without a real title (RSS fetch hasn't
+      // completed or failed), pin the curated display name. "No real title"
+      // means the title is the literal fallback string OR mapFeed's site_url
+      // fallback (row.title was null so mapFeed used site_url, e.g.
+      // "nytimes.com"). Only the single curated path carries a name to pin.
+      const curatedFeed = curatedName && feeds.length === 1 ? feeds[0] : null;
+      const hasRealTitle = curatedFeed
+        ? curatedFeed.title !== 'Untitled feed' && curatedFeed.title !== curatedFeed.siteUrl
+        : false;
+      if (curatedFeed && curatedName && !hasRealTitle) {
+        await ds.setTitleOverride(curatedFeed.id, curatedName).catch(() => {});
+      }
+      // Always invalidate feed-meta so FeedPage re-fetches the post-subscribe
+      // title regardless of whether a curated override was applied.
+      feeds.forEach(settleFeed);
+      invalidate();
+      if (errors[0]) console.warn('Subscribe partially failed:', errors[0]);
+      // Reset the input/picker only if this add is still the current one —
+      // re-read after the await above so a mid-handler edit isn't clobbered.
+      if (seq === discoverSeq.current) {
+        selectedSuggestionName.current = null;
+        setFeedUrl('');
+        clearPicker();
+      }
+      // Some succeeded; if others failed, say so rather than silently dropping.
+      const message =
+        errors.length > 0
+          ? `Subscribed to ${feeds.length} feed${feeds.length > 1 ? 's' : ''}; ` +
+            `${errors.length} couldn’t be added`
+          : feeds.length === 1
+            ? `Subscribed to ${hasRealTitle || !curatedName ? feeds[0].title : curatedName}`
+            : `Subscribed to ${feeds.length} feeds`;
+      showToast({ message });
+    },
+    onError: (err) => {
+      // allSettled means mutationFn won't reject for a feed-level failure; this
+      // is a safety net for anything unexpected.
+      console.warn('Subscribe failed:', err);
+      showToast({ message: addFeedMessage(err) });
+    },
+  });
+
+  // Run HTML discovery for a typed URL, then either subscribe straight away
+  // (0–1 candidates, today's behavior) or open the picker (2+ candidates, e.g.
+  // a site advertising per-section feeds) so the user chooses which to follow.
+  const discoverFeeds = useMutation({
+    mutationFn: async ({ url, seq }: { url: string; seq: number }) => {
       // discover() already tries parsing the target itself as a feed, so an
       // empty list means the URL is neither a feed nor advertises one. Do NOT
       // fall back to subscribing to the raw (non-feed) URL: that stored a feed
       // the server can only ever fetch as HTML, leaving it stuck as "Untitled
       // feed" with no items. Surface a clear error instead.
       const candidates = await ds.discover(url);
-      const chosen = candidates[0]?.url;
-      if (!chosen) throw new AddFeedError('no-feed');
-      const feed = await ds.subscribe(chosen);
-      return { feed, curatedName };
+      if (candidates.length === 0) throw new AddFeedError('no-feed');
+      return { candidates, seq };
     },
-    onSuccess: async ({ feed, curatedName }) => {
-      selectedSuggestionName.current = null;
-      setFeedUrl('');
-      // If the feed came back without a real title (RSS fetch hasn't completed or
-      // failed), pin the curated display name. "No real title" means the title is
-      // the literal fallback string OR mapFeed's site_url fallback (row.title was
-      // null so mapFeed used site_url, e.g. "nytimes.com").
-      const hasRealTitle = curatedName
-        ? feed.title !== 'Untitled feed' && feed.title !== feed.siteUrl
-        : false;
-      if (curatedName && !hasRealTitle) {
-        await ds.setTitleOverride(feed.id, curatedName).catch(() => {});
+    onSuccess: ({ candidates, seq }) => {
+      // Drop a superseded discovery: the user edited the URL or started a new
+      // add while this request was in flight, so its results no longer match
+      // the input. Applying them would subscribe / open a picker for the wrong
+      // site.
+      if (seq !== discoverSeq.current) return;
+      if (candidates.length === 1) {
+        subscribeFeeds.mutate({ urls: [candidates[0].url], curatedName: null, seq });
+        return;
       }
-      // Always invalidate feed-meta so FeedPage re-fetches the post-subscribe title
-      // regardless of whether a curated override was applied.
-      queryClient.invalidateQueries({ queryKey: ['feed-meta', feed.id] });
-      // subscribe() awaits refresh() internally, but refresh errors are swallowed
-      // there. Fire a best-effort retry here so a failed initial fetch gets a
-      // second chance before the cron picks it up (up to 5 min away).
-      ds.refresh(feed.id).then(() => invalidate()).catch(() => {});
-      invalidate();
-      const displayName = hasRealTitle ? feed.title : (curatedName ?? feed.title);
-      showToast({ message: `Subscribed to ${displayName}` });
+      setSelected(new Set());
+      setPicker(candidates);
     },
-    onError: (err) => {
-      // Surface a specific reason to the user, and log the underlying detail
-      // (server message / status) so the exact cause is visible in devtools.
-      console.warn('Add feed failed:', err);
+    onError: (err, { seq }) => {
+      // Log the underlying detail (server message / status) regardless, so the
+      // exact cause is visible in devtools.
+      console.warn('Discover feed failed:', err);
+      // But only surface the toast if this is still the latest request —
+      // mirror onSuccess so a superseded discovery's failure can't pop a stale
+      // no-feed/unreachable error over the user's new add context.
+      if (seq !== discoverSeq.current) return;
       showToast({ message: addFeedMessage(err) });
     },
   });
+
+  const isAdding = discoverFeeds.isPending || subscribeFeeds.isPending;
+
+  // Submit handler: curated suggestions have a known, validated feed URL —
+  // subscribe directly and skip the discover round-trip so a discover outage or
+  // bot-block on the site's homepage can't prevent subscribing to a well-known
+  // feed. Everything else goes through discovery.
+  const onSubmitAddFeed = (url: string) => {
+    // Any prior picker belongs to the previous add attempt. Clear it before
+    // starting a new one so a failed/single-candidate discovery for site B
+    // can't leave site A's picker on screen — subscribable under the new input.
+    // clearPicker also bumps discoverSeq, superseding any in-flight discovery.
+    clearPicker();
+    // Tag every request with the current token; the resolver applies its result
+    // (or clears the input/picker) only if this is still the latest add.
+    const seq = discoverSeq.current;
+    if (isFromSuggestion.current) {
+      isFromSuggestion.current = false;
+      // Capture the curated name synchronously so a concurrent autocomplete
+      // interaction can't overwrite it while the request is in-flight.
+      subscribeFeeds.mutate({ urls: [url], curatedName: selectedSuggestionName.current, seq });
+      return;
+    }
+    discoverFeeds.mutate({ url, seq });
+  };
+
+  const toggleCandidate = (url: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(url)) next.delete(url);
+      else next.add(url);
+      return next;
+    });
+  };
 
   const onImport = async (file: File) => {
     const xml = await file.text();
@@ -156,7 +302,7 @@ export function SettingsPage() {
           onSubmit={(e) => {
             e.preventDefault();
             setShowSuggestions(false);
-            if (feedUrl.trim()) addFeed.mutate(feedUrl.trim());
+            if (feedUrl.trim()) onSubmitAddFeed(feedUrl.trim());
           }}
         >
           <div className="settings__add-wrap">
@@ -184,11 +330,16 @@ export function SettingsPage() {
                 setFeedUrl(e.target.value);
                 setShowSuggestions(true);
                 setActiveIdx(-1);
+                // Editing the URL invalidates an open picker (it was discovered
+                // for the old text); drop it so it can't subscribe under the new.
+                clearPicker();
               }}
               onFocus={() => setShowSuggestions(true)}
               onBlur={() => {
-                // Delay so a click on a suggestion registers first.
-                setTimeout(() => setShowSuggestions(false), 150);
+                // Delay so a click on a suggestion registers first. Cleared on
+                // unmount via the effect above so it can't setState post-teardown.
+                if (blurTimer.current) clearTimeout(blurTimer.current);
+                blurTimer.current = setTimeout(() => setShowSuggestions(false), 150);
               }}
               onKeyDown={(e) => {
                 if (!showSuggestions || suggestions.length === 0) return;
@@ -205,6 +356,7 @@ export function SettingsPage() {
                   setFeedUrl(suggestions[activeIdx].feedUrl);
                   setShowSuggestions(false);
                   setActiveIdx(-1);
+                  clearPicker();
                 } else if (e.key === 'Escape') {
                   setShowSuggestions(false);
                   setActiveIdx(-1);
@@ -235,6 +387,7 @@ export function SettingsPage() {
                       setFeedUrl(feed.feedUrl);
                       setShowSuggestions(false);
                       setActiveIdx(-1);
+                      clearPicker();
                     }}
                   >
                     <span className="settings__suggestion-name">{feed.name}</span>
@@ -244,10 +397,80 @@ export function SettingsPage() {
               </ul>
             )}
           </div>
-          <button type="submit" className="settings__btn" disabled={addFeed.isPending}>
-            {addFeed.isPending ? 'Adding…' : 'Add'}
+          <button type="submit" className="settings__btn" disabled={isAdding}>
+            {isAdding ? 'Adding…' : 'Add'}
           </button>
         </form>
+
+        {picker && (
+          <div
+            className="settings__picker"
+            role="group"
+            aria-label="Choose feeds to subscribe to"
+          >
+            <p className="settings__picker-hint">
+              This site offers more than one feed. Choose the sections you want to follow:
+            </p>
+            <ul className="settings__picker-list">
+              {picker.map((candidate) => {
+                const checked = selected.has(candidate.url);
+                return (
+                  <li key={candidate.url}>
+                    <label className="settings__picker-option">
+                      <input
+                        type="checkbox"
+                        className="settings__picker-check"
+                        checked={checked}
+                        // Lock the selection while a subscribe is committing —
+                        // the request snapshotted these URLs, so editing now
+                        // would show a selection that differs from what's saved.
+                        disabled={isAdding}
+                        onChange={() => toggleCandidate(candidate.url)}
+                      />
+                      <span className="settings__picker-text">
+                        <span className="settings__picker-title">{candidate.title}</span>
+                        {candidate.sampleTitles.length > 0 && (
+                          <span className="settings__picker-samples">
+                            {candidate.sampleTitles.slice(0, 3).join(' · ')}
+                          </span>
+                        )}
+                        <span className="settings__picker-url">{candidate.url}</span>
+                      </span>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="settings__picker-actions">
+              <button
+                type="button"
+                className="settings__btn"
+                disabled={selected.size === 0 || isAdding}
+                onClick={() =>
+                  subscribeFeeds.mutate({
+                    urls: [...selected],
+                    curatedName: null,
+                    seq: discoverSeq.current,
+                  })
+                }
+              >
+                {isAdding
+                  ? 'Adding…'
+                  : selected.size > 1
+                    ? `Subscribe to ${selected.size}`
+                    : 'Subscribe'}
+              </button>
+              <button
+                type="button"
+                className="settings__btn"
+                disabled={isAdding}
+                onClick={clearPicker}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="settings__section">

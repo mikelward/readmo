@@ -355,6 +355,25 @@ folders       (user_id FK, name, sort)
   parse `<link rel="alternate" type="application/rss+xml|atom+xml|json">` and
   common fallbacks (`/feed`, `/rss`, `/atom.xml`, `/feed.json`); validate by
   fetching+parsing each candidate before offering it.
+- **When discovery returns more than one feed**, the Settings **Add a feed**
+  flow shows a multi-select picker rather than silently subscribing to the
+  first candidate — this is how a user follows a specific section of a site
+  (e.g. a news site that advertises Sport and World news feeds alongside its
+  main feed). Each row shows the candidate's title, a few sample item titles,
+  and its URL, with a 44px-min checkbox; the user can check any combination and
+  subscribe to all of them in one action, or Cancel. Multi-feed subscribe is
+  per-feed, not all-or-nothing: each selected URL is subscribed independently
+  (no transaction spans them), so if one fails (gated/conflict) the others still
+  commit and the toast reports "Subscribed to N feeds; M couldn't be added". If
+  *every* selected feed fails, nothing commits, the picker stays open so the
+  user can adjust and retry, and the specific failure reason is shown. A
+  discovery that's superseded before it resolves (the user edits the URL or
+  starts another add while it's in flight) is discarded — neither its picker nor
+  its error surfaces under the new input. A single discovered
+  candidate (the common case) still subscribes directly with no extra tap, and
+  curated autocomplete suggestions bypass discovery entirely as before. The
+  picker only surfaces the sections a site advertises on the submitted page; it
+  does not crawl the site for sections that page doesn't link.
 - Discovery reports *why* a URL yields no feed so the client shows a specific
   message instead of a blanket "no feed found": a `code` of `auth`
   (login-gated — the feed/site returned 401/403), `not-found` (404/410), or

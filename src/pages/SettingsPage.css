@@ -76,6 +76,79 @@
   white-space: nowrap;
 }
 
+/* Multi-feed picker: shown when discovery returns more than one feed
+   (e.g. a site's per-section feeds — Sport, World news — plus its main feed). */
+.settings__picker {
+  margin-top: 12px;
+  border: 1px solid var(--rm-border-strong);
+  border-radius: var(--rm-radius);
+  background: var(--rm-bg-elevated);
+  padding: 10px 12px;
+}
+
+.settings__picker-hint {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  color: var(--rm-meta);
+}
+
+.settings__picker-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+}
+
+.settings__picker-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 6px;
+  min-height: var(--rm-tap);
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings__picker-check {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  /* Keep the box visually aligned with the first line of the label text. */
+  margin-top: 2px;
+  accent-color: var(--rm-accent);
+}
+
+.settings__picker-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings__picker-title {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--rm-text);
+}
+
+.settings__picker-samples {
+  font-size: 0.78rem;
+  color: var(--rm-meta);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings__picker-url {
+  font-size: 0.72rem;
+  color: var(--rm-meta);
+  word-break: break-all;
+}
+
+.settings__picker-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .settings__btn,
 .settings__theme-btn {
   padding: 10px 16px;
