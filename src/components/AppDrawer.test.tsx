@@ -91,16 +91,17 @@ describe('AppDrawer', () => {
       expect(screen.getByRole('radio', { name: 'Slate' })).toBeInTheDocument();
     });
 
-    it('lays the palette swatches out as a 2-up grid, not one flex row', () => {
-      // Guardrail: keep at most a couple of tap zones per row. A single flex
-      // row would crowd the palette swatches onto one line at normal drawer
-      // widths, so the palette control opts into a 2-column grid while the
-      // mode (light/dark/system) row stays a flex row.
+    it('lays the palette swatches out as a single flex row, like the mode row', () => {
+      // With three palettes (Ink/Clay/Slate) the picker is a single row of
+      // three — right at the contributor guide's per-row tap-zone cap — using
+      // the same flex layout as the mode (light/dark/system) row, not the old
+      // 2-up grid.
       renderDrawer();
       const palette = screen.getByRole('radiogroup', { name: 'Palette' });
-      expect(palette).toHaveClass('app-drawer__segmented--grid');
+      expect(palette).not.toHaveClass('app-drawer__segmented--grid');
+      expect(palette).toHaveClass('app-drawer__segmented');
       const mode = screen.getByRole('radiogroup', { name: 'Mode' });
-      expect(mode).not.toHaveClass('app-drawer__segmented--grid');
+      expect(mode).toHaveClass('app-drawer__segmented');
     });
 
     it('shows each palette as a color swatch rather than a text label', () => {
