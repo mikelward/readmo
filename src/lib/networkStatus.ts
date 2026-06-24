@@ -87,10 +87,44 @@ let probeInFlight = false;
 // baseline, so it is re-adjudicated rather than silently coalesced away.
 let successSeq = 0;
 let probeBaselineSeq = 0;
+// Cache-bypassing successes — genuine proof the backend was reachable. Unlike
+// `successSeq` (bumped on ANY resolved fetch), this counts only responses that
+// cannot have come from the Workbox NetworkFirst cache, which can lie about
+// liveness (the whole reason confirmBackendReachable exists):
+//   - every liveness-probe success (hits `/auth/v1/health`, no service worker), and
+//   - every non-GET trackedFetch success (Cache API is GET-only, so a POST/
+//     PATCH/DELETE — writes, the feed_items read RPC, auth, functions — always
+//     reaches the origin).
+// confirmBackendReachable's stale-failure guard keys off this counter: a cached
+// GET resolving mid-probe must NOT suppress a real failed probe, but a genuine
+// live request (e.g. a set_item_state POST) that the backend accepted must.
+let livenessSeq = 0;
 
 // Short ceiling for the reachability probe — well under the 15s read cap so a
 // genuine offline flips the pill promptly rather than waiting a second 15s.
 const PROBE_TIMEOUT_MS = 5_000;
+
+// Once a fetch failure flips us down, nothing in the app re-checks the backend
+// on its own: emitIfChanged paused React Query (onlineManager.setOnline(false)),
+// so no query refetches → no trackedFetch → no success ever fires to clear the
+// pill. Left alone, "Down" sticks on screen long after the backend recovers (and
+// a user reading cached content issues no reads that would notice). So we re-
+// probe the SW-bypassing liveness endpoint on an interval until liveness is
+// confirmed. Cost is negligible: one tiny GET every 30s, only while in doubt.
+//
+// The lifecycle keys on `awaitingLiveness`, NOT on the connectivity status: a
+// Workbox cache hit calls reportFetchSuccess(false), which flips the status to
+// 'online' (clearing the pill) without proving the backend is reachable. If the
+// probe stopped on that transition, a cache-only "recovery" while the backend is
+// still down would cancel the only real liveness check and leave us falsely
+// online until some later live request happens to fail. So the doubt is set on
+// any goOffline and cleared ONLY by a cache-bypassing success (a probe, or a
+// non-GET request the backend accepted); the probe runs the whole time it's set.
+const RECOVERY_PROBE_INTERVAL_MS = 30_000;
+let recoveryTimer: ReturnType<typeof setInterval> | null = null;
+// True while we've seen a failure but not yet re-confirmed genuine liveness. A
+// cache hit clearing the pill does not clear this — see the block comment above.
+let awaitingLiveness = false;
 
 /**
  * Register the reachability-probe endpoint (called by the Supabase client at
@@ -107,6 +141,10 @@ function emitIfChanged() {
   const wasOnline = lastStatus === 'online';
   const isOnline = next === 'online';
   lastStatus = next;
+  // NB: the recovery probe is NOT started/stopped here — its lifecycle keys on
+  // `awaitingLiveness` (set in goOffline, cleared by a cache-bypassing success),
+  // not on status, so a cache hit flipping us to 'online' can't cancel it while
+  // the backend is still down. See updateRecoveryProbe.
   // Status subscribers see every transition (e.g. 'offline' -> 'backend-
   // unreachable'); boolean subscribers + onlineManager only fire on the
   // online/not-online edge so query pausing/resume behaves exactly as before.
@@ -142,13 +180,38 @@ export function subscribeConnectivityStatus(fn: StatusListener): () => void {
   };
 }
 
-export function reportFetchSuccess() {
+/**
+ * Report a successful fetch. `cacheBypassing` marks responses that prove the
+ * backend was genuinely reachable — i.e. cannot have been served from the
+ * Workbox cache (every non-GET request; see {@link livenessSeq}). Those bump the
+ * liveness counter that confirmBackendReachable's stale-failure guard trusts; a
+ * plain (possibly cache-served GET) success bumps only the general signal.
+ */
+export function reportFetchSuccess(cacheBypassing = false) {
   // Bump unconditionally (even when already online) so a probe started before
   // this success can detect it and skip flipping us offline.
   successSeq++;
+  if (cacheBypassing) {
+    // Genuine proof of reachability: record it and stand down the recovery probe.
+    // A cache-ambiguous GET success does NOT clear the doubt (it can't prove the
+    // backend is up), so the probe keeps running until something cache-bypassing
+    // confirms it.
+    livenessSeq++;
+    awaitingLiveness = false;
+    updateRecoveryProbe();
+  }
   if (fetchOnline) return;
   fetchOnline = true;
   emitIfChanged();
+}
+
+/**
+ * A liveness-probe success: genuine proof of reachability, because the probe
+ * hits `/auth/v1/health` directly (no service worker, so no cache can answer
+ * it). Reported as cache-bypassing so it counts toward the liveness counter.
+ */
+function reportProbeSuccess() {
+  reportFetchSuccess(true);
 }
 
 export function reportFetchFailure(err: unknown): Promise<void> | void {
@@ -160,6 +223,12 @@ export function reportFetchFailure(err: unknown): Promise<void> | void {
 }
 
 function goOffline() {
+  // A failure means we can no longer trust that the backend is reachable — start
+  // (or keep) re-probing until a cache-bypassing success proves otherwise. Set
+  // before the early return so a probe failure that lands while we're already
+  // offline still keeps the doubt (and timer) alive.
+  awaitingLiveness = true;
+  updateRecoveryProbe();
   if (!fetchOnline) return;
   fetchOnline = false;
   emitIfChanged();
@@ -193,8 +262,9 @@ async function maybeProbeAfterTimeout(): Promise<void> {
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
     // Reaching the backend is positive evidence of connectivity: keep us online,
-    // and clear the pill if a prior hard failure had flipped it off.
-    reportFetchSuccess();
+    // and clear the pill if a prior hard failure had flipped it off. A genuine
+    // probe success (not a cache hit), so it counts toward probeSuccessSeq too.
+    reportProbeSuccess();
   } catch {
     // Probe failed too → genuinely unreachable, unless a real success landed
     // since the latest timeout (then we're online and this probe is stale).
@@ -222,6 +292,17 @@ async function maybeProbeAfterTimeout(): Promise<void> {
  */
 export async function confirmBackendReachable(): Promise<boolean> {
   if (probeUrl == null) return true;
+  // Snapshot the liveness counter before probing so a *stale* failure can't
+  // relatch us offline. Probes can overlap (the 30s interval racing a focus/
+  // visibility probe — and `focus` + `visibilitychange` can both fire on one tab
+  // switch) and settle out of order: a probe opened while the backend was down
+  // can reject *after* newer evidence proved it reachable. Only flip offline if
+  // no cache-bypassing success has landed since this probe started. Keying on
+  // livenessSeq (not successSeq) means a Workbox GET cache hit resolving
+  // mid-probe — which can lie about liveness — can't suppress a real failed
+  // probe, while a genuine live request (another probe, or a non-GET like a
+  // set_item_state POST that the backend accepted) correctly does.
+  const baselineSeq = livenessSeq;
   // Manual controller + clearTimeout (rather than AbortSignal.timeout) so the
   // timer is released the instant the probe settles — an AbortSignal.timeout
   // keeps its timer running until it fires, which leaks a pending macrotask past
@@ -232,16 +313,63 @@ export async function confirmBackendReachable(): Promise<boolean> {
     // Plain `fetch` (not trackedFetch) — this IS the probe, so don't recurse;
     // any HTTP response proves we reached the server.
     await fetch(probeUrl, { method: 'GET', signal: controller.signal });
-    reportFetchSuccess();
+    reportProbeSuccess();
     return true;
   } catch {
     // Couldn't reach the backend → the empty read was a stale cache hit (or the
-    // server is down). Flip the pill; the caller surfaces the miss-state.
-    goOffline();
+    // server is down). Flip the pill — unless a cache-bypassing success landed
+    // since we started, which makes this failure stale: relatching then would
+    // falsely re-show "Down" over a backend already proven reachable.
+    if (livenessSeq === baselineSeq) goOffline();
     return false;
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Reconcile the recovery timer with the current need for it: it runs exactly
+ * while we're awaiting liveness re-confirmation, the device itself is online
+ * (no point probing a backend when the radio is down — that's the user's fix),
+ * and a probe endpoint is configured (mock mode has no backend to be down).
+ * Called wherever those inputs change. Idempotent.
+ */
+function updateRecoveryProbe() {
+  if (awaitingLiveness && browserOnline && probeUrl != null) startRecoveryProbe();
+  else stopRecoveryProbe();
+}
+
+/**
+ * Re-probe the backend on an interval until liveness is re-confirmed. Idempotent
+ * — a timer already running is left alone. Each tick delegates to
+ * {@link confirmBackendReachable}: a success reports cache-bypassing liveness
+ * (clearing `awaitingLiveness`, which stops this timer via updateRecoveryProbe);
+ * a failure leaves the doubt set and the next tick tries again. The probe
+ * bypasses the service worker, so it reflects the live backend, never a cache hit.
+ */
+function startRecoveryProbe() {
+  if (recoveryTimer != null) return;
+  recoveryTimer = setInterval(() => {
+    void confirmBackendReachable();
+  }, RECOVERY_PROBE_INTERVAL_MS);
+}
+
+function stopRecoveryProbe() {
+  if (recoveryTimer == null) return;
+  clearInterval(recoveryTimer);
+  recoveryTimer = null;
+}
+
+/**
+ * A user returning focus to a tab is the moment to re-check — probe immediately
+ * rather than waiting out the recovery interval. Keys on `awaitingLiveness` (not
+ * status) so it also re-confirms a cache-only "recovery" that cleared the pill
+ * while the backend was still down; a no-op once liveness is confirmed (so a
+ * focus while genuinely online fires no needless probe).
+ */
+function handleRegainedFocus() {
+  if (!awaitingLiveness || !browserOnline) return;
+  void confirmBackendReachable();
 }
 
 function isTimeout(err: unknown): boolean {
@@ -277,6 +405,16 @@ function isHardNetworkError(err: unknown): boolean {
   return false;
 }
 
+/**
+ * The request method, across the `Request | string | URL` + init shapes fetch
+ * accepts. Used only to tell cache-eligible GETs from cache-bypassing requests.
+ */
+function methodOf(input: RequestInfo | URL, init?: RequestInit): string {
+  if (init?.method) return init.method.toUpperCase();
+  if (input instanceof Request) return input.method.toUpperCase();
+  return 'GET';
+}
+
 export async function trackedFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
@@ -287,8 +425,11 @@ export async function trackedFetch(
     // treat it as evidence the fetch side is healthy. The browser may
     // still disagree (e.g. just after firing an 'offline' event while
     // the SW served a cache hit), and in that case we stay offline
-    // until both signals line up.
-    reportFetchSuccess();
+    // until both signals line up. A non-GET response additionally counts as
+    // cache-bypassing liveness proof (Workbox runtime caching is GET-only, so a
+    // POST/PATCH/DELETE always reached the origin); a GET might be a cache hit,
+    // so it isn't trusted as liveness evidence — that's what the probe is for.
+    reportFetchSuccess(methodOf(input, init) !== 'GET');
     return res;
   } catch (err) {
     reportFetchFailure(err);
@@ -299,18 +440,31 @@ export async function trackedFetch(
 function handleBrowserOnline() {
   if (browserOnline) return;
   browserOnline = true;
+  // Reconnecting while still awaiting liveness resumes the probe (it was idle
+  // while the device was offline).
+  updateRecoveryProbe();
   emitIfChanged();
 }
 
 function handleBrowserOffline() {
   if (!browserOnline) return;
   browserOnline = false;
+  // Device offline → "find a connection" is the user's fix; stand down the probe
+  // until the radio is back (handleBrowserOnline resumes it if still in doubt).
+  updateRecoveryProbe();
   emitIfChanged();
 }
 
 if (typeof window !== 'undefined') {
   window.addEventListener('online', handleBrowserOnline);
   window.addEventListener('offline', handleBrowserOffline);
+  // Returning to a tab that's showing "Down" re-checks the backend at once.
+  window.addEventListener('focus', handleRegainedFocus);
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') handleRegainedFocus();
+  });
 }
 
 // Tests need to rehydrate module state after overriding
@@ -318,6 +472,7 @@ if (typeof window !== 'undefined') {
 export function _resetNetworkStatusForTests() {
   listeners.clear();
   statusListeners.clear();
+  stopRecoveryProbe();
   browserOnline = initialBrowserOnline();
   fetchOnline = true;
   lastStatus = computeStatus();
@@ -325,6 +480,8 @@ export function _resetNetworkStatusForTests() {
   probeInFlight = false;
   successSeq = 0;
   probeBaselineSeq = 0;
+  livenessSeq = 0;
+  awaitingLiveness = false;
   // Re-sync React Query's singleton onlineManager to the reset state — a test
   // that drove us offline (pausing queries) would otherwise leak that into the
   // next test, stranding its queries paused.
