@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { ItemList } from './ItemList';
 import { MockDataSource } from '../lib/data/MockDataSource';
@@ -240,6 +241,33 @@ describe('ItemList', () => {
     // Error/retry UI, not an exhausted-feed message.
     await screen.findByText(/couldn’t load items/i);
     expect(screen.queryByTestId('more-btn')).toBeNull();
+  });
+
+  it('shows error UI instead of empty label when a cached-empty feed refetch fails', async () => {
+    // Simulate a returning visit: the persisted cache has an empty page from a
+    // previous session, so React Query treats the next fetch as a background
+    // refetch (not an initial load). In RQ v5 that keeps status=’success’ and
+    // only sets query.error — isError stays false — so the bug was the empty
+    // label silently showing instead of the error UI.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const viewKey = `cached-empty-err-${viewKeySeq++}`;
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    queryClient.setQueryData(['feed', viewKey], {
+      pages: [{ items: [], total: 0, nextCursor: null }],
+      pageParams: [null],
+    });
+
+    const fetchPage = vi.fn(() => Promise.reject(new Error('network timeout')));
+    renderWithProviders(
+      <ItemList viewKey={viewKey} fetchPage={fetchPage} emptyLabel="All caught up." />,
+      { source, queryClient },
+    );
+
+    // Must show the error/retry UI — NOT the empty label.
+    await screen.findByText(/couldn’t load items/i);
+    expect(screen.queryByText(/all caught up/i)).toBeNull();
   });
 
   it('More loads the next page, then disables as "No more items" when exhausted', async () => {
