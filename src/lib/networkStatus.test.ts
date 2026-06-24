@@ -4,9 +4,14 @@ import {
   getOnline,
   reportFetchFailure,
   reportFetchSuccess,
+  setConnectivityProbeUrl,
   subscribeOnline,
   trackedFetch,
 } from './networkStatus';
+
+function timeoutError() {
+  return new DOMException('timed out', 'TimeoutError');
+}
 
 function setNavigatorOnline(value: boolean) {
   Object.defineProperty(window.navigator, 'onLine', {
@@ -71,11 +76,13 @@ describe('networkStatus tracker', () => {
       expect(getOnline()).toBe(false);
     });
 
-    it('flips offline when a request is timed out (TimeoutError)', async () => {
+    it('treats a timeout as offline when no reachability probe is configured', async () => {
+      // Mock/unconfigured mode: no probe target, so a read timeout falls back
+      // to the conservative legacy behavior.
       vi.stubGlobal(
         'fetch',
         vi.fn(async () => {
-          throw new DOMException('timed out', 'TimeoutError');
+          throw timeoutError();
         }),
       );
 
@@ -116,6 +123,133 @@ describe('networkStatus tracker', () => {
       // Two identical "offline" fetches should emit one transition;
       // coming back online is the second.
       expect(events).toEqual([false, true]);
+    });
+  });
+
+  describe('read-timeout reachability probe', () => {
+    const PROBE = 'https://x.supabase.co/auth/v1/health';
+
+    it('stays online when the probe reaches the backend (DB slow, not offline)', async () => {
+      // The backend is up but the heavy read timed out; the lightweight probe
+      // still answers, so we must NOT paint the Offline pill.
+      const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+      vi.stubGlobal('fetch', fetchMock);
+      setConnectivityProbeUrl(PROBE);
+
+      await reportFetchFailure(timeoutError());
+
+      expect(getOnline()).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith(
+        PROBE,
+        expect.objectContaining({ method: 'GET' }),
+      );
+    });
+
+    it('stays online even when the probe returns a 4xx/5xx (any response proves reachability)', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 503 })));
+      setConnectivityProbeUrl(PROBE);
+
+      await reportFetchFailure(timeoutError());
+
+      expect(getOnline()).toBe(true);
+    });
+
+    it('flips offline only when the probe also fails (genuinely unreachable)', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          throw new TypeError('Failed to fetch');
+        }),
+      );
+      setConnectivityProbeUrl(PROBE);
+
+      await reportFetchFailure(timeoutError());
+
+      expect(getOnline()).toBe(false);
+    });
+
+    it('coalesces concurrent timeouts into a single probe', async () => {
+      let resolve!: (r: Response) => void;
+      const fetchMock = vi.fn(
+        () => new Promise<Response>((r) => { resolve = r; }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      setConnectivityProbeUrl(PROBE);
+
+      const a = reportFetchFailure(timeoutError());
+      const b = reportFetchFailure(timeoutError());
+      resolve(new Response(null, { status: 200 }));
+      await Promise.all([a, b]);
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(getOnline()).toBe(true);
+    });
+
+    it('does not clobber a real success that lands while the probe is in flight', async () => {
+      let rejectProbe!: (e: unknown) => void;
+      const fetchMock = vi.fn(
+        () => new Promise<Response>((_, rej) => { rejectProbe = rej; }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      setConnectivityProbeUrl(PROBE);
+
+      const probe = reportFetchFailure(timeoutError());
+      // A different request succeeds before the probe settles.
+      reportFetchSuccess();
+      rejectProbe(new TypeError('Failed to fetch'));
+      await probe;
+
+      // The stale probe failure must not flip us offline.
+      expect(getOnline()).toBe(true);
+    });
+
+    it('re-probes a timeout that arrives after a success while an earlier probe is in flight', async () => {
+      // Probe 1 is held open. A success bumps the baseline, then a *new* timeout
+      // arrives (a lie-fi outage that began after the success). When probe 1
+      // ultimately fails, that post-success timeout must still flip us offline —
+      // it must not be coalesced into, then suppressed by, the pre-success probe.
+      let rejectProbe!: (e: unknown) => void;
+      const fetchMock = vi.fn(
+        () => new Promise<Response>((_, rej) => { rejectProbe = rej; }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      setConnectivityProbeUrl(PROBE);
+
+      const probe = reportFetchFailure(timeoutError()); // starts probe (baseline 0)
+      reportFetchSuccess();                             // successSeq -> 1
+      reportFetchFailure(timeoutError());               // post-success timeout, rebases to 1
+      rejectProbe(new TypeError('Failed to fetch'));    // probe fails
+      await probe;
+
+      expect(fetchMock).toHaveBeenCalledTimes(1); // still a single coalesced probe
+      expect(getOnline()).toBe(false);
+    });
+
+    it('recovers online when a post-offline timeout probe reaches the backend', async () => {
+      // Already offline from a hard error. Connectivity returns but the DB is
+      // slow, so the next read times out instead of succeeding — there's no real
+      // success to fire reportFetchSuccess. The probe reaches the backend and
+      // must clear the stuck Offline pill on its own.
+      setConnectivityProbeUrl(PROBE);
+      reportFetchFailure(new TypeError('Failed to fetch'));
+      expect(getOnline()).toBe(false);
+
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 200 })));
+      await reportFetchFailure(timeoutError());
+
+      expect(getOnline()).toBe(true);
+    });
+
+    it('does not probe for a hard network error — it flips offline immediately', async () => {
+      const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+      vi.stubGlobal('fetch', fetchMock);
+      setConnectivityProbeUrl(PROBE);
+
+      reportFetchFailure(new TypeError('Failed to fetch'));
+
+      expect(getOnline()).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 
