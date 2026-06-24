@@ -77,6 +77,20 @@ describe('ItemList', () => {
     expect(screen.getByTestId('sweep-btn')).toBeInTheDocument();
   });
 
+  it('shows the dismissable pin-to-download promo bar above the rows', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderHome(source);
+    await screen.findAllByTestId('item-row');
+
+    expect(screen.getByText('Pin an article to download it')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /dismiss/i }));
+    expect(
+      screen.queryByText('Pin an article to download it'),
+    ).not.toBeInTheDocument();
+  });
+
   it('has a Back to top button in the bottom toolbar that scrolls to the top', async () => {
     const user = userEvent.setup();
     const scrollToSpy = vi.fn();

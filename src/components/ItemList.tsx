@@ -7,6 +7,7 @@ import { measureStickyBottomInset, measureTopChromeHeight } from '../lib/stickyI
 import { checkForServiceWorkerUpdate } from '../lib/swUpdate';
 import { ItemRows } from './ItemRows';
 import { ListToolbar } from './ListToolbar';
+import { PromoBar } from './PromoBar';
 import { PullToRefresh } from './PullToRefresh';
 import { useFeedBar } from './FeedBarContext';
 import './ItemList.css';
@@ -135,15 +136,24 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
             </button>
           </div>
         ) : (
-          <ItemRows
-            items={items}
-            isLoading={isLoading}
-            skeletonCount={6}
-            enableSwipe
-            listRef={listRef}
-            getRowRef={getRowRef}
-            emptyLabel={emptyLabel ?? 'Nothing here yet.'}
-          />
+          <>
+            {/* Onboarding hint sits above the rows, but only once items exist —
+                there's nothing to pin under skeletons or an empty feed. */}
+            {items.length > 0 ? (
+              <PromoBar id="pin-to-download">
+                Pin an article to download it
+              </PromoBar>
+            ) : null}
+            <ItemRows
+              items={items}
+              isLoading={isLoading}
+              skeletonCount={6}
+              enableSwipe
+              listRef={listRef}
+              getRowRef={getRowRef}
+              emptyLabel={emptyLabel ?? 'Nothing here yet.'}
+            />
+          </>
         )}
       </PullToRefresh>
 
