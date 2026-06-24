@@ -564,6 +564,11 @@ loopback/link-local/private/metadata targets and redirects to them.
    - **Background refresh status strip** at the foot ("Checking for new
      items…" / "Couldn't refresh." + Retry), appearing only when rows are
      already on screen. Verbatim mirror.
+   - **Pin-to-download promo bar** above the first row ("Pin an article to
+     download it"), explaining that pinning warms the offline cache (see
+     *Prefetch on Pin/Favorite*). Shown only once rows exist; dismissable via a
+     single 44×44 close button, persisted per-device
+     (`readmo:promo-dismissed:pin-to-download`).
    - **`/offline`** — items cached on this device.
 
 3. **Item row** — see *Item row layout*. Right-side button = **Pin/Unpin** on

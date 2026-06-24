@@ -1,0 +1,50 @@
+.promo-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--rm-border);
+  background: var(--rm-bg-card);
+  color: var(--rm-text);
+}
+
+.promo-bar__icon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  color: var(--rm-accent);
+}
+
+.promo-bar__text {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.3;
+}
+
+.promo-bar__dismiss {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--rm-tap);
+  min-height: var(--rm-tap);
+  padding: 0;
+  border: none;
+  border-radius: var(--rm-radius);
+  background: none;
+  color: var(--rm-meta);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .promo-bar__dismiss:hover {
+    background: var(--rm-bg);
+    color: var(--rm-text);
+  }
+}
+
+.promo-bar__dismiss:active {
+  background: var(--rm-bg);
+  color: var(--rm-text);
+}
