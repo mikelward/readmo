@@ -27,7 +27,7 @@ export const PALETTE_LABELS: Record<Palette, string> = {
 // only ever reflect the active one.
 export const PALETTE_SWATCHES: Record<Palette, { bg: string; accent: string }> =
   {
-    ink: { bg: '#faf9f5', accent: '#2b2b2b' },
+    ink: { bg: '#faf9f5', accent: '#363636' },
     turquoise: { bg: '#f1f9f7', accent: '#0e7c74' },
     indigo: { bg: '#f5f5fb', accent: '#4338ca' },
     mauve: { bg: '#f9f1f5', accent: '#923b67' },
