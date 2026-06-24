@@ -1,6 +1,7 @@
 .reader {
   display: flex;
   flex-direction: column;
+  background: var(--rm-bg-card);
 }
 
 .reader__state {
