@@ -2,7 +2,6 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth, type OAuthProvider } from '../hooks/useAuth';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { isSupabaseConfigured } from '../lib/supabase/client';
-import '../components/AppHeader.css';
 import '../components/ItemRow.css';
 import './SignInPage.css';
 
@@ -46,11 +45,6 @@ export function SignInPage() {
   return (
     <div className="signin">
       <div className="signin__hero" aria-hidden="true">
-        <div className="app-header signin__mock-header-override">
-          <div className="app-header__inner">
-            <span className="app-header__brand">readmo</span>
-          </div>
-        </div>
         <ul className="signin__mock-feed">
           {DEMO_ROWS.map((row, i) => (
             <li key={i} className={`item-row${row.read ? ' item-row--opened' : ''}`}>

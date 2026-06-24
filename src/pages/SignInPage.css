@@ -19,13 +19,6 @@
   flex-shrink: 0;
 }
 
-/* The hero header reuses .app-header but must not be sticky and must not
-   double-apply the safe-area inset (the real page header already consumed it). */
-.signin__mock-header-override {
-  position: static;
-  padding-top: 0;
-}
-
 .signin__mock-feed {
   list-style: none;
   margin: 0;
