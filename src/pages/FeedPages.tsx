@@ -4,6 +4,7 @@ import { useDataSource } from '../lib/data/context';
 import { useHomeFeed } from '../hooks/useHomeFeed';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { ItemList } from '../components/ItemList';
+import { HomeEmptyCoach } from '../components/HomeEmptyCoach';
 import './PageHeader.css';
 
 /** `/` — the aggregate river across all non-muted subscriptions, or a chosen
@@ -13,6 +14,43 @@ export function HomePage() {
   const { homeFeed } = useHomeFeed();
   useDocumentTitle('readmo');
 
+  // The drawer's ['subscriptions'] query, but forced to re-read on mount
+  // (`refetchOnMount: 'always'`, same pattern as FeedPage's feed-meta) so a
+  // persisted/within-staleTime *empty* array can't strand a user on the coach
+  // after they add their first feed on another device. We treat the result as
+  // authoritative only when a *successful* read has landed this mount:
+  // `isSuccess` excludes a failed refetch (which keeps the stale data but flips
+  // the result to status 'error'), and `isFetchedAfterMount` excludes the
+  // pre-refetch cached value. Until then the feed view mounts and does its own
+  // fresh read, so a stale or offline-failed empty cache never suppresses real
+  // items.
+  const { data: subs, isSuccess, isFetchedAfterMount } = useQuery({
+    queryKey: ['subscriptions'],
+    queryFn: () => ds.getSubscriptions(),
+    refetchOnMount: 'always',
+    // While the coach is up the feed ItemList (and its pull-to-refresh) is
+    // unmounted, so this is the only observer left for ['subscriptions']. Opt
+    // it out of the app-wide refetchOnWindowFocus/Reconnect: false so a user
+    // who adds their first feed on another tab/device and returns to a
+    // long-open coach gets a refresh on focus/reconnect once the empty result
+    // goes stale — without it they'd be stuck on the coach until reload.
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+  });
+  const subsFresh = isSuccess && isFetchedAfterMount;
+
+  // Brand-new account with no subscriptions: coach them to add a feed rather
+  // than show an empty feed (which implies they had items and read them).
+  // Checked before the folder override because with zero subscriptions every
+  // folder view is empty too, so a stale per-device "Home = folder" preference
+  // would otherwise strand a fresh account on a dead-end folder empty state.
+  // Gated on a fresh read (not just any cached success) so a slow load doesn't
+  // flash the coach and a stale empty cache doesn't suppress the feed; a user
+  // with only muted feeds still has subscriptions, so they get the normal
+  // caught-up state, not this.
+  if (subsFresh && subs?.length === 0) {
+    return <HomeEmptyCoach />;
+  }
   if (homeFeed.kind === 'folder') {
     const name = homeFeed.name;
     return (
