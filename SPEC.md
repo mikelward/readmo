@@ -1070,6 +1070,24 @@ keys differ; the strategies map one-to-one:
   failed fetch reads as "Down" until the `offline` event lands — we accept
   blaming the server during that ambiguity rather than mislabeling a real outage
   as the user being offline (the bug this replaced).
+- **"Down" self-heals.** Going `backend-unreachable` pauses React Query
+  (`onlineManager.setOnline(false)`), so no app read fires to notice the backend
+  recover — left alone the "Down" pill would stick on screen indefinitely (worse
+  for a user reading cached content, who issues no reads at all). So
+  `networkStatus.ts` re-probes the SW-bypassing liveness endpoint
+  (`confirmBackendReachable`, `/auth/v1/health`) every 30s, and immediately on
+  regained window focus / tab visibility, until liveness is re-confirmed. The
+  probe's lifecycle keys on a liveness flag, **not** on the connectivity status:
+  a Workbox cache hit (`reportFetchSuccess(false)`) can flip the status back to
+  `online` and clear the pill without proving the backend is reachable, so if the
+  probe stopped on that it would leave us *falsely* online while the backend is
+  still down. The doubt is set on any `goOffline` and cleared only by a
+  **cache-bypassing** success — a probe, or a non-GET request the backend
+  accepted (Workbox runtime caching is GET-only, so a POST/PATCH/DELETE always
+  reached the origin; a GET might be a cache hit). A cache-only "recovery" thus
+  clears the pill but keeps probing, and the next probe re-latches Down if the
+  backend is genuinely down. **Cost:** negligible — one in-process GoTrue GET (no
+  Postgres) every 30s, only while liveness is in doubt.
 - **Offline reader fallback:** an **unpinned** article whose detail read can't
   reach the network still opens to its **RSS body**, recovered from a list page
   already on the device — list payloads carry `content_html` (only

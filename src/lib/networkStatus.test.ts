@@ -296,6 +296,95 @@ describe('networkStatus tracker', () => {
       expect(getConnectivityStatus()).toBe('backend-unreachable');
     });
 
+    it('does not relatch when a stale probe failure settles after a newer probe succeeded', async () => {
+      // Two recovery probes overlap (interval racing a focus/visibility probe).
+      // Probe A is opened while the backend is still down and held pending;
+      // probe B then reaches the now-recovered backend and clears the pill. A's
+      // late rejection must NOT relatch "Down" over a backend that's back up.
+      setConnectivityProbeUrl(PROBE);
+      reportFetchFailure(new TypeError('Failed to fetch'));
+      expect(getConnectivityStatus()).toBe('backend-unreachable');
+
+      let rejectA!: (e: unknown) => void;
+      const fetchMock = vi
+        .fn()
+        .mockImplementationOnce(
+          () => new Promise<Response>((_, rej) => { rejectA = rej; }),
+        )
+        .mockResolvedValueOnce(new Response(null, { status: 200 }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const a = confirmBackendReachable(); // opened while down, held pending
+      const b = confirmBackendReachable(); // reaches the recovered backend
+      await expect(b).resolves.toBe(true);
+      expect(getConnectivityStatus()).toBe('online');
+
+      rejectA(new TypeError('Failed to fetch'));
+      await expect(a).resolves.toBe(false);
+      // A's failure is stale (a success landed since it started) → no relatch.
+      expect(getConnectivityStatus()).toBe('online');
+    });
+
+    it('a cache-hit success does not suppress a real liveness-probe failure', async () => {
+      // The probe exists precisely because a Workbox NetworkFirst cache hit can
+      // lie about liveness. A general trackedFetch success (possibly cache-
+      // served) landing while a liveness probe is in flight must NOT keep the
+      // failed probe from flipping us offline — only a genuine SW-bypassing probe
+      // success may. (Guard keys on livenessSeq, not successSeq.)
+      setConnectivityProbeUrl(PROBE);
+      reportFetchSuccess(); // start online
+      expect(getConnectivityStatus()).toBe('online');
+
+      let rejectProbe!: (e: unknown) => void;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(() => new Promise<Response>((_, rej) => { rejectProbe = rej; })),
+      );
+
+      const probe = confirmBackendReachable(); // SW-bypassing, will fail
+      // A cacheable GET resolves from the SW cache while the probe is pending —
+      // a possibly-lying success, so it must not count as liveness evidence.
+      reportFetchSuccess(/* cacheBypassing */ false);
+      rejectProbe(new TypeError('Failed to fetch'));
+      await expect(probe).resolves.toBe(false);
+
+      // The lying cache hit must not have masked the dead backend.
+      expect(getConnectivityStatus()).toBe('backend-unreachable');
+    });
+
+    it('a live cache-bypassing request success suppresses a stale probe failure', async () => {
+      // The mirror of the cache-hit case: a genuine uncached request (a non-GET
+      // — e.g. a set_item_state POST — which Workbox can't serve from cache) that
+      // the backend accepts IS proof of reachability. If it lands while an older
+      // probe is pending, that probe's late failure must not relatch "Down" over
+      // a backend that just answered a live request.
+      setConnectivityProbeUrl(PROBE);
+      reportFetchFailure(new TypeError('Failed to fetch'));
+      expect(getConnectivityStatus()).toBe('backend-unreachable');
+
+      let rejectProbe!: (e: unknown) => void;
+      const fetchMock = vi
+        .fn()
+        // First call is the probe (held open, then rejected).
+        .mockImplementationOnce(
+          () => new Promise<Response>((_, rej) => { rejectProbe = rej; }),
+        )
+        // Second is the live write that reaches the backend.
+        .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const probe = confirmBackendReachable(); // opened while down, held pending
+      await trackedFetch('https://x.supabase.co/rest/v1/rpc/set_item_state', {
+        method: 'POST',
+      });
+      expect(getConnectivityStatus()).toBe('online');
+
+      rejectProbe(new TypeError('Failed to fetch'));
+      await expect(probe).resolves.toBe(false);
+      // The accepted live write is liveness proof → no stale relatch.
+      expect(getConnectivityStatus()).toBe('online');
+    });
+
     it('returns true without fetching when no probe URL is configured (mock mode)', async () => {
       const fetchMock = vi.fn();
       vi.stubGlobal('fetch', fetchMock);
@@ -361,6 +450,189 @@ describe('networkStatus tracker', () => {
       reportFetchSuccess();
 
       expect(events).toEqual([false, true]);
+    });
+  });
+
+  describe('backend-unreachable self-healing recovery probe', () => {
+    const PROBE = 'https://x.supabase.co/auth/v1/health';
+    // Matches RECOVERY_PROBE_INTERVAL_MS in networkStatus.ts (not exported).
+    const RECOVERY_INTERVAL_MS = 30_000;
+
+    it('self-heals a latched backend-unreachable when a recovery probe reaches the backend', async () => {
+      vi.useFakeTimers();
+      try {
+        setConnectivityProbeUrl(PROBE);
+        // Latch to backend-unreachable via a hard failure (device stays online).
+        reportFetchFailure(new TypeError('Failed to fetch'));
+        expect(getConnectivityStatus()).toBe('backend-unreachable');
+
+        // The backend recovers; the next interval probe reaches it. No app read
+        // fires here — recovery must come from the timer alone.
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () => new Response(null, { status: 200 })),
+        );
+        await vi.advanceTimersByTimeAsync(RECOVERY_INTERVAL_MS);
+
+        expect(getConnectivityStatus()).toBe('online');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('stops probing once recovered (the timer is cleared on the online transition)', async () => {
+      vi.useFakeTimers();
+      try {
+        setConnectivityProbeUrl(PROBE);
+        reportFetchFailure(new TypeError('Failed to fetch'));
+        const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        await vi.advanceTimersByTimeAsync(RECOVERY_INTERVAL_MS);
+        expect(getConnectivityStatus()).toBe('online');
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+
+        // No further probes once we're back online.
+        await vi.advanceTimersByTimeAsync(RECOVERY_INTERVAL_MS * 3);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('keeps re-probing on each interval while the backend stays down', async () => {
+      vi.useFakeTimers();
+      try {
+        setConnectivityProbeUrl(PROBE);
+        reportFetchFailure(new TypeError('Failed to fetch'));
+        const fetchMock = vi.fn(async () => {
+          throw new TypeError('Failed to fetch');
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        await vi.advanceTimersByTimeAsync(RECOVERY_INTERVAL_MS);
+        await vi.advanceTimersByTimeAsync(RECOVERY_INTERVAL_MS);
+
+        expect(getConnectivityStatus()).toBe('backend-unreachable');
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('does not start a recovery timer for a device-offline state', async () => {
+      vi.useFakeTimers();
+      try {
+        setConnectivityProbeUrl(PROBE);
+        const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        // Device itself offline: the actionable fix is the user's, not a re-probe.
+        setNavigatorOnline(false);
+        window.dispatchEvent(new Event('offline'));
+        expect(getConnectivityStatus()).toBe('offline');
+
+        await vi.advanceTimersByTimeAsync(RECOVERY_INTERVAL_MS * 2);
+        expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('re-probes immediately on regained window focus while latched down', async () => {
+      setConnectivityProbeUrl(PROBE);
+      reportFetchFailure(new TypeError('Failed to fetch'));
+      expect(getConnectivityStatus()).toBe('backend-unreachable');
+
+      const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      window.dispatchEvent(new Event('focus'));
+      await vi.waitFor(() => expect(getConnectivityStatus()).toBe('online'));
+      expect(fetchMock).toHaveBeenCalledWith(
+        PROBE,
+        expect.objectContaining({ method: 'GET' }),
+      );
+    });
+
+    it('does not probe on focus when not latched down', () => {
+      setConnectivityProbeUrl(PROBE);
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+
+      // Online: a focus event must not fire a needless probe.
+      window.dispatchEvent(new Event('focus'));
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps probing after a cache hit clears the pill while the backend is still down', async () => {
+      // A Workbox cache hit (reportFetchSuccess(false)) can flip the status to
+      // 'online' without proving the backend is up. The recovery probe's
+      // lifecycle keys on liveness, not status, so it must NOT be canceled by
+      // that cache-only "recovery" — otherwise nothing re-checks and we stay
+      // falsely online while the backend is still down.
+      vi.useFakeTimers();
+      try {
+        setConnectivityProbeUrl(PROBE);
+        reportFetchFailure(new TypeError('Failed to fetch'));
+        expect(getConnectivityStatus()).toBe('backend-unreachable');
+
+        // Cache-served GET clears the pill but proves nothing about liveness.
+        reportFetchSuccess(/* cacheBypassing */ false);
+        expect(getConnectivityStatus()).toBe('online');
+
+        // Next tick still probes (backend down) and re-latches Down.
+        const fetchMock = vi.fn(async () => {
+          throw new TypeError('Failed to fetch');
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        await vi.advanceTimersByTimeAsync(RECOVERY_INTERVAL_MS);
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(getConnectivityStatus()).toBe('backend-unreachable');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('stops probing after a cache hit cleared the pill once a probe confirms liveness', async () => {
+      vi.useFakeTimers();
+      try {
+        setConnectivityProbeUrl(PROBE);
+        reportFetchFailure(new TypeError('Failed to fetch'));
+        reportFetchSuccess(/* cacheBypassing */ false); // cache hit clears pill
+        expect(getConnectivityStatus()).toBe('online');
+
+        // The backend is genuinely back: the next probe confirms liveness and
+        // the timer stands down.
+        const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+        await vi.advanceTimersByTimeAsync(RECOVERY_INTERVAL_MS);
+        expect(getConnectivityStatus()).toBe('online');
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(RECOVERY_INTERVAL_MS * 3);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('re-confirms on focus after a cache hit cleared the pill while still down', async () => {
+      setConnectivityProbeUrl(PROBE);
+      reportFetchFailure(new TypeError('Failed to fetch'));
+      reportFetchSuccess(/* cacheBypassing */ false); // cache hit clears pill
+      expect(getConnectivityStatus()).toBe('online');
+
+      // Focus keys on awaiting-liveness, not status, so it still re-probes — and
+      // the failing probe re-latches Down over the cache-only "recovery".
+      vi.stubGlobal('fetch', vi.fn(async () => {
+        throw new TypeError('Failed to fetch');
+      }));
+      window.dispatchEvent(new Event('focus'));
+      await vi.waitFor(() =>
+        expect(getConnectivityStatus()).toBe('backend-unreachable'),
+      );
     });
   });
 
