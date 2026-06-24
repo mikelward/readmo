@@ -6,6 +6,12 @@ import { ToastProvider } from '../components/Toast';
 import { FeedBarProvider } from '../components/FeedBarContext';
 import { DataSourceProvider } from '../lib/data/context';
 import { MockDataSource } from '../lib/data/MockDataSource';
+import { useFeedInvalidation } from '../hooks/useFeedInvalidation';
+
+function FeedInvalidationMount() {
+  useFeedInvalidation();
+  return null;
+}
 
 /** Wraps a UI tree in the full provider stack with a fresh, isolated
  * MockDataSource and a no-retry QueryClient, so component/integration tests
@@ -28,6 +34,7 @@ export function renderWithProviders(
           <ToastProvider>
             <FeedBarProvider>
               <MemoryRouter initialEntries={[opts.route ?? '/']}>
+                <FeedInvalidationMount />
                 {children}
               </MemoryRouter>
             </FeedBarProvider>

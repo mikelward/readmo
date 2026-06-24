@@ -1,7 +1,5 @@
-import { useEffect } from 'react';
 import {
   useInfiniteQuery,
-  useQueryClient,
 } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import type { FeedItem } from '../lib/types';
@@ -11,14 +9,13 @@ export type FetchPage = (cursor: string | null) => Promise<Page<FeedItem>>;
 
 /**
  * Drives a feed view (home / folder / single feed). Pages are fetched lazily
- * (explicit "More", no infinite scroll — SPEC.md *Feed views*). The query is
- * invalidated whenever item state changes so the Pinned-prepend ordering and
- * Done/Hidden filtering (applied inside the DataSource) stay live after a
- * swipe or toggle.
+ * (explicit "More", no infinite scroll — SPEC.md *Feed views*). Feed query
+ * invalidation on state changes is handled globally by useFeedInvalidation
+ * (mounted in App) so mutations on the reader page take effect even while
+ * this hook is unmounted.
  */
 export function useFeedItems(viewKey: string, fetchPage: FetchPage) {
   const ds = useDataSource();
-  const queryClient = useQueryClient();
 
   const query = useInfiniteQuery({
     queryKey: ['feed', viewKey],
@@ -33,14 +30,6 @@ export function useFeedItems(viewKey: string, fetchPage: FetchPage) {
     // so navigating between feed views doesn't hammer the DB either.
     refetchOnWindowFocus: true,
   });
-
-  // Re-derive when local item state changes (pin/hide/done affect ordering
-  // and filtering inside the DataSource).
-  useEffect(() => {
-    return ds.stateStore.subscribe(() => {
-      void queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
-    });
-  }, [ds, queryClient, viewKey]);
 
   const items: FeedItem[] = query.data?.pages.flatMap((p) => p.items) ?? [];
   const total = query.data?.pages[0]?.total ?? 0;
