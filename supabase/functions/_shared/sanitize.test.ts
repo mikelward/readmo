@@ -120,6 +120,39 @@ describe('sanitizeContent', () => {
     expect(sanitizeContent('', base)).toBe('');
   });
 
+  it('drops spacer paragraphs (empty, whitespace, &nbsp;, <br>-only)', () => {
+    const out = sanitizeContent(
+      '<p>one</p><p></p><p>   </p><p>&nbsp;</p><p><br></p><p>two</p>',
+      base,
+    );
+    expect(out).toBe('<p>one</p><p>two</p>');
+  });
+
+  it('keeps paragraphs that carry media (e.g. <p><img></p>)', () => {
+    const out = sanitizeContent('<p><img src="/a.png"></p>', base);
+    expect(out).toContain('<img');
+    expect(out).toContain(
+      'src="/api/img?url=' +
+        encodeURIComponent('https://pub.example.com/a.png') +
+        '"',
+    );
+  });
+
+  it('keeps a paragraph wrapping a linked image (<p><a><img></a></p>)', () => {
+    const out = sanitizeContent(
+      '<p><a href="https://x.com/full.jpg"><img src="/thumb.png"></a></p>',
+      base,
+    );
+    expect(out).toContain('<a');
+    expect(out).toContain('href="https://x.com/full.jpg"');
+    expect(out).toContain('<img');
+    expect(out).toContain(
+      'src="/api/img?url=' +
+        encodeURIComponent('https://pub.example.com/thumb.png') +
+        '"',
+    );
+  });
+
   it('drops disallowed tags like <iframe> and <form>', () => {
     const out = sanitizeContent(
       '<iframe src="https://evil"></iframe><form><input></form><p>ok</p>',

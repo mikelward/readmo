@@ -216,6 +216,27 @@
   overflow-wrap: break-word;
 }
 
+/* Pin a single, consistent paragraph gap regardless of the publisher's
+   default margins, and trim the leading/trailing margin so the body hugs the
+   byline above and the toolbar below. Any spacer paragraphs the publisher left
+   are stripped server-side (see sanitize.ts); this also hides ones in
+   already-stored content. */
+.reader__body p {
+  margin: 0 0 1em;
+}
+
+.reader__body > :first-child {
+  margin-top: 0;
+}
+
+.reader__body > :last-child {
+  margin-bottom: 0;
+}
+
+.reader__body p:empty {
+  display: none;
+}
+
 /* Inline images (inside <p>, <li>, etc.) keep natural sizing. */
 .reader__body img {
   max-width: 100%;

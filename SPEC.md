@@ -315,7 +315,10 @@ folders       (user_id FK, name, sort)
 - **Sanitize** `contentHtml` server-side (DOMPurify/sanitize-html) before
   storing — strip scripts/handlers/disallowed tags, absolutize relative URLs
   against the item URL, force `rel="noopener"`. Never store/serve raw
-  publisher HTML.
+  publisher HTML. Also drop **spacer paragraphs** (empty, whitespace-only,
+  `&nbsp;`-only, or `<br>`-only `<p>`) that publishers (e.g. Reddit) use for
+  vertical padding, so the reader's standard paragraph gap applies uniformly;
+  paragraphs carrying media are kept.
 - De-dup on `(feed_id, guid)` (fall back to `url`, then a content hash);
   compute `content_hash` to detect edits and update in place. **Also dedup on
   `(feed_id, url)` where `url is not null`** — publishers (BBC, …) sometimes

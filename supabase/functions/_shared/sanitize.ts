@@ -42,7 +42,7 @@ export function sanitizeContent(
 ): string {
   if (!html) return '';
 
-  return sanitizeHtml(html, {
+  const clean = sanitizeHtml(html, {
     allowedTags: ALLOWED_TAGS,
     allowedAttributes: {
       a: ['href', 'name', 'rel', 'target', 'title'],
@@ -121,6 +121,25 @@ export function sanitizeContent(
     // Discard comments (may carry conditional-comment payloads).
     allowProtocolRelative: false,
   });
+
+  return dropSpacerParagraphs(clean);
+}
+
+/**
+ * Remove "spacer" paragraphs publishers (Reddit and others) leave for vertical
+ * padding — ones whose entire content is whitespace, `&nbsp;`, or `<br>`. They
+ * render as extra blank lines in the reader; dropping them lets the reader's
+ * standard paragraph gap apply uniformly.
+ *
+ * Runs after sanitize, so every `<p>` is bare (no attributes survive the
+ * allow-list) and the match is exact. Paragraphs carrying any real markup —
+ * text, links, images, even linked images (`<p><a><img></a></p>`) — don't match
+ * the all-blank pattern and are left untouched.
+ */
+function dropSpacerParagraphs(html: string): string {
+  // `\s` already covers the non-breaking space char (U+00A0); `&nbsp;` matches
+  // its entity form, which sanitize-html may emit.
+  return html.replace(/<p>(?:\s|&nbsp;|<br\s*\/?>)*<\/p>/gi, '');
 }
 
 /** Resolve a possibly-relative URL against a base; null on failure/empty. */
