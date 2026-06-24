@@ -92,13 +92,11 @@ describe('useTheme', () => {
     expect(result.current.palette).toBe('ink');
 
     act(() => result.current.setTheme('dark'));
-    act(() => result.current.setPalette('turquoise'));
-    expect(result.current.palette).toBe('turquoise');
+    act(() => result.current.setPalette('clay'));
+    expect(result.current.palette).toBe('clay');
     expect(result.current.theme).toBe('dark');
-    expect(window.localStorage.getItem(PALETTE_STORAGE_KEY)).toBe('turquoise');
-    expect(document.documentElement.getAttribute('data-palette')).toBe(
-      'turquoise',
-    );
+    expect(window.localStorage.getItem(PALETTE_STORAGE_KEY)).toBe('clay');
+    expect(document.documentElement.getAttribute('data-palette')).toBe('clay');
     // Mode attribute is untouched by a palette change.
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
 
@@ -112,11 +110,9 @@ describe('useTheme', () => {
     const a = renderHook(() => useTheme());
     const b = renderHook(() => useTheme());
 
-    act(() => a.result.current.setPalette('turquoise'));
-    expect(b.result.current.palette).toBe('turquoise');
-    expect(document.documentElement.getAttribute('data-palette')).toBe(
-      'turquoise',
-    );
+    act(() => a.result.current.setPalette('clay'));
+    expect(b.result.current.palette).toBe('clay');
+    expect(document.documentElement.getAttribute('data-palette')).toBe('clay');
   });
 
   it('syncs across hook instances via the change event', () => {

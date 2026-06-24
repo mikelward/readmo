@@ -166,44 +166,34 @@ describe('palette', () => {
   });
 
   it('reads a stored palette and ignores garbage', () => {
-    window.localStorage.setItem(PALETTE_STORAGE_KEY, 'turquoise');
-    expect(getStoredPalette()).toBe('turquoise');
+    window.localStorage.setItem(PALETTE_STORAGE_KEY, 'clay');
+    expect(getStoredPalette()).toBe('clay');
     window.localStorage.setItem(PALETTE_STORAGE_KEY, 'magenta');
     expect(getStoredPalette()).toBe('ink');
   });
 
-  it('setStoredPalette persists turquoise and sets data-palette', () => {
-    setStoredPalette('turquoise');
-    expect(window.localStorage.getItem(PALETTE_STORAGE_KEY)).toBe('turquoise');
-    expect(document.documentElement.getAttribute('data-palette')).toBe(
-      'turquoise',
-    );
+  it('setStoredPalette persists clay and sets data-palette', () => {
+    setStoredPalette('clay');
+    expect(window.localStorage.getItem(PALETTE_STORAGE_KEY)).toBe('clay');
+    expect(document.documentElement.getAttribute('data-palette')).toBe('clay');
   });
 
-  it('setStoredPalette persists indigo and sets data-palette', () => {
-    setStoredPalette('indigo');
-    expect(window.localStorage.getItem(PALETTE_STORAGE_KEY)).toBe('indigo');
-    expect(document.documentElement.getAttribute('data-palette')).toBe('indigo');
-  });
-
-  it('setStoredPalette persists mauve and sets data-palette', () => {
-    setStoredPalette('mauve');
-    expect(window.localStorage.getItem(PALETTE_STORAGE_KEY)).toBe('mauve');
-    expect(document.documentElement.getAttribute('data-palette')).toBe('mauve');
+  it('setStoredPalette persists slate and sets data-palette', () => {
+    setStoredPalette('slate');
+    expect(window.localStorage.getItem(PALETTE_STORAGE_KEY)).toBe('slate');
+    expect(document.documentElement.getAttribute('data-palette')).toBe('slate');
   });
 
   it('setStoredPalette("ink") clears the attribute and the key', () => {
-    setStoredPalette('turquoise');
+    setStoredPalette('clay');
     setStoredPalette('ink');
     expect(window.localStorage.getItem(PALETTE_STORAGE_KEY)).toBeNull();
     expect(document.documentElement.hasAttribute('data-palette')).toBe(false);
   });
 
   it('applyPalette toggles the attribute without touching storage', () => {
-    applyPalette('turquoise');
-    expect(document.documentElement.getAttribute('data-palette')).toBe(
-      'turquoise',
-    );
+    applyPalette('clay');
+    expect(document.documentElement.getAttribute('data-palette')).toBe('clay');
     expect(window.localStorage.getItem(PALETTE_STORAGE_KEY)).toBeNull();
     applyPalette('ink');
     expect(document.documentElement.hasAttribute('data-palette')).toBe(false);
@@ -212,7 +202,7 @@ describe('palette', () => {
   it('setStoredPalette fires a change event', () => {
     const handler = vi.fn();
     window.addEventListener(THEME_CHANGE_EVENT, handler);
-    setStoredPalette('turquoise');
+    setStoredPalette('clay');
     expect(handler).toHaveBeenCalledTimes(1);
     window.removeEventListener(THEME_CHANGE_EVENT, handler);
   });
@@ -224,30 +214,25 @@ describe('palette', () => {
     expect(meta.content).toBe('#faf9f5');
     applyThemeColorMeta('dark', 'ink');
     expect(meta.content).toBe('#14161c');
-    // turquoise light/dark
-    applyThemeColorMeta('light', 'turquoise');
-    expect(meta.content).toBe('#f1f9f7');
-    applyThemeColorMeta('dark', 'turquoise');
-    expect(meta.content).toBe('#0f1a18');
-    // indigo light/dark
-    applyThemeColorMeta('light', 'indigo');
-    expect(meta.content).toBe('#f5f5fb');
-    applyThemeColorMeta('dark', 'indigo');
-    expect(meta.content).toBe('#14141f');
-    // mauve light/dark
-    applyThemeColorMeta('light', 'mauve');
-    expect(meta.content).toBe('#f9f1f5');
-    applyThemeColorMeta('dark', 'mauve');
-    expect(meta.content).toBe('#17151b');
+    // clay light/dark
+    applyThemeColorMeta('light', 'clay');
+    expect(meta.content).toBe('#faf4f1');
+    applyThemeColorMeta('dark', 'clay');
+    expect(meta.content).toBe('#1b1614');
+    // slate light/dark
+    applyThemeColorMeta('light', 'slate');
+    expect(meta.content).toBe('#f3f5fa');
+    applyThemeColorMeta('dark', 'slate');
+    expect(meta.content).toBe('#141821');
   });
 
   it('setStoredPalette repaints the meta color for the current mode', () => {
     const meta = installMetaThemeColor();
     setStoredTheme('light');
-    setStoredPalette('turquoise');
-    expect(meta.content).toBe('#f1f9f7');
+    setStoredPalette('clay');
+    expect(meta.content).toBe('#faf4f1');
     setStoredTheme('dark');
-    // mode flip under turquoise → dark turquoise bg
-    expect(meta.content).toBe('#0f1a18');
+    // mode flip under clay → dark clay bg
+    expect(meta.content).toBe('#1b1614');
   });
 });

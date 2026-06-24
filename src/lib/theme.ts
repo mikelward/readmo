@@ -5,19 +5,18 @@ export const THEME_CHANGE_EVENT = 'readmo:themeChanged';
 // "Mode" (light/dark/system) and "palette" (color family) are orthogonal: each
 // palette ships its own light and dark variants, so the user picks both. Mode
 // drives the `data-theme` attribute; palette drives `data-palette`. `global.css`
-// combines them (e.g. `:root[data-palette='turquoise'][data-theme='dark']`).
+// combines them (e.g. `:root[data-palette='clay'][data-theme='dark']`).
 export type Theme = 'light' | 'dark' | 'system';
-export type Palette = 'ink' | 'turquoise' | 'indigo' | 'mauve';
+export type Palette = 'ink' | 'clay' | 'slate';
 
 const THEMES: readonly Theme[] = ['light', 'dark', 'system'];
-const PALETTES: readonly Palette[] = ['ink', 'turquoise', 'indigo', 'mauve'];
+const PALETTES: readonly Palette[] = ['ink', 'clay', 'slate'];
 
 // Display names for each palette, used by the drawer/settings pickers.
 export const PALETTE_LABELS: Record<Palette, string> = {
   ink: 'Ink',
-  turquoise: 'Turquoise',
-  indigo: 'Indigo',
-  mauve: 'Mauve',
+  clay: 'Clay',
+  slate: 'Slate',
 };
 
 // Representative light-variant colors for the palette swatch in the picker.
@@ -28,9 +27,8 @@ export const PALETTE_LABELS: Record<Palette, string> = {
 export const PALETTE_SWATCHES: Record<Palette, { bg: string; accent: string }> =
   {
     ink: { bg: '#faf9f5', accent: '#363636' },
-    turquoise: { bg: '#f1f9f7', accent: '#0e7c74' },
-    indigo: { bg: '#f5f5fb', accent: '#4338ca' },
-    mauve: { bg: '#f9f1f5', accent: '#923b67' },
+    clay: { bg: '#faf4f1', accent: '#b53a2e' },
+    slate: { bg: '#f3f5fa', accent: '#3d5a80' },
   };
 
 // Ink is the default palette, so it owns the bare `:root`/`[data-theme]` blocks
@@ -79,9 +77,8 @@ export function getStoredPalette(): Palette {
 // then resolved mode so the chrome tint tracks both axes.
 const META_THEME_COLORS: Record<Palette, Record<'light' | 'dark', string>> = {
   ink: { light: '#faf9f5', dark: '#14161c' },
-  turquoise: { light: '#f1f9f7', dark: '#0f1a18' },
-  indigo: { light: '#f5f5fb', dark: '#14141f' },
-  mauve: { light: '#f9f1f5', dark: '#17151b' },
+  clay: { light: '#faf4f1', dark: '#1b1614' },
+  slate: { light: '#f3f5fa', dark: '#141821' },
 } as const;
 
 // Keep the browser's address-bar / OS-chrome tint in sync with the
