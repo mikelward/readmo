@@ -5,6 +5,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { ItemList } from './ItemList';
 import { MockDataSource } from '../lib/data/MockDataSource';
+import { _resetNetworkStatusForTests } from '../lib/networkStatus';
 import type { FeedItem } from '../lib/types';
 import {
   installIntersectionObserverMock,
@@ -56,6 +57,13 @@ describe('ItemList', () => {
   afterEach(() => {
     uninstallIntersectionObserverMock();
     vi.unstubAllGlobals();
+    // The offline-message test toggles navigator.onLine + the network tracker;
+    // bring the browser back online first so the 'online' transition re-syncs
+    // React Query's singleton onlineManager (otherwise later tests' queries stay
+    // paused), then reset the tracker's own module state.
+    Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: true });
+    window.dispatchEvent(new Event('online'));
+    _resetNetworkStatusForTests();
     // Reset scroll geometry to jsdom defaults so each test starts with the
     // "More" pager at the foot of the list (scrollY 0 + innerHeight ≥
     // scrollHeight 0 → atListEnd). Tests that exercise paging set their own.
@@ -252,8 +260,9 @@ describe('ItemList', () => {
       { source },
     );
 
-    // Error/retry UI, not an exhausted-feed message.
-    await screen.findByText(/couldn’t load items/i);
+    // Error/retry UI, not an exhausted-feed message. Online + errored reads as
+    // a server problem (e.g. an overloaded DB returning 500), not "offline".
+    await screen.findByText(/server isn’t responding/i);
     expect(screen.queryByTestId('more-btn')).toBeNull();
   });
 
@@ -280,8 +289,32 @@ describe('ItemList', () => {
     );
 
     // Must show the error/retry UI — NOT the empty label.
-    await screen.findByText(/couldn’t load items/i);
+    await screen.findByText(/server isn’t responding/i);
     expect(screen.queryByText(/all caught up/i)).toBeNull();
+  });
+
+  it('says "offline" only when the device has no network, not on a server error', async () => {
+    // Genuine disconnect: the browser reports offline. The list error must own
+    // up to that ("you're offline"), distinct from the server-problem copy a
+    // failed-but-reachable read gets.
+    Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: false });
+    window.dispatchEvent(new Event('offline'));
+
+    const source = new MockDataSource(`test-${Math.random()}`);
+    // 'offlineFirst' (the app's global networkMode) lets the read still attempt
+    // and fail while offline → isError → the error UI; the default 'online' mode
+    // would pause the query and never surface it.
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0, networkMode: 'offlineFirst' } },
+    });
+    const fetchPage = vi.fn(() => Promise.reject(new Error('boom')));
+    renderWithProviders(
+      <ItemList viewKey={`offline-${viewKeySeq++}`} fetchPage={fetchPage} />,
+      { source, queryClient },
+    );
+
+    await screen.findByText(/you’re offline/i);
+    expect(screen.queryByText(/server isn’t responding/i)).toBeNull();
   });
 
   it('More loads the next page, then disables as "No more items" when exhausted', async () => {

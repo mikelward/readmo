@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { IsRestoringProvider, QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { MockDataSource } from '../lib/data/MockDataSource';
-import { _resetNetworkStatusForTests } from '../lib/networkStatus';
+import { _resetNetworkStatusForTests, reportFetchFailure } from '../lib/networkStatus';
 import type { FeedItem } from '../lib/types';
 import type { FullTextResult } from '../lib/fullText';
 import { ItemPage } from './ItemPage';
@@ -180,6 +180,25 @@ describe('ItemPage reading mode', () => {
     // No full-article fetch is attempted while offline.
     expect(screen.queryByTestId('fulltext-loading')).not.toBeInTheDocument();
     expect(screen.queryByTestId('reader-keep-reading')).not.toBeInTheDocument();
+  });
+
+  it('blames the server, not the user, when the backend is unreachable but the device is online', async () => {
+    // Device has a connection (navigator.onLine stays true) but a hard fetch
+    // failure flipped the network tracker, and there's no cached copy to fall
+    // back to. The miss state must say the server is the problem — not "pin it
+    // while online", which would wrongly imply the user is offline.
+    reportFetchFailure(new TypeError('Failed to fetch'));
+    class DownSource extends MockDataSource {
+      async getItem(): Promise<FeedItem | null> {
+        throw new Error('backend down');
+      }
+    }
+    renderReader(new DownSource(`test-${Math.random()}`));
+
+    expect(
+      await screen.findByText(/server isn.t responding right now/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/isn.t saved offline/i)).not.toBeInTheDocument();
   });
 
   it('respects a successful "not visible" miss while online (no stale-cache override)', async () => {

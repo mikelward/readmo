@@ -17,6 +17,30 @@ import { onlineManager } from '@tanstack/react-query';
 
 type Listener = (online: boolean) => void;
 
+// A request failing tells us our backend wasn't reachable on the last try — it
+// does NOT tell us the device has no network. Those are different problems with
+// different fixes (wait for the server vs. find a connection), so we surface
+// them as distinct states instead of one blanket "Offline":
+//   - 'online'              — both signals agree we're connected.
+//   - 'offline'             — the device itself reports no network
+//                             (navigator.onLine === false). The user's problem.
+//   - 'backend-unreachable' — the device has a connection but our backend isn't
+//                             answering (overloaded / erroring / behind a CDN
+//                             returning a CORS-less 5xx, which surfaces as a
+//                             TypeError). Readmo's problem, not theirs. Shown as
+//                             "Down", not "Offline", so we stop telling users
+//                             they're offline when the server is the one that's
+//                             struggling.
+// Caveat: navigator.onLine lags on mobile (see the header comment), so in the
+// brief window after a genuine disconnect where the OS still says online, a
+// failed fetch reads as 'backend-unreachable' until the 'offline' event lands.
+// We accept blaming the server during that ambiguous window rather than the
+// reverse (a server outage mislabeled as the user being offline), which was the
+// bug this replaces.
+export type ConnectivityStatus = 'online' | 'offline' | 'backend-unreachable';
+
+type StatusListener = (status: ConnectivityStatus) => void;
+
 function initialBrowserOnline(): boolean {
   if (typeof navigator === 'undefined') return true;
   return navigator.onLine;
@@ -25,8 +49,22 @@ function initialBrowserOnline(): boolean {
 let browserOnline: boolean = initialBrowserOnline();
 let fetchOnline: boolean = true;
 
-let lastEmitted: boolean = browserOnline && fetchOnline;
+function computeStatus(): ConnectivityStatus {
+  if (browserOnline && fetchOnline) return 'online';
+  // A device that reports no network is offline regardless of fetch state —
+  // the device signal wins, since "find a connection" is the actionable fix.
+  if (!browserOnline) return 'offline';
+  // Browser says connected, but our last fetch failed: the backend is the
+  // problem, not the connection.
+  return 'backend-unreachable';
+}
+
+let lastStatus: ConnectivityStatus = computeStatus();
+// Boolean subscribers (the legacy `online` signal) only care about the
+// online/not-online edge; status subscribers see every transition, including
+// 'offline' <-> 'backend-unreachable' (where the boolean stays false).
 const listeners = new Set<Listener>();
+const statusListeners = new Set<StatusListener>();
 
 // A self-imposed read *timeout* (supabaseFetch aborts a hung read after 15s)
 // is ambiguous: the device may be offline, or the backend may just be slow —
@@ -63,30 +101,44 @@ export function setConnectivityProbeUrl(u: string | null) {
   probeUrl = u;
 }
 
-function combined(): boolean {
-  return browserOnline && fetchOnline;
-}
-
 function emitIfChanged() {
-  const next = combined();
-  if (next === lastEmitted) return;
-  lastEmitted = next;
-  for (const fn of listeners) fn(next);
+  const next = computeStatus();
+  if (next === lastStatus) return;
+  const wasOnline = lastStatus === 'online';
+  const isOnline = next === 'online';
+  lastStatus = next;
+  // Status subscribers see every transition (e.g. 'offline' -> 'backend-
+  // unreachable'); boolean subscribers + onlineManager only fire on the
+  // online/not-online edge so query pausing/resume behaves exactly as before.
+  for (const fn of statusListeners) fn(next);
+  if (wasOnline === isOnline) return;
+  for (const fn of listeners) fn(isOnline);
   // Keep React Query's own onlineManager in sync so paused queries
   // resume when we reconnect (belt-and-braces with networkMode:
   // 'offlineFirst' — that mode prevents hanging, this keeps
   // refetch-on-reconnect working).
-  onlineManager.setOnline(next);
+  onlineManager.setOnline(isOnline);
 }
 
 export function getOnline(): boolean {
-  return combined();
+  return computeStatus() === 'online';
+}
+
+export function getConnectivityStatus(): ConnectivityStatus {
+  return computeStatus();
 }
 
 export function subscribeOnline(fn: Listener): () => void {
   listeners.add(fn);
   return () => {
     listeners.delete(fn);
+  };
+}
+
+export function subscribeConnectivityStatus(fn: StatusListener): () => void {
+  statusListeners.add(fn);
+  return () => {
+    statusListeners.delete(fn);
   };
 }
 
@@ -225,11 +277,16 @@ if (typeof window !== 'undefined') {
 // navigator.onLine or clearing listeners between cases.
 export function _resetNetworkStatusForTests() {
   listeners.clear();
+  statusListeners.clear();
   browserOnline = initialBrowserOnline();
   fetchOnline = true;
-  lastEmitted = combined();
+  lastStatus = computeStatus();
   probeUrl = null;
   probeInFlight = false;
   successSeq = 0;
   probeBaselineSeq = 0;
+  // Re-sync React Query's singleton onlineManager to the reset state — a test
+  // that drove us offline (pausing queries) would otherwise leak that into the
+  // next test, stranding its queries paused.
+  onlineManager.setOnline(lastStatus === 'online');
 }

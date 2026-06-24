@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDataSource } from '../lib/data/context';
+import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { useFeedItems, type FetchPage } from '../hooks/useFeedItems';
 import { useInViewIds } from '../hooks/useInViewIds';
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
@@ -23,6 +24,7 @@ interface Props {
  * swipe, an explicit "More" button, and the background-refresh status strip. */
 export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
   const ds = useDataSource();
+  const status = useConnectivityStatus();
   const {
     items,
     isLoading,
@@ -130,7 +132,15 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
       <PullToRefresh onRefresh={async () => { await ds.refresh(); await refetch(); await checkForServiceWorkerUpdate(); }}>
         {isError || (refreshFailed && items.length === 0) ? (
           <div className="item-list__state" role="alert">
-            <p>Couldn’t load items.</p>
+            {/* Say which failure it is so a server problem doesn't read as the
+                user being offline. 'offline' = the device has no network;
+                anything else (backend unreachable, or a 5xx that still
+                reached us) is a server-side problem they can only wait out. */}
+            <p>
+              {status === 'offline'
+                ? 'You’re offline. Reconnect to load items.'
+                : 'Readmo’s server isn’t responding right now — it may be busy.'}
+            </p>
             <button type="button" onClick={() => refetch()}>
               Retry
             </button>

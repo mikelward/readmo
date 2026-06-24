@@ -919,8 +919,13 @@ keys differ; the strategies map one-to-one:
   treating a timeout as offline). Cost/reliability: same Supabase project (no new
   third party), fires only on the rare timeout path, ~5s budget — negligible.
   Hard network errors (`TypeError`/`NetworkError` — DNS, unreachable host,
-  dropped connection) still flip the pill immediately, since they fail fast and
-  unambiguously mean no connection.
+  dropped connection) still flip the **fetch** signal immediately (they fail
+  fast), but a failed fetch is **not** assumed to mean the *device* is offline —
+  a cross-origin backend behind a CDN/gateway surfaces an overload as a
+  CORS-less 5xx or a dropped connection, which `fetch` reports as a `TypeError`
+  indistinguishable from a genuine disconnect. So the *label* keys off
+  `navigator.onLine`: a failed fetch while the device still reports a connection
+  is shown as **"Down"** (backend unreachable), not "Offline" — see *Offline UX*.
 - `CACHE_BUSTER` wipes the persisted blob on schema change; the outbox and
   Supabase data are unaffected (server is canonical).
 - **All client caches are scoped to the signed-in user and purged on account
@@ -978,20 +983,41 @@ keys differ; the strategies map one-to-one:
 
 ### Offline UX (mirrors newshacker)
 
-- `useOnlineStatus` → small **"Offline" pill** in the header linking to
-  `/offline`.
-- **Combined detection** (`networkStatus.ts`): `online = browserOnline &&
-  fetchOnline`; `trackedFetch` flips `fetchOnline` on `TypeError` / any response
-  (ignore `AbortError`); AND-ing protects both directions; keep React Query's
-  `onlineManager` in sync.
+- **Connectivity pill** in the header, linking to `/offline`. Its label
+  distinguishes *the device has no network* from *our backend isn't answering*,
+  so a server problem never reads as the user being offline:
+  - **"Offline"** — the device reports no network (`navigator.onLine === false`).
+    The user's problem (find a connection).
+  - **"Down"** — the device has a connection but our backend isn't responding
+    (overloaded / erroring / a CORS-less gateway 5xx that surfaces as a
+    `TypeError`). Readmo's problem, not theirs. `title` reads "Readmo's server
+    isn't responding right now"; the feed/reader views echo this in their error
+    copy instead of a blanket "couldn't load".
+  - No pill when fully online.
+- **Detection** (`networkStatus.ts`): two signals — `browserOnline`
+  (`navigator.onLine` + online/offline events) and `fetchOnline` (`trackedFetch`
+  flips it on `TypeError`/`NetworkError` or any response; `AbortError` ignored).
+  A three-way status derives from them: `online` (both up), `offline`
+  (`!browserOnline` — the device signal wins), else `backend-unreachable`. The
+  legacy boolean `online === (status === 'online')` is kept for callers that
+  only gate on connected-or-not, and React Query's `onlineManager` is held in
+  sync with it. `useOnlineStatus` returns the boolean; `useConnectivityStatus`
+  returns the three-way status. Caveat: `navigator.onLine` lags on mobile, so in
+  the brief window after a real disconnect where the OS still says online, a
+  failed fetch reads as "Down" until the `offline` event lands — we accept
+  blaming the server during that ambiguity rather than mislabeling a real outage
+  as the user being offline (the bug this replaced).
 - **Offline reader fallback:** an **unpinned** article whose detail read can't
   reach the network still opens to its **RSS body**, recovered from a list page
   already on the device — list payloads carry `content_html` (only
   `full_content_html` is stripped; see migration 0011), so the feed's own body
   is shown via `lib/offlineItem.ts:findCachedFeedItem`. The full-article fetch is
   skipped offline. Only an article that was **never loaded into any list** falls
-  through to the miss state: "This article isn't saved offline. Pin it while
-  online to keep a copy." — no retry button offline.
+  through to the miss state, whose copy matches the connectivity status:
+  *offline* → "This article isn't saved offline. Pin it while online to keep a
+  copy." (no retry button); *backend-unreachable* → "Readmo's server isn't
+  responding right now — it may be busy."; *online* (reached the server but it
+  errored) → "Couldn't load this article."
 - **Writes queue offline** (the outbox) — pin/favorite/done/hide/open reflect
   immediately and flush on reconnect; hard failures roll back + toast.
 
