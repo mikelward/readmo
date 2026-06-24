@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { looksTokenized } from './urlSafety.ts';
+import { looksTokenized, redactUrl } from './urlSafety.ts';
 
 describe('looksTokenized — ordinary article URLs pass (false)', () => {
   it.each([
@@ -32,5 +32,31 @@ describe('looksTokenized — token-bearing URLs are skipped (true)', () => {
     expect(
       looksTokenized('https://example.com/a/9f86d081884c7d659a2feaa0c55ad015-thumb'),
     ).toBe(true);
+  });
+});
+
+describe('redactUrl — strips everything that could carry a token', () => {
+  it('keeps scheme + host', () => {
+    expect(redactUrl('https://example.com/feed.xml')).toBe('https://example.com');
+  });
+  it('drops the query string (?token=…)', () => {
+    expect(redactUrl('https://example.com/feed?token=secret')).toBe('https://example.com');
+  });
+  it('drops the path even when it embeds a hex token', () => {
+    expect(redactUrl('https://example.com/feeds/9f86d081884c7d659a2feaa0c55ad015.xml')).toBe(
+      'https://example.com',
+    );
+  });
+  it('drops credentials', () => {
+    expect(redactUrl('https://user:pass@example.com/feed.xml')).toBe('https://example.com');
+  });
+  it('keeps a non-default port (still part of host)', () => {
+    expect(redactUrl('https://example.com:8443/feed.xml')).toBe('https://example.com:8443');
+  });
+  it('returns a placeholder for unparseable input rather than the raw string', () => {
+    expect(redactUrl('not a url')).toBe('<unparseable-url>');
+    expect(redactUrl('')).toBe('<no-url>');
+    expect(redactUrl(null)).toBe('<no-url>');
+    expect(redactUrl(undefined)).toBe('<no-url>');
   });
 });

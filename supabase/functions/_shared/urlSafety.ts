@@ -12,6 +12,21 @@
 // hyphen-delimited UUIDs — while catching raw high-entropy tokens (long hex
 // blobs, JWT/base64url strings) and any query string.
 
+/** Redact a URL down to scheme://host for safe logging. Strips userinfo, path,
+ * query, and fragment — any of which can carry a subscriber token (a feed URL
+ * pasted directly by the user lands in feeds.url with secret_url null, so the
+ * "public" column can in fact contain a secret; SPEC.md / guardrail #6).
+ * Returns '<unparseable-url>' if the URL won't parse — never the raw input. */
+export function redactUrl(url: string | null | undefined): string {
+  if (!url) return '<no-url>';
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return '<unparseable-url>';
+  }
+}
+
 /** True if the URL should NOT be forwarded to a third party because it may
  * carry a secret. */
 export function looksTokenized(url: string): boolean {

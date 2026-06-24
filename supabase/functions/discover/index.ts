@@ -85,8 +85,15 @@ Deno.serve(async (req: Request) => {
     return json({ candidates: result.validated });
   } catch (err) {
     // SSRF-blocked (private/loopback address) or any fetch/parse failure: the
-    // URL couldn't be reached. Tag it so the client says so.
-    if (err instanceof SsrfError) return json({ error: err.message, code: 'unreachable' }, 400);
+    // URL couldn't be reached. Tag it so the client says so. SsrfError is an
+    // expected outcome (sketchy URL) so it logs at debug-ish detail; anything
+    // else is unexpected and gets a louder line so it surfaces in the Edge
+    // Function log when a user reports "discover never worked".
+    if (err instanceof SsrfError) {
+      console.warn('discover: blocked by SSRF guard:', err.message);
+      return json({ error: err.message, code: 'unreachable' }, 400);
+    }
+    console.error('discover: unhandled error:', err);
     return json(
       { error: err instanceof Error ? err.message : String(err), code: 'unreachable' },
       502,

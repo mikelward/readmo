@@ -46,13 +46,24 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { extractArticle } from '../_shared/fulltext.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
-import { looksTokenized } from '../_shared/urlSafety.ts';
+import { looksTokenized, redactUrl } from '../_shared/urlSafety.ts';
 import { corsHeaders, preflight } from '../_shared/cors.ts';
 
 const JINA_MAX_BYTES = 4 * 1024 * 1024; // 4 MiB
 const FETCH_MAX_BYTES = 8 * 1024 * 1024; // 8 MiB — article pages can be large
 
 Deno.serve(async (req: Request) => {
+  // Top-level guard so an unexpected throw produces an Edge Function log
+  // line, not a bare EDGE_FUNCTION_ERROR.
+  try {
+    return await handle(req);
+  } catch (err) {
+    console.error('fulltext: unhandled error:', err);
+    return json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
+async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return preflight();
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
 
@@ -112,8 +123,12 @@ Deno.serve(async (req: Request) => {
       body = new TextDecoder().decode(res.body);
       finalUrl = res.url;
     }
-  } catch {
-    // SSRF-blocked, DNS failure, timeout, oversized body — all "unreachable".
+  } catch (err) {
+    // SSRF-blocked, DNS failure, timeout, oversized body — all "unreachable"
+    // to the caller, but log so a publisher that always fails is diagnosable.
+    // Article URLs can embed a subscriber token (the file-level comment calls
+    // this out for the Jina path); redact to scheme://host before logging.
+    console.warn(`fulltext: fetch for item ${itemId} (${redactUrl(item.url)}) failed:`, err);
     return json({ status: 'unreachable', contentHtml: null });
   }
 
@@ -136,12 +151,14 @@ Deno.serve(async (req: Request) => {
     .eq('id', itemId);
   if (writeError) {
     // The extraction still succeeded for this caller; surface it even if the
-    // cache write failed (next caller just re-extracts).
+    // cache write failed (next caller just re-extracts). Log so a persistently
+    // failing cache write doesn't stay invisible.
+    console.error(`fulltext: cache write for item ${itemId} failed:`, writeError);
     return json({ status: 'ok', contentHtml: clean });
   }
 
   return json({ status: 'ok', contentHtml: clean });
-});
+}
 
 /** Fetch via Jina, but only for URLs we're reasonably sure carry no secret.
  * Two gates: (a) skip feeds that carry a secret_url (definitely private; the
