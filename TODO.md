@@ -55,6 +55,21 @@ constraint is documented in more detail.
     two of their subscriptions share articles. Lowest impact, requires UI.
   See SPEC.md §Data → De-dup.
 
+## Feed discovery
+
+- **Section discovery for curated autocomplete feeds/sites.** Typed URLs that
+  advertise multiple feeds now surface a multi-select picker so a user can
+  follow a specific section (Sport, World news, …) — see SPEC.md §Feed
+  discovery. Curated `POPULAR_FEEDS` autocomplete entries still bypass discovery
+  entirely (each points at one direct feed URL), so they never offer sections.
+  Extend the curated path to support sections too: either tag curated entries
+  that represent a *site* (vs. a single feed) and route their submit through
+  `discover()` → the picker, or carry an explicit per-entry section list in
+  `popularFeeds.ts` and show the picker without a network round-trip. Keep the
+  bot-block resilience the curated direct-subscribe path was added for (don't
+  force every popular feed through discovery). See `src/pages/SettingsPage.tsx`
+  (`onSubmitAddFeed`) and `src/lib/popularFeeds.ts`.
+
 ## Server RPCs
 
 - **Authenticated OPML-export RPC.** `feeds_public` exposes only `site_url`
