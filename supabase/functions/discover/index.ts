@@ -22,6 +22,7 @@ import { discoverFromHtml, redditFeedFor, type FeedCandidate } from '../_shared/
 import { parseFeed } from '../_shared/parser.ts';
 import { safeFetch, SsrfError } from '../_shared/ssrf.ts';
 import { corsHeaders, preflight } from '../_shared/cors.ts';
+import { redactUrl } from '../_shared/urlSafety.ts';
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return preflight();
@@ -41,13 +42,13 @@ Deno.serve(async (req: Request) => {
     // otherwise assertSafeUrl/safeFetch reject it as "Invalid URL".
     const target = /^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `https://${url}`;
 
-    console.log(`discover: probing ${target}`);
+    console.log(`discover: probing ${redactUrl(target)}`);
 
     // Reddit short-circuit: derive the .rss form directly (its pages don't
     // reliably advertise the feed).
     const reddit = redditFeedFor(target);
     if (reddit) {
-      console.log(`discover: Reddit short-circuit → ${reddit}`);
+      console.log(`discover: Reddit short-circuit → ${redactUrl(reddit)}`);
       const { feed } = await tryParse(reddit);
       if (feed) {
         console.log(`discover: Reddit feed validated`);
