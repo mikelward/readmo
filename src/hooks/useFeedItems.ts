@@ -42,6 +42,8 @@ export function useFeedItems(viewKey: string, fetchPage: FetchPage) {
     refetch: query.refetch,
     // Background refresh: data already present and a refetch is in flight.
     isRefreshing: !!query.data && query.isFetching && !query.isFetchingNextPage,
-    refreshFailed: !!query.data && query.isError,
+    // In React Query v5, a background refetch failure keeps status='success'
+    // and isError=false; only query.error is set. Use that directly.
+    refreshFailed: !!query.data && !!query.error,
   };
 }

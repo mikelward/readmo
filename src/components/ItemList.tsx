@@ -127,7 +127,7 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
       <ListToolbar />
 
       <PullToRefresh onRefresh={async () => { await ds.refresh(); await refetch(); await checkForServiceWorkerUpdate(); }}>
-        {isError ? (
+        {isError || (refreshFailed && items.length === 0) ? (
           <div className="item-list__state" role="alert">
             <p>Couldn’t load items.</p>
             <button type="button" onClick={() => refetch()}>
