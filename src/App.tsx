@@ -8,6 +8,7 @@ import { FeedBarProvider } from './components/FeedBarContext';
 import { useAuth } from './hooks/useAuth';
 import { useUserCacheScope } from './hooks/useUserCacheScope';
 import { useOfflineCacheLock } from './hooks/useOfflineCacheLock';
+import { useFeedInvalidation } from './hooks/useFeedInvalidation';
 import { HomePage, FolderPage, FeedPage } from './pages/FeedPages';
 import {
   PinnedPage,
@@ -42,6 +43,9 @@ export default function App() {
   // Keep pinned/favorited items' reader queries cached for offline (lock while
   // bucketed, evict when neither). Mounted once here so it tracks state app-wide.
   useOfflineCacheLock();
+  // Invalidate feed caches on any state change, even while the feed list is
+  // unmounted (e.g. user marks Done on the reader page then navigates back).
+  useFeedInvalidation();
   // Gate rendering across an auth transition: while the previous user's caches
   // are being purged and the app reloads, paint nothing so the next user can't
   // briefly see the previous user's cached content (guardrail #8).
