@@ -29,11 +29,9 @@ export function useFeedItems(viewKey: string, fetchPage: FetchPage) {
   });
 
   const items: FeedItem[] = query.data?.pages.flatMap((p) => p.items) ?? [];
-  const total = query.data?.pages[0]?.total ?? 0;
 
   return {
     items,
-    total,
     isLoading: query.isLoading,
     isError: query.isError,
     // Any fetch in flight (initial, refetch, or next-page). Callers that need to

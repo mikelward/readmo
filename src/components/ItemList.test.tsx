@@ -35,7 +35,7 @@ function renderPaged(source: MockDataSource, items: FeedItem[], pageSize: number
     const offset = cursor ? Number(cursor) : 0;
     const slice = items.slice(offset, offset + pageSize);
     const next = offset + pageSize < items.length ? String(offset + pageSize) : null;
-    return Promise.resolve({ items: slice, nextCursor: next, total: items.length });
+    return Promise.resolve({ items: slice, nextCursor: next });
   });
   const utils = renderWithProviders(
     <ItemList
@@ -110,7 +110,7 @@ describe('ItemList', () => {
   it('does not show the promo bar on an empty feed', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     const fetchPage = vi.fn(() =>
-      Promise.resolve({ items: [], nextCursor: null, total: 0 }),
+      Promise.resolve({ items: [], nextCursor: null }),
     );
     renderWithProviders(
       <ItemList viewKey={`empty-${Math.random()}`} fetchPage={fetchPage} emptyLabel="All caught up." />,
@@ -250,14 +250,12 @@ describe('ItemList', () => {
     let release: (page: {
       items: FeedItem[];
       nextCursor: string | null;
-      total: number;
     }) => void = () => {};
     const fetchPage = vi.fn(
       () =>
         new Promise<{
           items: FeedItem[];
           nextCursor: string | null;
-          total: number;
         }>((resolve) => {
           release = resolve;
         }),
@@ -271,7 +269,7 @@ describe('ItemList', () => {
     await screen.findByTestId('back-to-top');
     expect(screen.queryByTestId('more-btn')).toBeNull();
 
-    act(() => release({ items, nextCursor: null, total: items.length }));
+    act(() => release({ items, nextCursor: null }));
 
     await screen.findAllByTestId('item-row');
     expect(screen.getByTestId('more-btn')).toHaveTextContent('No more items');
@@ -303,7 +301,7 @@ describe('ItemList', () => {
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
     queryClient.setQueryData(['feed', viewKey], {
-      pages: [{ items: [], total: 0, nextCursor: null }],
+      pages: [{ items: [], nextCursor: null }],
       pageParams: [null],
     });
 
@@ -353,7 +351,7 @@ describe('ItemList', () => {
 
     const source = new MockDataSource(`test-${Math.random()}`);
     const fetchPage = vi.fn(() =>
-      Promise.resolve({ items: [], nextCursor: null, total: 0 }),
+      Promise.resolve({ items: [], nextCursor: null }),
     );
     renderWithProviders(
       <ItemList
@@ -374,7 +372,7 @@ describe('ItemList', () => {
     // it). navigator.onLine defaults to true here.
     const source = new MockDataSource(`test-${Math.random()}`);
     const fetchPage = vi.fn(() =>
-      Promise.resolve({ items: [], nextCursor: null, total: 0 }),
+      Promise.resolve({ items: [], nextCursor: null }),
     );
     renderWithProviders(
       <ItemList
@@ -411,7 +409,7 @@ describe('ItemList', () => {
     // First (offline) read resolves empty immediately; the reconnect refetch is
     // held open behind `releaseRefetch` so we can assert the caught-up label
     // doesn't appear until it settles.
-    const empty = { items: [] as FeedItem[], nextCursor: null, total: 0 };
+    const empty = { items: [] as FeedItem[], nextCursor: null };
     let releaseRefetch: (page: typeof empty) => void = () => {};
     let calls = 0;
     const fetchPage = vi.fn(() => {
@@ -470,7 +468,7 @@ describe('ItemList', () => {
 
     // The (offlineFirst) read is held open the whole time, so it's still in
     // flight when we reconnect.
-    const empty = { items: [] as FeedItem[], nextCursor: null, total: 0 };
+    const empty = { items: [] as FeedItem[], nextCursor: null };
     let release: (page: typeof empty) => void = () => {};
     const fetchPage = vi.fn(
       () => new Promise<typeof empty>((resolve) => {
@@ -522,7 +520,7 @@ describe('ItemList', () => {
       },
     });
 
-    const empty = { items: [] as FeedItem[], nextCursor: null, total: 0 };
+    const empty = { items: [] as FeedItem[], nextCursor: null };
     let releaseRetry: () => void = () => {};
     let calls = 0;
     const fetchPage = vi.fn(() => {
@@ -579,11 +577,11 @@ describe('ItemList', () => {
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
     queryClient.setQueryData(['feed', viewKey], {
-      pages: [{ items: [], total: 0, nextCursor: null }],
+      pages: [{ items: [], nextCursor: null }],
       pageParams: [null],
     });
 
-    const empty = { items: [] as FeedItem[], nextCursor: null, total: 0 };
+    const empty = { items: [] as FeedItem[], nextCursor: null };
     let release: () => void = () => {};
     const fetchPage = vi.fn(
       () => new Promise<typeof empty>((resolve) => { release = () => resolve(empty); }),

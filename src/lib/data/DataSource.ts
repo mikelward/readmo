@@ -12,9 +12,10 @@ import type { ItemStateStore } from './itemState';
 
 export interface Page<T> {
   items: T[];
-  /** Total items available for this view, so the UI can show "More". */
-  total: number;
-  /** Opaque cursor for the next page, or null when exhausted. */
+  /** Opaque cursor for the next page, or null when exhausted. A non-null
+   * cursor means the last page came back full, so another page *may* exist —
+   * we don't carry a grand total (the feed never shows "X of Y", and a
+   * window count over the whole filtered set is expensive at scale). */
   nextCursor: string | null;
 }
 

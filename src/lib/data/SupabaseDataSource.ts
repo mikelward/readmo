@@ -370,7 +370,9 @@ export class SupabaseDataSource implements DataSource {
    * (newest-first by `sort_at`, Done/Hidden excluded). Because it pages the
    * *combined* sequence, each page holds at most `limit` rows (matching the
    * mock), and the client never sends an unbounded `feed_id`/exclusion `IN (…)`.
-   * `total_count` is a window count carried on every row.
+   * No total count rides on the rows (it forced a full scan of the filtered set
+   * on every call — SCALING.md); "is there another page?" is inferred from
+   * whether this page came back full.
    */
   private async feedView(
     args: { p_scope: 'home' | 'folder' | 'feed'; p_folder: string | null; p_feed_id: FeedId | null },
@@ -383,10 +385,9 @@ export class SupabaseDataSource implements DataSource {
     // pin/opened affordances from the store, and overlayLocalState below consults
     // it, so a page returned before hydration would briefly show default flags.
     await this.ensureHydrated();
-    const rows = this.unwrap<Array<{ item: ItemRow; total_count: number }>>(
+    const rows = this.unwrap<Array<{ item: ItemRow }>>(
       await this.sb.rpc('feed_items', { ...args, p_limit: limit, p_offset: offset }),
     );
-    const total = rows.length > 0 ? Number(rows[0].total_count) : 0;
     const items = await this.resolveFeedItems(
       this.overlayLocalState(rows.map((r) => r.item)),
     );
@@ -406,11 +407,16 @@ export class SupabaseDataSource implements DataSource {
       );
     }
 
+    // A full page (server returned exactly `limit` rows) means more may follow;
+    // a short page is the end. This compares the *raw* RPC row count, not the
+    // post-overlay `items` (overlayLocalState can drop locally Done/Hidden rows
+    // from a page), so the cursor still tracks the server's offset paging. The
+    // tradeoff vs. a total count: when the result set is an exact multiple of
+    // `limit`, the final fetch returns an empty page before stopping.
     const nextOffset = offset + limit;
     return {
       items,
-      total,
-      nextCursor: nextOffset < total ? String(nextOffset) : null,
+      nextCursor: rows.length === limit ? String(nextOffset) : null,
     };
   }
 

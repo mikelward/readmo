@@ -20,7 +20,8 @@ describe('MockDataSource feed reads', () => {
     ds.stateStore.set(victim, 'done', true);
     const after = await ds.getHomeItems();
     expect(after.items.find((fi) => fi.item.id === victim)).toBeUndefined();
-    expect(after.total).toBe(before.total - 1);
+    // The seed fits in a single page, so dropping one item shrinks it by one.
+    expect(after.items.length).toBe(before.items.length - 1);
   });
 
   it('prepends Pinned items to the top, oldest-pinned first', async () => {
