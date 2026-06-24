@@ -695,9 +695,14 @@ page's discipline is unchanged.
 - **Full-text reading mode (default):** many feeds publish only a truncated
   stub as `content_html`. When the feed body looks truncated (no body, or under
   ~600 chars of visible text — see `src/lib/fullText.ts:looksTruncated`) the
-  reader automatically fetches the full article from its source via the
-  `fulltext` Edge Function and shows that by default, falling back to the feed
-  body. The function fetches through the SSRF-hardened helper, extracts the
+  reader fetches the full article from its source via the `fulltext` Edge
+  Function **in the background while showing the feed body immediately**, so the
+  reader always has something to read on the first tap. The fetched article does
+  **not** auto-swap in (that would reflow the page mid-read): a **"Keep
+  reading"** button appears once it's ready and reveals it on demand. An
+  already-cached full body (a pinned or previously-read item) skips the button
+  and opens straight into the reading view. The function fetches through the
+  SSRF-hardened helper, extracts the
   article with Readability, **sanitizes the extracted HTML** (same path as the
   feed body — guardrail #6; never stores/serves raw publisher HTML), and caches
   the result on the shared item (`items.full_content_html`) so later opens — on
@@ -716,9 +721,12 @@ page's discipline is unchanged.
     insensitive). Genuine content lists (few/no links) and section headings are
     kept; a page that was mostly chrome now falls under the minimum article
     length and reports `empty`.
-  - A **reading-view / feed-version toggle** appears when both bodies exist; the
-    reading view is the default. Feeds whose body is already complete are not
-    auto-fetched but offer a **"Get full article"** control.
+  - The feed body shows first; once the background fetch lands, **"Keep
+    reading"** reveals the full article (no auto-swap). Once both bodies exist a
+    **reading-view / feed-version toggle** lets the user flip between them. An
+    already-cached full body defaults to the reading view. Feeds whose body is
+    already complete are not auto-fetched but offer a **"Get full article"**
+    control.
   - **Outcomes** (the function returns `{ status, contentHtml }`): `ok`,
     `empty` (paywall/teaser — nothing article-like found), `auth` (publisher
     gated the page even via the Jina fallback → the reader keeps the feed body
@@ -971,7 +979,13 @@ keys differ; the strategies map one-to-one:
   fetchOnline`; `trackedFetch` flips `fetchOnline` on `TypeError` / any response
   (ignore `AbortError`); AND-ing protects both directions; keep React Query's
   `onlineManager` in sync.
-- **Offline reader miss:** "This article isn't saved offline. Pin it while
+- **Offline reader fallback:** an **unpinned** article whose detail read can't
+  reach the network still opens to its **RSS body**, recovered from a list page
+  already on the device — list payloads carry `content_html` (only
+  `full_content_html` is stripped; see migration 0011), so the feed's own body
+  is shown via `lib/offlineItem.ts:findCachedFeedItem`. The full-article fetch is
+  skipped offline. Only an article that was **never loaded into any list** falls
+  through to the miss state: "This article isn't saved offline. Pin it while
   online to keep a copy." — no retry button offline.
 - **Writes queue offline** (the outbox) — pin/favorite/done/hide/open reflect
   immediately and flush on reconnect; hard failures roll back + toast.

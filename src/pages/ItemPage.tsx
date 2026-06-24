@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
+import { findCachedFeedItem } from '../lib/offlineItem';
 import { useItemState } from '../hooks/useItemState';
 import { useWideViewport } from '../hooks/useWideViewport';
 import { useShareItem } from '../hooks/useShareItem';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { formatAge, formatDisplayDomain, isSafeHttpUrl } from '../lib/itemMeta';
 import { fullTextStaleTime, looksTruncated } from '../lib/fullText';
+import type { FullTextResult } from '../lib/fullText';
 import type { Feed, Item, ItemState, ItemStateField } from '../lib/types';
 import { TooltipButton } from '../components/TooltipButton';
 import {
@@ -24,6 +26,13 @@ import {
   VerticalAlignTop,
 } from '../components/icons';
 import './ItemPage.css';
+
+/** True when a cached `['fulltext', id]` result already holds a usable reading
+ * body (a terminal `ok` with HTML) — i.e. the full article is available without
+ * a fresh fetch, so the reader can open straight into the reading view. */
+function cachedFullTextOk(ft: FullTextResult | undefined): boolean {
+  return ft?.status === 'ok' && !!ft.contentHtml;
+}
 
 interface ReaderToolbarProps {
   /** Where the bar sits. The bottom copy suffixes its test ids so the two
@@ -218,23 +227,52 @@ export function ItemPage() {
   const online = useOnlineStatus();
 
   const { state, set, toggle } = useItemState(id);
+  const queryClient = useQueryClient();
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['item', id],
     queryFn: () => ds.getItem(id),
   });
 
+  // Offline fallback: when the per-item detail read *fails* (the fetch errored,
+  // or we're offline and it can't run) recover the RSS body from a list page
+  // already on this device, so an unpinned article stays readable offline (the
+  // feed's own body, not the extracted reading view). See `lib/offlineItem`.
+  //
+  // Gated to "no successful detail result" on purpose. `data === null` is a
+  // *successful* miss — the server says the item isn't visible (e.g. after
+  // unsubscribing — RLS hides it) — and stays authoritative even offline, so we
+  // key on `data === undefined` (errored / never-resolved), NOT `!data` (which
+  // would also swallow a cached `null` miss and override it with a stale row).
+  const detailUnavailable =
+    data === undefined && !isLoading && (isError || !online);
+  const fallback = useMemo(
+    () => (detailUnavailable ? findCachedFeedItem(queryClient, id) : null),
+    [detailUnavailable, queryClient, id],
+  );
+  const resolved = data ?? fallback;
+
   // Reading mode: when the feed body looks truncated, fetch the full article
-  // from its source (server-side extraction). `manualTrigger` lets the user
-  // request it for a feed whose body looked complete; `showFeedVersion` flips
-  // back to the feed's own body when both exist. Pinning caches this query (and
+  // from its source (server-side extraction) in the background while the RSS
+  // body shows immediately. `manualTrigger` lets the user request it for a feed
+  // whose body looked complete; `userView` is the per-article view the user has
+  // chosen (null = the default for this article). Pinning caches this query (and
   // the item detail) for offline via usePinnedCacheLock.
   const [manualTrigger, setManualTrigger] = useState(false);
-  const [showFeedVersion, setShowFeedVersion] = useState(false);
+  const [userView, setUserView] = useState<'feed' | 'full' | null>(null);
+  // Whether a full body was ALREADY available when this article opened — cached
+  // in the `['fulltext', id]` query by a pinned/favorite prefetch or an earlier
+  // open. Such an article opens straight into the reading view (like a body
+  // cached on the item itself). Only a body fetched *fresh in the background*
+  // this session waits behind "Keep reading" (so the reader doesn't reflow). The
+  // lazy init reads the cache synchronously to avoid a one-frame feed flash.
+  const [fullReadyAtOpen, setFullReadyAtOpen] = useState(() =>
+    cachedFullTextOk(queryClient.getQueryData<FullTextResult>(['fulltext', id])),
+  );
 
-  const cachedFull = data?.item.fullContentHtml ?? null;
-  const truncated = data ? looksTruncated(data.item) : false;
-  const wantFull = !!data && !cachedFull && online && (truncated || manualTrigger);
+  const cachedFull = resolved?.item.fullContentHtml ?? null;
+  const truncated = resolved ? looksTruncated(resolved.item) : false;
+  const wantFull = !!resolved && !cachedFull && online && (truncated || manualTrigger);
 
   const fullQuery = useQuery({
     queryKey: ['fulltext', id],
@@ -249,19 +287,25 @@ export function ItemPage() {
   // Opening the reader marks the item Opened (auto), and resets the per-article
   // reading-mode view state when navigating between items.
   useEffect(() => {
-    if (data) set('opened', true);
+    if (resolved) set('opened', true);
     setManualTrigger(false);
-    setShowFeedVersion(false);
+    setUserView(null);
+    // Re-snapshot "was the full body already cached?" for the newly-opened item
+    // (SPA navigation between items reuses this component, so the lazy init
+    // above only covers the first mount).
+    setFullReadyAtOpen(
+      cachedFullTextOk(queryClient.getQueryData<FullTextResult>(['fulltext', id])),
+    );
     // Only when the item first resolves / changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.item.id]);
+  }, [resolved?.item.id]);
 
   const openOriginal = useCallback(() => {
-    if (data && isSafeHttpUrl(data.item.url)) {
+    if (resolved && isSafeHttpUrl(resolved.item.url)) {
       set('opened', true);
-      window.open(data.item.url, '_blank', 'noopener,noreferrer');
+      window.open(resolved.item.url, '_blank', 'noopener,noreferrer');
     }
-  }, [data, set]);
+  }, [resolved, set]);
 
   const markDone = useCallback(() => {
     set('done', true); // also clears pinned via the mutation shield
@@ -301,7 +345,7 @@ export function ItemPage() {
   if (isLoading) {
     return <div className="reader__state">Loading…</div>;
   }
-  if (isError || !data) {
+  if (!resolved) {
     return (
       <div className="reader__state">
         {online ? (
@@ -313,16 +357,26 @@ export function ItemPage() {
     );
   }
 
-  const { item, feed } = data;
+  const { item, feed } = resolved;
   const source = feed.title || formatDisplayDomain(item.url);
 
-  // Resolve the reading-mode body. Prefer the cached/fetched full article, but
-  // let the user flip back to the feed's own body when both exist.
+  // Resolve the reading-mode body. The RSS body always shows first; the full
+  // article (cached, or fetched in the background) is revealed only when the
+  // user asks for it via "Keep reading" — except a body already cached full
+  // (pinned/previously read) defaults straight to the reading view.
   const fetched = fullQuery.data;
   const fullHtml = cachedFull ?? (fetched?.status === 'ok' ? fetched.contentHtml : null);
-  const showReading = !!fullHtml && !showFeedVersion;
+  // A full body that was already on hand at open — cached on the item, or in the
+  // fulltext query from a prefetch/earlier open — opens straight into reading
+  // mode; only a fresh background fetch waits behind "Keep reading".
+  const defaultView: 'feed' | 'full' = cachedFull || fullReadyAtOpen ? 'full' : 'feed';
+  const view = userView ?? defaultView;
+  const showReading = view === 'full' && !!fullHtml;
   const bodyHtml = showReading ? fullHtml : item.contentHtml;
   const fetchingFull = fullQuery.isFetching && !fullHtml;
+  // Full article is fetched and ready, but we're still showing the feed body —
+  // offer to reveal it (no auto-swap, so the reader doesn't reflow mid-read).
+  const keepReading = !!fullHtml && !showReading;
   // A non-"ok" result (paywall/teaser/unreachable) — only worth surfacing once
   // we have nothing better than the feed body to show.
   const fullFailed = !fullHtml && fetched != null && fetched.status !== 'ok';
@@ -374,14 +428,23 @@ export function ItemPage() {
           <span className="reader__mode-note" data-testid="fulltext-loading">
             Loading full article…
           </span>
-        ) : fullHtml && item.contentHtml ? (
+        ) : keepReading ? (
+          <button
+            type="button"
+            className="reader__mode-toggle"
+            data-testid="reader-keep-reading"
+            onClick={() => setUserView('full')}
+          >
+            {truncated ? 'Keep reading' : 'Show reading view'}
+          </button>
+        ) : showReading && item.contentHtml ? (
           <button
             type="button"
             className="reader__mode-toggle"
             data-testid="reader-view-toggle"
-            onClick={() => setShowFeedVersion((v) => !v)}
+            onClick={() => setUserView('feed')}
           >
-            {showReading ? 'Show feed version' : 'Show reading view'}
+            Show feed version
           </button>
         ) : fullFailed ? (
           <>
@@ -408,7 +471,10 @@ export function ItemPage() {
             type="button"
             className="reader__mode-toggle"
             data-testid="fulltext-get"
-            onClick={() => setManualTrigger(true)}
+            onClick={() => {
+              setManualTrigger(true);
+              setUserView('full');
+            }}
           >
             Get full article
           </button>

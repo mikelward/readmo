@@ -65,7 +65,12 @@ export class MockDataSource implements DataSource {
     if (!feed) return null;
     const sub = this.subs.get(item.feedId);
     const title = sub?.titleOverride ?? feed.title;
-    return { item, feed: title !== feed.title ? { ...feed, title } : feed };
+    // Return a snapshot copy of the item, mirroring the real backend (which maps
+    // a fresh object per read). Without this, a later in-place mutation — e.g.
+    // fetchFullText caching `fullContentHtml` on the stored item — would also
+    // mutate a FeedItem already handed to the cache, making a background
+    // full-text fetch appear to "auto-swap" the open reader mid-session.
+    return { item: { ...item }, feed: title !== feed.title ? { ...feed, title } : feed };
   }
 
   /** Build the ordered list for a feed view: pinned first (oldest pin first,
