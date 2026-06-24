@@ -33,7 +33,7 @@
 .toast__action {
   background: transparent;
   border: none;
-  color: var(--rm-accent-strong);
+  color: var(--rm-toast-action);
   font-weight: 700;
   font-size: 14px;
   padding: 4px 8px;

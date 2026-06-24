@@ -25,6 +25,15 @@
   --rm-accent-strong: #000000;
   --rm-accent-contrast: #faf9f5;
 
+  /* Toast action button — always readable on the toast's hardcoded dark
+     (#222) surface, so uses the dark-mode accent rather than --rm-accent-strong
+     which is near-black in ink light mode. */
+  --rm-toast-action: #ececec;
+  /* Foreground for elements that use --rm-danger as their background (badges,
+     health dot). White works in light mode (~4.7:1 on #c0392b); dark modes
+     flip to page background because --rm-danger is a bright/light red there. */
+  --rm-danger-fg: #ffffff;
+
   --rm-bg: #faf9f5;
   --rm-bg-card: #ffffff;
   --rm-bg-elevated: #ffffff;
@@ -61,6 +70,7 @@
   --rm-accent: #ececec;
   --rm-accent-strong: #ffffff;
   --rm-accent-contrast: #14161c;
+  --rm-danger-fg: var(--rm-bg);
 
   --rm-bg: #14161c;
   --rm-bg-card: #1d2027;
@@ -116,6 +126,7 @@
     --rm-brand-fg: #faf9f5;
 
     --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --rm-danger-fg: var(--rm-bg);
 
     color-scheme: dark;
   }
@@ -131,6 +142,7 @@
   --rm-accent: #0e7c74;
   --rm-accent-strong: #0a5c56;
   --rm-accent-contrast: #ffffff;
+  --rm-toast-action: #5ed6c9;
 
   --rm-bg: #f1f9f7;
   --rm-bg-card: #ffffff;
@@ -187,6 +199,7 @@
   --rm-brand-fg: #f1f9f7;
 
   --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --rm-danger-fg: var(--rm-bg);
 
   color-scheme: dark;
 }
@@ -223,6 +236,7 @@
     --rm-brand-fg: #f1f9f7;
 
     --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --rm-danger-fg: var(--rm-bg);
 
     color-scheme: dark;
   }
@@ -238,6 +252,7 @@
   --rm-accent: #4338ca;
   --rm-accent-strong: #3730a3;
   --rm-accent-contrast: #ffffff;
+  --rm-toast-action: #a5b4fc;
 
   --rm-bg: #f5f5fb;
   --rm-bg-card: #ffffff;
@@ -293,6 +308,7 @@
   --rm-brand-fg: #f5f5fb;
 
   --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --rm-danger-fg: var(--rm-bg);
 
   color-scheme: dark;
 }
@@ -329,6 +345,7 @@
     --rm-brand-fg: #f5f5fb;
 
     --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --rm-danger-fg: var(--rm-bg);
 
     color-scheme: dark;
   }
@@ -353,6 +370,7 @@
   --rm-accent: #923b67;
   --rm-accent-strong: #76304f;
   --rm-accent-contrast: #ffffff;
+  --rm-toast-action: #e3a6cb;
 
   --rm-bg: #f9f1f5;
   --rm-bg-card: #ffffff;
@@ -409,6 +427,7 @@
   --rm-brand-fg: #2a0e20;
 
   --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --rm-danger-fg: var(--rm-bg);
 
   color-scheme: dark;
 }
@@ -445,6 +464,7 @@
     --rm-brand-fg: #2a0e20;
 
     --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --rm-danger-fg: var(--rm-bg);
 
     color-scheme: dark;
   }

@@ -179,7 +179,7 @@
   height: 18px;
   border-radius: 999px;
   background: var(--rm-danger);
-  color: #fff;
+  color: var(--rm-danger-fg);
   font-size: 0.7rem;
   font-weight: 800;
 }
