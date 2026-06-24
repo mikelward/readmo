@@ -26,7 +26,7 @@
   margin-left: auto;
   font-size: 0.78rem;
   font-weight: 700;
-  color: #fff;
+  color: var(--rm-danger-fg);
   background: var(--rm-danger);
   border: none;
   border-radius: 999px;
