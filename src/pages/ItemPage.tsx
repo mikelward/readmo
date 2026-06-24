@@ -6,7 +6,7 @@ import { findCachedFeedItem } from '../lib/offlineItem';
 import { useItemState } from '../hooks/useItemState';
 import { useWideViewport } from '../hooks/useWideViewport';
 import { useShareItem } from '../hooks/useShareItem';
-import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { formatAge, formatDisplayDomain, isSafeHttpUrl } from '../lib/itemMeta';
 import { fullTextStaleTime, looksTruncated } from '../lib/fullText';
 import type { FullTextResult } from '../lib/fullText';
@@ -224,7 +224,11 @@ export function ItemPage() {
   const navigate = useNavigate();
   const wide = useWideViewport();
   const share = useShareItem();
-  const online = useOnlineStatus();
+  const status = useConnectivityStatus();
+  // `online` gates the offline fallback + full-text fetch (both keyed on
+  // "fully connected"); `status` distinguishes a genuine disconnect from our
+  // backend being down so the miss-state message can say which it is.
+  const online = status === 'online';
 
   const { state, set, toggle } = useItemState(id);
   const queryClient = useQueryClient();
@@ -356,8 +360,10 @@ export function ItemPage() {
   if (!resolved) {
     return (
       <div className="reader__state">
-        {online ? (
+        {status === 'online' ? (
           <p>Couldn’t load this article.</p>
+        ) : status === 'backend-unreachable' ? (
+          <p>Readmo’s server isn’t responding right now — it may be busy.</p>
         ) : (
           <p>This article isn’t saved offline. Pin it while online to keep a copy.</p>
         )}

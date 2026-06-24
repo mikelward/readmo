@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { BrandMark, Menu, Search } from './icons';
 import { AppDrawer } from './AppDrawer';
 import { HeaderAccountMenu } from './HeaderAccountMenu';
@@ -13,7 +13,7 @@ import './AppHeader.css';
  * chip is always-visible per SPEC.md *Auth*. */
 export function AppHeader() {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const online = useOnlineStatus();
+  const status = useConnectivityStatus();
 
   return (
     <>
@@ -35,13 +35,21 @@ export function AppHeader() {
 
           <div className="app-header__spacer" />
 
-          {!online ? (
+          {status !== 'online' ? (
             <Link
               to="/offline"
               className="app-header__offline-pill"
               data-testid="offline-pill"
+              // "Down" = device is connected but our backend isn't answering;
+              // "Offline" = the device itself has no network. Both link to the
+              // cached-content view (the only thing readable either way).
+              title={
+                status === 'backend-unreachable'
+                  ? "Readmo's server isn't responding right now"
+                  : 'You appear to be offline'
+              }
             >
-              Offline
+              {status === 'backend-unreachable' ? 'Down' : 'Offline'}
             </Link>
           ) : null}
 

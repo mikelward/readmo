@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   _resetNetworkStatusForTests,
+  getConnectivityStatus,
   getOnline,
   reportFetchFailure,
   reportFetchSuccess,
   setConnectivityProbeUrl,
+  subscribeConnectivityStatus,
   subscribeOnline,
   trackedFetch,
+  type ConnectivityStatus,
 } from './networkStatus';
 
 function timeoutError() {
@@ -308,6 +311,55 @@ describe('networkStatus tracker', () => {
       reportFetchSuccess();
 
       expect(events).toEqual([false, true]);
+    });
+  });
+
+  describe('three-way connectivity status', () => {
+    it('reports backend-unreachable when a fetch fails but the device is online', () => {
+      // navigator.onLine stays true (beforeEach): a hard fetch failure flips the
+      // fetch signal only, so it's our backend that is down — not the device.
+      reportFetchFailure(new TypeError('Failed to fetch'));
+      expect(getConnectivityStatus()).toBe('backend-unreachable');
+      // The legacy boolean still reads "not online" so query pausing is unchanged.
+      expect(getOnline()).toBe(false);
+    });
+
+    it('reports offline when the device itself has no network', () => {
+      setNavigatorOnline(false);
+      window.dispatchEvent(new Event('offline'));
+      expect(getConnectivityStatus()).toBe('offline');
+    });
+
+    it('lets the device-offline signal win over a fetch failure', () => {
+      setNavigatorOnline(false);
+      window.dispatchEvent(new Event('offline'));
+      reportFetchFailure(new TypeError('Failed to fetch'));
+      // Both signals are down; "find a connection" is the actionable fix.
+      expect(getConnectivityStatus()).toBe('offline');
+    });
+
+    it('notifies status subscribers on the offline <-> backend-unreachable transition the boolean hides', () => {
+      const statusEvents: ConnectivityStatus[] = [];
+      const boolEvents: boolean[] = [];
+      subscribeConnectivityStatus((s) => statusEvents.push(s));
+      subscribeOnline((v) => boolEvents.push(v));
+
+      // online -> backend-unreachable (device still claims a connection)
+      reportFetchFailure(new TypeError('Failed to fetch'));
+      // backend-unreachable -> offline (the OS finally reports no network)
+      setNavigatorOnline(false);
+      window.dispatchEvent(new Event('offline'));
+
+      // The status channel sees both edges; the boolean only the online->false one.
+      expect(statusEvents).toEqual(['backend-unreachable', 'offline']);
+      expect(boolEvents).toEqual([false]);
+    });
+
+    it('returns to online once both the device and backend agree', () => {
+      reportFetchFailure(new TypeError('Failed to fetch'));
+      expect(getConnectivityStatus()).toBe('backend-unreachable');
+      reportFetchSuccess();
+      expect(getConnectivityStatus()).toBe('online');
     });
   });
 });
