@@ -16,7 +16,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  background: var(--rm-bg-card);
+  background: var(--rm-bg);
   border-bottom: 1px solid var(--rm-border);
   padding: 6px 8px;
   z-index: 10;
