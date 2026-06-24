@@ -26,14 +26,16 @@
 }
 
 /* gradient fade at the bottom of the hero — must sit above item rows
-   (which have z-index: 1) so the fade isn't painted over on short viewports. */
+   (which have z-index: 1) so the fade isn't painted over on short viewports.
+   Kept short (44px) so it only softens the bottom edge: at the compact row
+   height it would otherwise wash out the whole last preview row (r/popular). */
 .signin__mock-fade {
   position: absolute;
   z-index: 2;
   bottom: 0;
   left: 0;
   right: 0;
-  height: 80px;
+  height: 44px;
   background: linear-gradient(to bottom, transparent, var(--rm-bg-card));
   pointer-events: none;
 }
