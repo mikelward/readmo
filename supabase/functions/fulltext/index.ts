@@ -100,10 +100,12 @@ async function handle(req: Request): Promise<Response> {
 
   // Cache hit — serve the previously extracted body without re-fetching.
   if (item.full_content_html) {
+    console.log(`fulltext: item ${itemId} — cache hit`);
     return json({ status: 'ok', contentHtml: item.full_content_html });
   }
   if (!item.url) return json({ status: 'empty', contentHtml: null });
 
+  console.log(`fulltext: fetching item ${itemId} (${redactUrl(item.url)})`);
   let body: string;
   let finalUrl = item.url;
   try {
@@ -111,11 +113,17 @@ async function handle(req: Request): Promise<Response> {
       timeoutMs: 12_000,
       maxBytes: FETCH_MAX_BYTES,
     });
+    console.log(`fulltext: item ${itemId} responded HTTP ${res.status}`);
     if (res.status === 401 || res.status === 403) {
       // Login/bot wall. Retry via Jina ONLY for public feeds (no secret_url),
       // so we never forward a possibly-tokenized item URL to a third party.
+      console.log(`fulltext: item ${itemId} HTTP ${res.status} — trying Jina fallback`);
       const jinaHtml = await maybeFetchViaJina(service, item.feed_id, item.url);
-      if (jinaHtml === null) return json({ status: 'auth', contentHtml: null });
+      if (jinaHtml === null) {
+        console.log(`fulltext: item ${itemId} — Jina unavailable or URL tokenized`);
+        return json({ status: 'auth', contentHtml: null });
+      }
+      console.log(`fulltext: item ${itemId} — Jina returned HTML`);
       body = jinaHtml;
     } else if (res.status >= 400) {
       return json({ status: 'unreachable', contentHtml: null });
@@ -135,11 +143,18 @@ async function handle(req: Request): Promise<Response> {
   // Pass the item's title so a body heading that just repeats the headline the
   // reader already renders above the body is dropped (no duplicated title).
   const extracted = extractArticle(body, finalUrl, item.title ?? undefined);
-  if (!extracted) return json({ status: 'empty', contentHtml: null });
+  if (!extracted) {
+    console.log(`fulltext: item ${itemId} — no article body extracted (paywall/teaser?)`);
+    return json({ status: 'empty', contentHtml: null });
+  }
 
   // Sanitize the extracted body before it is stored OR returned (guardrail #6).
   const clean = sanitizeContent(extracted.contentHtml, finalUrl);
-  if (!clean) return json({ status: 'empty', contentHtml: null });
+  if (!clean) {
+    console.log(`fulltext: item ${itemId} — sanitized body empty`);
+    return json({ status: 'empty', contentHtml: null });
+  }
+  console.log(`fulltext: item ${itemId} — extracted ${clean.length} chars, caching`);
 
   // Cache on the shared item (service role; client item writes are revoked).
   const { error: writeError } = await service

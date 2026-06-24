@@ -106,6 +106,9 @@ async function handle(req: Request): Promise<Response> {
     return json({ error: error.message }, 400);
   }
 
+  const subCount = subs?.length ?? 0;
+  console.log(`refresh: ${subCount} subscription(s) to refresh`);
+
   let refreshed = 0;
   let debounced = 0;
   let failed = 0;
@@ -123,6 +126,7 @@ async function handle(req: Request): Promise<Response> {
     }
   }
 
+  console.log(`refresh: done — refreshed=${refreshed} debounced=${debounced} failed=${failed}`);
   return json({ refreshed, debounced, failed, debounceSeconds: DEBOUNCE_S });
 }
 
@@ -143,9 +147,11 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
     feed.last_fetched_at &&
     Date.now() - Date.parse(feed.last_fetched_at) < DEBOUNCE_S * 1000
   ) {
+    console.log(`refresh: feed ${feedId} debounced (fetched ${Math.round((Date.now() - Date.parse(feed.last_fetched_at)) / 1000)}s ago)`);
     return false;
   }
 
+  console.log(`refresh: fetching feed ${feedId}`);
   const res = await safeFetch(feed.secret_url ?? feed.url, {
     headers: {
       'User-Agent': USER_AGENT,
@@ -153,9 +159,11 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
     },
     timeoutMs: 10_000,
   });
+  console.log(`refresh: feed ${feedId} responded HTTP ${res.status}`);
   if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
   const ct = res.headers.get('content-type') ?? '';
   const parsed = parseFeedBody(new TextDecoder().decode(res.body), feed.url, ct);
+  console.log(`refresh: feed ${feedId} parsed — ${parsed.items.length} item(s), title=${JSON.stringify(parsed.feedTitle)}`);
   const { error: metaError } = await service
     .from('feeds')
     .update({
@@ -189,6 +197,9 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
       p_items: itemsPayload,
     });
     if (upsertError) throw new Error(`item upsert failed: ${upsertError.message}`);
+    console.log(`refresh: feed ${feedId} — upserted ${rows.length} item(s)`);
+  } else {
+    console.log(`refresh: feed ${feedId} — 0 items to upsert, skipping`);
   }
   // Validators (etag/last_modified) are written only after items are stored.
   // Writing them before the upsert would cause the next cron poll to send
