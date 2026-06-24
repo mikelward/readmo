@@ -108,6 +108,13 @@ void reconcileUserCachesOnBoot(bootUid).finally(() => {
           maxAge: PERSIST_MAX_AGE,
           buster: CACHE_BUSTER,
         }}
+        onSuccess={() => {
+          // After the persisted cache is hydrated, invalidate feed queries so
+          // any Done/Hidden item state that preexisted the React tree (hydrated
+          // synchronously from localStorage before first render) takes effect
+          // immediately rather than waiting for the 5-minute staleTime to expire.
+          void queryClient.invalidateQueries({ queryKey: ['feed'] });
+        }}
       >
         <DataSourceProvider source={dataSource}>
           <ToastProvider>
