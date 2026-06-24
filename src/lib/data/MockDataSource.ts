@@ -106,7 +106,6 @@ export class MockDataSource implements DataSource {
     const nextOffset = offset + limit;
     return {
       items: slice,
-      total: all.length,
       nextCursor: nextOffset < all.length ? String(nextOffset) : null,
     };
   }

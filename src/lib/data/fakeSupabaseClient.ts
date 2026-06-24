@@ -330,11 +330,10 @@ function runRpc(
       })
       .sort((a, b) => sortMs(b) - sortMs(a) || idDesc(a, b)); // section 1: sort_at desc
     const combined = [...pinned, ...body];
-    const total = combined.length;
     return {
       data: combined
         .slice(offset, offset + limit)
-        .map((it) => ({ item: it, total_count: total })),
+        .map((it) => ({ item: it })),
       error: null,
     };
   }

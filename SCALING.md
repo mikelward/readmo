@@ -24,6 +24,11 @@ to act) and the action.
   default (~8 s) rather than this tighter 5 s cap; whether that 8 s is the right
   batch ceiling (vs. an explicit `0`/generous value) is tracked in TODO.md →
   *Server / batch query limits*.
+- **Dropped the `feed_items` window `count(*) over()`.** The RPC no longer
+  returns a per-call `total_count` (it forced a full scan of the whole filtered
+  result set on every page fetch). The feed never showed "X of Y"; the client
+  now decides whether another page exists from whether the last page came back
+  full. See `0014_feed_items_drop_total_count.sql`.
 
 ---
 
@@ -59,16 +64,17 @@ connection), so this matters most for:
 
 ## `feed_items` RPC: `count(*) over()`
 
-**Trigger:** The `feed_items` RPC appears in the slow-query log with high
-`mean_time` or `total_time`.
+**Done** (`0014_feed_items_drop_total_count.sql`, see *Already done* above).
+The window function `count(*) over()` in `0006_feed_rpcs.sql` did a full scan
+of the filtered result set on every call to return a total item count for a
+pagination UI that was never built. We took option 1 below — dropped the count
+entirely. The remaining options are kept here in case a "X of Y" UI is ever
+wanted:
 
-**Action:** The window function `count(*) over()` in `0006_feed_rpcs.sql`
-does a full scan of the filtered result set on every call to return the
-total item count for pagination UI. With many items/subscriptions this
-becomes expensive. Options:
-
-1. **Drop the total count** — most feed readers don't show "X of Y"; remove
-   `total_count` from the RPC return and the `total` field from the client.
+1. **Drop the total count** *(done)* — most feed readers don't show "X of Y";
+   removed `total_count` from the RPC return and the `total` field from the
+   client. "Is there another page?" is now inferred from whether the last page
+   came back full.
 2. **Estimate** — use `pg_class.reltuples` or a materialized count; good
    enough for "~1,200 items".
 3. **Separate cheap count query** — issue a lightweight `count` query only

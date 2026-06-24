@@ -77,7 +77,7 @@ describe('SupabaseDataSource reads', () => {
     // i2 pinned (top), then body newest-first: i6 (day 6), i3 (day 3).
     // i1 hidden + i4 done are excluded; feed-c is muted.
     expect(ids(page.items)).toEqual(['i2', 'i6', 'i3']);
-    expect(page.total).toBe(3);
+    // 3 rows < the default limit (30), so the page is short → no next cursor.
     expect(page.nextCursor).toBeNull();
   });
 
@@ -96,16 +96,23 @@ describe('SupabaseDataSource reads', () => {
     // holds at most `limit` rows (pinned no longer dumped wholesale on page 1).
     const p1 = await env.ds.getHomeItems({ limit: 1 });
     expect(ids(p1.items)).toEqual(['i2']);
-    expect(p1.total).toBe(3);
     expect(p1.nextCursor).toBe('1');
 
     const p2 = await env.ds.getHomeItems({ limit: 1, cursor: p1.nextCursor });
     expect(ids(p2.items)).toEqual(['i6']);
     expect(p2.nextCursor).toBe('2');
 
+    // Without a total count, "more?" is inferred from a full page. The third
+    // page is still full (1 row == limit), so a cursor is offered even though
+    // the sequence is exhausted...
     const p3 = await env.ds.getHomeItems({ limit: 1, cursor: p2.nextCursor });
     expect(ids(p3.items)).toEqual(['i3']);
-    expect(p3.nextCursor).toBeNull();
+    expect(p3.nextCursor).toBe('3');
+
+    // ...and the next fetch comes back empty, which ends the pagination.
+    const p4 = await env.ds.getHomeItems({ limit: 1, cursor: p3.nextCursor });
+    expect(ids(p4.items)).toEqual([]);
+    expect(p4.nextCursor).toBeNull();
   });
 
   it('orders undated items by the created_at fallback (sort_at)', async () => {

@@ -38,8 +38,8 @@ describe('findCachedFeedItem', () => {
     // { pages: Page<FeedItem>[], pageParams }, not a bare Page.
     client.setQueryData(['feed', 'home'], {
       pages: [
-        { items: [feedItem('a')], total: 3, nextCursor: '1' },
-        { items: [feedItem('b'), feedItem('c')], total: 3, nextCursor: null },
+        { items: [feedItem('a')], nextCursor: '1' },
+        { items: [feedItem('b'), feedItem('c')], nextCursor: null },
       ],
       pageParams: [null, '1'],
     });
@@ -50,7 +50,6 @@ describe('findCachedFeedItem', () => {
     const client = new QueryClient();
     client.setQueryData(['feed', 'home'], {
       items: [feedItem('a'), feedItem('b')],
-      total: 2,
       nextCursor: null,
     });
     expect(findCachedFeedItem(client, 'b')?.item.contentHtml).toBe('<p>body of b</p>');
@@ -66,7 +65,6 @@ describe('findCachedFeedItem', () => {
     const client = new QueryClient();
     client.setQueryData(['feed', 'home'], {
       items: [feedItem('a')],
-      total: 1,
       nextCursor: null,
     });
     expect(findCachedFeedItem(client, 'missing')).toBeNull();

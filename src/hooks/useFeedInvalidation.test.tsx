@@ -39,7 +39,7 @@ describe('boot-time feed invalidation after persist restore', () => {
     const fetchPage = vi.fn((cursor: string | null) => {
       callCount++;
       if (callCount === 1) {
-        return Promise.resolve({ items: allItems, nextCursor: null, total: allItems.length });
+        return Promise.resolve({ items: allItems, nextCursor: null });
       }
       return new Promise((resolve) => {
         releaseRefetch = () => source.getHomeItems({ cursor }).then(resolve);
