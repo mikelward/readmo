@@ -20,6 +20,17 @@ const USER_AGENT = 'Readmo/1.0 (+https://readmo.app)';
 const DEBOUNCE_S = 60;
 
 Deno.serve(async (req: Request) => {
+  // Wrap the whole handler so an unexpected throw produces an Edge Function
+  // log line, not a bare EDGE_FUNCTION_ERROR with nothing to look at.
+  try {
+    return await handle(req);
+  } catch (err) {
+    console.error('refresh: unhandled error:', err);
+    return json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
+async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return preflight();
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
 
@@ -34,39 +45,55 @@ Deno.serve(async (req: Request) => {
     /* empty body == refresh all of the caller's subscriptions */
   }
 
-  const userClient = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_ANON_KEY')!,
-    { global: { headers: { Authorization: authHeader } } },
-  );
-  const service = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-    { auth: { autoRefreshToken: false, persistSession: false } },
-  );
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!supabaseUrl || !anonKey || !serviceKey) {
+    console.error(
+      'refresh: missing required env:',
+      !supabaseUrl ? 'SUPABASE_URL' : '',
+      !anonKey ? 'SUPABASE_ANON_KEY' : '',
+      !serviceKey ? 'SUPABASE_SERVICE_ROLE_KEY' : '',
+    );
+    return json({ error: 'Server misconfigured' }, 500);
+  }
+
+  const userClient = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+  });
+  const service = createClient(supabaseUrl, serviceKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
 
   // Resolve which feeds to refresh — scoped to the caller's subscriptions via
   // their RLS-bound client (so a user can't force-poll a feed they don't have).
   let query = userClient.from('subscriptions').select('feed_id');
   if (feedId) query = query.eq('feed_id', feedId);
   const { data: subs, error } = await query;
-  if (error) return json({ error: error.message }, 400);
+  if (error) {
+    console.error('refresh: subscription lookup failed:', error);
+    return json({ error: error.message }, 400);
+  }
 
   let refreshed = 0;
   let debounced = 0;
+  let failed = 0;
   for (const { feed_id } of subs ?? []) {
     try {
       // refreshOne enforces the DEBOUNCE_S throttle and reports whether it
       // actually hit the publisher, so spamming refresh doesn't inflate counts.
       if (await refreshOne(service, feed_id)) refreshed++;
       else debounced++;
-    } catch {
-      /* per-feed isolation: one bad feed doesn't fail the request */
+    } catch (err) {
+      // Per-feed isolation: one bad feed doesn't fail the request — but log
+      // the failure so a feed that silently never refreshes is diagnosable.
+      failed++;
+      console.error(`refresh: feed ${feed_id} failed:`, err);
     }
   }
 
-  return json({ refreshed, debounced, debounceSeconds: DEBOUNCE_S });
-});
+  return json({ refreshed, debounced, failed, debounceSeconds: DEBOUNCE_S });
+}
 
 /** Refresh one feed. Returns true if it actually fetched, false if skipped by
  * the debounce (or the feed no longer exists). */

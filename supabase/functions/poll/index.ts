@@ -19,6 +19,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { parseFeedBody } from '../_shared/parser.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
+import { redactUrl } from '../_shared/urlSafety.ts';
 
 const USER_AGENT = 'Readmo/1.0 (+https://readmo.app)';
 const BATCH_SIZE = 25;
@@ -28,7 +29,32 @@ const MAX_INTERVAL_S = 6 * 60 * 60; // 6 h — backoff ceiling (SPEC.md)
 const CIRCUIT_BREAKER_FAILS = 8; // park the feed after N consecutive failures
 
 Deno.serve(async (req: Request) => {
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  // Every failure path below logs through console.error — Supabase ships those
+  // to the Edge Function logs, where an "EDGE_FUNCTION_ERROR" without context
+  // is otherwise unanalyzable. Don't add a silent catch anywhere in this file.
+  try {
+    return await handle(req);
+  } catch (err) {
+    console.error('poll: unhandled error:', err);
+    return json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
+async function handle(req: Request): Promise<Response> {
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  if (!serviceKey || !supabaseUrl) {
+    // Misconfiguration: the function is deployed without its env wired up.
+    // Log the specific missing var so the operator can fix it from the log line
+    // alone — without this, the createClient() call below would throw a generic
+    // "Invalid URL" / undefined-bearer that's hard to interpret.
+    console.error(
+      'poll: missing required env:',
+      !serviceKey ? 'SUPABASE_SERVICE_ROLE_KEY' : '',
+      !supabaseUrl ? 'SUPABASE_URL' : '',
+    );
+    return json({ error: 'Server misconfigured' }, 500);
+  }
 
   // Cron-only: this endpoint polls with the service role (RLS bypass), so it
   // must reject anyone who isn't the scheduler. The pg_cron job sends the
@@ -43,7 +69,7 @@ Deno.serve(async (req: Request) => {
   // RLS. Disable autoRefreshToken/persistSession so the client doesn't drop
   // the service key. The service key is a server-only secret (never shipped
   // to clients).
-  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, serviceKey, {
+  const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
@@ -57,9 +83,13 @@ Deno.serve(async (req: Request) => {
     .select('id, url, secret_url, etag, last_modified, fetch_interval_s, error_count')
     .lte('next_fetch_at', new Date().toISOString())
     .limit(BATCH_SIZE);
-  if (error) return json({ error: error.message }, 500);
+  if (error) {
+    console.error('poll: feed-select query failed:', error);
+    return json({ error: error.message }, 500);
+  }
 
   let processed = 0;
+  let failed = 0;
   for (const feed of feeds ?? []) {
     // TODO(PR2, P2 — subscriber filter): the SELECT above must also require
     // EXISTS (subscriptions for this feed). Without it, feeds keep being polled
@@ -72,12 +102,20 @@ Deno.serve(async (req: Request) => {
       await pollOne(supabase, feed);
       processed++;
     } catch (err) {
+      failed++;
+      // Log BEFORE recordFailure: a feed that's been hard-broken for hours
+      // shouldn't have the log line obscured by what recordFailure does next.
+      // feeds.url can hold a tokenized URL (the user pasted one directly and
+      // secret_url stayed null; migration 0004 / guardrail #6) — redact to
+      // scheme://host so a transient publisher failure doesn't persist the
+      // user's feed token to Edge Function logs.
+      console.error(`poll: feed ${feed.id} (${redactUrl(feed.url)}) failed:`, err);
       await recordFailure(supabase, feed, err);
     }
   }
 
-  return json({ processed, considered: feeds?.length ?? 0 });
-});
+  return json({ processed, failed, considered: feeds?.length ?? 0 });
+}
 
 async function pollOne(supabase: any, feed: any): Promise<void> {
   // The fetchable URL is secret_url when present (tokenized feeds), else url.
@@ -196,7 +234,7 @@ async function recordFailure(supabase: any, feed: any, err: unknown): Promise<vo
   // interval (surfaced to the user as a feed-health badge; "retry now" resets
   // error_count and next_fetch_at).
   const parked = nextCount >= CIRCUIT_BREAKER_FAILS;
-  await supabase
+  const { error: updateError } = await supabase
     .from('feeds')
     .update({
       error_count: nextCount,
@@ -206,6 +244,12 @@ async function recordFailure(supabase: any, feed: any, err: unknown): Promise<vo
       ).toISOString(),
     })
     .eq('id', feed.id);
+  // If we can't even write the failure row, the feed-health UI will lie. Log
+  // it loudly — silently dropping the write here is what hides "EDGE_FUNCTION
+  // _ERROR with no logs" investigations.
+  if (updateError) {
+    console.error(`poll: recordFailure update for feed ${feed.id} failed:`, updateError);
+  }
 }
 
 function json(body: unknown, status = 200): Response {

@@ -60,7 +60,11 @@ Deno.serve(async (req: Request) => {
       },
     });
   } catch (err) {
-    if (err instanceof SsrfError) return new Response('Blocked', { status: 400 });
+    if (err instanceof SsrfError) {
+      console.warn('img: blocked by SSRF guard:', err.message, '(', target, ')');
+      return new Response('Blocked', { status: 400 });
+    }
+    console.error('img: proxy error for', target, ':', err);
     return new Response('Proxy error', { status: 502 });
   }
 });
