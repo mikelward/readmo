@@ -70,6 +70,21 @@ function readBuildInfo(): BuildInfo {
     git('rev-parse --is-shallow-repository') === 'true'
       ? 0
       : Number(git('rev-list --count HEAD')) || 0;
+  // The client stamps commitCount as `x-readmo-build` and the version gate
+  // rejects builds below MIN_CLIENT_BUILD. A *production* bundle that stamped 0
+  // (shallow checkout that couldn't be unshallowed) would be rejected the moment
+  // the gate is armed above zero — locking out the newest client. Fail the
+  // production build instead of shipping that poison pill; a shallow prod
+  // checkout is a CI problem to fix, not to paper over. Gated on VERCEL_ENV (the
+  // real deploy users run), so local/CI `npm run build` and previews are
+  // unaffected.
+  if (env.VERCEL_ENV === 'production' && commitCount === 0) {
+    throw new Error(
+      'Build aborted: commitCount is 0 in a production build (shallow checkout?). ' +
+        'Shipping it would let the x-readmo-build version gate reject the newest ' +
+        'client. Ensure full git history (git fetch --unshallow) before building.',
+    );
+  }
   const commitTime = git('log -1 --format=%cI');
   const commitSubject =
     env.VERCEL_GIT_COMMIT_MESSAGE?.split('\n')[0] || git('log -1 --format=%s');
@@ -82,6 +97,25 @@ function readBuildInfo(): BuildInfo {
     commitSubject,
     buildTime: new Date().toISOString(),
   };
+}
+
+// URL pattern for the Workbox data cache (Supabase REST/RPC reads). Derived
+// from the configured Supabase origin so it keeps matching after a gateway
+// migration — pointing VITE_SUPABASE_URL at e.g. api.readmo.app would otherwise
+// silently drop the offline cache, since reads would no longer hit
+// *.supabase.co. Falls back to any project ref when the URL is unset (local
+// dev, or .env-only setups where the var isn't in process.env at build time).
+function supabaseRestCachePattern(): RegExp {
+  const url = process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (url) {
+    try {
+      const host = new URL(url).host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`^https://${host}/rest/v1/.*`);
+    } catch {
+      // Malformed URL — fall through to the default below.
+    }
+  }
+  return /^https:\/\/.*\.supabase\.co\/rest\/v1\/.*/;
 }
 
 const TEST_BUILD_INFO: BuildInfo = {
@@ -150,9 +184,10 @@ export default defineConfig({
             {
               // Data reads from Supabase REST/RPC — NetworkFirst so a healthy
               // network always wins, with a cache fallback offline (see
-              // SPEC.md *PWA & Offline → Caching strategy*). The host is
-              // swapped in for the real project ref when PR2 wires Supabase.
-              urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/.*/,
+              // SPEC.md *PWA & Offline → Caching strategy*). Pattern is derived
+              // from VITE_SUPABASE_URL so it follows a gateway/custom-domain
+              // migration instead of silently dropping the offline cache.
+              urlPattern: supabaseRestCachePattern(),
               handler: 'NetworkFirst',
               options: {
                 cacheName: 'readmo-data',

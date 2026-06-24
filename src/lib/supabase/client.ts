@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { setConnectivityProbeUrl, trackedFetch } from '../networkStatus';
+import { buildInfo } from '../buildInfo';
 
 // Hard ceiling on a single PostgREST GET read. Without it a request that never
 // answers (lie-fi, or the service worker's NetworkFirst awaiting a hung network
@@ -162,7 +163,17 @@ export function getSupabase(): SupabaseClient {
       // Connectivity-track every request and bound reads (GET + feed_items RPC)
       // so a hung network can't strand a read on its loading skeletons forever
       // (writes/auth/functions stay uncapped — see supabaseFetch).
-      global: { fetch: supabaseFetch },
+      //
+      // Stamp the build number on every request so the backend can shed an old
+      // client shipped with a runaway-refetch bug: the Edge functions gate on
+      // it (supabase/functions/_shared/clientVersion.ts) and a gateway can gate
+      // the read RPC the same way. Header name is duplicated as a literal here
+      // because src/ and supabase/functions/ build separately — keep it in sync
+      // with CLIENT_BUILD_HEADER ('x-readmo-build').
+      global: {
+        fetch: supabaseFetch,
+        headers: { 'x-readmo-build': String(buildInfo.commitCount) },
+      },
     });
   }
   return client;

@@ -14,10 +14,21 @@ import { parseFeedBody } from '../_shared/parser.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
 import { corsHeaders, preflight } from '../_shared/cors.ts';
+import { RateLimiter, rateLimitKey } from '../_shared/rateLimit.ts';
+import { CLIENT_BUILD_HEADER, checkClientBuild } from '../_shared/clientVersion.ts';
 
 const USER_AGENT = 'Readmo/1.0 (+https://readmo.app)';
 // Debounce window: skip a forced refetch if the feed was fetched within this.
 const DEBOUNCE_S = 60;
+
+// Per-caller in-memory rate limit, checked BEFORE any DB work so a client stuck
+// on a buggy version that pull-to-refreshes in a loop is shed at the door
+// instead of spending a `subscriptions` select + a `feeds` read per call. Burst
+// of 10 with sustained ~12/min (1 token / 5s) — far above any human's
+// pull-to-refresh cadence, well below a refetch loop's. Best-effort per warm
+// isolate; see rateLimit.ts for scope and the gateway note. Module scope so the
+// bucket survives across requests on the same isolate.
+const REFRESH_LIMIT = new RateLimiter({ capacity: 10, refillPerSec: 0.2 });
 
 Deno.serve(async (req: Request) => {
   // Wrap the whole handler so an unexpected throw produces an Edge Function
@@ -34,9 +45,29 @@ async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return preflight();
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
 
+  // Turn away known-bad old builds first — the targeted kill switch for a
+  // client shipped with a refetch-loop bug. Cheapest possible reject (a header
+  // compare), before auth or any DB work. Read the floor from the env on every
+  // request, not at module load: raising the MIN_CLIENT_BUILD secret must take
+  // effect on an already-warm isolate (which would otherwise keep the captured
+  // value, usually 0) for the no-redeploy kill switch to actually work.
+  const minClientBuild = Number(Deno.env.get('MIN_CLIENT_BUILD') ?? '0');
+  const gate = checkClientBuild(req.headers.get(CLIENT_BUILD_HEADER), minClientBuild);
+  if (!gate.allowed) {
+    return json({ error: 'client too old, please update', minBuild: gate.floor }, 426);
+  }
+
   // Authenticate the caller (forwarded JWT) so we only refresh feeds the user
   // actually subscribes to. The service-role client below does the writes.
   const authHeader = req.headers.get('Authorization') ?? '';
+
+  // Shed abusive callers before touching Postgres.
+  const limit = REFRESH_LIMIT.take(rateLimitKey(authHeader), Date.now());
+  if (!limit.allowed) {
+    return json({ error: 'rate limited', retryAfterSeconds: limit.retryAfterS }, 429, {
+      'Retry-After': String(limit.retryAfterS),
+    });
+  }
 
   let feedId: string | undefined;
   try {
@@ -178,9 +209,9 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
   return true;
 }
 
-function json(body: unknown, status = 200): Response {
+function json(body: unknown, status = 200, extraHeaders: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'content-type': 'application/json', ...corsHeaders },
+    headers: { 'content-type': 'application/json', ...corsHeaders, ...extraHeaders },
   });
 }

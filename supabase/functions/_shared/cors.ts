@@ -15,8 +15,11 @@
 export const corsHeaders: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  // `x-readmo-build` is the client build-number stamp the version gate reads
+  // (clientVersion.ts); it must be allowed or the browser's preflight blocks
+  // every cross-origin call that carries it.
   'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type',
+    'authorization, x-client-info, apikey, content-type, x-readmo-build',
   'Access-Control-Max-Age': '86400',
 };
 
