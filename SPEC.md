@@ -1036,11 +1036,10 @@ keys differ; the strategies map one-to-one:
   favoriting caches the item detail + reading body for offline** and evicts when
   the item leaves both buckets (`useOfflineCacheLock`; see *Prefetch on
   Pin/Favorite*). Deferred follow-ups:
-  - **TODO — lock proxied standalone images too.** `useOfflineCacheLock` covers
-    the `['item']`/`['fulltext']` queries for pinned/favorited items; the
-    referenced `/api/img` image bytes aren't pinned in the cache yet, so an
-    offline reader may show broken images. Fold image prefetch/locking into the
-    same subscriber.
+  - **Image bytes cached via SW.** After warming the item detail and full-text,
+    `useOfflineCacheLock` fires background `fetch()` calls for every `/api/img`
+    URL found in the HTML so the service worker's `StaleWhileRevalidate` handler
+    populates the `readmo-images` cache entry for offline reading.
   - **TODO — sync the readable version across a user's devices.** The extracted
     body is cached on the shared `items` row server-side, so any device that
     *re-reads* the item gets it; the offline/IndexedDB copy is currently
