@@ -6,7 +6,12 @@ import {
 } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useOnlineStatus } from './useOnlineStatus';
-import { fullTextStaleTime, looksTruncated } from '../lib/fullText';
+import {
+  fullTextQueryKey,
+  fullTextQueryKeyPrefix,
+  fullTextStaleTime,
+  looksTruncated,
+} from '../lib/fullText';
 import type { FullTextResult } from '../lib/fullText';
 import type { FeedItem } from '../lib/types';
 
@@ -98,12 +103,12 @@ export function useOfflineCacheLock(): void {
           // warmed on a terminal result — a transient `unreachable` stays
           // retryable so we don't get stuck on the feed stub.
           await queryClient.prefetchQuery({
-            queryKey: ['fulltext', id],
+            queryKey: fullTextQueryKey(id),
             queryFn: () => ds.fetchFullText(id),
             staleTime: fullTextStaleTime,
             gcTime: Number.POSITIVE_INFINITY,
           });
-          const ft = queryClient.getQueryData<FullTextResult>(['fulltext', id]);
+          const ft = queryClient.getQueryData<FullTextResult>(fullTextQueryKey(id));
           if (ft && ft.status !== 'unreachable') warmed.add(id);
         });
     },
@@ -125,7 +130,7 @@ export function useOfflineCacheLock(): void {
             enabled: false,
           }),
           new QueryObserver(queryClient, {
-            queryKey: ['fulltext', id],
+            queryKey: fullTextQueryKey(id),
             queryFn: () => ds.fetchFullText(id),
             enabled: false,
           }),
@@ -142,7 +147,11 @@ export function useOfflineCacheLock(): void {
       release();
       locks.delete(id);
       warmed.delete(id);
-      queryClient.removeQueries({ queryKey: ['fulltext', id], exact: true });
+      // Prefix match (no `exact`) so this evicts the current versioned key AND
+      // any legacy ['fulltext', id] / older-version body left by a prior build —
+      // the persisted cache is maxAge: Infinity, so an un-evicted old body would
+      // otherwise linger forever after the item leaves the offline bucket.
+      queryClient.removeQueries({ queryKey: fullTextQueryKeyPrefix(id) });
       queryClient.removeQueries({ queryKey: ['item', id], exact: true });
     };
 

@@ -5,6 +5,7 @@ import { DataSourceProvider } from '../lib/data/context';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import { _resetNetworkStatusForTests } from '../lib/networkStatus';
 import { useOfflineCacheLock } from './useOfflineCacheLock';
+import { fullTextQueryKey } from '../lib/fullText';
 
 function setNavigatorOnline(value: boolean) {
   Object.defineProperty(window.navigator, 'onLine', { configurable: true, value });
@@ -40,11 +41,28 @@ describe('useOfflineCacheLock', () => {
     source.stateStore.set('item-1', 'pinned', true);
     // The detail and (truncated) full-text bodies are warmed into the cache.
     await waitFor(() => expect(qc.getQueryData(['item', 'item-1'])).toBeTruthy());
-    await waitFor(() => expect(qc.getQueryData(['fulltext', 'item-1'])).toBeTruthy());
+    await waitFor(() => expect(qc.getQueryData(fullTextQueryKey('item-1'))).toBeTruthy());
 
     source.stateStore.set('item-1', 'pinned', false);
     // Unpinning evicts both so unpinned bodies don't linger in the cache.
     await waitFor(() => expect(qc.getQueryData(['item', 'item-1'])).toBeUndefined());
+    expect(qc.getQueryData(fullTextQueryKey('item-1'))).toBeUndefined();
+  });
+
+  it('evicts a legacy (older-version) full-text body on unpin too', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const qc = setup(source);
+
+    source.stateStore.set('item-1', 'pinned', true);
+    await waitFor(() => expect(qc.getQueryData(fullTextQueryKey('item-1'))).toBeTruthy());
+    // Simulate a body warmed by a prior build under the un-versioned key. The
+    // persisted cache is maxAge: Infinity, so this must be evicted on unpin or
+    // it lingers forever even after the item leaves the offline bucket.
+    qc.setQueryData(['fulltext', 'item-1'], { status: 'ok', contentHtml: '<p>old</p>' });
+
+    source.stateStore.set('item-1', 'pinned', false);
+    await waitFor(() => expect(qc.getQueryData(fullTextQueryKey('item-1'))).toBeUndefined());
+    // The legacy-key body is gone too (prefix removal, not exact).
     expect(qc.getQueryData(['fulltext', 'item-1'])).toBeUndefined();
   });
 
@@ -90,7 +108,7 @@ describe('useOfflineCacheLock', () => {
       window.dispatchEvent(new Event('online'));
     });
     await waitFor(() => expect(qc.getQueryData(['item', 'item-1'])).toBeTruthy());
-    await waitFor(() => expect(qc.getQueryData(['fulltext', 'item-1'])).toBeTruthy());
+    await waitFor(() => expect(qc.getQueryData(fullTextQueryKey('item-1'))).toBeTruthy());
   });
 
   it('retries a transient full-text miss instead of getting stuck on the stub', async () => {
@@ -110,7 +128,7 @@ describe('useOfflineCacheLock', () => {
     // First attempt: detail cached, full text transiently unreachable (not warmed).
     await waitFor(() =>
       expect(
-        (qc.getQueryData(['fulltext', 'item-1']) as { status?: string } | undefined)?.status,
+        (qc.getQueryData(fullTextQueryKey('item-1')) as { status?: string } | undefined)?.status,
       ).toBe('unreachable'),
     );
 
@@ -118,7 +136,7 @@ describe('useOfflineCacheLock', () => {
     source.stateStore.set('item-1', 'favorite', true);
     await waitFor(() =>
       expect(
-        (qc.getQueryData(['fulltext', 'item-1']) as { status?: string } | undefined)?.status,
+        (qc.getQueryData(fullTextQueryKey('item-1')) as { status?: string } | undefined)?.status,
       ).toBe('ok'),
     );
   });
@@ -281,6 +299,6 @@ describe('useOfflineCacheLock', () => {
     source.stateStore.set('item-1', 'pinned', true);
     await waitFor(() => expect(qc.getQueryData(['item', 'item-1'])).toBeTruthy());
     // Body is long enough → not truncated → no full-text fetch.
-    expect(qc.getQueryData(['fulltext', 'item-1'])).toBeUndefined();
+    expect(qc.getQueryData(fullTextQueryKey('item-1'))).toBeUndefined();
   });
 });

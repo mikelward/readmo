@@ -31,6 +31,41 @@ export interface ExtractedArticle {
 export const MIN_ARTICLE_TEXT = 250;
 
 /**
+ * Version of the extraction/cleaning pipeline whose output is cached in
+ * `items.full_content_html`. The `fulltext` function stamps every cache write
+ * with this number (`items.full_content_version`) and only serves a cached body
+ * when its stamp still equals this constant; a mismatch (older number, or NULL
+ * for bodies cached before versioning existed) re-extracts with current code.
+ *
+ * BUMP THIS whenever a change to {@link extractArticle} / {@link cleanArticleHtml}
+ * (or the sanitizer they feed) changes the HTML we'd produce for the same page —
+ * that is how already-cached bodies get lazily corrected on their next open
+ * instead of serving stale output forever (the cache is otherwise permanent).
+ *
+ * History:
+ *   1 — original extraction (no title-duplicate heading / nav-list stripping).
+ *   2 — `cleanArticleHtml`: drop nav chrome + a leading heading that just
+ *       repeats the headline the reader already renders (commit a64b20d).
+ */
+export const FULLTEXT_VERSION = 2;
+
+/**
+ * Whether a cached full-text body may be served as-is. True only when a body is
+ * present AND it was written by the CURRENT {@link FULLTEXT_VERSION}; a missing
+ * body or an older/NULL version stamp (legacy rows cached before versioning)
+ * is stale and the caller should re-extract.
+ */
+export function isFreshFullContent(cached: {
+  full_content_html?: string | null;
+  full_content_version?: number | null;
+}): boolean {
+  return (
+    !!cached.full_content_html &&
+    cached.full_content_version === FULLTEXT_VERSION
+  );
+}
+
+/**
  * Extract the main article from a full HTML page.
  *
  * @param html  The raw HTML of the article page (from safeFetch).
