@@ -93,10 +93,10 @@
 .app-drawer__segmented {
   display: flex;
   /* Wrap rather than let buttons squeeze under the 44px tap floor: both the
-     mode row (light/dark/system) and the palette row (Ink/Clay/Slate) stay one
-     line of three at any realistic width, with wrapping as a safety net on
-     ultra-narrow viewports. Three is the contributor guide's per-row tap-zone
-     cap, so the palette row sits right at it. */
+     mode row (light/dark/system) stays one line of three and the palette row
+     (Ink/Grape) one line of two at any realistic width, with wrapping as a
+     safety net on ultra-narrow viewports. Three is the contributor guide's
+     per-row tap-zone cap, which neither row exceeds. */
   flex-wrap: wrap;
   gap: 8px;
   margin: 4px 8px 8px;

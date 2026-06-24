@@ -82,20 +82,18 @@ describe('AppDrawer', () => {
   });
 
   describe('Appearance — palette', () => {
-    it('renders Ink, Clay, and Slate buttons', () => {
+    it('renders Ink and Grape buttons', () => {
       renderDrawer();
       const group = screen.getByRole('radiogroup', { name: 'Palette' });
       expect(group).toBeInTheDocument();
       expect(screen.getByRole('radio', { name: 'Ink' })).toBeInTheDocument();
-      expect(screen.getByRole('radio', { name: 'Clay' })).toBeInTheDocument();
-      expect(screen.getByRole('radio', { name: 'Slate' })).toBeInTheDocument();
+      expect(screen.getByRole('radio', { name: 'Grape' })).toBeInTheDocument();
     });
 
     it('lays the palette swatches out as a single flex row, like the mode row', () => {
-      // With three palettes (Ink/Clay/Slate) the picker is a single row of
-      // three — right at the contributor guide's per-row tap-zone cap — using
-      // the same flex layout as the mode (light/dark/system) row, not the old
-      // 2-up grid.
+      // The picker uses the same flex layout as the mode (light/dark/system)
+      // row — well within the contributor guide's per-row tap-zone cap — not
+      // the old 2-up grid.
       renderDrawer();
       const palette = screen.getByRole('radiogroup', { name: 'Palette' });
       expect(palette).not.toHaveClass('app-drawer__segmented--grid');
@@ -112,19 +110,19 @@ describe('AppDrawer', () => {
       expect(ink.querySelector('.app-drawer__swatch')).not.toBeNull();
     });
 
-    it('selects the slate palette when its swatch is clicked', async () => {
+    it('selects the grape palette when its swatch is clicked', async () => {
       const user = userEvent.setup();
       const setSpy = vi.spyOn(themeLib, 'setStoredPalette').mockImplementation(() => {});
       const { onClose } = renderDrawer();
-      await user.click(screen.getByRole('radio', { name: 'Slate' }));
-      expect(setSpy).toHaveBeenCalledWith('slate');
+      await user.click(screen.getByRole('radio', { name: 'Grape' }));
+      expect(setSpy).toHaveBeenCalledWith('grape');
       expect(onClose).not.toHaveBeenCalled();
     });
 
     it('marks stored palette as checked', () => {
-      vi.spyOn(themeLib, 'getStoredPalette').mockReturnValue('clay');
+      vi.spyOn(themeLib, 'getStoredPalette').mockReturnValue('grape');
       renderDrawer();
-      expect(screen.getByRole('radio', { name: 'Clay' })).toHaveAttribute('aria-checked', 'true');
+      expect(screen.getByRole('radio', { name: 'Grape' })).toHaveAttribute('aria-checked', 'true');
       expect(screen.getByRole('radio', { name: 'Ink' })).toHaveAttribute('aria-checked', 'false');
     });
 
@@ -132,8 +130,8 @@ describe('AppDrawer', () => {
       const user = userEvent.setup();
       const setSpy = vi.spyOn(themeLib, 'setStoredPalette').mockImplementation(() => {});
       const { onClose } = renderDrawer();
-      await user.click(screen.getByRole('radio', { name: 'Clay' }));
-      expect(setSpy).toHaveBeenCalledWith('clay');
+      await user.click(screen.getByRole('radio', { name: 'Grape' }));
+      expect(setSpy).toHaveBeenCalledWith('grape');
       expect(onClose).not.toHaveBeenCalled();
     });
   });

@@ -303,7 +303,7 @@ export function SettingsPage() {
   };
 
   const themes: Theme[] = ['light', 'dark', 'system'];
-  const palettes: Palette[] = ['ink', 'clay', 'slate'];
+  const palettes: Palette[] = ['ink', 'grape'];
 
   return (
     <div className="settings">
