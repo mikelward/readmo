@@ -1046,6 +1046,36 @@ keys differ; the strategies map one-to-one:
   copy." (no retry button); *backend-unreachable* → "Readmo's server isn't
   responding right now — it may be busy."; *online* (reached the server but it
   errored) → "Couldn't load this article."
+- **An empty feed view never claims "all caught up" unless online.** The
+  caught-up empty state (e.g. Home's "You're all caught up.") implies the server
+  confirmed there's nothing unread. A feed view shows it only when the device is
+  online and the empty result is genuine. If the view is empty while *offline* or
+  *backend-unreachable* — whether the read failed, or a stale cache / fresh-enough
+  persisted-empty page returned empty without ever reaching the server — the view
+  shows the same miss-state copy + Retry as a failed load (*offline* → "You're
+  offline. Reconnect to load items."; *backend-unreachable* → "Readmo's server
+  isn't responding right now — it may be busy.") rather than a reassuring-but-
+  unconfirmed "caught up". On the offline→online transition the feed forces a
+  confirming refetch (it ignores `staleTime`, so a just-cached empty page can't
+  short-circuit it) and holds a loading state until it settles; an already
+  in-flight read (e.g. the user's Retry) is adopted as that confirming fetch
+  rather than duplicated.
+- **An empty feed is confirmed against a live server, not the SW cache, before
+  claiming caught up.** `status === 'online'` alone isn't proof the *server*
+  answered: the `readmo-data` route is Workbox `NetworkFirst` with a 10s cache
+  fallback, and `trackedFetch` counts any resolved response — including a SW
+  cache hit — as success, so a backend-down/lie-fi read can be served a stale
+  empty page while the device still reports online. So when a feed read's *first
+  page* comes back empty, `SupabaseDataSource.feedView` issues a live reachability
+  probe (`confirmBackendReachable`, hitting `/auth/v1/health` — outside the
+  cached `/rest/v1/` route, so the SW never mediates it) before trusting the
+  result; if the backend doesn't answer, the read throws and the view shows the
+  down/offline miss-state instead of "all caught up". Non-empty reads skip the
+  probe (there's no caught-up claim to confirm); unconfigured/mock mode skips it
+  too (no remote backend to be down). **Cost/reliability:** one extra GoTrue
+  `/auth/v1/health` GET per *empty* feed read — in-process (no Postgres),
+  negligible, and off the happy path for any populated feed; on failure it only
+  swaps a false "caught up" for the existing miss-state.
 - **Writes queue offline** (the outbox) — pin/favorite/done/hide/open reflect
   immediately and flush on reconnect; hard failures roll back + toast.
 
