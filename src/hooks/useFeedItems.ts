@@ -1,7 +1,6 @@
 import {
   useInfiniteQuery,
 } from '@tanstack/react-query';
-import { useDataSource } from '../lib/data/context';
 import type { FeedItem } from '../lib/types';
 import type { Page } from '../lib/data/DataSource';
 
@@ -15,8 +14,6 @@ export type FetchPage = (cursor: string | null) => Promise<Page<FeedItem>>;
  * this hook is unmounted.
  */
 export function useFeedItems(viewKey: string, fetchPage: FetchPage) {
-  const ds = useDataSource();
-
   const query = useInfiniteQuery({
     queryKey: ['feed', viewKey],
     queryFn: ({ pageParam }) => fetchPage(pageParam),
