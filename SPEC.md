@@ -442,9 +442,17 @@ loopback/link-local/private/metadata targets and redirects to them.
   never affected (they're always at/above the floor). The same header lets a
   gateway gate the `feed_items` read path the same way with one header-match
   rule — so an old client's read-loop can be rejected before Postgres without an
-  Edge Function in front of it. Read-path enforcement (gateway) and a new-client
-  `426`→service-worker-refresh self-heal are tracked as follow-ups. Cost:
-  negligible (a header compare).
+  Edge Function in front of it. **Read-path enforcement is implemented as a
+  Cloudflare Worker gateway** (`infra/cf-gateway/`): the app points
+  `VITE_SUPABASE_URL` at `api.readmo.app`, the Worker forwards to the Supabase
+  origin, and a free per-IP WAF Rate Limiting Rule sheds a request storm before
+  it reaches Postgres. The Worker's version gate is scoped to the stamped data
+  paths (`/rest/`, `/functions/`) so it never blocks an OAuth navigation. It is
+  operator-enabled (deploy + flip the URL) and ships with the gate disarmed; see
+  `infra/cf-gateway/README.md` and SCALING.md. A new-client
+  `426`→service-worker-refresh self-heal is still tracked as a follow-up. Cost:
+  negligible in-app (a header compare); the gateway is $0 under 100k req/day,
+  else ~$5/mo (Workers Paid).
 
 ### Cost & reliability (rule-11 discipline, carried from newshacker)
 
