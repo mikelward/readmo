@@ -9,7 +9,7 @@ describe('cors', () => {
     expect(methods).toContain('POST');
     expect(methods).toContain('OPTIONS');
     const allowed = corsHeaders['Access-Control-Allow-Headers'].toLowerCase();
-    for (const h of ['authorization', 'apikey', 'content-type', 'x-client-info']) {
+    for (const h of ['authorization', 'apikey', 'content-type', 'x-client-info', 'x-readmo-build']) {
       expect(allowed).toContain(h);
     }
   });

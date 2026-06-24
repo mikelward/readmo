@@ -413,7 +413,30 @@ loopback/link-local/private/metadata targets and redirects to them.
   + feed-health badge; no new infra unless the egress-pool mitigation is needed,
   which we'll cost out only if Reddit volume warrants it.
 - **On-demand:** adding a feed or pull-to-refresh triggers an immediate
-  server-side fetch for the relevant feed(s), debounced server-side.
+  server-side fetch for the relevant feed(s), debounced server-side (the
+  per-feed `DEBOUNCE_S` skip protects the *publisher*).
+- **Per-caller rate limit on `refresh`:** an in-memory token bucket (keyed by
+  JWT subject; burst 10, sustained ~12/min) sheds a misbehaving client — e.g.
+  one stuck on a buggy build that pull-to-refreshes in a loop — with a `429` +
+  `Retry-After` **before** any DB query, so the abuse can't turn into a
+  `subscriptions` select + per-feed `feeds` reads. This protects Readmo's own
+  Postgres, distinct from the publisher debounce above. It's best-effort per
+  warm Edge isolate and does **not** cover the direct `feed_items` read RPC
+  (no Edge Function in front of it); a distributed/read-path cap belongs at the
+  gateway (Cloudflare / platform) and is tracked separately. Cost: negligible —
+  no infra, no external call, no DB work (guardrail #5).
+- **Minimum-client-version gate.** The app stamps every Supabase request with
+  `x-readmo-build: <commitCount>` (a monotonic build number). Edge functions
+  reject builds below the configurable `MIN_CLIENT_BUILD` floor (0 = disarmed)
+  with `426 Upgrade Required`, before any DB work. This is the targeted kill
+  switch for a client shipped with a runaway-refetch bug: bump the floor past
+  the bad build (no redeploy) and old clients are shed; current clients are
+  never affected (they're always at/above the floor). The same header lets a
+  gateway gate the `feed_items` read path the same way with one header-match
+  rule — so an old client's read-loop can be rejected before Postgres without an
+  Edge Function in front of it. Read-path enforcement (gateway) and a new-client
+  `426`→service-worker-refresh self-heal are tracked as follow-ups. Cost:
+  negligible (a header compare).
 
 ### Cost & reliability (rule-11 discipline, carried from newshacker)
 
