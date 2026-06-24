@@ -72,3 +72,11 @@ export function usePromoDismissed(id: string): {
 
   return { dismissed, dismiss };
 }
+
+/** Test-only: drop the in-memory dismissal cache so a test can start from a
+ * clean slate. The cache is module-level and otherwise persists across a test
+ * file's cases, which would let an earlier dismissal mask a later assertion.
+ * Pair with `localStorage.clear()` to also reset the persisted flag. */
+export function resetPromoDismissedCacheForTest(): void {
+  cache.clear();
+}
