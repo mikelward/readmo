@@ -31,12 +31,30 @@ const CACHE_BUSTER = '1';
 // IndexedDB for article bodies; PR1 uses localStorage with the mock seed.)
 const PERSIST_MAX_AGE = Number.POSITIVE_INFINITY;
 
+/**
+ * Don't retry when the server itself is the problem — a 5xx / PGRST error
+ * or a timed-out request won't improve on an immediate retry, and retrying
+ * doubles the time before the user sees the error UI. Retry once for
+ * everything else (transient network blip, dropped connection).
+ */
+function shouldRetry(_count: number, error: unknown): boolean {
+  // Timed-out request (supabaseFetch aborts with TimeoutError after 15 s).
+  if (error instanceof DOMException && error.name === 'TimeoutError') return false;
+  // PostgREST / Supabase JS error — has a numeric `status` field.
+  if (error != null && typeof error === 'object' && 'status' in error) {
+    const status = (error as { status: unknown }).status;
+    if (typeof status === 'number' && status >= 500) return false;
+  }
+  // Default: retry once.
+  return _count < 1;
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 5 * 60 * 1000,
       gcTime: 60 * 60 * 1000,
-      retry: 1,
+      retry: shouldRetry,
       refetchOnWindowFocus: false,
       // The service worker answers from the Cache API when it can, so run the
       // fetch even when the browser reports offline; a true miss surfaces as
