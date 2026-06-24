@@ -6,6 +6,7 @@ import { renderWithProviders } from '../test/renderWithProviders';
 import { ItemList } from './ItemList';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import type { FeedItem } from '../lib/types';
+import { resetPromoDismissedCacheForTest } from '../hooks/usePromoDismissed';
 import {
   installIntersectionObserverMock,
   setVisibilityForTest,
@@ -51,6 +52,12 @@ describe('ItemList', () => {
   // row as fully visible by default (see intersectionObserver.ts).
   beforeEach(() => {
     installIntersectionObserverMock();
+    // Start every case with the promo bar un-dismissed: clear both the
+    // persisted flag and the module-level cache so an earlier dismissal can't
+    // mask a later "bar is absent" assertion (it would return null for the
+    // wrong reason).
+    window.localStorage.clear();
+    resetPromoDismissedCacheForTest();
   });
 
   afterEach(() => {
@@ -86,6 +93,23 @@ describe('ItemList', () => {
     expect(screen.getByText('Pin an article to download it')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /dismiss/i }));
+    expect(
+      screen.queryByText('Pin an article to download it'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('does not show the promo bar on an empty feed', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: [], nextCursor: null, total: 0 }),
+    );
+    renderWithProviders(
+      <ItemList viewKey={`empty-${Math.random()}`} fetchPage={fetchPage} emptyLabel="All caught up." />,
+      { source },
+    );
+    // Wait for the empty state to settle (the bar must not be promised here —
+    // there's nothing to pin).
+    expect(await screen.findByText('All caught up.')).toBeInTheDocument();
     expect(
       screen.queryByText('Pin an article to download it'),
     ).not.toBeInTheDocument();
