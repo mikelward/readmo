@@ -28,6 +28,41 @@ let fetchOnline: boolean = true;
 let lastEmitted: boolean = browserOnline && fetchOnline;
 const listeners = new Set<Listener>();
 
+// A self-imposed read *timeout* (supabaseFetch aborts a hung read after 15s)
+// is ambiguous: the device may be offline, or the backend may just be slow —
+// e.g. the DB pegged and the feed RPC not answering in time. Rather than guess
+// "offline" (the old behavior, which painted a wrong Offline pill whenever the
+// DB was overloaded), we probe a lightweight reachability endpoint to decide.
+//
+// The probe URL is injected by the Supabase client (client.ts) once it knows
+// the project URL; GoTrue's `/auth/v1/health` is an in-process liveness check
+// that does NOT query Postgres, so it stays responsive even when the DB is
+// saturated — exactly the signal that separates "backend slow" from "offline".
+// Unset (mock/unconfigured mode) → fall back to the conservative legacy
+// behavior and treat a timeout as offline.
+let probeUrl: string | null = null;
+let probeInFlight = false;
+// successSeq is bumped on every reported success. `probeBaselineSeq` captures it
+// as of the most recent timeout under adjudication: a probe only flips us
+// offline if no success has landed *since that timeout*. A timeout that arrives
+// after a success (even while an earlier probe is still running) refreshes this
+// baseline, so it is re-adjudicated rather than silently coalesced away.
+let successSeq = 0;
+let probeBaselineSeq = 0;
+
+// Short ceiling for the reachability probe — well under the 15s read cap so a
+// genuine offline flips the pill promptly rather than waiting a second 15s.
+const PROBE_TIMEOUT_MS = 5_000;
+
+/**
+ * Register the reachability-probe endpoint (called by the Supabase client at
+ * init). Pass `null` to disable probing (mock/unconfigured mode), in which case
+ * a read timeout falls back to being treated as offline.
+ */
+export function setConnectivityProbeUrl(u: string | null) {
+  probeUrl = u;
+}
+
 function combined(): boolean {
   return browserOnline && fetchOnline;
 }
@@ -56,23 +91,72 @@ export function subscribeOnline(fn: Listener): () => void {
 }
 
 export function reportFetchSuccess() {
+  // Bump unconditionally (even when already online) so a probe started before
+  // this success can detect it and skip flipping us offline.
+  successSeq++;
   if (fetchOnline) return;
   fetchOnline = true;
   emitIfChanged();
 }
 
-export function reportFetchFailure(err: unknown) {
-  if (!isNetworkError(err)) return;
+export function reportFetchFailure(err: unknown): Promise<void> | void {
+  // A read timeout is ambiguous (offline vs. slow/overloaded backend). Don't
+  // flip the pill on the timeout alone — probe reachability and decide there.
+  if (isTimeout(err)) return maybeProbeAfterTimeout();
+  if (!isHardNetworkError(err)) return;
+  goOffline();
+}
+
+function goOffline() {
   if (!fetchOnline) return;
   fetchOnline = false;
   emitIfChanged();
 }
 
-function isNetworkError(err: unknown): boolean {
-  // A request we timed out ourselves (see trackedFetch's bounded fetch) means
-  // the network didn't answer in time — treat it as offline-right-now so the
-  // pill flips and React Query pauses retries until connectivity returns.
-  if (err instanceof DOMException && err.name === 'TimeoutError') return true;
+/**
+ * Resolve the ambiguity of a read timeout. If a lightweight probe reaches the
+ * backend, the device is online and the read just timed out on a slow/overloaded
+ * server — stay (or come back) online; the feed view shows its own "Couldn't
+ * load" / Retry. If the probe also fails, we're genuinely unreachable — flip to
+ * offline. Runs even when already offline, since a timeout whose probe succeeds
+ * is how we recover a stuck Offline pill on reconnect-while-the-DB-is-slow (no
+ * real read succeeds to fire reportFetchSuccess in that window).
+ */
+async function maybeProbeAfterTimeout(): Promise<void> {
+  // No probe target (mock/unconfigured): conservative legacy behavior.
+  if (probeUrl == null) return void goOffline();
+  // Rebase adjudication on THIS timeout's view of connectivity, so a probe
+  // already in flight re-judges against the latest timeout rather than the one
+  // that started it (a post-success timeout must not be coalesced into — and
+  // then suppressed by — a probe started before that success).
+  probeBaselineSeq = successSeq;
+  if (probeInFlight) return;
+  probeInFlight = true;
+  try {
+    // Any HTTP response — even a 4xx/5xx — proves we reached the server, so the
+    // device is online and the backend is merely slow. Plain `fetch` (not
+    // trackedFetch) to avoid a recursive probe loop on the probe's own timeout.
+    await fetch(probeUrl, {
+      method: 'GET',
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    // Reaching the backend is positive evidence of connectivity: keep us online,
+    // and clear the pill if a prior hard failure had flipped it off.
+    reportFetchSuccess();
+  } catch {
+    // Probe failed too → genuinely unreachable, unless a real success landed
+    // since the latest timeout (then we're online and this probe is stale).
+    if (probeBaselineSeq === successSeq) goOffline();
+  } finally {
+    probeInFlight = false;
+  }
+}
+
+function isTimeout(err: unknown): boolean {
+  return err instanceof DOMException && err.name === 'TimeoutError';
+}
+
+function isHardNetworkError(err: unknown): boolean {
   // AbortError is a caller cancelling the request (React Query does
   // this when a query is superseded), not a signal about connectivity.
   if (err instanceof DOMException && err.name === 'AbortError') return false;
@@ -144,4 +228,8 @@ export function _resetNetworkStatusForTests() {
   browserOnline = initialBrowserOnline();
   fetchOnline = true;
   lastEmitted = combined();
+  probeUrl = null;
+  probeInFlight = false;
+  successSeq = 0;
+  probeBaselineSeq = 0;
 }

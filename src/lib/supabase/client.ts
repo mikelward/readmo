@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { trackedFetch } from '../networkStatus';
+import { setConnectivityProbeUrl, trackedFetch } from '../networkStatus';
 
 // Hard ceiling on a single PostgREST GET read. Without it a request that never
 // answers (lie-fi, or the service worker's NetworkFirst awaiting a hung network
@@ -34,6 +34,14 @@ const anonKey =
   env.VITE_SUPABASE_ANON_KEY ??
   env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
   env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+
+// Register the reachability probe used to disambiguate a read *timeout* from
+// genuine offline (see networkStatus.ts). GoTrue's `/auth/v1/health` is an
+// in-process liveness check that doesn't query Postgres, so it stays responsive
+// even when the DB is overloaded — the case where a slow `feed_items` read would
+// otherwise time out and paint a wrong "Offline" pill. Unconfigured (mock) →
+// no probe, and a timeout falls back to being treated as offline.
+setConnectivityProbeUrl(url ? `${url.replace(/\/$/, '')}/auth/v1/health` : null);
 
 /** Deterministic localStorage key for the persisted auth session. Fixed (rather
  * than supabase-js's default `sb-<ref>-auth-token`) so the boot path can read

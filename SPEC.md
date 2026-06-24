@@ -890,8 +890,24 @@ keys differ; the strategies map one-to-one:
   would surface as a failed `getSession()` → the user is nulled →
   `useUserCacheScope` treats it as a sign-out and purges the offline cache,
   turning a transient blip into a spurious sign-out. Every request still flows
-  through `trackedFetch`, so a real network failure (or read timeout) flips the
-  Offline pill.
+  through `trackedFetch`, so a real network failure flips the Offline pill.
+- **A read *timeout* is not treated as proof of offline.** A self-imposed 15s
+  read cap is ambiguous: the device may be offline, or the backend may just be
+  slow (e.g. the DB overloaded and `feed_items` not answering in time). Flipping
+  the Offline pill on the timeout alone mislabels a server-side slowdown as a
+  device-connectivity problem. Instead, a timeout triggers a lightweight
+  reachability probe (`GET /auth/v1/health` — GoTrue's in-process liveness
+  check, which does **not** query Postgres, so it stays responsive under DB
+  load). **Any** HTTP response → the backend is reachable and the device is
+  online, so the pill stays off and the feed view surfaces its own "Couldn't
+  load — Retry" state. Only if the probe **also** fails (network error / its own
+  timeout) do we flip to Offline. The probe is coalesced (one in flight at a
+  time) and skipped when no project URL is configured (mock mode falls back to
+  treating a timeout as offline). Cost/reliability: same Supabase project (no new
+  third party), fires only on the rare timeout path, ~5s budget — negligible.
+  Hard network errors (`TypeError`/`NetworkError` — DNS, unreachable host,
+  dropped connection) still flip the pill immediately, since they fail fast and
+  unambiguously mean no connection.
 - `CACHE_BUSTER` wipes the persisted blob on schema change; the outbox and
   Supabase data are unaffected (server is canonical).
 - **All client caches are scoped to the signed-in user and purged on account
