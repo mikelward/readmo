@@ -50,7 +50,7 @@ describe('SignInPage', () => {
   it('renders the feed preview hero when signed out', () => {
     renderAt({ pathname: '/signin' });
     expect(document.querySelector('.signin__hero')).not.toBeNull();
-    const rows = document.querySelectorAll('.signin__mock-row');
+    const rows = document.querySelectorAll('.item-row');
     expect(rows.length).toBeGreaterThan(0);
   });
 

@@ -10,7 +10,7 @@
 .signin__hero {
   position: relative;
   width: 100%;
-  max-width: 560px;
+  max-width: 720px;
   background: var(--rm-bg-card);
   border-bottom: 1px solid var(--rm-border);
   overflow: hidden;
@@ -19,86 +19,15 @@
   flex-shrink: 0;
 }
 
-.signin__mock-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--rm-border);
-  background: var(--rm-bg-elevated);
-}
-
-.signin__mock-logo {
-  font-size: 1.05rem;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  color: var(--rm-text);
-}
-
-.signin__mock-pill {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--rm-meta);
-  background: var(--rm-bg);
-  border: 1px solid var(--rm-border);
-  border-radius: 20px;
-  padding: 2px 10px;
+/* The hero header reuses .app-header but must not be sticky. */
+.signin__mock-header-override {
+  position: static;
 }
 
 .signin__mock-feed {
   list-style: none;
   margin: 0;
   padding: 0;
-}
-
-.signin__mock-row {
-  display: flex;
-  align-items: center;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--rm-border);
-  gap: 12px;
-  min-height: var(--rm-tap);
-}
-
-.signin__mock-row-body {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.signin__mock-source {
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: var(--rm-meta);
-}
-
-.signin__mock-title {
-  font-size: 0.9rem;
-  font-weight: 500;
-  color: var(--rm-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.signin__mock-row--read .signin__mock-title {
-  color: var(--rm-read);
-}
-
-.signin__mock-meta {
-  font-size: 0.72rem;
-  color: var(--rm-meta);
-}
-
-.signin__mock-action {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  border: 1.5px solid var(--rm-border-strong);
-  flex-shrink: 0;
-  opacity: 0.5;
 }
 
 /* gradient fade at the bottom of the hero */
