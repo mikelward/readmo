@@ -22,13 +22,15 @@
 .signin__mock-feed {
   list-style: none;
   margin: 0;
-  padding: 0;
+  /* small top inset so the first row isn't flush against the hero's top edge */
+  padding: 8px 0 0;
 }
 
 /* gradient fade at the bottom of the hero — must sit above item rows
    (which have z-index: 1) so the fade isn't painted over on short viewports.
    Kept short (44px) so it only softens the bottom edge: at the compact row
-   height it would otherwise wash out the whole last preview row (r/popular). */
+   height it would otherwise wash out the whole last preview row. r/popular is
+   deliberately not the last row so its source stays clear of the fade. */
 .signin__mock-fade {
   position: absolute;
   z-index: 2;

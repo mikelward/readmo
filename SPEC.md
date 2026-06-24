@@ -492,7 +492,10 @@ loopback/link-local/private/metadata targets and redirects to them.
   static feed preview (hero mockup of article rows) above the sign-in
   card (tagline + OAuth buttons + short privacy disclosure) so visitors
   understand the product before signing in. The hero always stacks above
-  the card in a single column. Deep links
+  the card in a single column. The mock rows have a small top inset and a
+  bottom fade gradient (implying more content); the sample row that shows a
+  Reddit source / read state is kept out of the bottom row so the fade never
+  washes out its source line. Deep links
   round-trip through sign-in then land on the target.
 - **Account UI = header chip** (mirrors newshacker): one always-visible
   control, far right, 44×44+, every page. Signed out → "Sign in". Signed in →
