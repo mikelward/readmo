@@ -9,10 +9,13 @@ interface FromState {
   from?: { pathname?: string; search?: string; hash?: string };
 }
 
+// r/popular sits in the middle, not last: the bottom row is partly covered by
+// the hero's fade gradient, which would wash out its source/meta line. Keeping a
+// crisp row (here the Reddit one) clear of the fade keeps the source legible.
 const DEMO_ROWS = [
   { source: 'AP News', title: 'FDA Approves New Treatment for Common Form of Heart Disease', age: '1h', domain: 'apnews.com', read: false },
-  { source: 'Vox', title: 'Why Your Grocery Bill Keeps Going Up', age: '3h', domain: 'vox.com', read: false },
   { source: 'r/popular', title: 'My Dad Just Retired After 40 Years — Proud of Him', age: '4h', domain: 'reddit.com', read: true },
+  { source: 'Vox', title: 'Why Your Grocery Bill Keeps Going Up', age: '3h', domain: 'vox.com', read: false },
 ];
 
 /** Clean sign-in landing (SPEC.md *Auth*). When Supabase is configured the
