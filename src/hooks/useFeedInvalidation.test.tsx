@@ -5,7 +5,7 @@ import { renderWithProviders } from '../test/renderWithProviders';
 import { ItemList } from '../components/ItemList';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import type { FeedItem } from '../lib/types';
-import type { Page } from '../lib/data/DataSource';
+import type { FetchPage } from './useFeedItems';
 
 /**
  * Regression: after a persisted-cache restore, preexisting Done/Hidden item
@@ -33,10 +33,10 @@ describe('boot-time feed invalidation after persist restore', () => {
     // persisted snapshot. Subsequent calls are held behind a gate so we can
     // assert the Done item is visible from the first result before the
     // refetch resolves and filters it out.
-    let releaseRefetch: ((p: Page<FeedItem>) => void) | null = null;
+    let releaseRefetch: (() => void) | null = null;
     let callCount = 0;
 
-    const fetchPage = vi.fn((cursor: string | null): Promise<Page<FeedItem>> => {
+    const fetchPage = vi.fn((cursor: string | null) => {
       callCount++;
       if (callCount === 1) {
         return Promise.resolve({ items: allItems, nextCursor: null, total: allItems.length });
@@ -53,7 +53,7 @@ describe('boot-time feed invalidation after persist restore', () => {
     });
 
     renderWithProviders(
-      <ItemList viewKey="home-all" fetchPage={fetchPage} emptyLabel="All caught up." />,
+      <ItemList viewKey="home-all" fetchPage={fetchPage as FetchPage} emptyLabel="All caught up." />,
       { source, queryClient },
     );
 
