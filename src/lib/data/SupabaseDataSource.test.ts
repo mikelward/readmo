@@ -92,29 +92,19 @@ describe('SupabaseDataSource reads', () => {
   });
 
   it('throws a descriptive error when feed_items returns the wrong row shape', async () => {
-    // The RPC is `returns table (item items)` → rows are `{ item: {...} }`. If a
-    // deployed RPC drifts to a flat `setof items`, `r.item` is undefined and the
-    // old code blew up downstream with a cryptic "Cannot read properties of
-    // undefined (reading 'feed_id')". The shape guard must name the real cause
-    // instead, so the miss-state/console point at the stale DB function.
+    // If the deployed function returns rows missing `id` (e.g. a completely
+    // different schema), the shape guard must surface a clear error rather than
+    // a cryptic downstream crash.
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const flat = setup();
-    const realRpc = flat.fake.client.rpc.bind(flat.fake.client);
-    flat.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
-      const res = realRpc(name, params) as PromiseLike<{ data: unknown; error: unknown }>;
-      if (name !== 'feed_items') return res;
-      // Unwrap the `{ item }` wrapper to simulate a flat-shape RPC response.
-      return Promise.resolve(res).then((r) => {
-        const flatData = Array.isArray(r.data)
-          ? (r.data as Array<{ item: unknown }>).map((row) => row.item)
-          : r.data;
-        return { data: flatData, error: r.error };
-      });
-    }) as typeof flat.fake.client.rpc;
-    await expect(flat.ds.getHomeItems()).rejects.toThrow(/database function may be out of date/i);
+    const bad = setup();
+    bad.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name !== 'feed_items') return bad.fake.client.rpc(name, params);
+      void params;
+      return Promise.resolve({ data: [{ wrong_field: 'oops' }], error: null });
+    }) as typeof bad.fake.client.rpc;
+    await expect(bad.ds.getHomeItems()).rejects.toThrow(/feed_items returned rows missing/i);
     errSpy.mockRestore();
   });
-
   it('pages the COMBINED pinned+body sequence, bounded to limit per page', async () => {
     // Combined order is [i2 (pinned), i6, i3 (body, newest-first)]; each page
     // holds at most `limit` rows (pinned no longer dumped wholesale on page 1).
