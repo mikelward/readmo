@@ -9,7 +9,7 @@
      Rasterized into public/icon-512-maskable.png by
      scripts/generate-icons.mjs. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <rect width="512" height="512" fill="#1a1a1a"/>
+  <rect width="512" height="512" fill="#363636"/>
   <text x="256" y="240"
         text-anchor="middle"
         dominant-baseline="central"

@@ -8,7 +8,7 @@
 //     truth for the mark) — the script writes public/favicon.svg and
 //     public/favicon-maskable.svg itself, then rasterizes the PNGs from
 //     those same strings. No hand-maintained SVG to drift out of sync.
-//  2. The mark is Readmo's: an ink (#1a1a1a) rounded-square tile, a
+//  2. The mark is Readmo's: a charcoal ink (#363636) rounded-square tile, a
 //     paper-white uppercase "R" centered slightly above the midline, and
 //     a paper-white "home-indicator pill" near the bottom edge — the
 //     letter-mark + mobile-first motif inherited from newshacker, in our
@@ -35,9 +35,10 @@ const publicDir = resolve(here, '..', 'public');
 // stays crisp for the largest (512x512). Higher is wasted work.
 const INPUT_DENSITY = 384;
 
-// Paper / monochrome mark: an ink (near-black) tile with a paper-white
+// Paper / monochrome mark: a charcoal ink tile with a paper-white
 // letterform and home-indicator pill, matching the "ink on paper" theme.
-const INK = '#1a1a1a';
+// Matches the default Ink palette's --rm-brand-tile (#363636).
+const INK = '#363636';
 const PAPER = '#faf9f5';
 
 const FONT_FAMILY =

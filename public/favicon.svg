@@ -7,7 +7,7 @@
      scale and is plainly visible at 192/512. Rasterized into
      public/icon-*.png by scripts/generate-icons.mjs. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <rect width="512" height="512" rx="96" fill="#1a1a1a"/>
+  <rect width="512" height="512" rx="96" fill="#363636"/>
   <text x="256" y="240"
         text-anchor="middle"
         dominant-baseline="central"
