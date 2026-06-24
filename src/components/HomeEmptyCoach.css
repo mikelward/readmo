@@ -1,0 +1,52 @@
+.home-coach {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+  padding: 56px 24px;
+  color: var(--rm-text);
+}
+
+.home-coach__title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.home-coach__body {
+  margin: 0;
+  max-width: 32ch;
+  color: var(--rm-meta);
+  line-height: 1.4;
+}
+
+.home-coach__cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
+  min-height: var(--rm-tap);
+  padding: 0 20px;
+  border-radius: var(--rm-radius);
+  background: var(--rm-accent);
+  color: var(--rm-accent-contrast);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.home-coach__cta-icon {
+  width: 20px;
+  height: 20px;
+}
+
+@media (hover: hover) {
+  .home-coach__cta:hover {
+    background: var(--rm-accent-strong);
+  }
+}
+
+.home-coach__cta:active {
+  background: var(--rm-accent-strong);
+}

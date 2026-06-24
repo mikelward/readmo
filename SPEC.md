@@ -553,6 +553,11 @@ loopback/link-local/private/metadata targets and redirects to them.
    - **`/` (Home)** — all non-muted subscriptions merged. A drawer *Home*
      picker can swap `/` to a chosen folder, persisted per-device (mirrors
      `useHomeFeed`). URL stays `/`.
+   - **No-feeds coach** — when the account has **zero subscriptions**, Home
+     shows a first-run coach ("No feeds yet" + an *Add a feed* button linking to
+     Settings) instead of the "You're all caught up." empty state, which implies
+     the user had items and read them. An account with only *muted* feeds still
+     has subscriptions, so it gets the normal caught-up state, not the coach.
    - **`/folder/:name`** — a folder's merge. **`/feed/:feedId`** — one feed.
    - **Pinned prepended to the top** of every feed view, rendered once,
      oldest-pinned first; **pinning a body row keeps its position** (Sweep
