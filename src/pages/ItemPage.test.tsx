@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { useState, type ReactNode } from 'react';
 import { Route, Routes } from 'react-router-dom';
-import { screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { QueryClient } from '@tanstack/react-query';
+import { IsRestoringProvider, QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import { _resetNetworkStatusForTests } from '../lib/networkStatus';
@@ -228,6 +229,59 @@ describe('ItemPage reading mode', () => {
 
     expect(await screen.findByText(/isn.t saved offline/i)).toBeInTheDocument();
     expect(screen.queryByText(/visible creases/)).not.toBeInTheDocument();
+  });
+
+  it('recovers the offline RSS body once the persisted cache finishes hydrating', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    // The persisted feed page (built ahead of time) is NOT in the cache yet —
+    // it lands only when restoration finishes, modeling a cold offline start
+    // where the reader mounts before PersistQueryClientProvider has hydrated.
+    const seed = new MockDataSource(`test-${Math.random()}`);
+    const homePage = await seed.getHomeItems();
+    class OfflineSource extends MockDataSource {
+      async getItem(): Promise<FeedItem | null> {
+        throw new Error('offline');
+      }
+    }
+    setOnline(false);
+
+    // Drive React Query's restoration flag, flipping it false from the test to
+    // model PersistQueryClientProvider finishing hydration.
+    let finishRestoring: () => void = () => {};
+    function Restoring({ children }: { children: ReactNode }) {
+      const [restoring, setRestoring] = useState(true);
+      finishRestoring = () => setRestoring(false);
+      return <IsRestoringProvider value={restoring}>{children}</IsRestoringProvider>;
+    }
+
+    renderWithProviders(
+      <Restoring>
+        <Routes>
+          <Route path="/item/:id" element={<ItemPage />} />
+        </Routes>
+      </Restoring>,
+      { source: new OfflineSource(`test-${Math.random()}`), queryClient, route: '/item/item-1' },
+    );
+
+    // While restoring (cache still empty): wait, don't paint the miss state.
+    expect(screen.getByText(/Loading/)).toBeInTheDocument();
+    expect(screen.queryByText(/visible creases/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/isn.t saved offline/i)).not.toBeInTheDocument();
+
+    // Restoration completes: the list cache is now populated AND isRestoring
+    // flips — the fallback must re-scan and find the body (the regression was it
+    // staying null because the memo didn't recompute).
+    act(() => {
+      queryClient.setQueryData(['feed', 'home'], {
+        pages: [homePage],
+        pageParams: [null],
+      });
+      finishRestoring();
+    });
+    expect(await screen.findByText(/visible creases/)).toBeInTheDocument();
+    expect(screen.queryByText(/isn.t saved offline/i)).not.toBeInTheDocument();
   });
 
   it('opens to the reading view when full text is already cached in the fulltext query', async () => {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useIsRestoring, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { findCachedFeedItem } from '../lib/offlineItem';
 import { useItemState } from '../hooks/useItemState';
@@ -228,6 +228,11 @@ export function ItemPage() {
 
   const { state, set, toggle } = useItemState(id);
   const queryClient = useQueryClient();
+  // True while the persisted query cache is still hydrating at boot. The offline
+  // fallback below scans that cache, so it must wait for (and recompute after)
+  // restoration — otherwise a cold offline start scans an empty cache and stays
+  // stuck on the miss state. Outside the persist provider (tests) this is false.
+  const isRestoring = useIsRestoring();
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['item', id],
@@ -246,9 +251,12 @@ export function ItemPage() {
   // would also swallow a cached `null` miss and override it with a stale row).
   const detailUnavailable =
     data === undefined && !isLoading && (isError || !online);
+  // Recompute once restoration finishes: `isRestoring` flipping false re-renders
+  // this component and re-runs the scan against the now-hydrated list caches.
   const fallback = useMemo(
-    () => (detailUnavailable ? findCachedFeedItem(queryClient, id) : null),
-    [detailUnavailable, queryClient, id],
+    () =>
+      detailUnavailable && !isRestoring ? findCachedFeedItem(queryClient, id) : null,
+    [detailUnavailable, isRestoring, queryClient, id],
   );
   const resolved = data ?? fallback;
 
@@ -342,7 +350,7 @@ export function ItemPage() {
     return () => document.removeEventListener('keydown', onKey);
   }, [openOriginal, toggle, markDone]);
 
-  if (isLoading) {
+  if (isLoading || isRestoring) {
     return <div className="reader__state">Loading…</div>;
   }
   if (!resolved) {
