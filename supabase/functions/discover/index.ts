@@ -41,21 +41,31 @@ Deno.serve(async (req: Request) => {
     // otherwise assertSafeUrl/safeFetch reject it as "Invalid URL".
     const target = /^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `https://${url}`;
 
+    console.log(`discover: probing ${target}`);
+
     // Reddit short-circuit: derive the .rss form directly (its pages don't
     // reliably advertise the feed).
     const reddit = redditFeedFor(target);
     if (reddit) {
+      console.log(`discover: Reddit short-circuit → ${reddit}`);
       const { feed } = await tryParse(reddit);
-      if (feed) return json({ candidates: [feed] });
+      if (feed) {
+        console.log(`discover: Reddit feed validated — title=${JSON.stringify(feed.title)}`);
+        return json({ candidates: [feed] });
+      }
     }
 
     // Fetch the target. It may itself be a feed or an HTML page.
     const res = await safeFetch(target, { timeoutMs: 10_000, maxBytes: 8 * 1024 * 1024 });
+    console.log(`discover: target responded HTTP ${res.status}`);
     const body = new TextDecoder().decode(res.body);
 
     // If the target parses as a feed, offer it directly.
     const { feed: asFeed } = await tryParse(res.url, body);
-    if (asFeed) return json({ candidates: [asFeed] });
+    if (asFeed) {
+      console.log(`discover: URL is a feed — title=${JSON.stringify(asFeed.title)}`);
+      return json({ candidates: [asFeed] });
+    }
 
     // Not a feed itself. If the fetch didn't actually succeed, report WHY
     // rather than falling through to a misleading "no feed found": a
@@ -66,19 +76,24 @@ Deno.serve(async (req: Request) => {
       // 403 often means bot-blocking (Cloudflare etc.) rather than a real auth
       // wall. Try via Jina Reader — a headless-browser proxy that bypasses
       // bot protection — before giving up.
+      console.log(`discover: HTTP ${res.status} — trying Jina fallback`);
       const jinaHtml = await fetchViaJina(target);
       if (jinaHtml !== null) {
+        console.log('discover: Jina returned HTML, probing for feed candidates');
         const result = await probeHtml(jinaHtml, target);
+        console.log(`discover: Jina path — ${result.validated.length} candidate(s) validated`);
         if (result.validated.length > 0) return json({ candidates: result.validated });
         if (result.candidateFail) return feedErrorResponse(result.candidateFail);
         return feedErrorResponse(targetCode);
       }
+      console.log('discover: Jina unavailable or skipped, returning auth error');
       return feedErrorResponse(targetCode);
     }
     if (targetCode) return feedErrorResponse(targetCode);
 
     // Otherwise treat it as HTML and probe each candidate.
     const result = await probeHtml(body, res.url);
+    console.log(`discover: HTML path — ${result.validated.length} candidate(s) validated`);
     if (result.validated.length === 0 && result.candidateFail) {
       return feedErrorResponse(result.candidateFail);
     }

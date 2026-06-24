@@ -72,6 +72,7 @@ Deno.serve(async (req: Request) => {
       content: mail.text,
     });
     await client.close();
+    console.log(`notify-signup: email sent to ${mail.to} for user ${event.id ?? '(unknown)'}`);
   } catch (err) {
     console.error('notify-signup: SMTP send failed:', err);
     try {
