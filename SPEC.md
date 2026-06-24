@@ -121,24 +121,21 @@ Everything else about the visual system mirrors newshacker.
   insets reserve space for landscape-iPhone notches on the edge controls.
 - **Navigation drawer sections:** Home (feed picker — All subscriptions or a folder), Library (Pinned / Favorites / Done / Opened / Offline), Folders (folder nav, hidden when none exist), Feeds (subscription list), Appearance (mode + palette segmented controls), App (Settings, Debug).
 - **Dark mode:** full light/dark/system via tokens.
-- **Palette:** three color families selectable in the drawer's Appearance section (and also in Settings), orthogonal to the
-  light/dark/**mode** axis — **Ink** (default, the monochrome ink-on-paper above),
-  **Clay** (a calm, warm red: brick-red accent `--rm-accent: #b53a2e` light /
-  `#ec9482` dark on faintly warm-tinted paper), and **Slate** (a calm, muted
-  blue: denim accent `--rm-accent: #3d5a80` light / `#9db8e0` dark on faintly
-  cool-tinted paper); all clear 4.5:1. The accents are deliberately muted (not
-  bold/bright), and Clay's warm red stays distinct from the cooler crimson
-  `--rm-danger` so destructive actions don't read as the accent. Mode drives
+- **Palette:** two color families selectable in the drawer's Appearance section (and also in Settings), orthogonal to the
+  light/dark/**mode** axis — **Ink** (default, the monochrome ink-on-paper above)
+  and **Grape** (a vivid violet: grape accent
+  `--rm-accent: #6d2c91` light / `#cba6ed` dark on faintly grape-tinted paper);
+  both clear 4.5:1. Mode drives
   the `data-theme` attribute, palette drives `data-palette`; each palette ships
   its own light and dark variants. The brand mark's tile follows the palette
-  (charcoal ink tile by default, deep clay under Clay, deep slate under Slate)
-  via the `--rm-brand-tile` / `--rm-brand-fg` tokens; the non-ink palettes
-  freeze the tile to their deep accent across both modes for recognizability.
+  (charcoal ink tile by default, deep grape under Grape) via the
+  `--rm-brand-tile` / `--rm-brand-fg` tokens; the non-ink palette freezes the
+  tile to its deep accent across both modes for recognizability.
   In the drawer the palette picker renders each option as a two-tone color
   **swatch** (paper background + accent, split on the diagonal) rather than a
-  text label, with the active palette's swatch ringed, laid out as a **single
-  row of three** (Ink/Clay/Slate) — right at the per-row tap-zone cap, matching
-  the mode row of three above it; Settings keeps the text buttons.
+  text label, with the active palette's swatch ringed, laid out in a single
+  flex row (matching the mode row of three above it, within the per-row
+  tap-zone cap); Settings keeps the text buttons.
 - Icons inlined monochrome SVG (Material Symbols, `fill="currentColor"`), no
   icon font / runtime request.
 
@@ -683,7 +680,7 @@ loopback/link-local/private/metadata targets and redirects to them.
    right-actions group, suppressed on `/search`. Same placement.
 
 10. **Settings** — `/settings`: subscriptions/folders, OPML in/out, theme
-    (light/dark/system), palette (Ink/Clay/Slate), account/sign-out. Theme and
+    (light/dark/system), palette (Ink/Grape), account/sign-out. Theme and
     palette are also accessible directly in the drawer's **Appearance** section.
 
 11. **Keyboard shortcuts** — same letter scheme (see below).

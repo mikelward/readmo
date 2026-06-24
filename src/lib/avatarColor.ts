@@ -1,7 +1,7 @@
 // Palette for the initial-on-color account disc shown when a user has no
 // OAuth picture (deterministic, offline, zero requests — SPEC.md *Auth →
 // Account UI*). These vivid hues sit apart from the muted brand-mark accents
-// (charcoal ink / clay / slate) so the disc reads as a peer of the logo
+// (charcoal ink / grape) so the disc reads as a peer of the logo
 // rather than fighting it. Each color clears white-text contrast for the
 // centered initial.
 export const AVATAR_COLORS = [

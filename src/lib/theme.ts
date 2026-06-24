@@ -5,18 +5,17 @@ export const THEME_CHANGE_EVENT = 'readmo:themeChanged';
 // "Mode" (light/dark/system) and "palette" (color family) are orthogonal: each
 // palette ships its own light and dark variants, so the user picks both. Mode
 // drives the `data-theme` attribute; palette drives `data-palette`. `global.css`
-// combines them (e.g. `:root[data-palette='clay'][data-theme='dark']`).
+// combines them (e.g. `:root[data-palette='grape'][data-theme='dark']`).
 export type Theme = 'light' | 'dark' | 'system';
-export type Palette = 'ink' | 'clay' | 'slate';
+export type Palette = 'ink' | 'grape';
 
 const THEMES: readonly Theme[] = ['light', 'dark', 'system'];
-const PALETTES: readonly Palette[] = ['ink', 'clay', 'slate'];
+const PALETTES: readonly Palette[] = ['ink', 'grape'];
 
 // Display names for each palette, used by the drawer/settings pickers.
 export const PALETTE_LABELS: Record<Palette, string> = {
   ink: 'Ink',
-  clay: 'Clay',
-  slate: 'Slate',
+  grape: 'Grape',
 };
 
 // Representative light-variant colors for the palette swatch in the picker.
@@ -27,8 +26,7 @@ export const PALETTE_LABELS: Record<Palette, string> = {
 export const PALETTE_SWATCHES: Record<Palette, { bg: string; accent: string }> =
   {
     ink: { bg: '#faf9f5', accent: '#363636' },
-    clay: { bg: '#faf4f1', accent: '#b53a2e' },
-    slate: { bg: '#f3f5fa', accent: '#3d5a80' },
+    grape: { bg: '#f7f3fb', accent: '#6d2c91' },
   };
 
 // Ink is the default palette, so it owns the bare `:root`/`[data-theme]` blocks
@@ -77,8 +75,7 @@ export function getStoredPalette(): Palette {
 // then resolved mode so the chrome tint tracks both axes.
 const META_THEME_COLORS: Record<Palette, Record<'light' | 'dark', string>> = {
   ink: { light: '#faf9f5', dark: '#14161c' },
-  clay: { light: '#faf4f1', dark: '#1b1614' },
-  slate: { light: '#f3f5fa', dark: '#141821' },
+  grape: { light: '#f7f3fb', dark: '#1a141f' },
 } as const;
 
 // Keep the browser's address-bar / OS-chrome tint in sync with the
