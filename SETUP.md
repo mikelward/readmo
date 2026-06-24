@@ -386,3 +386,17 @@ affecting account creation.
   slow/failing relay never delays or blocks signup. Failure modes — relay down
   or rejecting (function returns 502), or secrets unset (no-op / 500) — only
   drop the *alert*; the account is still created. No new always-on dependency.
+
+---
+
+## 11. Frontend deploy (Vercel)
+
+The frontend's Vercel project ("Framework Preset: Vite") is mostly
+zero-config, but **one project env var is required**:
+
+| Var | Value | Why |
+| --- | --- | --- |
+| `VERCEL_DEEP_CLONE` | `1` | Vercel's default `git clone --depth=10` defeats `git rev-list --count HEAD` at build time. The build aborts (`vite.config.ts → readBuildInfo`) if `commitCount` is 0 in a production build, because shipping `x-readmo-build: 0` would let the version gate (`supabase/functions/_shared/clientVersion.ts`) reject the newest client the moment the gate is armed. An in-build `git fetch --unshallow` is a silent no-op on Vercel, so `VERCEL_DEEP_CLONE=1` (per [vercel#5737](https://github.com/vercel/vercel/discussions/5737)) is the only fix that sticks. |
+
+Also set `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` (see §5) — without
+them the client falls back to the in-memory mock data source.
