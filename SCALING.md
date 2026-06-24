@@ -16,6 +16,14 @@ to act) and the action.
   before any DB work. This is the in-code half — it covers Edge Functions
   only, **not** the `feed_items` read RPC. See *Shedding an abusive or runaway
   client* below for the read-path (gateway) half that uses the same header.
+- **Per-role `statement_timeout` on user-initiated queries** (`0013`).
+  `authenticated` (5 s) and `anon` (3 s) queries are killed if they run long, so
+  a pathological interactive read/write can't pin a pooled connection and starve
+  others under load — it bounds *cost per query*, not request rate. `service_role`
+  (poller / refresh / import batch) is left at its inherited `authenticator`
+  default (~8 s) rather than this tighter 5 s cap; whether that 8 s is the right
+  batch ceiling (vs. an explicit `0`/generous value) is tracked in TODO.md →
+  *Server / batch query limits*.
 
 ---
 
