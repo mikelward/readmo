@@ -90,12 +90,13 @@ newshacker.
 
 ## Visual design
 
-Ink on paper (monochrome) — a calm, near-black accent on warm paper rather
-than a colored hue. The ink accent clears 4.5:1 on the paper background so it
+Ink on paper (monochrome) — a calm, soft-charcoal accent on warm paper rather
+than a colored hue (charcoal, not pure black, so larger ink fills — the brand
+tile, the primary button — read softer than the near-black body text). The ink accent clears 4.5:1 on the paper background so it
 can be used for links and the primary button, not just as a glyph backdrop.
 Everything else about the visual system mirrors newshacker.
 
-- **Accent / primary:** ink `--rm-accent: #2b2b2b` (light) / `#ececec` (dark)
+- **Accent / primary:** ink `--rm-accent: #363636` (light) / `#ececec` (dark)
   — focus rings, links, active library icons, the brand wordmark, and the
   primary "Open original" button (a solid ink fill with paper-white text).
   Links also carry an underline so they remain distinguishable without a hue.
