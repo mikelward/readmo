@@ -1,0 +1,51 @@
+.load-error {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--rm-meta);
+}
+
+.load-error__headline {
+  margin: 0;
+}
+
+.load-error__details {
+  margin-top: 12px;
+  text-align: left;
+  display: inline-block;
+  max-width: 100%;
+}
+
+/* The disclosure toggle is interactive — give it a 44px tap floor (guardrail
+   #2) and a clear affordance. */
+.load-error__details summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--rm-tap);
+  cursor: pointer;
+  color: var(--rm-accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+  list-style-position: inside;
+  user-select: none;
+}
+
+.load-error__detail-text {
+  margin: 4px 0 0;
+  font-family: var(--rm-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.8rem;
+  color: var(--rm-danger);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.load-error__retry {
+  margin-top: 12px;
+  padding: 10px 20px;
+  min-height: var(--rm-tap);
+  border: 1px solid var(--rm-border-strong);
+  border-radius: var(--rm-radius);
+  background: var(--rm-bg-card);
+  color: var(--rm-accent);
+  font-weight: 600;
+  cursor: pointer;
+}

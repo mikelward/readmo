@@ -1094,11 +1094,13 @@ keys differ; the strategies map one-to-one:
   `full_content_html` is stripped; see migration 0011), so the feed's own body
   is shown via `lib/offlineItem.ts:findCachedFeedItem`. The full-article fetch is
   skipped offline. Only an article that was **never loaded into any list** falls
-  through to the miss state, whose copy matches the connectivity status:
-  *offline* → "This article isn't saved offline. Pin it while online to keep a
-  copy." (no retry button); *backend-unreachable* → "Readmo's server isn't
-  responding right now — it may be busy."; *online* (reached the server but it
-  errored) → "Couldn't load this article."
+  through to the miss state, whose copy is a function of BOTH the connectivity
+  status AND the actual read error (not status alone): *offline* → "This article
+  isn't saved offline. Pin it while online to keep a copy." (no retry button);
+  *backend-unreachable* → "Readmo's server isn't responding right now — it may be
+  busy."; *online with an error* (the server responded, with an error) →
+  "Unexpected response fetching this article." plus the underlying message behind
+  a "Details" disclosure; *online with no error* → "Couldn't load this article."
 - **An empty feed view never claims "all caught up" unless online.** The
   caught-up empty state (e.g. Home's "You're all caught up.") implies the server
   confirmed there's nothing unread. A feed view shows it only when the device is
@@ -1107,8 +1109,11 @@ keys differ; the strategies map one-to-one:
   persisted-empty page returned empty without ever reaching the server — the view
   shows the same miss-state copy + Retry as a failed load (*offline* → "You're
   offline. Reconnect to load items."; *backend-unreachable* → "Readmo's server
-  isn't responding right now — it may be busy.") rather than a reassuring-but-
-  unconfirmed "caught up". On the offline→online transition the feed forces a
+  isn't responding right now — it may be busy."; *online with an error* → it
+  names the action, "Unexpected response fetching the feed list.", with the
+  underlying message behind a "Details" disclosure — never the "isn't responding"
+  line, since the server *did* respond) rather than a reassuring-but-unconfirmed
+  "caught up". On the offline→online transition the feed forces a
   confirming refetch (it ignores `staleTime`, so a just-cached empty page can't
   short-circuit it) and holds a loading state until it settles; an already
   in-flight read (e.g. the user's Retry) is adopted as that confirming fetch
@@ -1129,6 +1134,20 @@ keys differ; the strategies map one-to-one:
   `/auth/v1/health` GET per *empty* feed read — in-process (no Postgres),
   negligible, and off the happy path for any populated feed; on failure it only
   swaps a false "caught up" for the existing miss-state.
+- **Load failures are reported accurately and consistently.** Every load-failure
+  surface (feed views, the reader, library views, and error toasts) renders the
+  same shared panel (`components/LoadError`, copy from `lib/loadErrorCopy`): a
+  friendly headline that **names the failed action and never blames the
+  connection when the server actually responded with an error**, plus the
+  underlying message behind an expandable **"Details"** disclosure so the cause
+  is reachable on mobile (where the console isn't). The full error object also
+  goes to `console.error` for desktop debugging. The on-screen detail is the
+  *same* text that's logged — the rule is "anything safe to log is safe to show";
+  a response too sensitive to display is too sensitive to return to the client at
+  all and must be withheld server-side, not hidden in the UI. The client also
+  guards the `feed_items` RPC shape (`{ item: … }` per row) and, on a mismatch,
+  fails with "the database function may be out of date." rather than a cryptic
+  `undefined` access.
 - **Writes queue offline** (the outbox) — pin/favorite/done/hide/open reflect
   immediately and flush on reconnect; hard failures roll back + toast.
 

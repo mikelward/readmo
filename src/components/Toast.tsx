@@ -14,6 +14,9 @@ import {
 import './Toast.css';
 
 const DEFAULT_DURATION_MS = 4000;
+// A toast with an expandable detail needs longer than the default so the user
+// can open and read it before it dismisses.
+const DETAIL_DURATION_MS = 10000;
 
 interface ActiveToast extends ToastOptions {
   key: number;
@@ -49,7 +52,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         const key = sameGroup ? prev.key : ++keyRef.current;
         return { ...opts, key };
       });
-      const duration = opts.durationMs ?? DEFAULT_DURATION_MS;
+      const duration =
+        opts.durationMs ?? (opts.detail ? DETAIL_DURATION_MS : DEFAULT_DURATION_MS);
       // `durationMs: Infinity` (or any non-finite value) opts into a
       // sticky toast that stays up until the user taps the action or
       // a later `showToast` replaces it. Used for the "new version
@@ -86,7 +90,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       >
         {toast ? (
           <div className="toast" key={toast.key}>
-            <span className="toast__message">{toast.message}</span>
+            <div className="toast__body">
+              <span className="toast__message">{toast.message}</span>
+              {toast.detail ? (
+                <details className="toast__details">
+                  <summary>Details</summary>
+                  <p className="toast__detail-text">{toast.detail}</p>
+                </details>
+              ) : null}
+            </div>
             {toast.actionLabel ? (
               <button
                 type="button"

@@ -388,6 +388,27 @@ export class SupabaseDataSource implements DataSource {
     const rows = this.unwrap<Array<{ item: ItemRow }>>(
       await this.sb.rpc('feed_items', { ...args, p_limit: limit, p_offset: offset }),
     );
+    // The RPC is declared `returns table (item public.items)`, so PostgREST
+    // wraps each row as `{ item: {...} }`. If a deployed RPC drifts to a flat
+    // `setof items` (or any other shape), `r.item` is undefined and the old
+    // code blew up downstream with a cryptic `Cannot read properties of
+    // undefined (reading 'feed_id')`. Detect the mismatch HERE and throw a
+    // message that actually names the problem, so the miss-state and the console
+    // both point at the RPC shape instead of a generic connectivity excuse.
+    const malformed = rows.find((r) => r == null || r.item == null);
+    if (malformed !== undefined) {
+      console.error(
+        '[readmo] feed_items returned an unexpected row shape — expected ' +
+          '{ item: {...} } per row (RPC `returns table (item items)`). Sample row:',
+        malformed,
+      );
+      // Message reads as the on-screen "Details" line (the headline already says
+      // "Unexpected response fetching the feed list"), so name the specific cause.
+      throw new Error(
+        'feed_items returned rows missing the `item` field — the database ' +
+          'function may be out of date.',
+      );
+    }
     const items = await this.resolveFeedItems(
       this.overlayLocalState(rows.map((r) => r.item)),
     );

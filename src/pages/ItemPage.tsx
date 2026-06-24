@@ -12,6 +12,8 @@ import { fullTextStaleTime, looksTruncated } from '../lib/fullText';
 import type { FullTextResult } from '../lib/fullText';
 import type { Feed, Item, ItemState, ItemStateField } from '../lib/types';
 import { TooltipButton } from '../components/TooltipButton';
+import { LoadError } from '../components/LoadError';
+import { loadFailureCopy } from '../lib/loadErrorCopy';
 import {
   ArrowBack,
   CheckCircleFilled,
@@ -238,10 +240,18 @@ export function ItemPage() {
   // stuck on the miss state. Outside the persist provider (tests) this is false.
   const isRestoring = useIsRestoring();
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['item', id],
     queryFn: () => ds.getItem(id),
   });
+
+  // Full error to the console (desktop); the on-screen miss-state shows a
+  // friendly headline + curated detail for the mobile case where there's no
+  // console. Only an actual read error is worth logging — an offline miss with
+  // no error object isn't a failure to investigate.
+  useEffect(() => {
+    if (error) console.error('[readmo] fetching this article failed:', error);
+  }, [error]);
 
   // Offline fallback: when the per-item detail read *fails* (the fetch errored,
   // or we're offline and it can't run) recover the RSS body from a list page
@@ -358,15 +368,22 @@ export function ItemPage() {
     return <div className="reader__state">Loading…</div>;
   }
   if (!resolved) {
+    // Same accurate-copy approach as the feed list: name the action and show a
+    // curated detail when the server actually errored, only say "isn't
+    // responding" when the backend is truly unreachable, and keep the bespoke
+    // offline line (pin-for-offline, no retry — retrying can't help offline).
+    const copy = loadFailureCopy(status, error, {
+      action: 'fetching this article',
+      noun: 'this article',
+      offline: 'This article isn’t saved offline. Pin it while online to keep a copy.',
+    });
     return (
       <div className="reader__state">
-        {status === 'online' ? (
-          <p>Couldn’t load this article.</p>
-        ) : status === 'backend-unreachable' ? (
-          <p>Readmo’s server isn’t responding right now — it may be busy.</p>
-        ) : (
-          <p>This article isn’t saved offline. Pin it while online to keep a copy.</p>
-        )}
+        <LoadError
+          headline={copy.headline}
+          detail={copy.detail}
+          onRetry={status === 'offline' ? undefined : () => refetch()}
+        />
       </div>
     );
   }
