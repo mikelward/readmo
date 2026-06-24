@@ -12,14 +12,14 @@ describe('extractProxiedImageUrls', () => {
     ).toEqual([]);
   });
 
-  it('extracts a single /api/img URL', () => {
+  it('extracts a single /api/img src URL', () => {
     const html = '<img src="/api/img?url=https%3A%2F%2Fexample.com%2Fphoto.jpg">';
     expect(extractProxiedImageUrls(html)).toEqual([
       '/api/img?url=https%3A%2F%2Fexample.com%2Fphoto.jpg',
     ]);
   });
 
-  it('extracts multiple /api/img URLs', () => {
+  it('extracts multiple /api/img src URLs', () => {
     const html = `
       <p>
         <img src="/api/img?url=https%3A%2F%2Fa.com%2F1.jpg" alt="one">
@@ -39,6 +39,28 @@ describe('extractProxiedImageUrls', () => {
     `;
     expect(extractProxiedImageUrls(html)).toEqual([
       '/api/img?url=https%3A%2F%2Fproxied.com%2Fimg.jpg',
+    ]);
+  });
+
+  it('extracts proxied srcset candidates', () => {
+    const html = `<img srcset="/api/img?url=https%3A%2F%2Fa.com%2F1x.jpg 1x, /api/img?url=https%3A%2F%2Fa.com%2F2x.jpg 2x">`;
+    expect(extractProxiedImageUrls(html)).toEqual([
+      '/api/img?url=https%3A%2F%2Fa.com%2F1x.jpg',
+      '/api/img?url=https%3A%2F%2Fa.com%2F2x.jpg',
+    ]);
+  });
+
+  it('ignores non-proxied srcset candidates', () => {
+    const html = `<img srcset="https://cdn.com/1x.jpg 1x, /api/img?url=https%3A%2F%2Fa.com%2F2x.jpg 2x">`;
+    expect(extractProxiedImageUrls(html)).toEqual([
+      '/api/img?url=https%3A%2F%2Fa.com%2F2x.jpg',
+    ]);
+  });
+
+  it('extracts proxied video poster URL', () => {
+    const html = `<video poster="/api/img?url=https%3A%2F%2Fa.com%2Fthumb.jpg" src="/video.mp4"></video>`;
+    expect(extractProxiedImageUrls(html)).toEqual([
+      '/api/img?url=https%3A%2F%2Fa.com%2Fthumb.jpg',
     ]);
   });
 

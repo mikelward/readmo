@@ -100,6 +100,10 @@ export function useOfflineCacheLock(): void {
           }
           // Prefetch images from feed body so the SW caches them for offline.
           prefetchImages(fi.item.contentHtml);
+          // fullContentHtml may already be populated (e.g. fetched on a prior
+          // open or by another device); scan it now before the truncation check
+          // so its images are cached even when looksTruncated returns false.
+          if (fi.item.fullContentHtml) prefetchImages(fi.item.fullContentHtml);
 
           if (!looksTruncated(fi.item)) {
             warmed.add(id); // nothing more to fetch
