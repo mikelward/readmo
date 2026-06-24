@@ -1,0 +1,24 @@
+# Cloudflare Worker config for readmo's API gateway (see README.md).
+# Deploy: `npx wrangler deploy` from this directory.
+name = "readmo-api-gateway"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# Vars are NOT secret (the Supabase URL + anon key are already public, baked into
+# the client bundle) — but they're project-specific, so they're kept out of git.
+# Set them per-environment instead of committing them, e.g. a local, gitignored
+# `.dev.vars` for `wrangler dev`, or the dashboard (Worker → Settings →
+# Variables). Real secrets (service_role key, JWT secret) never go here — this
+# Worker doesn't need them.
+#
+# [vars]
+# SUPABASE_ORIGIN  = "https://<your-ref>.supabase.co"   # the origin to forward to
+# APP_ORIGINS      = "https://readmo.app,https://www.readmo.app"  # CORS allow-list
+# MIN_CLIENT_BUILD = "0"   # version gate: "0" = disarmed; raise past a bad build
+
+# Bind api.readmo.app to this Worker. Either keep this route block (the zone must
+# be in this Cloudflare account), or instead add api.readmo.app as a Worker
+# "Custom Domain" in the dashboard (simpler — it provisions DNS + cert).
+# routes = [
+#   { pattern = "api.readmo.app/*", zone_name = "readmo.app" },
+# ]

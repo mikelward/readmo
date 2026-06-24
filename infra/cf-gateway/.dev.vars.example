@@ -1,0 +1,6 @@
+# Copy to `.dev.vars` (gitignored) for `wrangler dev`. Not secret — the Supabase
+# URL and anon key are already public in the client bundle — but project-specific,
+# so the real values are kept out of git. Real secrets never go here.
+SUPABASE_ORIGIN="https://<your-ref>.supabase.co"
+APP_ORIGINS="https://readmo.app,https://www.readmo.app"
+MIN_CLIENT_BUILD="0"

@@ -140,6 +140,15 @@ is exactly the path a refetch loop pounds. That half needs a gateway.
 >   population drains on its own — but a tight refetch loop may never navigate,
 >   which is the case that needs one of the levers above.
 
+> [!NOTE]
+> **Implemented** as a Cloudflare Worker in [`infra/cf-gateway/`](./infra/cf-gateway/)
+> — it takes the **no-add-on** path: the Worker rewrites requests to
+> `<ref>.supabase.co` itself, so the `$10/mo` Supabase custom-domain step below
+> is *not* needed. Rate limiting is a free WAF rule (per-IP) that runs before the
+> Worker. See that directory's README for deploy + the rule. The
+> custom-domain-add-on variant below is the alternative if you'd rather have
+> Cloudflare proxy Supabase's origin directly with zero proxy code.
+
 **Action — front Supabase with Cloudflare so one ruleset covers every path
 (Edge + REST). Best done proactively (see the note above), then armed when
 needed:**
