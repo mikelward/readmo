@@ -12,24 +12,27 @@
 
 .reader__topbar,
 .reader__bottombar {
-  position: sticky;
   display: flex;
   align-items: center;
   gap: 8px;
   background: var(--rm-bg);
   border-bottom: 1px solid var(--rm-border);
   padding: 6px 8px;
-  z-index: 10;
 }
 
+/* Only the top bar is pinned. The bottom bar is a relative end-of-article
+   footer (you scroll to it), matching newshacker — the top bar already carries
+   every action while reading, so a floating bottom copy would just overlay the
+   last lines of text. */
 .reader__topbar {
+  position: sticky;
   top: var(--rm-header-h);
+  z-index: 10;
 }
 
 .reader__bottombar {
   border-top: 1px solid var(--rm-border);
   border-bottom: none;
-  bottom: 0;
   padding-bottom: max(6px, env(safe-area-inset-bottom));
 }
 

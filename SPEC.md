@@ -815,7 +815,10 @@ page's discipline is unchanged.
 ### Reader action bar (mirrors newshacker's Thread action bar shape)
 
 Single row, single-row invariant at ≥320px, pointer-vs-touch sizing, top **and**
-bottom bars. Left→right:
+bottom bars. The **top bar is sticky** (pinned under the header) and carries
+every action throughout the read; the **bottom bar is a relative end-of-article
+footer** you scroll down to — matching newshacker, rather than floating over the
+last lines of text. Left→right:
 
 **Open original** (primary, accent; marks Opened, fades to neutral once opened)
 → **Pin/Unpin** (📌) → **Done** (✓) → **More ⋮**. On wide viewports (≥960px)
@@ -825,7 +828,8 @@ they live in the overflow. (No Upvote — RSS has no votes.)
 - **Done** also unpins and **navigates back** (the "I'm finished, move on"
   gesture); **Unmark done** does not navigate. Same as newshacker.
 - Bottom bar swaps the primary slot to **Back to top** (neutral, stretched) so
-  Pin/Done/⋮ land at the same x-position.
+  Pin/Done/⋮ land at the same x-position — handy right where you finish reading,
+  since this bar is the relative footer at the article's end.
 - **More ⋮** overflow: Favorite/Share (when not inline), **Open feed**, **Copy
   link**, **Mute feed**. Anchored dropdown (sheet fallback), 44px touch / dense
   pointer.
