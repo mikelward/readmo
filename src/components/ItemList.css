@@ -15,7 +15,8 @@
 }
 
 .item-list__skeleton {
-  height: 72px;
+  /* Match the live row's compact height (.item-row in ItemRow.css). */
+  height: 56px;
   border-bottom: 1px solid var(--rm-border);
   background: linear-gradient(
     90deg,

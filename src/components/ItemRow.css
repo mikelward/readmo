@@ -1,14 +1,20 @@
 /* Item row — the core list unit. At most three tap zones (two shipped): the
  * stretched body link, the right-side icon button, and a reserved middle slot
- * (unused). 44x44 touch floor, >=12px gap to the right button. */
+ * (unused). 44x44 touch floor, >=12px gap to the right button. Compact vertical
+ * rhythm matches newshacker's .story-row (6px padding, tap-floor on the body). */
 
 .item-row {
   position: relative;
   display: flex;
+  /* center so the fixed-height pin button stays vertically centered when the
+   * title wraps to two lines; the body carries its own align-self: stretch so
+   * the stretched-link tap zone still fills the row height. */
   align-items: center;
   gap: 12px;
-  padding: 16px 12px;
-  min-height: 72px;
+  /* Compact vertical rhythm to match newshacker's .story-row (6px). The
+   * 44px tap floor on the body keeps the row at the SPEC's 48px+ height
+   * without padding it out. */
+  padding: 6px 12px;
   background: var(--rm-bg-card);
   border-bottom: 1px solid var(--rm-border);
   /* Let the row translate horizontally over its swipe hints. */
@@ -29,9 +35,12 @@
   gap: 4px;
   color: inherit;
   text-decoration: none;
-  /* The stretched link fills the row's left zone. */
+  /* The stretched link fills the row's left zone. The tap floor lives here
+   * (matching newshacker's .story-row__body), so the row stays compact while
+   * still guaranteeing a 44px+ touch target. */
   align-self: stretch;
   justify-content: center;
+  min-height: var(--rm-tap);
 }
 
 @media (hover: hover) {
