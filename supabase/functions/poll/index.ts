@@ -88,6 +88,9 @@ async function handle(req: Request): Promise<Response> {
     return json({ error: error.message }, 500);
   }
 
+  const considered = feeds?.length ?? 0;
+  console.log(`poll: selected ${considered} feed(s) due for fetch`);
+
   let processed = 0;
   let failed = 0;
   for (const feed of feeds ?? []) {
@@ -114,7 +117,8 @@ async function handle(req: Request): Promise<Response> {
     }
   }
 
-  return json({ processed, failed, considered: feeds?.length ?? 0 });
+  console.log(`poll: done — processed=${processed} failed=${failed} considered=${considered}`);
+  return json({ processed, failed, considered });
 }
 
 async function pollOne(supabase: any, feed: any): Promise<void> {
@@ -129,9 +133,12 @@ async function pollOne(supabase: any, feed: any): Promise<void> {
   if (feed.etag) headers['If-None-Match'] = feed.etag;
   if (feed.last_modified) headers['If-Modified-Since'] = feed.last_modified;
 
+  console.log(`poll: fetching feed ${feed.id} (${redactUrl(fetchUrl)})`);
   const res = await safeFetch(fetchUrl, { headers, timeoutMs: 10_000 });
+  console.log(`poll: feed ${feed.id} responded HTTP ${res.status}`);
 
   if (res.status === 304) {
+    console.log(`poll: feed ${feed.id} not modified (304), skipping`);
     await scheduleNext(supabase, feed, { ok: true, interval: feed.fetch_interval_s });
     return;
   }
@@ -139,6 +146,7 @@ async function pollOne(supabase: any, feed: any): Promise<void> {
   // Honor 429/Retry-After by backing off without treating it as a hard error.
   if (res.status === 429) {
     const retry = Number(res.headers.get('retry-after')) || feed.fetch_interval_s * 2;
+    console.log(`poll: feed ${feed.id} rate-limited (429), backing off ${retry}s`);
     await scheduleNext(supabase, feed, { ok: true, interval: clampInterval(retry) });
     return;
   }
@@ -152,6 +160,7 @@ async function pollOne(supabase: any, feed: any): Promise<void> {
   // paywall redirect). Mislabelled-but-valid feeds (real RSS served as
   // text/html) are accepted if parseFeed extracts a title or items.
   const parsed = parseFeedBody(body, fetchUrl, ct);
+  console.log(`poll: feed ${feed.id} parsed — ${parsed.items.length} item(s), title=${JSON.stringify(parsed.feedTitle)}`);
 
   // Upsert feed-level metadata (title, site_url, new validators).
   await supabase
@@ -179,7 +188,9 @@ async function pollOne(supabase: any, feed: any): Promise<void> {
     // content_hash detects edits → update in place rather than duplicate.
     content_hash: it.guid,
   }));
-  if (rows.length > 0) {
+  if (rows.length === 0) {
+    console.log(`poll: feed ${feed.id} — 0 items to upsert, skipping`);
+  } else {
     // Call upsert_feed_items (migration 0013) instead of a direct .upsert():
     // we need ON CONFLICT to target EITHER (feed_id, guid) OR (feed_id, url),
     // and a single PostgREST upsert can only name one constraint. The RPC
@@ -194,6 +205,7 @@ async function pollOne(supabase: any, feed: any): Promise<void> {
       p_items: itemsPayload,
     });
     if (upsertError) throw new Error(`item upsert failed: ${upsertError.message}`);
+    console.log(`poll: feed ${feed.id} — upserted ${rows.length} item(s)`);
   }
 
   await scheduleNext(supabase, feed, { ok: true, interval: feed.fetch_interval_s });
