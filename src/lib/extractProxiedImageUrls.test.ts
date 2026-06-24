@@ -42,11 +42,19 @@ describe('extractProxiedImageUrls', () => {
     ]);
   });
 
-  it('extracts proxied srcset candidates', () => {
+  it('extracts proxied srcset candidates with descriptors', () => {
     const html = `<img srcset="/api/img?url=https%3A%2F%2Fa.com%2F1x.jpg 1x, /api/img?url=https%3A%2F%2Fa.com%2F2x.jpg 2x">`;
     expect(extractProxiedImageUrls(html)).toEqual([
       '/api/img?url=https%3A%2F%2Fa.com%2F1x.jpg',
       '/api/img?url=https%3A%2F%2Fa.com%2F2x.jpg',
+    ]);
+  });
+
+  it('extracts descriptor-less srcset candidates (comma-only separator)', () => {
+    const html = `<img srcset="/api/img?url=https%3A%2F%2Fa.com%2Fa.jpg, /api/img?url=https%3A%2F%2Fa.com%2Fb.jpg">`;
+    expect(extractProxiedImageUrls(html)).toEqual([
+      '/api/img?url=https%3A%2F%2Fa.com%2Fa.jpg',
+      '/api/img?url=https%3A%2F%2Fa.com%2Fb.jpg',
     ]);
   });
 
