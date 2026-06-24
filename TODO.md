@@ -46,3 +46,28 @@ constraint is documented in more detail.
   subscriptions could exceed request-line limits. The scalable fix is the
   server-side subscription-scoped feed join (the `feed_items` RPC already covers
   the paged path). See `SupabaseDataSource.feedView` and SPEC.md §Data.
+
+## Server / batch query limits
+
+- **Decide whether `service_role` (poll / refresh / import batch) needs an
+  explicit query ceiling.** `0013_user_query_statement_timeout.sql` caps
+  `statement_timeout` for *user-initiated* queries (`authenticated` 5 s, `anon`
+  3 s) but does not change `service_role`. That does **not** leave batch work
+  unbounded: an unset `service_role` timeout inherits the `authenticator`
+  default (8 s per Supabase's
+  [timeouts docs](https://supabase.com/docs/guides/database/postgres/timeouts)),
+  so a batch statement running past ~8 s is already canceled — possibly aborting
+  a legitimately long feed sync mid-batch. So the real decision is whether 8 s is
+  the right batch ceiling, or whether to set `service_role` explicitly (to `0`
+  for no limit, or a generous value like 30–60 s) and reload PostgREST. Options
+  to weigh:
+    - A *generous* `service_role` statement_timeout (e.g. 30–60 s) as a safety
+      net for truly-stuck queries, set well above any healthy batch.
+    - Per-operation `SET LOCAL statement_timeout` inside the function around the
+      known-heavy statements (the item upserts), leaving the role default unset.
+    - Rely on the bounds that already exist: the poller chunks ~25 feeds/run,
+      `safeFetch` caps each upstream fetch at 10 s, and Edge Functions have a
+      platform wall-clock limit — so total batch time is already loosely bounded.
+  Not urgent: batch volume is small today and the fetch timeout covers the common
+  stall. Revisit if a stuck batch query is ever seen pinning a connection. See
+  `0013_user_query_statement_timeout.sql` and SCALING.md.
