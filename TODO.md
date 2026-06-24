@@ -34,6 +34,27 @@ constraint is documented in more detail.
   flags (the loser re-reconciles). Per-field versioning would let independent
   edits both land. Conservative-but-safe today. See SPEC.md §Sync.
 
+## Storage / dedup
+
+- **Cross-feed item dedup.** Same-feed dupes (a publisher re-issuing the same
+  URL under a new `<guid>`) are now collapsed by the `(feed_id, url)` partial
+  unique index and the `upsert_feed_items` RPC (migration `0013`). The
+  remaining case is when the SAME article URL shows up in two DIFFERENT feed
+  subscriptions — e.g. a user subscribed to both "BBC News - Home" and "BBC
+  News - Top Stories", which carry overlapping articles. Today those land as
+  separate `items` rows (one per `feed_id`) and the user sees two rows for the
+  same story. Options to consider, with tradeoffs:
+  - **De-dup at read time in `feed_items`** (`distinct on (lower(url))`,
+    keep the newest): cheapest, reversible, but hides the duplication rather
+    than fixing storage; needs care with the section/order_by to avoid losing
+    the Pinned-first guarantee.
+  - **Share `items` rows across feeds**: lift the `feed_id` off `items` into a
+    join table; biggest schema change, but the cleanest. Costs a migration on
+    the hottest table and the `feed_items` RPC.
+  - **Subscription-level dedup hint**: let the user pick a "primary" feed when
+    two of their subscriptions share articles. Lowest impact, requires UI.
+  See SPEC.md §Data → De-dup.
+
 ## Server RPCs
 
 - **Authenticated OPML-export RPC.** `feeds_public` exposes only `site_url`

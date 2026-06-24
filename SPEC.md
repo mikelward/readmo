@@ -240,7 +240,7 @@ items         (id, feed_id FK, guid, url, title, author, published_at,
                content_html, summary, full_content_html,
                full_content_fetched_at, enclosures, content_hash,
                created_at,
-               sort_at = coalesce(published_at, created_at))          -- shared; UNIQUE(feed_id, guid)
+               sort_at = coalesce(published_at, created_at))          -- shared; UNIQUE(feed_id, guid), UNIQUE(feed_id, url) WHERE url IS NOT NULL
 subscriptions (user_id FK, feed_id FK, folder, title_override,
                muted bool, sort, created_at)                         -- user ↔ feed
 item_state    (user_id FK, item_id FK,
@@ -322,7 +322,15 @@ folders       (user_id FK, name, sort)
   against the item URL, force `rel="noopener"`. Never store/serve raw
   publisher HTML.
 - De-dup on `(feed_id, guid)` (fall back to `url`, then a content hash);
-  compute `content_hash` to detect edits and update in place.
+  compute `content_hash` to detect edits and update in place. **Also dedup on
+  `(feed_id, url)` where `url is not null`** — publishers (BBC, …) sometimes
+  re-issue the same article URL under a new `<guid>`, which the guid-only key
+  doesn't catch. The poller calls the `upsert_feed_items` RPC instead of a
+  direct upsert so both unique constraints can resolve atomically: insert with
+  `ON CONFLICT (feed_id, guid)` and, on a `(feed_id, url)` `unique_violation`,
+  fall back to `UPDATE` (adopting the new guid as the canonical identity).
+  Cross-feed dedup — same URL appearing in two distinct subscribed feeds — is
+  out of scope here; tracked in `TODO.md`.
 
 ### Feed discovery
 

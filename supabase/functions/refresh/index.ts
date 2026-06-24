@@ -177,12 +177,17 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
     content_hash: it.guid,
   }));
   if (rows.length > 0) {
-    // PostgREST resolves with { error } rather than throwing, so a rejected
-    // upsert must be surfaced — otherwise refreshOne resolves "successfully"
-    // and the caller reports a refresh that stored nothing.
-    const { error: upsertError } = await service
-      .from('items')
-      .upsert(rows, { onConflict: 'feed_id,guid' });
+    // Same RPC the cron poller uses (migration 0013): ON CONFLICT can only
+    // target one index, but items has TWO unique constraints — (feed_id, guid)
+    // and (feed_id, url) — so a direct .upsert(...) would fail when a
+    // publisher re-issues an existing URL under a new guid. The RPC catches
+    // the (feed_id, url) unique_violation and updates the existing row in
+    // place. PostgREST still resolves with { error }, surface it.
+    const itemsPayload = rows.map(({ feed_id: _fid, ...rest }) => rest);
+    const { error: upsertError } = await service.rpc('upsert_feed_items', {
+      p_feed_id: feed.id,
+      p_items: itemsPayload,
+    });
     if (upsertError) throw new Error(`item upsert failed: ${upsertError.message}`);
   }
   // Validators (etag/last_modified) are written only after items are stored.

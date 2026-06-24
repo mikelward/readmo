@@ -180,15 +180,19 @@ async function pollOne(supabase: any, feed: any): Promise<void> {
     content_hash: it.guid,
   }));
   if (rows.length > 0) {
-    // ON CONFLICT (feed_id, guid) DO UPDATE — Supabase upsert.
-    // TODO(PR2, P2 — check the result): PostgREST resolves with `{ error }`
-    // rather than throwing, so a rejected upsert would otherwise fall through
-    // to scheduleNext({ ok: true }) and clear the feed's error state while no
-    // items were stored — a feed reported healthy but silently empty.
-    // Destructure { error } and throw so the catch records the failure.
-    const { error: upsertError } = await supabase
-      .from('items')
-      .upsert(rows, { onConflict: 'feed_id,guid' });
+    // Call upsert_feed_items (migration 0013) instead of a direct .upsert():
+    // we need ON CONFLICT to target EITHER (feed_id, guid) OR (feed_id, url),
+    // and a single PostgREST upsert can only name one constraint. The RPC
+    // catches the (feed_id, url) unique_violation and updates the existing
+    // row in place — that's what de-dups a publisher re-issuing the same URL
+    // under a new guid (BBC, ...). See SPEC.md "Feed fetching & parsing".
+    //
+    // strip feed_id from the row payload — the RPC carries it as p_feed_id.
+    const itemsPayload = rows.map(({ feed_id: _fid, ...rest }) => rest);
+    const { error: upsertError } = await supabase.rpc('upsert_feed_items', {
+      p_feed_id: feed.id,
+      p_items: itemsPayload,
+    });
     if (upsertError) throw new Error(`item upsert failed: ${upsertError.message}`);
   }
 
