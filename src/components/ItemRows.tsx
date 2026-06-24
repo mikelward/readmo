@@ -3,6 +3,7 @@ import type { FeedId, FeedItem, ItemId } from '../lib/types';
 import { useShareItem } from '../hooks/useShareItem';
 import { ItemRow, type RightAction } from './ItemRow';
 import { ChevronRight } from './icons';
+import { StoryRowSkeleton } from './Skeletons';
 import './ItemList.css';
 
 /** What to render as a feed-section header before a given row. */
@@ -76,7 +77,9 @@ export function ItemRows({
     return (
       <ul className="item-list__skeletons" aria-hidden="true">
         {Array.from({ length: skeletonCount }).map((_, i) => (
-          <li key={i} className="item-list__skeleton" />
+          <li key={i} className="item-list__skeleton">
+            <StoryRowSkeleton />
+          </li>
         ))}
       </ul>
     );

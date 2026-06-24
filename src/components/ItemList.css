@@ -102,27 +102,13 @@
   background: var(--rm-bg-card);
 }
 
+/* Each loading row wraps a <StoryRowSkeleton> (title/meta/button shapes) so the
+   placeholder reads as content arriving, matching newshacker's feed skeleton.
+   The shimmer lives on the inner skeleton shapes; the <li> just carries the
+   row divider. The inner skeleton is tuned (Skeletons.css) to the live row's
+   compact height (.item-row in ItemRow.css). */
 .item-list__skeleton {
-  /* Match the live row's compact height (.item-row in ItemRow.css). */
-  height: 56px;
   border-bottom: 1px solid var(--rm-border);
-  background: linear-gradient(
-    90deg,
-    var(--rm-bg-card) 0%,
-    var(--rm-bg) 50%,
-    var(--rm-bg-card) 100%
-  );
-  background-size: 200% 100%;
-  animation: item-list-shimmer 1.2s ease-in-out infinite;
-}
-
-@keyframes item-list-shimmer {
-  0% {
-    background-position: 200% 0;
-  }
-  100% {
-    background-position: -200% 0;
-  }
 }
 
 .item-list__state {

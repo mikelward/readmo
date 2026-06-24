@@ -19,6 +19,11 @@ describe('ItemRows', () => {
       <ItemRows items={[]} isLoading emptyLabel="Nothing here." />,
     );
     expect(container.querySelectorAll('.item-list__skeleton').length).toBeGreaterThan(0);
+    // Each placeholder renders the structured StoryRowSkeleton (title + meta +
+    // button shapes), matching newshacker — not a blank block.
+    expect(container.querySelectorAll('.skeleton-row').length).toBeGreaterThan(0);
+    expect(container.querySelector('.skeleton-row__title')).toBeInTheDocument();
+    expect(container.querySelector('.skeleton-row__btn')).toBeInTheDocument();
     expect(screen.queryByText('Nothing here.')).not.toBeInTheDocument();
     expect(screen.queryAllByTestId('item-row')).toHaveLength(0);
   });

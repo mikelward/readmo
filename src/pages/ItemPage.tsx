@@ -15,6 +15,7 @@ import { TooltipButton } from '../components/TooltipButton';
 import { ItemRowMenu, type ItemRowMenuItem } from '../components/ItemRowMenu';
 import { LoadError } from '../components/LoadError';
 import { loadFailureCopy } from '../lib/loadErrorCopy';
+import { ReaderSkeleton } from '../components/Skeletons';
 import {
   ArrowBack,
   Check,
@@ -381,7 +382,18 @@ export function ItemPage() {
   }, [openOriginal, toggle, markDone]);
 
   if (isLoading || isRestoring) {
-    return <div className="reader__state">Loading…</div>;
+    // role="status" makes this a live region so screen readers announce the
+    // loading state; the skeleton itself is decorative (aria-hidden), so the
+    // visually-hidden label carries the announced text. No aria-busy here: a
+    // busy live region defers its announcement until busy flips to false, but
+    // this wrapper unmounts when loading ends rather than flipping, which would
+    // suppress the announcement entirely.
+    return (
+      <div className="reader reader--loading" role="status">
+        <span className="visually-hidden">Loading article…</span>
+        <ReaderSkeleton />
+      </div>
+    );
   }
   if (!resolved) {
     // Same accurate-copy approach as the feed list: name the action and show a
