@@ -107,3 +107,29 @@ constraint is documented in more detail.
   Not urgent: batch volume is small today and the fetch timeout covers the common
   stall. Revisit if a stuck batch query is ever seen pinning a connection. See
   `0013_user_query_statement_timeout.sql` and SCALING.md.
+
+## Infrastructure / hosting
+
+- **Consider consolidating the frontend onto Cloudflare (Vercel → CF Pages).**
+  Once the Cloudflare gateway (`infra/cf-gateway/`) is in the picture, we
+  considered moving the rest of the front end off Vercel too — the SPA bundle to
+  **Cloudflare Pages** and the one Vercel function (`api/img.ts`) to a Worker —
+  to drop a platform and the Vercel Pro (~$20/mo). The move would be *small*
+  because Vercel does very little here: it serves the static SPA, runs the single
+  `api/img.ts` image shim, and supplies the `VERCEL_*` build-env vars; the
+  lock-in is minimal. **Decided against it for now** — the **GitHub PR preview
+  DX** (the `vercel[bot]` preview deployments + inspector) is valued, and CF
+  Pages' previews, while real, are less polished. The blocker is DX preference,
+  not feasibility.
+
+  If revisited, the move is roughly: SPA → CF Pages (the `vercel.json` SPA
+  rewrite becomes a `_redirects` / `_routes.json` rule); `api/img.ts` → a Worker
+  or Pages Function (or fold it into the gateway Worker, which already proxies
+  `/functions/`); and `vite.config.ts` must accept CF Pages' build-env vars
+  (`CF_PAGES`, `CF_PAGES_COMMIT_SHA`, `CF_PAGES_BRANCH`) in place of `VERCEL_*`
+  **and re-gate the production poison-pill guard** (currently
+  `VERCEL_ENV === 'production'`) on CF Pages' "is production" signal, or it would
+  silently never fire. Revisit if the Vercel preview DX stops mattering, if CF
+  Pages previews improve, or to cut the Vercel Pro cost. (Moving the *backend* —
+  Postgres / Auth / RLS / Edge Functions — off Supabase is a separate, much
+  larger re-platforming and is **not** what this is about.)
