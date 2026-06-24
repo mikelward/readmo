@@ -25,10 +25,11 @@ export function useFeedItems(viewKey: string, fetchPage: FetchPage) {
     queryFn: ({ pageParam }) => fetchPage(pageParam),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
-    // For a feed view, "last time the component mounted" is the freshness
-    // signal that matches user intent (newshacker's rule).
-    refetchOnMount: 'always',
-    refetchOnWindowFocus: true,
+    // Rely on the global staleTime (5 min) and refetchOnWindowFocus: false
+    // defaults from main.tsx. refetchOnMount: true (the RQ default) still
+    // re-fetches when the cached data is stale, so navigating back to a feed
+    // after 5+ minutes refreshes it — without hammering the DB on every tab
+    // switch or navigation within the app.
   });
 
   // Re-derive when local item state changes (pin/hide/done affect ordering
