@@ -25,11 +25,13 @@ export function useFeedItems(viewKey: string, fetchPage: FetchPage) {
     queryFn: ({ pageParam }) => fetchPage(pageParam),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
-    // Rely on the global staleTime (5 min) and refetchOnWindowFocus: false
-    // defaults from main.tsx. refetchOnMount: true (the RQ default) still
-    // re-fetches when the cached data is stale, so navigating back to a feed
-    // after 5+ minutes refreshes it — without hammering the DB on every tab
-    // switch or navigation within the app.
+    // refetchOnWindowFocus: true so a tab that regains focus after >5 min
+    // picks up new items (SPEC.md "refetch-on-focus + PTR"). The global
+    // staleTime (5 min, main.tsx) gates this — no request fires if the data
+    // is still fresh, so switching tabs rapidly is cheap.
+    // refetchOnMount uses the RQ default (true-when-stale), not 'always',
+    // so navigating between feed views doesn't hammer the DB either.
+    refetchOnWindowFocus: true,
   });
 
   // Re-derive when local item state changes (pin/hide/done affect ordering
