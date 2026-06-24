@@ -43,7 +43,11 @@
 
 // @ts-nocheck — runs under Deno, not node/tsc.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { extractArticle } from '../_shared/fulltext.ts';
+import {
+  extractArticle,
+  FULLTEXT_VERSION,
+  isFreshFullContent,
+} from '../_shared/fulltext.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
 import { looksTokenized } from '../_shared/urlSafety.ts';
@@ -81,14 +85,18 @@ Deno.serve(async (req: Request) => {
   // RLS-scoped lookup: only resolves if the caller may see this item.
   const { data: item, error } = await userClient
     .from('items')
-    .select('id, feed_id, url, title, full_content_html')
+    .select('id, feed_id, url, title, full_content_html, full_content_version')
     .eq('id', itemId)
     .maybeSingle();
   if (error) return json({ error: error.message }, 400);
   if (!item) return json({ error: 'Item not found' }, 404);
 
-  // Cache hit — serve the previously extracted body without re-fetching.
-  if (item.full_content_html) {
+  // Cache hit — serve the previously extracted body without re-fetching, but
+  // ONLY when it was written by the current extractor version. A body cached by
+  // older code (or before versioning, version NULL) is stale and re-extracted
+  // below, so an extraction-logic change lazily corrects existing rows instead
+  // of serving permanently-cached stale output (see FULLTEXT_VERSION).
+  if (isFreshFullContent(item)) {
     return json({ status: 'ok', contentHtml: item.full_content_html });
   }
   if (!item.url) return json({ status: 'empty', contentHtml: null });
@@ -131,6 +139,7 @@ Deno.serve(async (req: Request) => {
     .from('items')
     .update({
       full_content_html: clean,
+      full_content_version: FULLTEXT_VERSION,
       full_content_fetched_at: new Date().toISOString(),
     })
     .eq('id', itemId);

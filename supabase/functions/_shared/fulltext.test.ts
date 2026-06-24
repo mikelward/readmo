@@ -1,6 +1,11 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { extractArticle, MIN_ARTICLE_TEXT } from './fulltext.ts';
+import {
+  extractArticle,
+  FULLTEXT_VERSION,
+  isFreshFullContent,
+  MIN_ARTICLE_TEXT,
+} from './fulltext.ts';
 
 /** A realistic article page: a <body> wrapped in site chrome (nav/header/
  * footer/aside) around an <article> with the real content. Readability should
@@ -204,5 +209,57 @@ describe('extractArticle', () => {
     expect(() =>
       extractArticle('<html><body><p>oops', 'https://example.com'),
     ).not.toThrow();
+  });
+});
+
+describe('isFreshFullContent', () => {
+  it('serves a body stamped with the current extractor version', () => {
+    expect(
+      isFreshFullContent({
+        full_content_html: '<p>cached body</p>',
+        full_content_version: FULLTEXT_VERSION,
+      }),
+    ).toBe(true);
+  });
+
+  it('re-extracts a legacy body with no version stamp (null)', () => {
+    // The duplicated-header bug: cached before versioning existed, so it must be
+    // treated as stale and re-extracted rather than served as-is.
+    expect(
+      isFreshFullContent({
+        full_content_html: '<p>stale legacy body</p>',
+        full_content_version: null,
+      }),
+    ).toBe(false);
+  });
+
+  it('re-extracts a body stamped with an older version', () => {
+    expect(
+      isFreshFullContent({
+        full_content_html: '<p>stale body</p>',
+        full_content_version: FULLTEXT_VERSION - 1,
+      }),
+    ).toBe(false);
+  });
+
+  it('treats a missing/empty body as not fresh regardless of version', () => {
+    expect(
+      isFreshFullContent({
+        full_content_html: null,
+        full_content_version: FULLTEXT_VERSION,
+      }),
+    ).toBe(false);
+    expect(
+      isFreshFullContent({
+        full_content_html: '',
+        full_content_version: FULLTEXT_VERSION,
+      }),
+    ).toBe(false);
+    expect(isFreshFullContent({})).toBe(false);
+  });
+
+  it('FULLTEXT_VERSION is a positive integer', () => {
+    expect(Number.isInteger(FULLTEXT_VERSION)).toBe(true);
+    expect(FULLTEXT_VERSION).toBeGreaterThan(0);
   });
 });

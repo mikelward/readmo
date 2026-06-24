@@ -51,7 +51,7 @@ const ITEM_COLS =
 // the feed snippet, and pulling every cached full article into a 50-result
 // search or a large library bucket would bloat the payload and the persisted
 // (user-scoped) React Query cache. Only the single-item detail read fetches it.
-const ITEM_DETAIL_COLS = `${ITEM_COLS}, full_content_html`;
+const ITEM_DETAIL_COLS = `${ITEM_COLS}, full_content_html, full_content_version`;
 const ITEM_STATE_COLS =
   'item_id, pinned, pinned_at, favorite, favorite_at, done, done_at, hidden, hidden_at, opened, opened_at, version';
 const SUBSCRIPTION_COLS = 'feed_id, folder, title_override, muted, sort';

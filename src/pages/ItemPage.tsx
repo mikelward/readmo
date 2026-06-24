@@ -7,7 +7,7 @@ import { useWideViewport } from '../hooks/useWideViewport';
 import { useShareItem } from '../hooks/useShareItem';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { formatAge, formatDisplayDomain, isSafeHttpUrl } from '../lib/itemMeta';
-import { fullTextStaleTime, looksTruncated } from '../lib/fullText';
+import { fullTextQueryKey, fullTextStaleTime, looksTruncated } from '../lib/fullText';
 import type { Feed, Item, ItemState, ItemStateField } from '../lib/types';
 import { TooltipButton } from '../components/TooltipButton';
 import {
@@ -237,7 +237,7 @@ export function ItemPage() {
   const wantFull = !!data && !cachedFull && online && (truncated || manualTrigger);
 
   const fullQuery = useQuery({
-    queryKey: ['fulltext', id],
+    queryKey: fullTextQueryKey(id),
     queryFn: () => ds.fetchFullText(id),
     enabled: wantFull,
     // Terminal outcomes (ok/empty/auth) are cached forever; a transient
