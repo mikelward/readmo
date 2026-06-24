@@ -9,6 +9,14 @@ import { useOnlineStatus } from './useOnlineStatus';
 import { fullTextStaleTime, looksTruncated } from '../lib/fullText';
 import type { FullTextResult } from '../lib/fullText';
 import type { FeedItem } from '../lib/types';
+import { extractProxiedImageUrls } from '../lib/extractProxiedImageUrls';
+
+/** Fire-and-forget fetch for each proxied image URL so the SW caches them. */
+function prefetchImages(html: string): void {
+  for (const url of extractProxiedImageUrls(html)) {
+    fetch(url).catch(() => {});
+  }
+}
 
 /**
  * Durable offline cache for the offline buckets — **pinned or favorited** items
@@ -90,6 +98,9 @@ export function useOfflineCacheLock(): void {
             void queryClient.invalidateQueries({ queryKey: ['offline'] });
             void queryClient.invalidateQueries({ queryKey: ['library'] });
           }
+          // Prefetch images from feed body so the SW caches them for offline.
+          prefetchImages(fi.item.contentHtml);
+
           if (!looksTruncated(fi.item)) {
             warmed.add(id); // nothing more to fetch
             return;
@@ -104,6 +115,7 @@ export function useOfflineCacheLock(): void {
             gcTime: Number.POSITIVE_INFINITY,
           });
           const ft = queryClient.getQueryData<FullTextResult>(['fulltext', id]);
+          if (ft?.contentHtml) prefetchImages(ft.contentHtml);
           if (ft && ft.status !== 'unreachable') warmed.add(id);
         });
     },

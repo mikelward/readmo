@@ -3,6 +3,16 @@
 Deferred work, tracked here so it isn't lost. Each item links to where the
 constraint is documented in more detail.
 
+## Offline / PWA
+
+- **Background Sync API.** Writes queued in the outbox while offline are
+  flushed on the next page open / focus-return. The
+  [Background Sync API](https://developer.mozilla.org/en-US/docs/Web/API/Background_Synchronization_API)
+  would let the service worker flush the outbox in the background — even when
+  the tab is closed — on browsers that support it (Chrome/Android, not Safari).
+  Worth considering once the outbox is reliable (idempotency keys done);
+  deferred until then.
+
 ## Sync / write path
 
 - **Idempotency keys for exactly-once outbox delivery.** The item-state outbox
