@@ -43,11 +43,20 @@ function git(args: string): string {
   }
 }
 
-function gitRun(args: string, timeout = 30_000): void {
+// Run a git command and surface its output. Unlike `git()` above, this is for
+// state-changing commands (fetch) where we want to see what happened in the
+// build log — silent failures here are what produced the commitCount=0
+// mystery this code is solving. Returns true on exit 0, false otherwise; the
+// command's stdout/stderr is forwarded to the parent so it lands in build logs.
+function gitRun(args: string, timeout = 60_000): boolean {
+  console.log(`[vite.config] git ${args}`);
   try {
-    execSync(`git ${args}`, { stdio: 'ignore', timeout });
-  } catch {
-    // ignore — caller checks the result via git()
+    execSync(`git ${args}`, { stdio: 'inherit', timeout });
+    return true;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[vite.config] git ${args} failed: ${msg}`);
+    return false;
   }
 }
 
@@ -60,14 +69,42 @@ function readBuildInfo(): BuildInfo {
     7,
   );
   const branch = env.VERCEL_GIT_COMMIT_REF || git('rev-parse --abbrev-ref HEAD');
-  // Vercel clones at depth ~10; unshallow so rev-list --count is accurate.
-  // Capped at 30 s — on timeout/failure the re-check below returns 'true'
-  // and commitCount stays 0, hiding the row rather than showing a wrong count.
-  if (git('rev-parse --is-shallow-repository') === 'true') {
-    gitRun('fetch --unshallow', 30_000);
+  // Distinguish the three commitCount=0 paths up front so build logs say which
+  // one we're on — without this, "shallow with failed unshallow", "no .git at
+  // all", and "git binary missing" all look identical at the version-gate
+  // abort below.
+  const inRepo = git('rev-parse --is-inside-work-tree') === 'true';
+  if (!inRepo) {
+    console.error(
+      '[vite.config] not inside a git work tree — commitCount will be 0 ' +
+        '(no .git directory, or git binary unavailable).',
+    );
+  }
+  // Vercel clones at depth ~10; try hard to recover full history so
+  // `rev-list --count HEAD` is accurate. Sequence: --unshallow (the normal
+  // path); then --deepen with a large step (some remotes/clones reject
+  // --unshallow but accept --deepen); finally re-check. Each step prints its
+  // output to the build log so a future "commitCount=0" failure is
+  // diagnosable from the log alone.
+  if (inRepo && git('rev-parse --is-shallow-repository') === 'true') {
+    const recovered =
+      gitRun('fetch --unshallow', 60_000) ||
+      gitRun('fetch origin --unshallow', 60_000) ||
+      gitRun('fetch --depth=2147483647', 60_000) ||
+      gitRun('fetch --deepen=1000000', 60_000);
+    if (!recovered) {
+      console.error(
+        '[vite.config] every unshallow attempt failed; commitCount will be 0.',
+      );
+    }
+    if (git('rev-parse --is-shallow-repository') === 'true') {
+      console.error(
+        '[vite.config] repository is still shallow after unshallow attempts.',
+      );
+    }
   }
   const commitCount =
-    git('rev-parse --is-shallow-repository') === 'true'
+    !inRepo || git('rev-parse --is-shallow-repository') === 'true'
       ? 0
       : Number(git('rev-list --count HEAD')) || 0;
   // The client stamps commitCount as `x-readmo-build` and the version gate
@@ -80,9 +117,11 @@ function readBuildInfo(): BuildInfo {
   // unaffected.
   if (env.VERCEL_ENV === 'production' && commitCount === 0) {
     throw new Error(
-      'Build aborted: commitCount is 0 in a production build (shallow checkout?). ' +
-        'Shipping it would let the x-readmo-build version gate reject the newest ' +
-        'client. Ensure full git history (git fetch --unshallow) before building.',
+      'Build aborted: commitCount is 0 in a production build. Shipping it ' +
+        'would let the x-readmo-build version gate reject the newest client. ' +
+        'See the [vite.config] log lines above for which path produced 0 ' +
+        '(not-a-git-repo, all unshallow attempts failed, or still-shallow ' +
+        'after recovery) and ensure full git history before building.',
     );
   }
   const commitTime = git('log -1 --format=%cI');
