@@ -121,7 +121,10 @@ function readBuildInfo(): BuildInfo {
         'would let the x-readmo-build version gate reject the newest client. ' +
         'See the [vite.config] log lines above for which path produced 0 ' +
         '(not-a-git-repo, all unshallow attempts failed, or still-shallow ' +
-        'after recovery) and ensure full git history before building.',
+        'after recovery). On Vercel, the in-build `git fetch --unshallow` ' +
+        'is a silent no-op — set the project env var VERCEL_DEEP_CLONE=1 ' +
+        'so the initial clone has full history (SETUP.md §11, ' +
+        'https://github.com/vercel/vercel/discussions/5737).',
     );
   }
   const commitTime = git('log -1 --format=%cI');
