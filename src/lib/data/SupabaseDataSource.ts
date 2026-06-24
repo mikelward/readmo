@@ -13,6 +13,7 @@ import {
 } from '../types';
 import type { FullTextResult, FullTextStatus } from '../fullText';
 import { getSupabase } from '../supabase/client';
+import { confirmBackendReachable } from '../networkStatus';
 import { OUTBOX_SUFFIX } from '../userCache';
 import { ItemStateStore, localStoragePersistence } from './itemState';
 import {
@@ -389,6 +390,21 @@ export class SupabaseDataSource implements DataSource {
     const items = await this.resolveFeedItems(
       this.overlayLocalState(rows.map((r) => r.item)),
     );
+
+    // An empty first page renders the "all caught up" empty state. But the
+    // service worker's NetworkFirst cache can answer this read with a stale empty
+    // 200 while the backend is actually down — the 15s read cap sits past the
+    // SW's 10s cache-fallback window precisely so a slow read still gets served
+    // from cache — and trackedFetch reads that cache hit as success, leaving the
+    // status 'online'. So a cache-served empty page would falsely claim the
+    // reader is caught up. Confirm with a live, SW-bypassing reachability probe
+    // before trusting it; if the backend isn't reachable, surface a read error so
+    // the view shows the offline/down miss-state instead of "all caught up".
+    if (offset === 0 && items.length === 0 && !(await confirmBackendReachable())) {
+      throw new Error(
+        'feed read returned empty but the backend is unreachable — refusing to claim caught up off a possible cache hit',
+      );
+    }
 
     const nextOffset = offset + limit;
     return {

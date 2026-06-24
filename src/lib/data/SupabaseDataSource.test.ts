@@ -1,7 +1,8 @@
 // @vitest-environment node
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseDataSource } from './SupabaseDataSource';
+import { _resetNetworkStatusForTests, setConnectivityProbeUrl } from '../networkStatus';
 import { makeFakeSupabase, type FakeTables } from './fakeSupabaseClient';
 
 const recent = new Date('2026-06-20T00:00:00.000Z').toISOString();
@@ -450,5 +451,63 @@ describe('SupabaseDataSource dispatch + writes', () => {
     const env = setup();
     await env.ds.retryParkedFeed('feed-a');
     expect(env.fake.invokeCalls).toContainEqual({ name: 'refresh', body: { feedId: 'feed-a' } });
+  });
+});
+
+describe('SupabaseDataSource — empty-feed caught-up confirmation', () => {
+  const PROBE = 'https://x.supabase.co/auth/v1/health';
+
+  function emptyTables(): FakeTables {
+    return { feeds_public: [], subscriptions: [], items: [], item_state: [], folders: [] };
+  }
+
+  afterEach(() => {
+    _resetNetworkStatusForTests(); // clears the probe URL + connectivity state
+    vi.unstubAllGlobals();
+  });
+
+  it('throws on an empty feed when the backend is unreachable, rather than reporting caught up', async () => {
+    // The feed_items RPC returns empty — but if that empty came from the SW cache
+    // while the backend is down, claiming "all caught up" would be a lie. The live
+    // probe fails, so the read must error (→ the view shows the down/offline
+    // miss-state) instead of resolving to an empty page.
+    const { ds } = setup(emptyTables());
+    setConnectivityProbeUrl(PROBE);
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+
+    await expect(ds.getHomeItems()).rejects.toThrow(/caught up/i);
+  });
+
+  it('resolves to the empty page when the live probe confirms the backend is reachable', async () => {
+    const { ds } = setup(emptyTables());
+    setConnectivityProbeUrl(PROBE);
+    const fetchMock = vi.fn(async () => ({})); // any resolved response proves reachability
+    vi.stubGlobal('fetch', fetchMock);
+
+    const page = await ds.getHomeItems();
+    expect(page.items).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledWith(PROBE, expect.objectContaining({ method: 'GET' }));
+  });
+
+  it('does not probe or throw for an empty feed in mock/unconfigured mode (no backend to be down)', async () => {
+    const { ds } = setup(emptyTables());
+    // No probe URL configured (reset leaves it null).
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const page = await ds.getHomeItems();
+    expect(page.items).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not probe a non-empty feed — there is no caught-up claim to confirm', async () => {
+    const { ds } = setup(); // seeded → home has items
+    setConnectivityProbeUrl(PROBE);
+    const fetchMock = vi.fn(async () => ({}));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const page = await ds.getHomeItems();
+    expect(page.items.length).toBeGreaterThan(0);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

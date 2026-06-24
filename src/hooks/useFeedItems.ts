@@ -36,6 +36,11 @@ export function useFeedItems(viewKey: string, fetchPage: FetchPage) {
     total,
     isLoading: query.isLoading,
     isError: query.isError,
+    // Any fetch in flight (initial, refetch, or next-page). Callers that need to
+    // avoid starting a *second* fetch — e.g. the reconnect confirm in ItemList —
+    // gate on this so they treat an in-flight request as the confirming one
+    // instead of cancelling/duplicating it.
+    isFetching: query.isFetching,
     hasMore: query.hasNextPage ?? false,
     isFetchingMore: query.isFetchingNextPage,
     fetchMore: query.fetchNextPage,

@@ -204,6 +204,46 @@ async function maybeProbeAfterTimeout(): Promise<void> {
   }
 }
 
+/**
+ * Actively confirm the backend is reachable *right now*, bypassing the service
+ * worker. The probe hits the same liveness endpoint as the timeout adjudicator
+ * (`/auth/v1/health`), which lives on `/auth/v1/` — outside the SW's
+ * `/rest/v1/` NetworkFirst route — so Workbox never answers it from cache. A
+ * feed read, by contrast, the SW *can* answer from a stale empty `200` while the
+ * backend is down (the read's 15s cap deliberately sits past the SW's 10s
+ * cache-fallback window), which `trackedFetch` then reads as success → `online`.
+ * Callers use this to verify an *empty* feed read came from a live server before
+ * trusting it as "all caught up": a cache-served empty page would otherwise lie.
+ *
+ * The outcome is reported into the tracker so the connectivity status reflects
+ * it — a failed probe flips us to backend-unreachable (or offline). Returns true
+ * iff the backend answered. Unconfigured (no probe URL — mock/local dev with no
+ * remote backend to be down) returns true: the mock source is authoritative.
+ */
+export async function confirmBackendReachable(): Promise<boolean> {
+  if (probeUrl == null) return true;
+  // Manual controller + clearTimeout (rather than AbortSignal.timeout) so the
+  // timer is released the instant the probe settles — an AbortSignal.timeout
+  // keeps its timer running until it fires, which leaks a pending macrotask past
+  // the caller (and across test files).
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+  try {
+    // Plain `fetch` (not trackedFetch) — this IS the probe, so don't recurse;
+    // any HTTP response proves we reached the server.
+    await fetch(probeUrl, { method: 'GET', signal: controller.signal });
+    reportFetchSuccess();
+    return true;
+  } catch {
+    // Couldn't reach the backend → the empty read was a stale cache hit (or the
+    // server is down). Flip the pill; the caller surfaces the miss-state.
+    goOffline();
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function isTimeout(err: unknown): boolean {
   return err instanceof DOMException && err.name === 'TimeoutError';
 }

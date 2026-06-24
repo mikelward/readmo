@@ -29,6 +29,7 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
     items,
     isLoading,
     isError,
+    isFetching,
     hasMore,
     isFetchingMore,
     fetchMore,
@@ -125,12 +126,50 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
     return () => registerSweep(null, 0);
   }, [registerSweep, ds, sweepIds]);
 
+  // Force a confirming refetch when we come back online with nothing to show.
+  // The miss-state guard below keys off the *current* status, but on the
+  // offline→online transition `status` flips to 'online' while React Query can
+  // still treat a just-returned empty page (served from a stale cache or a
+  // fresh-enough persisted query while offline) as fresh under the 5-min
+  // staleTime — so it wouldn't refetch on its own, and the caught-up label would
+  // render off that unconfirmed empty result. Refetch (which ignores staleTime)
+  // to confirm against the live server. Skip it when a request is already in
+  // flight (e.g. the user's Retry, whose recovering response is what flipped
+  // status to 'online' before React Query resolved the page) — that one is the
+  // confirming fetch, and a second refetch over the cached empty data could
+  // cancel/duplicate it. The loading hold while any such fetch is in flight is
+  // driven by `isFetching` at the ItemRows call below, so it isn't reconnect-
+  // specific — it also covers a boot-time cache-invalidation refetch over an
+  // empty persisted page, where there's no offline→online transition.
+  const prevStatus = useRef(status);
+  useEffect(() => {
+    const wasOnline = prevStatus.current === 'online';
+    prevStatus.current = status;
+    if (status === 'online' && !wasOnline && items.length === 0 && !isFetching) {
+      refetch();
+    }
+  }, [status, isFetching, items.length, refetch]);
+
+  // When to show the miss-state (offline/server message + Retry) instead of the
+  // item rows. Two of these are failures we already know about: the initial
+  // load errored, or a background refetch over an empty cache failed. The third
+  // covers a *successful* empty result we can't trust: an empty feed while the
+  // device is offline or the backend is unreachable isn't proof the reader is
+  // caught up — we just couldn't confirm with the server (a fresh-enough
+  // persisted-empty cache that skips the refetch, or a stale cache answering
+  // empty). Claiming "You're all caught up." there is a lie; show the
+  // connectivity copy instead. Online + empty is a genuine caught-up state.
+  const showMissState =
+    isError ||
+    (refreshFailed && items.length === 0) ||
+    (!isLoading && items.length === 0 && status !== 'online');
+
   return (
     <div className="item-list">
       <ListToolbar />
 
       <PullToRefresh onRefresh={async () => { await ds.refresh(); await refetch(); await checkForServiceWorkerUpdate(); }}>
-        {isError || (refreshFailed && items.length === 0) ? (
+        {showMissState ? (
           <div className="item-list__state" role="alert">
             {/* Say which failure it is so a server problem doesn't read as the
                 user being offline. 'offline' = the device has no network;
@@ -156,7 +195,13 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
             ) : null}
             <ItemRows
               items={items}
-              isLoading={isLoading}
+              // Skeletons (not the caught-up label) whenever a fetch is
+              // validating an empty feed — the initial load, a reconnect
+              // confirm, a boot-time cache-invalidation refetch over an empty
+              // persisted page, or a focus/PTR refresh. An empty result isn't
+              // trustworthy as "all caught up" until the in-flight read that
+              // could populate it (or fail and surface the miss-state) settles.
+              isLoading={isLoading || (isFetching && items.length === 0)}
               skeletonCount={6}
               enableSwipe
               listRef={listRef}

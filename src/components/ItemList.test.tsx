@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { ItemList } from './ItemList';
+import type { FetchPage } from '../hooks/useFeedItems';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import { _resetNetworkStatusForTests } from '../lib/networkStatus';
 import type { FeedItem } from '../lib/types';
@@ -339,6 +340,268 @@ describe('ItemList', () => {
 
     await screen.findByText(/you’re offline/i);
     expect(screen.queryByText(/server isn’t responding/i)).toBeNull();
+  });
+
+  it('does not claim "all caught up" on a successful empty result while offline', async () => {
+    // The fetch *succeeds* but returns nothing — e.g. a stale service-worker
+    // cache or a fresh-enough persisted-empty page that skips the refetch. With
+    // no error, isError/refreshFailed stay false, so the bug was the reassuring
+    // "all caught up" label rendering even though we never reached the server to
+    // confirm it. Offline + empty must show the connectivity copy instead.
+    Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: false });
+    window.dispatchEvent(new Event('offline'));
+
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: [], nextCursor: null, total: 0 }),
+    );
+    renderWithProviders(
+      <ItemList
+        viewKey={`offline-empty-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="You’re all caught up."
+      />,
+      { source },
+    );
+
+    await screen.findByText(/you’re offline/i);
+    expect(screen.queryByText(/all caught up/i)).toBeNull();
+  });
+
+  it('still shows "all caught up" on a genuine empty feed while online', async () => {
+    // The mirror of the offline case: online + empty is a real caught-up state,
+    // so the empty label must still render (the offline guard mustn't swallow
+    // it). navigator.onLine defaults to true here.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: [], nextCursor: null, total: 0 }),
+    );
+    renderWithProviders(
+      <ItemList
+        viewKey={`online-empty-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="You’re all caught up."
+      />,
+      { source },
+    );
+
+    expect(await screen.findByText(/all caught up/i)).toBeInTheDocument();
+    expect(screen.queryByText(/you’re offline/i)).toBeNull();
+  });
+
+  it('forces a confirming refetch on reconnect before clearing the empty miss state', async () => {
+    // Regression for the staleTime race: an empty page served from a stale cache
+    // while offline can stay "fresh" under the 5-min staleTime, so when the
+    // browser fires `online` and status flips, React Query wouldn't refetch — and
+    // the caught-up label would render off that unconfirmed empty result. The
+    // reconnect must force a refetch and hold a loading state until it confirms.
+    Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: false });
+    window.dispatchEvent(new Event('offline'));
+
+    const source = new MockDataSource(`test-${Math.random()}`);
+    // staleTime Infinity so the empty page stays fresh — isolating the explicit
+    // reconnect refetch (which ignores staleTime) from onlineManager's
+    // refetch-on-reconnect, which only fires for stale queries.
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: 0, staleTime: Infinity, networkMode: 'offlineFirst' },
+      },
+    });
+
+    // First (offline) read resolves empty immediately; the reconnect refetch is
+    // held open behind `releaseRefetch` so we can assert the caught-up label
+    // doesn't appear until it settles.
+    const empty = { items: [] as FeedItem[], nextCursor: null, total: 0 };
+    let releaseRefetch: (page: typeof empty) => void = () => {};
+    let calls = 0;
+    const fetchPage = vi.fn(() => {
+      calls += 1;
+      if (calls === 1) return Promise.resolve(empty);
+      return new Promise<typeof empty>((resolve) => {
+        releaseRefetch = resolve;
+      });
+    });
+
+    renderWithProviders(
+      <ItemList
+        viewKey={`reconnect-${viewKeySeq++}`}
+        fetchPage={fetchPage as FetchPage}
+        emptyLabel="You’re all caught up."
+      />,
+      { source, queryClient },
+    );
+
+    // Offline + empty → miss-state, not a caught-up claim.
+    await screen.findByText(/you’re offline/i);
+    expect(screen.queryByText(/all caught up/i)).toBeNull();
+
+    // Reconnect.
+    act(() => {
+      Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: true });
+      window.dispatchEvent(new Event('online'));
+    });
+
+    // A confirming refetch fires; while it's in flight we must not claim caught up.
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(/all caught up/i)).toBeNull();
+
+    // The live server confirms the feed really is empty → now it's genuinely
+    // caught up.
+    act(() => {
+      releaseRefetch(empty);
+    });
+    expect(await screen.findByText(/all caught up/i)).toBeInTheDocument();
+  });
+
+  it('treats an in-flight fetch as the confirming one on reconnect (no double fetch)', async () => {
+    // Regression: the recovering request flips status to 'online' (via
+    // trackedFetch) before useInfiniteQuery resolves. The reconnect effect must
+    // NOT call refetch() again over the cached empty data — that can cancel or
+    // duplicate the in-flight request and discard a successful recovery.
+    Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: false });
+    window.dispatchEvent(new Event('offline'));
+
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: 0, staleTime: Infinity, networkMode: 'offlineFirst' },
+      },
+    });
+
+    // The (offlineFirst) read is held open the whole time, so it's still in
+    // flight when we reconnect.
+    const empty = { items: [] as FeedItem[], nextCursor: null, total: 0 };
+    let release: (page: typeof empty) => void = () => {};
+    const fetchPage = vi.fn(
+      () => new Promise<typeof empty>((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    renderWithProviders(
+      <ItemList
+        viewKey={`reconnect-inflight-${viewKeySeq++}`}
+        fetchPage={fetchPage as FetchPage}
+        emptyLabel="You’re all caught up."
+      />,
+      { source, queryClient },
+    );
+
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(1));
+
+    // Reconnect while the fetch is still in flight — the guard must skip starting
+    // a second one.
+    await act(async () => {
+      Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: true });
+      window.dispatchEvent(new Event('online'));
+    });
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+
+    // The in-flight fetch confirms empty → caught up, with only one request.
+    act(() => {
+      release(empty);
+    });
+    expect(await screen.findByText(/all caught up/i)).toBeInTheDocument();
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds a loading state (no caught-up flash) when reconnecting mid-retry over cached-empty data', async () => {
+    // Regression for the reconnect-while-fetching case: the user's Retry is in
+    // flight and its recovering response flips status to 'online' before React
+    // Query applies the page. We adopt that in-flight fetch as the confirming one
+    // (no duplicate request) AND hold the loading state until it settles — so the
+    // caught-up label never paints off the cached empty page in the meantime.
+    const user = userEvent.setup();
+    Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: false });
+    window.dispatchEvent(new Event('offline'));
+
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: 0, staleTime: Infinity, networkMode: 'offlineFirst' },
+      },
+    });
+
+    const empty = { items: [] as FeedItem[], nextCursor: null, total: 0 };
+    let releaseRetry: () => void = () => {};
+    let calls = 0;
+    const fetchPage = vi.fn(() => {
+      calls += 1;
+      // Initial offline read resolves empty; the Retry (2nd call) is held open so
+      // it's still in flight when we reconnect.
+      if (calls === 1) return Promise.resolve(empty);
+      return new Promise<typeof empty>((resolve) => {
+        releaseRetry = () => resolve(empty);
+      });
+    });
+
+    renderWithProviders(
+      <ItemList
+        viewKey={`reconnect-midretry-${viewKeySeq++}`}
+        fetchPage={fetchPage as FetchPage}
+        emptyLabel="You’re all caught up."
+      />,
+      { source, queryClient },
+    );
+
+    // Offline + cached-empty → offline miss-state with a Retry.
+    const retry = await screen.findByRole('button', { name: /retry/i });
+    await user.click(retry);
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+
+    // Reconnect while the Retry is still in flight: no duplicate fetch, and we
+    // must NOT yet claim caught up (nor still say offline) — the result isn't in.
+    await act(async () => {
+      Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: true });
+      window.dispatchEvent(new Event('online'));
+    });
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(/all caught up/i)).toBeNull();
+    expect(screen.queryByText(/you’re offline/i)).toBeNull();
+
+    // The adopted in-flight fetch confirms empty → now genuinely caught up.
+    act(() => {
+      releaseRetry();
+    });
+    expect(await screen.findByText(/all caught up/i)).toBeInTheDocument();
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not flash caught-up while a boot/persist-restored empty feed is being validated', async () => {
+    // A persisted empty page is restored on boot while the browser reports
+    // online; the boot-time feed invalidation (refetchOnMount here) kicks off a
+    // validating refetch. There's no offline→online transition, but the empty
+    // label must still wait for that fetch to settle — not render "all caught up"
+    // off the unconfirmed cached page while it's in flight.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const viewKey = `boot-empty-${viewKeySeq++}`;
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    queryClient.setQueryData(['feed', viewKey], {
+      pages: [{ items: [], total: 0, nextCursor: null }],
+      pageParams: [null],
+    });
+
+    const empty = { items: [] as FeedItem[], nextCursor: null, total: 0 };
+    let release: () => void = () => {};
+    const fetchPage = vi.fn(
+      () => new Promise<typeof empty>((resolve) => { release = () => resolve(empty); }),
+    );
+
+    renderWithProviders(
+      <ItemList viewKey={viewKey} fetchPage={fetchPage as FetchPage} emptyLabel="You’re all caught up." />,
+      { source, queryClient },
+    );
+
+    // The validating refetch is in flight over the empty cached page — a loading
+    // state, NOT a caught-up claim.
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/all caught up/i)).toBeNull();
+
+    // Validation confirms empty → now genuinely caught up.
+    act(() => { release(); });
+    expect(await screen.findByText(/all caught up/i)).toBeInTheDocument();
   });
 
   it('More loads the next page, then disables as "No more items" when exhausted', async () => {

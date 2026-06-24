@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   _resetNetworkStatusForTests,
+  confirmBackendReachable,
   getConnectivityStatus,
   getOnline,
   reportFetchFailure,
@@ -252,6 +253,55 @@ describe('networkStatus tracker', () => {
       reportFetchFailure(new TypeError('Failed to fetch'));
 
       expect(getOnline()).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('confirmBackendReachable (SW-bypassing liveness probe)', () => {
+    const PROBE = 'https://x.supabase.co/auth/v1/health';
+
+    it('returns true and reports success when the backend answers', async () => {
+      const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+      vi.stubGlobal('fetch', fetchMock);
+      setConnectivityProbeUrl(PROBE);
+      // A cache-served read had (wrongly) marked us online; the probe confirms it.
+      reportFetchSuccess();
+
+      await expect(confirmBackendReachable()).resolves.toBe(true);
+      expect(getOnline()).toBe(true);
+      expect(fetchMock).toHaveBeenCalledWith(
+        PROBE,
+        expect.objectContaining({ method: 'GET' }),
+      );
+    });
+
+    it('returns true even on a 4xx/5xx — any response proves we reached the server', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 503 })));
+      setConnectivityProbeUrl(PROBE);
+
+      await expect(confirmBackendReachable()).resolves.toBe(true);
+      expect(getOnline()).toBe(true);
+    });
+
+    it('returns false and flips to backend-unreachable when the probe fails', async () => {
+      // navigator.onLine stays true (lie-fi / backend down), so a failed probe is
+      // a server problem, not the device's — status must be backend-unreachable.
+      vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+      setConnectivityProbeUrl(PROBE);
+      // Simulate the cache hit that wrongly marked us online first.
+      reportFetchSuccess();
+      expect(getOnline()).toBe(true);
+
+      await expect(confirmBackendReachable()).resolves.toBe(false);
+      expect(getConnectivityStatus()).toBe('backend-unreachable');
+    });
+
+    it('returns true without fetching when no probe URL is configured (mock mode)', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      // setConnectivityProbeUrl not called → probeUrl is null after reset.
+
+      await expect(confirmBackendReachable()).resolves.toBe(true);
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });
