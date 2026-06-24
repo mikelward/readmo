@@ -1,20 +1,19 @@
 /*
- * Readmo design tokens — "ink on paper" (default) plus opt-in "turquoise",
- * "indigo", and "mauve" palettes.
+ * Readmo design tokens — "ink on paper" (default) plus opt-in "clay" (a calm
+ * warm red) and "slate" (a calm muted blue) palettes.
  *
  * Two orthogonal axes:
  *   - Mode (light/dark/system)               → the `data-theme` attribute on <html>.
- *   - Palette (ink/turquoise/indigo/mauve)   → the `data-palette` attribute on <html>.
+ *   - Palette (ink/clay/slate)               → the `data-palette` attribute on <html>.
  * Ink is the default palette, so it owns the bare `:root` / `[data-theme]`
  * blocks (no `data-palette`). The other palettes override them under
  * `:root[data-palette='…']`. Each palette ships a light and a dark
  * variant, plus a `prefers-color-scheme: dark` block for system mode.
  *
- * The ink accent (#363636 light / #ececec dark), the turquoise accent
- * (#0e7c74 light / #5ed6c9 dark), the indigo accent (#4338ca light / #a5b4fc
- * dark), and the mauve accent (#923b67 light / #e3a6cb dark) all clear 4.5:1 on
- * their backgrounds — verify any change with a contrast checker (SPEC.md
- * *Visual design* / *Accessibility*).
+ * The ink accent (#363636 light / #ececec dark), the clay accent (#b53a2e
+ * light / #ec9482 dark), and the slate accent (#3d5a80 light / #9db8e0 dark)
+ * all clear 4.5:1 on their backgrounds — verify any change with a contrast
+ * checker (SPEC.md *Visual design* / *Accessibility*).
  */
 
 :root {
@@ -133,298 +132,78 @@
 }
 
 /* ---------------------------------------------------------------------------
- * Turquoise palette — soft turquoise on paper. Opt-in via data-palette.
- * Higher specificity than the bare ink :root, so it wins when applied. The
- * dark variant ([data-palette][data-theme='dark']) and the system-dark media
- * block below it both out-specify the turquoise-light block.
- * ------------------------------------------------------------------------- */
-:root[data-palette='turquoise'] {
-  --rm-accent: #0e7c74;
-  --rm-accent-strong: #0a5c56;
-  --rm-accent-contrast: #ffffff;
-  --rm-toast-action: #5ed6c9;
-
-  --rm-bg: #f1f9f7;
-  --rm-bg-card: #ffffff;
-  --rm-bg-elevated: #ffffff;
-  --rm-border: #d6e8e4;
-  --rm-border-strong: #bfdcd6;
-
-  --rm-text: #15201e;
-  --rm-read: #45534f;
-  --rm-meta: #647571;
-
-  --rm-danger: #c0392b;
-  --rm-success: #2e7d46;
-
-  /* Muted teal-gray dark enough for the hard-coded white swipe label
-     (.item-row__swipe-hint): ~4.7:1 on #fff, vs ~3.25:1 for the lighter
-     #7f938e it replaces. */
-  --rm-hide-bg: #647873;
-  --rm-pin-bg: var(--rm-accent);
-
-  --rm-brand-tile: #0e7c74;
-  --rm-brand-fg: #f1f9f7;
-
-  --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-
-  color-scheme: light;
-}
-
-:root[data-palette='turquoise'][data-theme='dark'] {
-  --rm-accent: #5ed6c9;
-  --rm-accent-strong: #7ee3d8;
-  --rm-accent-contrast: #08201d;
-
-  --rm-bg: #0f1a18;
-  --rm-bg-card: #16221f;
-  --rm-bg-elevated: #1c2a27;
-  --rm-border: #243430;
-  --rm-border-strong: #32453f;
-
-  --rm-text: #e8f1ef;
-  --rm-read: #9fb2ad;
-  --rm-meta: #7d908b;
-
-  --rm-danger: #ff6b5e;
-  --rm-success: #6bd08a;
-
-  --rm-hide-bg: #3a4a45;
-  /* Deep teal (not the bright accent-strong) so the swipe hint's white label
-     stays legible — accent-strong #7ee3d8 is near-white. ~5:1 on #fff. */
-  --rm-pin-bg: #0e7c74;
-
-  /* Keep the brand tile a constant teal across modes for recognizability. */
-  --rm-brand-tile: #0e7c74;
-  --rm-brand-fg: #f1f9f7;
-
-  --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --rm-danger-fg: var(--rm-bg);
-
-  color-scheme: dark;
-}
-
-/* Turquoise + system mode + OS dark. Out-specifies the ink system-dark block
- * (extra [data-palette] attribute) and the turquoise-light block. */
-@media (prefers-color-scheme: dark) {
-  :root[data-palette='turquoise']:not([data-theme='light']):not(
-      [data-theme='dark']
-    ) {
-    --rm-accent: #5ed6c9;
-    --rm-accent-strong: #7ee3d8;
-    --rm-accent-contrast: #08201d;
-
-    --rm-bg: #0f1a18;
-    --rm-bg-card: #16221f;
-    --rm-bg-elevated: #1c2a27;
-    --rm-border: #243430;
-    --rm-border-strong: #32453f;
-
-    --rm-text: #e8f1ef;
-    --rm-read: #9fb2ad;
-    --rm-meta: #7d908b;
-
-    --rm-danger: #ff6b5e;
-    --rm-success: #6bd08a;
-
-    --rm-hide-bg: #3a4a45;
-    /* See the explicit dark-turquoise block: keep the pin hint dark enough
-       for the white swipe label. */
-    --rm-pin-bg: #0e7c74;
-
-    --rm-brand-tile: #0e7c74;
-    --rm-brand-fg: #f1f9f7;
-
-    --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --rm-danger-fg: var(--rm-bg);
-
-    color-scheme: dark;
-  }
-}
-
-/* ---------------------------------------------------------------------------
- * Indigo palette — deep indigo on faintly indigo-tinted paper. Opt-in via
- * data-palette. Same structure as turquoise: a light block, an explicit dark
- * block, and a system-dark media block, each out-specifying the ones above it.
- * Accent #4338ca (light) / #a5b4fc (dark) both clear 4.5:1 on their backgrounds.
- * ------------------------------------------------------------------------- */
-:root[data-palette='indigo'] {
-  --rm-accent: #4338ca;
-  --rm-accent-strong: #3730a3;
-  --rm-accent-contrast: #ffffff;
-  --rm-toast-action: #a5b4fc;
-
-  --rm-bg: #f5f5fb;
-  --rm-bg-card: #ffffff;
-  --rm-bg-elevated: #ffffff;
-  --rm-border: #e1e0f0;
-  --rm-border-strong: #cdcbe6;
-
-  --rm-text: #1a1a2e;
-  --rm-read: #4a4a5e;
-  --rm-meta: #6b6b80;
-
-  --rm-danger: #c0392b;
-  --rm-success: #2e7d46;
-
-  /* Slate-indigo dark enough for the hard-coded white swipe label
-     (.item-row__swipe-hint): ~5:1 on #fff. */
-  --rm-hide-bg: #6b6b80;
-  --rm-pin-bg: var(--rm-accent);
-
-  --rm-brand-tile: #4338ca;
-  --rm-brand-fg: #f5f5fb;
-
-  --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-
-  color-scheme: light;
-}
-
-:root[data-palette='indigo'][data-theme='dark'] {
-  --rm-accent: #a5b4fc;
-  --rm-accent-strong: #c7d2fe;
-  --rm-accent-contrast: #1e1b3a;
-
-  --rm-bg: #14141f;
-  --rm-bg-card: #1d1d2b;
-  --rm-bg-elevated: #242436;
-  --rm-border: #2c2c40;
-  --rm-border-strong: #3a3a52;
-
-  --rm-text: #ececf5;
-  --rm-read: #a8a8bd;
-  --rm-meta: #8b8ba0;
-
-  --rm-danger: #ff6b5e;
-  --rm-success: #6bd08a;
-
-  --rm-hide-bg: #46465e;
-  /* Deep indigo (not the light accent-strong) so the swipe hint's white label
-     stays legible — accent #a5b4fc is near-white. ~8:1 on #fff. */
-  --rm-pin-bg: #4338ca;
-
-  /* Keep the brand tile a constant indigo across modes for recognizability. */
-  --rm-brand-tile: #4338ca;
-  --rm-brand-fg: #f5f5fb;
-
-  --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --rm-danger-fg: var(--rm-bg);
-
-  color-scheme: dark;
-}
-
-/* Indigo + system mode + OS dark. Out-specifies the ink system-dark block
- * (extra [data-palette] attribute) and the indigo-light block. */
-@media (prefers-color-scheme: dark) {
-  :root[data-palette='indigo']:not([data-theme='light']):not(
-      [data-theme='dark']
-    ) {
-    --rm-accent: #a5b4fc;
-    --rm-accent-strong: #c7d2fe;
-    --rm-accent-contrast: #1e1b3a;
-
-    --rm-bg: #14141f;
-    --rm-bg-card: #1d1d2b;
-    --rm-bg-elevated: #242436;
-    --rm-border: #2c2c40;
-    --rm-border-strong: #3a3a52;
-
-    --rm-text: #ececf5;
-    --rm-read: #a8a8bd;
-    --rm-meta: #8b8ba0;
-
-    --rm-danger: #ff6b5e;
-    --rm-success: #6bd08a;
-
-    --rm-hide-bg: #46465e;
-    /* See the explicit dark-indigo block: keep the pin hint dark enough
-       for the white swipe label. */
-    --rm-pin-bg: #4338ca;
-
-    --rm-brand-tile: #4338ca;
-    --rm-brand-fg: #f5f5fb;
-
-    --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --rm-danger-fg: var(--rm-bg);
-
-    color-scheme: dark;
-  }
-}
-
-/* ---------------------------------------------------------------------------
- * Mauve palette — a soothing, soft pinkish theme. Opt-in via data-palette.
- * Same structure as turquoise/indigo: a light block, an explicit dark block,
- * and a system-dark media block, each out-specifying the ones above it. The
- * whole palette is built from a single mauve-pink in two values — a plum
- * (#923b67) and its light form (#e3a6cb) — used for links, the "Open original"
- * button, the brand tile, and the swipe pin, to keep it calm and uncluttered.
- * Both accents clear 4.5:1 on their backgrounds.
+ * Clay palette — a calm, warm red on faintly warm-tinted paper. Opt-in via
+ * data-palette. Higher specificity than the bare ink :root, so it wins when
+ * applied; the dark variant ([data-palette][data-theme='dark']) and the
+ * system-dark media block below it both out-specify the clay-light block.
+ * Slate (below) mirrors this same structure.
  *
- * One deliberate divergence from turquoise/indigo: those freeze the brand tile
- * to the dark accent across modes, but here the tile tracks the accent (plum in
- * light, light mauve-pink in dark) so the logo always matches the button. The
- * "R"/pill (`--rm-brand-fg`) flips to a dark ink in dark mode to stay legible
- * on the light tile.
+ * The whole palette is built from a single warm terracotta in two values — a
+ * deep clay (#b53a2e) and its light form (#ec9482) — used for links, the
+ * "Open original" button, the brand tile, and the swipe pin, to keep it calm
+ * and uncluttered. It is a muted, warm red (not a bold/bright fire red); the
+ * cooler crimson `--rm-danger` stays distinct so destructive actions don't
+ * read as the accent. Both accents clear 4.5:1 on their backgrounds. The brand
+ * tile is frozen to the deep clay across modes for recognizability.
  * ------------------------------------------------------------------------- */
-:root[data-palette='mauve'] {
-  --rm-accent: #923b67;
-  --rm-accent-strong: #76304f;
+:root[data-palette='clay'] {
+  --rm-accent: #b53a2e;
+  --rm-accent-strong: #962f23;
   --rm-accent-contrast: #ffffff;
-  --rm-toast-action: #e3a6cb;
+  --rm-toast-action: #ec9482;
 
-  --rm-bg: #f9f1f5;
+  --rm-bg: #faf4f1;
   --rm-bg-card: #ffffff;
   --rm-bg-elevated: #ffffff;
-  --rm-border: #ecd9e2;
-  --rm-border-strong: #e0c6d2;
+  --rm-border: #f0ddd5;
+  --rm-border-strong: #e6cabe;
 
-  --rm-text: #281d24;
-  --rm-read: #5e4a55;
-  --rm-meta: #796171;
+  --rm-text: #2a1c17;
+  --rm-read: #5e4a43;
+  --rm-meta: #79655c;
 
   --rm-danger: #c0392b;
   --rm-success: #2e7d46;
 
-  /* Muted mauve-gray dark enough for the hard-coded white swipe label
-     (.item-row__swipe-hint): ~5.1:1 on #fff. */
-  --rm-hide-bg: #806775;
+  /* Muted clay-gray dark enough for the hard-coded white swipe label
+     (.item-row__swipe-hint): ~4.9:1 on #fff. */
+  --rm-hide-bg: #8a6a5e;
   --rm-pin-bg: var(--rm-accent);
 
-  --rm-brand-tile: #923b67;
-  --rm-brand-fg: #f9f1f5;
+  --rm-brand-tile: #b53a2e;
+  --rm-brand-fg: #faf4f1;
 
   --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 
   color-scheme: light;
 }
 
-:root[data-palette='mauve'][data-theme='dark'] {
-  --rm-accent: #e3a6cb;
-  --rm-accent-strong: #eec3dc;
-  --rm-accent-contrast: #2a0e20;
+:root[data-palette='clay'][data-theme='dark'] {
+  --rm-accent: #ec9482;
+  --rm-accent-strong: #f3b4a0;
+  --rm-accent-contrast: #2a130b;
 
-  --rm-bg: #17151b;
-  --rm-bg-card: #221d26;
-  --rm-bg-elevated: #29232e;
-  --rm-border: #332b38;
-  --rm-border-strong: #43394a;
+  --rm-bg: #1b1614;
+  --rm-bg-card: #261d19;
+  --rm-bg-elevated: #2e2420;
+  --rm-border: #392c27;
+  --rm-border-strong: #4a392f;
 
-  --rm-text: #efe8ee;
-  --rm-read: #c2b2bd;
-  --rm-meta: #ad9aaa;
+  --rm-text: #f0e6e1;
+  --rm-read: #c2b0a8;
+  --rm-meta: #a89890;
 
   --rm-danger: #ff6b5e;
   --rm-success: #6bd08a;
 
-  --rm-hide-bg: #463a48;
-  /* Deep plum (the light-mode accent) so the swipe hint's white label stays
-     legible — the dark accent #e3a6cb is near-white. ~6.9:1 on #fff. */
-  --rm-pin-bg: #923b67;
+  --rm-hide-bg: #4a3a33;
+  /* Deep clay (the light-mode accent) so the swipe hint's white label stays
+     legible — the dark accent #ec9482 is near-white. ~6:1 on #fff. */
+  --rm-pin-bg: #b53a2e;
 
-  /* Tile tracks the accent so the logo matches the button; the "R" flips to a
-     dark ink to stay legible on the light tile. */
-  --rm-brand-tile: #e3a6cb;
-  --rm-brand-fg: #2a0e20;
+  /* Keep the brand tile a constant deep clay across modes for recognizability. */
+  --rm-brand-tile: #b53a2e;
+  --rm-brand-fg: #faf4f1;
 
   --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   --rm-danger-fg: var(--rm-bg);
@@ -432,36 +211,150 @@
   color-scheme: dark;
 }
 
-/* Mauve + system mode + OS dark. Out-specifies the ink system-dark block
- * (extra [data-palette] attribute) and the mauve-light block. */
+/* Clay + system mode + OS dark. Out-specifies the ink system-dark block
+ * (extra [data-palette] attribute) and the clay-light block. */
 @media (prefers-color-scheme: dark) {
-  :root[data-palette='mauve']:not([data-theme='light']):not(
+  :root[data-palette='clay']:not([data-theme='light']):not(
       [data-theme='dark']
     ) {
-    --rm-accent: #e3a6cb;
-    --rm-accent-strong: #eec3dc;
-    --rm-accent-contrast: #2a0e20;
+    --rm-accent: #ec9482;
+    --rm-accent-strong: #f3b4a0;
+    --rm-accent-contrast: #2a130b;
 
-    --rm-bg: #17151b;
-    --rm-bg-card: #221d26;
-    --rm-bg-elevated: #29232e;
-    --rm-border: #332b38;
-    --rm-border-strong: #43394a;
+    --rm-bg: #1b1614;
+    --rm-bg-card: #261d19;
+    --rm-bg-elevated: #2e2420;
+    --rm-border: #392c27;
+    --rm-border-strong: #4a392f;
 
-    --rm-text: #efe8ee;
-    --rm-read: #c2b2bd;
-    --rm-meta: #ad9aaa;
+    --rm-text: #f0e6e1;
+    --rm-read: #c2b0a8;
+    --rm-meta: #a89890;
 
     --rm-danger: #ff6b5e;
     --rm-success: #6bd08a;
 
-    --rm-hide-bg: #463a48;
-    /* See the explicit dark-mauve block: keep the pin hint dark enough for the
+    --rm-hide-bg: #4a3a33;
+    /* See the explicit dark-clay block: keep the pin hint dark enough for the
        white swipe label. */
-    --rm-pin-bg: #923b67;
+    --rm-pin-bg: #b53a2e;
 
-    --rm-brand-tile: #e3a6cb;
-    --rm-brand-fg: #2a0e20;
+    --rm-brand-tile: #b53a2e;
+    --rm-brand-fg: #faf4f1;
+
+    --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --rm-danger-fg: var(--rm-bg);
+
+    color-scheme: dark;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Slate palette — a calm, muted blue on faintly cool-tinted paper. Opt-in via
+ * data-palette. Same structure as clay: a light block, an explicit dark block,
+ * and a system-dark media block, each out-specifying the ones above it.
+ *
+ * Built from a single denim blue in two values — a deep slate (#3d5a80) and
+ * its light form (#9db8e0) — used for links, the "Open original" button, the
+ * brand tile, and the swipe pin. It is a soft, calm blue (not a bright/electric
+ * azure). Both accents clear 4.5:1 on their backgrounds; the brand tile is
+ * frozen to the deep slate across modes for recognizability.
+ * ------------------------------------------------------------------------- */
+:root[data-palette='slate'] {
+  --rm-accent: #3d5a80;
+  --rm-accent-strong: #2f4766;
+  --rm-accent-contrast: #ffffff;
+  --rm-toast-action: #9db8e0;
+
+  --rm-bg: #f3f5fa;
+  --rm-bg-card: #ffffff;
+  --rm-bg-elevated: #ffffff;
+  --rm-border: #dde3ee;
+  --rm-border-strong: #cad3e3;
+
+  --rm-text: #1a2030;
+  --rm-read: #4a5364;
+  --rm-meta: #6b7385;
+
+  --rm-danger: #c0392b;
+  --rm-success: #2e7d46;
+
+  /* Muted slate-gray dark enough for the hard-coded white swipe label
+     (.item-row__swipe-hint): ~5.4:1 on #fff. */
+  --rm-hide-bg: #5f6b80;
+  --rm-pin-bg: var(--rm-accent);
+
+  --rm-brand-tile: #3d5a80;
+  --rm-brand-fg: #f3f5fa;
+
+  --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+
+  color-scheme: light;
+}
+
+:root[data-palette='slate'][data-theme='dark'] {
+  --rm-accent: #9db8e0;
+  --rm-accent-strong: #bccfee;
+  --rm-accent-contrast: #0b1426;
+
+  --rm-bg: #141821;
+  --rm-bg-card: #1d2330;
+  --rm-bg-elevated: #252c3b;
+  --rm-border: #2d3548;
+  --rm-border-strong: #3b4458;
+
+  --rm-text: #e8ecf5;
+  --rm-read: #a6aebf;
+  --rm-meta: #8a93a6;
+
+  --rm-danger: #ff6b5e;
+  --rm-success: #6bd08a;
+
+  --rm-hide-bg: #38415a;
+  /* Deep slate (the light-mode accent) so the swipe hint's white label stays
+     legible — the dark accent #9db8e0 is near-white. ~7:1 on #fff. */
+  --rm-pin-bg: #3d5a80;
+
+  /* Keep the brand tile a constant deep slate across modes for recognizability. */
+  --rm-brand-tile: #3d5a80;
+  --rm-brand-fg: #f3f5fa;
+
+  --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --rm-danger-fg: var(--rm-bg);
+
+  color-scheme: dark;
+}
+
+/* Slate + system mode + OS dark. Out-specifies the ink system-dark block
+ * (extra [data-palette] attribute) and the slate-light block. */
+@media (prefers-color-scheme: dark) {
+  :root[data-palette='slate']:not([data-theme='light']):not(
+      [data-theme='dark']
+    ) {
+    --rm-accent: #9db8e0;
+    --rm-accent-strong: #bccfee;
+    --rm-accent-contrast: #0b1426;
+
+    --rm-bg: #141821;
+    --rm-bg-card: #1d2330;
+    --rm-bg-elevated: #252c3b;
+    --rm-border: #2d3548;
+    --rm-border-strong: #3b4458;
+
+    --rm-text: #e8ecf5;
+    --rm-read: #a6aebf;
+    --rm-meta: #8a93a6;
+
+    --rm-danger: #ff6b5e;
+    --rm-success: #6bd08a;
+
+    --rm-hide-bg: #38415a;
+    /* See the explicit dark-slate block: keep the pin hint dark enough for the
+       white swipe label. */
+    --rm-pin-bg: #3d5a80;
+
+    --rm-brand-tile: #3d5a80;
+    --rm-brand-fg: #f3f5fa;
 
     --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
     --rm-danger-fg: var(--rm-bg);

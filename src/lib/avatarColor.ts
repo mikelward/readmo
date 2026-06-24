@@ -1,8 +1,9 @@
 // Palette for the initial-on-color account disc shown when a user has no
 // OAuth picture (deterministic, offline, zero requests — SPEC.md *Auth →
-// Account UI*). Indigo is reserved for the brand mark, so this palette
-// stays clear of it to read as a peer of the logo rather than fighting
-// it. Each color clears white-text contrast for the centered initial.
+// Account UI*). These vivid hues sit apart from the muted brand-mark accents
+// (charcoal ink / clay / slate) so the disc reads as a peer of the logo
+// rather than fighting it. Each color clears white-text contrast for the
+// centered initial.
 export const AVATAR_COLORS = [
   '#2563eb', // blue
   '#0d9488', // teal
