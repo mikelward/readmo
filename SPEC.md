@@ -136,10 +136,9 @@ Everything else about the visual system mirrors newshacker.
   freeze the tile to their deep accent across both modes for recognizability.
   In the drawer the palette picker renders each option as a two-tone color
   **swatch** (paper background + accent, split on the diagonal) rather than a
-  text label, with the active palette's swatch ringed, laid out as a
-  **two-column grid** (at most two swatches per row, so the palettes don't
-  crowd a single row of tappables — the mode row above stays a row of three);
-  Settings keeps the text buttons.
+  text label, with the active palette's swatch ringed, laid out as a **single
+  row of three** (Ink/Clay/Slate) — right at the per-row tap-zone cap, matching
+  the mode row of three above it; Settings keeps the text buttons.
 - Icons inlined monochrome SVG (Material Symbols, `fill="currentColor"`), no
   icon font / runtime request.
 
