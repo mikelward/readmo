@@ -385,32 +385,23 @@ export class SupabaseDataSource implements DataSource {
     // pin/opened affordances from the store, and overlayLocalState below consults
     // it, so a page returned before hydration would briefly show default flags.
     await this.ensureHydrated();
-    const rows = this.unwrap<Array<{ item: ItemRow }>>(
+    const rows = this.unwrap<Array<ItemRow>>(
       await this.sb.rpc('feed_items', { ...args, p_limit: limit, p_offset: offset }),
     );
-    // The RPC is declared `returns table (item public.items)`, so PostgREST
-    // wraps each row as `{ item: {...} }`. If a deployed RPC drifts to a flat
-    // `setof items` (or any other shape), `r.item` is undefined and the old
-    // code blew up downstream with a cryptic `Cannot read properties of
-    // undefined (reading 'feed_id')`. Detect the mismatch HERE and throw a
-    // message that actually names the problem, so the miss-state and the console
-    // both point at the RPC shape instead of a generic connectivity excuse.
-    const malformed = rows.find((r) => r == null || r.item == null);
+    // PostgREST expands composite OUT columns flat: `returns table (item items)`
+    // yields `[{ id, feed_id, ... }]`, not `[{ item: { id, ... } }]`. Guard that
+    // each row has the minimum expected shape so a stale DB function surfaces a
+    // clear error instead of a cryptic downstream crash.
+    const malformed = rows.find((r) => r == null || typeof r.id !== 'string');
     if (malformed !== undefined) {
       console.error(
-        '[readmo] feed_items returned an unexpected row shape — expected ' +
-          '{ item: {...} } per row (RPC `returns table (item items)`). Sample row:',
+        '[readmo] feed_items returned an unexpected row shape — expected flat item rows. Sample row:',
         malformed,
       );
-      // Message reads as the on-screen "Details" line (the headline already says
-      // "Unexpected response fetching the feed list"), so name the specific cause.
-      throw new Error(
-        'feed_items returned rows missing the `item` field — the database ' +
-          'function may be out of date.',
-      );
+      throw new Error('feed_items returned rows missing expected item fields.');
     }
     const items = await this.resolveFeedItems(
-      this.overlayLocalState(rows.map((r) => r.item)),
+      this.overlayLocalState(rows),
     );
 
     // An empty first page renders the "all caught up" empty state. But the

@@ -331,9 +331,7 @@ function runRpc(
       .sort((a, b) => sortMs(b) - sortMs(a) || idDesc(a, b)); // section 1: sort_at desc
     const combined = [...pinned, ...body];
     return {
-      data: combined
-        .slice(offset, offset + limit)
-        .map((it) => ({ item: it })),
+      data: combined.slice(offset, offset + limit),
       error: null,
     };
   }
