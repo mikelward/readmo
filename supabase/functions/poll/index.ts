@@ -160,7 +160,7 @@ async function pollOne(supabase: any, feed: any): Promise<void> {
   // paywall redirect). Mislabelled-but-valid feeds (real RSS served as
   // text/html) are accepted if parseFeed extracts a title or items.
   const parsed = parseFeedBody(body, fetchUrl, ct);
-  console.log(`poll: feed ${feed.id} parsed — ${parsed.items.length} item(s), title=${JSON.stringify(parsed.feedTitle)}`);
+  console.log(`poll: feed ${feed.id} parsed — ${parsed.items.length} item(s)`);
 
   // Upsert feed-level metadata (title, site_url, new validators).
   await supabase
