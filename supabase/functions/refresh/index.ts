@@ -163,7 +163,7 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
   if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
   const ct = res.headers.get('content-type') ?? '';
   const parsed = parseFeedBody(new TextDecoder().decode(res.body), feed.url, ct);
-  console.log(`refresh: feed ${feedId} parsed — ${parsed.items.length} item(s), title=${JSON.stringify(parsed.feedTitle)}`);
+  console.log(`refresh: feed ${feedId} parsed — ${parsed.items.length} item(s)`);
   const { error: metaError } = await service
     .from('feeds')
     .update({

@@ -50,7 +50,7 @@ Deno.serve(async (req: Request) => {
       console.log(`discover: Reddit short-circuit → ${reddit}`);
       const { feed } = await tryParse(reddit);
       if (feed) {
-        console.log(`discover: Reddit feed validated — title=${JSON.stringify(feed.title)}`);
+        console.log(`discover: Reddit feed validated`);
         return json({ candidates: [feed] });
       }
     }
@@ -63,7 +63,7 @@ Deno.serve(async (req: Request) => {
     // If the target parses as a feed, offer it directly.
     const { feed: asFeed } = await tryParse(res.url, body);
     if (asFeed) {
-      console.log(`discover: URL is a feed — title=${JSON.stringify(asFeed.title)}`);
+      console.log(`discover: URL is a feed`);
       return json({ candidates: [asFeed] });
     }
 
