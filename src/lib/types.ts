@@ -45,9 +45,18 @@ export interface Item {
   summary: string | null;
   /** Sanitized full-article HTML extracted server-side (reading mode), or null
    * until a successful extraction has been cached. Distinct from `contentHtml`
-   * (the feed's own body, which is often a truncated stub). See
-   * `lib/fullText.ts` and the `fulltext` Edge Function. */
+   * (the feed's own body, which is often a truncated stub). Holds ONLY a body
+   * produced by the current extractor version — a stale-version cached body is
+   * mapped to null (and flagged via `fullContentStale`) so the reader re-fetches
+   * rather than rendering it. See `lib/fullText.ts` and the `fulltext` Edge
+   * Function. */
   fullContentHtml: string | null;
+  /** True when the item HAD a cached full body that was dropped because it was
+   * extracted by an older `FULLTEXT_VERSION`. Lets the reader auto-trigger
+   * re-extraction even when the feed body itself doesn't look truncated (e.g. a
+   * body cached via a manual "Get full article" on a complete-looking feed),
+   * instead of silently reverting to the feed body until the user asks again. */
+  fullContentStale: boolean;
   enclosures: Enclosure[];
 }
 

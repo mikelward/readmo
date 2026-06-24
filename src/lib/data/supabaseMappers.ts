@@ -7,6 +7,7 @@ import type {
   ItemState,
   Subscription,
 } from '../types';
+import { FULLTEXT_VERSION } from '../fullText';
 
 // Pure row→domain mappers for the Supabase (PostgREST) shapes. Kept separate
 // from SupabaseDataSource so they can be unit-tested without a client. PostgREST
@@ -71,6 +72,7 @@ export interface ItemRow {
   content_html: string | null;
   summary: string | null;
   full_content_html?: string | null;
+  full_content_version?: number | null;
   enclosures: unknown;
   content_hash: string | null;
   created_at: string | null;
@@ -138,6 +140,10 @@ function mapEnclosures(raw: unknown): Enclosure[] {
 /** `items` row → `Item`. `published_at` falls back to `created_at` so an item
  * missing a publish date still sorts sensibly. */
 export function mapItem(row: ItemRow): Item {
+  // A cached full body is usable only when stamped with the current extractor
+  // version; otherwise it's stale (older version, or legacy NULL).
+  const fullFresh =
+    !!row.full_content_html && row.full_content_version === FULLTEXT_VERSION;
   return {
     id: row.id,
     feedId: row.feed_id,
@@ -148,7 +154,13 @@ export function mapItem(row: ItemRow): Item {
     publishedAt: tsToMs(row.published_at) ?? tsToMs(row.created_at) ?? 0,
     contentHtml: row.content_html ?? '',
     summary: row.summary ?? null,
-    fullContentHtml: row.full_content_html ?? null,
+    // Only surface a cached full body that current extraction code produced. A
+    // stale-version (or legacy NULL-version) body is dropped so the reader
+    // re-fetches and re-extracts instead of rendering it (see FULLTEXT_VERSION).
+    // fullContentStale records that a body WAS present but dropped, so the reader
+    // can re-extract even when the feed body isn't truncated.
+    fullContentHtml: fullFresh ? row.full_content_html! : null,
+    fullContentStale: !!row.full_content_html && !fullFresh,
     enclosures: mapEnclosures(row.enclosures),
   };
 }

@@ -7,7 +7,7 @@ import { useWideViewport } from '../hooks/useWideViewport';
 import { useShareItem } from '../hooks/useShareItem';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { formatAge, formatDisplayDomain, isSafeHttpUrl } from '../lib/itemMeta';
-import { fullTextStaleTime, looksTruncated } from '../lib/fullText';
+import { fullTextQueryKey, fullTextStaleTime, looksTruncated } from '../lib/fullText';
 import type { Feed, Item, ItemState, ItemStateField } from '../lib/types';
 import { TooltipButton } from '../components/TooltipButton';
 import {
@@ -234,10 +234,15 @@ export function ItemPage() {
 
   const cachedFull = data?.item.fullContentHtml ?? null;
   const truncated = data ? looksTruncated(data.item) : false;
-  const wantFull = !!data && !cachedFull && online && (truncated || manualTrigger);
+  // A version-stale cached body was dropped by the mapper (cachedFull is null):
+  // re-extract it on open even when the feed body isn't truncated, so a manual
+  // "Get full article" result doesn't silently revert to the feed body.
+  const staleFull = data?.item.fullContentStale ?? false;
+  const wantFull =
+    !!data && !cachedFull && online && (truncated || manualTrigger || staleFull);
 
   const fullQuery = useQuery({
-    queryKey: ['fulltext', id],
+    queryKey: fullTextQueryKey(id),
     queryFn: () => ds.fetchFullText(id),
     enabled: wantFull,
     // Terminal outcomes (ok/empty/auth) are cached forever; a transient

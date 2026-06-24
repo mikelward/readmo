@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  FULLTEXT_VERSION,
+  fullTextQueryKey,
   htmlTextLength,
   looksTruncated,
   TRUNCATION_TEXT_THRESHOLD,
@@ -48,5 +50,19 @@ describe('looksTruncated', () => {
     const justOver = `<p>${'x'.repeat(TRUNCATION_TEXT_THRESHOLD + 1)}</p>`;
     expect(looksTruncated({ contentHtml: justUnder, fullContentHtml: null })).toBe(true);
     expect(looksTruncated({ contentHtml: justOver, fullContentHtml: null })).toBe(false);
+  });
+});
+
+describe('fullTextQueryKey', () => {
+  it('scopes the key to the item id and the extractor version', () => {
+    // The version in the key is what invalidates a persisted (staleTime:Infinity)
+    // full-text result when FULLTEXT_VERSION is bumped — a stale body lives under
+    // the old key and is never read.
+    expect(fullTextQueryKey('item-1')).toEqual(['fulltext', 'item-1', FULLTEXT_VERSION]);
+  });
+
+  it('FULLTEXT_VERSION is a positive integer', () => {
+    expect(Number.isInteger(FULLTEXT_VERSION)).toBe(true);
+    expect(FULLTEXT_VERSION).toBeGreaterThan(0);
   });
 });

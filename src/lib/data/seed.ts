@@ -151,6 +151,7 @@ export const SEED_ITEMS: Item[] = SPECS.map((spec, i) => ({
   contentHtml: spec.body,
   summary: null,
   fullContentHtml: null,
+  fullContentStale: false,
   enclosures: [],
 }));
 

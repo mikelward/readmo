@@ -19,6 +19,7 @@ const FEED_ITEM: FeedItem = {
     contentHtml: '<p>Body</p>',
     summary: null,
     fullContentHtml: null,
+    fullContentStale: false,
     enclosures: [],
   },
   feed: {

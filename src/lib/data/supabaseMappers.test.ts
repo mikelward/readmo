@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
+import { FULLTEXT_VERSION } from '../fullText';
 import {
   PARKED_ERROR_THRESHOLD,
   isPermanentWriteError,
@@ -104,6 +105,47 @@ describe('mapItem', () => {
     expect(mapItem({ ...row, published_at: null }).publishedAt).toBe(
       Date.parse('2026-01-01T00:00:00.000Z'),
     );
+  });
+
+  it('surfaces a cached full body stamped with the current extractor version', () => {
+    const item = mapItem({
+      ...row,
+      full_content_html: '<p>current full body</p>',
+      full_content_version: FULLTEXT_VERSION,
+    });
+    expect(item.fullContentHtml).toBe('<p>current full body</p>');
+    expect(item.fullContentStale).toBe(false);
+  });
+
+  it('drops a legacy cached body with no version stamp and flags it stale', () => {
+    // The duplicated-header bug: a body cached before versioning (NULL) must not
+    // be rendered directly — dropping it routes the reader through re-extraction,
+    // and the stale flag makes that happen even on a non-truncated feed.
+    const item = mapItem({
+      ...row,
+      full_content_html: '<p>stale legacy body</p>',
+      full_content_version: null,
+    });
+    expect(item.fullContentHtml).toBeNull();
+    expect(item.fullContentStale).toBe(true);
+  });
+
+  it('drops a cached body stamped with an older version and flags it stale', () => {
+    const item = mapItem({
+      ...row,
+      full_content_html: '<p>stale body</p>',
+      full_content_version: FULLTEXT_VERSION - 1,
+    });
+    expect(item.fullContentHtml).toBeNull();
+    expect(item.fullContentStale).toBe(true);
+  });
+
+  it('leaves fullContentHtml null and not-stale when the row omits the body', () => {
+    // List/search reads select neither column; both are undefined → null, and
+    // there was never a body to re-extract, so it is not flagged stale.
+    const item = mapItem(row);
+    expect(item.fullContentHtml).toBeNull();
+    expect(item.fullContentStale).toBe(false);
   });
 });
 

@@ -238,8 +238,8 @@ feeds         (id, url UNIQUE, secret_url, site_url, title, etag,
                fetch_interval_s, error_count, last_error)             -- shared across users
 items         (id, feed_id FK, guid, url, title, author, published_at,
                content_html, summary, full_content_html,
-               full_content_fetched_at, enclosures, content_hash,
-               created_at,
+               full_content_fetched_at, full_content_version,
+               enclosures, content_hash, created_at,
                sort_at = coalesce(published_at, created_at))          -- shared; UNIQUE(feed_id, guid)
 subscriptions (user_id FK, feed_id FK, folder, title_override,
                muted bool, sort, created_at)                         -- user ↔ feed
@@ -702,6 +702,22 @@ page's discipline is unchanged.
   feed body — guardrail #6; never stores/serves raw publisher HTML), and caches
   the result on the shared item (`items.full_content_html`) so later opens — on
   any device, for any subscriber to the same item — are served from cache.
+  - **Cache is versioned by extractor (`items.full_content_version`).** The
+    cache is otherwise permanent (the function is its only writer and never
+    re-fetches a non-null body), so each write is stamped with
+    `FULLTEXT_VERSION` (`supabase/functions/_shared/fulltext.ts`) and a body is
+    only served when its stamp still matches. Bumping that constant when the
+    extraction/cleaning output changes lazily re-extracts already-cached rows on
+    their next open — no data migration. Legacy rows (cached before the stamp
+    existed, version NULL) re-extract the same way; this is what corrects bodies
+    cached before the title-duplicate-heading strip below. The bump propagates to
+    every cache layer from one constant: the client mirrors it as
+    `FULLTEXT_VERSION` (`src/lib/fullText.ts`, lockstep with the edge constant)
+    so `mapItem` drops a stale-version `full_content_html` (forcing the reader to
+    re-invoke the function rather than render it) and the reader/offline
+    full-text query key is `['fulltext', id, FULLTEXT_VERSION]` (so a persisted
+    terminal result — held under `staleTime: Infinity` — isn't served past a
+    bump).
   - **Tidies the extracted body** (`cleanArticleHtml` in
     `supabase/functions/_shared/fulltext.ts`) before it is measured and
     returned: **(a)** strips site navigation — every `<nav>` /
@@ -934,7 +950,9 @@ keys differ; the strategies map one-to-one:
   it tracks the offline buckets (**pinned OR favorited**, matching `/offline`)
   via the shared item-state store and, while an item is bucketed, holds its
   reader queries — `['item', id]` (detail + sanitized feed body) and, for
-  truncated feeds, `['fulltext', id]` (the extracted reading body) — in the
+  truncated feeds, `['fulltext', id, FULLTEXT_VERSION]` (the extracted reading
+  body, keyed by extractor version so a bump invalidates the persisted body that
+  would otherwise be served forever under `staleTime: Infinity`) — in the
   persisted cache so the item reads offline. An idle (`enabled:false`)
   `QueryObserver` per query blocks GC while bucketed and re-locks from hydrated
   state on mount (so a reload doesn't drop them); an entry is evicted only once
@@ -1046,13 +1064,16 @@ keys differ; the strategies map one-to-one:
     *re-reads* the item gets it; the offline/IndexedDB copy is currently
     per-device. Fold full-text into the offline/sync milestone so a pin on one
     device makes the readable body available offline on the others.
-  - **TODO — invalidate cached full text when the source article changes.** The
-    poller/refresh upserts on `(feed_id, guid)` and can update `content_html`
-    without clearing `full_content_html` (the `fulltext` function is its only
-    writer), so an edited article keeps serving stale reading-mode text. Proper
-    fix depends on real edit detection — `content_hash` is currently just the
-    guid, not a body hash — so wire that up first, then clear/refresh
-    `full_content_html` when the body hash changes.
+  - **TODO — invalidate cached full text when the *source article* changes.**
+    Extractor-*code* changes are handled (`full_content_version` lazily
+    re-extracts; see *Reader view → Full-text reading mode*), but a change to the
+    article *at the publisher* is not: the poller/refresh upserts on
+    `(feed_id, guid)` and can update `content_html` without clearing
+    `full_content_html` (the `fulltext` function is its only writer), so an
+    edited article keeps serving stale reading-mode text. Proper fix depends on
+    real edit detection — `content_hash` is currently just the guid, not a body
+    hash — so wire that up first, then clear/refresh `full_content_html` when the
+    body hash changes.
   - Smaller: per-feed override (force on/off), poller pre-fetch for known
     truncating feeds, and caching `empty`/`auth` outcomes (vs. only terminal
     React-Query caching client-side today) to avoid re-fetching hopeless pages.
