@@ -4,11 +4,12 @@ import { Link } from 'react-router-dom';
 import type { FeedItem } from '../lib/types';
 import { formatDisplayDomain, formatItemMetaTail, isSafeHttpUrl } from '../lib/itemMeta';
 import { usePointerDevice } from '../hooks/usePointerDevice';
+import { useWideViewport } from '../hooks/useWideViewport';
 import { useSwipeToDismiss } from '../hooks/useSwipeToDismiss';
 import { useItemState } from '../hooks/useItemState';
 import { ItemRowMenu, type ItemRowMenuItem } from './ItemRowMenu';
 import { TooltipButton } from './TooltipButton';
-import { PushPinFilled, PushPinOutline } from './icons';
+import { Check, PushPinFilled, PushPinOutline } from './icons';
 import './ItemRow.css';
 
 export interface RightAction {
@@ -41,6 +42,7 @@ export function ItemRow({
   const { state, set, toggle, hide } = useItemState(item.id);
   const pinned = state.pinned;
   const opened = state.opened;
+  const done = state.done;
 
   const title = item.title || '[untitled]';
   const source = feed.title || formatDisplayDomain(item.url);
@@ -49,6 +51,7 @@ export function ItemRow({
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const articleRef = useRef<HTMLElement>(null);
   const pointerDevice = usePointerDevice();
+  const wide = useWideViewport();
 
   const handleHide = useCallback(() => hide(), [hide]);
   const handlePin = useCallback(() => set('pinned', true), [set]);
@@ -184,6 +187,16 @@ export function ItemRow({
       : null;
 
   const pinLabel = pinned ? `Unpin ${title}` : `Pin ${title}`;
+  const doneLabel = done ? `Unmark ${title} done` : `Mark ${title} done`;
+  // Wide-viewport-only Done button on feed rows: surfaces the same toggle the
+  // reader's action bar has, in the row's reserved middle slot. Suppressed on
+  // library views (the row's right-side action already names the slot's intent)
+  // and on narrow viewports (the row keeps its two-tap-zone mobile shape).
+  const showDoneButton = !rightAction && wide;
+  const handleToggleDone = useCallback(() => {
+    if (done) set('done', false);
+    else hide();
+  }, [done, set, hide]);
 
   return (
     <>
@@ -239,6 +252,22 @@ export function ItemRow({
             })}
           </span>
         </Link>
+
+        {showDoneButton ? (
+          <TooltipButton
+            type="button"
+            className={'pin-btn' + (done ? ' pin-btn--active' : '')}
+            data-testid="done-btn"
+            aria-pressed={done}
+            aria-label={doneLabel}
+            tooltip={done ? 'Unmark done' : 'Done'}
+            onClick={handleToggleDone}
+          >
+            <span className="pin-btn__icon">
+              <Check />
+            </span>
+          </TooltipButton>
+        ) : null}
 
         {rightAction ? (
           <TooltipButton

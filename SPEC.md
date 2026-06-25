@@ -838,7 +838,13 @@ Identical to newshacker's *Story row layout*; only the meta content differs
   (`favorite` filled), `/done` → Unmark done (`check_circle` filled),
   `/opened` → Mark unread —
   filled, accent-colored. Same table as newshacker's *Library views*.
-- **Reserved middle slot** — unused; same high bar for any future use.
+- **Reserved middle slot** — on **narrow viewports** stays unused (mobile keeps
+  the two-tap-zone shape). On **wide viewports (≥960px) feed rows**, fills with
+  a **Done** icon button (`check`) sitting immediately to the left of Pin —
+  same toggle semantics as the reader's Done action (untoggled → marks done
+  and records an undo point; toggled → unmarks). Library views keep the slot
+  empty (their right-side button already names the row's intent). Same high
+  bar for any further use.
 
 Display-only meta (plain text inside the row link): **source** (feed/site
 name, favicon, trimmed to the registrable domain the way newshacker trims
