@@ -20,6 +20,16 @@
   padding-bottom: max(4px, env(safe-area-inset-bottom));
 }
 
+/* Default bottom bar (readmo:bottom-bar = 'list'): sit at the end of the list
+   in normal flow — scrolled to, never overlapping rows — matching newshacker's
+   relative footer. The 'screen' option drops this class and falls back to the
+   sticky rule above, pinning the bar to the viewport foot. The sweep
+   IntersectionObserver needs no change: measureStickyBottomInset already clamps
+   a below-the-fold toolbar's intrusion to 0. */
+.list-toolbar--bottom.list-toolbar--relative {
+  position: static;
+}
+
 .list-toolbar__row {
   display: flex;
   align-items: center;

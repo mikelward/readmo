@@ -653,6 +653,22 @@ loopback/link-local/private/metadata targets and redirects to them.
    IntersectionObserver whose `rootMargin` shrinks the top by that inset; the
    button disables when nothing unpinned is fully visible. Undo restores the
    last done / swipe / sweep batch. Same component/behavior as newshacker.
+   - **Auto-hide on scroll** (opt-in, `readmo:hide-on-scroll`, off by default —
+     see *Settings → Reading*): when on, each unpinned row is marked **Done the
+     moment it scrolls fully off the top** of the viewport (you scrolled past it
+     without pinning it). This is **not** the Sweep button: there's **no timer
+     and no accumulation** — dismissal is immediate and per-row, driven directly
+     by the sweep IntersectionObserver firing as a row leaves the top edge after
+     having been fully visible. It reuses Sweep's `hideMany` and the same pin
+     shield (pinned rows are never auto-hidden), and rows still below the fold
+     are never auto-hidden — only ones you've actually scrolled past. Rows that
+     are already Done/Hidden are skipped, so a re-delivered id can't clobber the
+     undo baseline. **Undo restores the whole scroll burst, not just the last
+     row:** dismissals within a rolling **2s window** of each other extend a
+     single undo batch (mirrors newshacker's dismiss-batch window), so one tap of
+     the toolbar Undo brings back the run you just scrolled past; a gap longer
+     than the window starts a fresh batch, so Undo only ever reaches back to the
+     burst you were just looking at.
 
 7. **Bottom action bar** — Back-to-top + More + Undo + Sweep on feed footers;
    Back-to-top only on library footers. Same slot order. **More lives in the
@@ -660,20 +676,32 @@ loopback/link-local/private/metadata targets and redirects to them.
    middle slot between Back-to-top and the Undo/Sweep group. It appears once
    the feed is **populated** (not during the loading skeletons, the error/retry
    state, or an empty result — those would otherwise flash a misleading
-   exhausted message). Because our bottom bar is **pinned to the viewport foot**
-   (newshacker's is a relative footer that you scroll down to), **More is a
-   pager, not just a page-fetch button** — it always reveals the next content
-   rather than claiming exhaustion while loaded rows still sit below the fold:
-   - **While the foot of the loaded list is below the fold**, tapping More
-     **scrolls one page down** to bring more already-loaded rows into view.
-   - **Once the list end is in view and another page is fetchable**, tapping
-     More **loads the next page** and scrolls its **first row to just below the
-     sticky top chrome** (header + top toolbar) once it renders, so you keep
-     reading from where the new page begins.
-   - **Only when the end is reached *and* nothing more can be fetched** does it
-     settle into a disabled **"No more items"** — reaching the true end is
-     explicit feedback, never shown prematurely just because the pinned bar is
-     always on screen.
+   exhausted message).
+   - **Position is configurable** (`readmo:bottom-bar`, per-device — see
+     *Settings → Bottom toolbar*). The **default is `list`**: a **relative
+     footer at the end of the list** that you scroll down to, matching
+     newshacker and never overlapping rows. The opt-in **`screen`** **pins the
+     bar to the viewport foot** so the actions stay in reach without scrolling
+     to the end. Only the bottom bar is repositioned; the top toolbar always
+     sticks below the header.
+   - **In the default `list` (relative) position, More just fetches** the next
+     page (and scrolls its first row up) — the reader only reaches the bar at
+     the foot of the list, so it tracks `hasMore` and never needs a page-down
+     tap. It settles into a disabled **"No more items"** at the true end.
+   - **In the `screen` (pinned) position, More is a pager, not just a page-fetch
+     button** — the bar is always on screen, so it can't claim exhaustion while
+     loaded rows still sit below the fold:
+     - **While the foot of the loaded list is below the fold**, tapping More
+       **scrolls one page down** to bring more already-loaded rows into view.
+     - **Once the list end is in view and another page is fetchable**, tapping
+       More **loads the next page** and scrolls its **first row to just below
+       the sticky top chrome** (header + top toolbar) once it renders.
+     - **Only when the end is reached *and* nothing more can be fetched** does
+       it settle into a disabled **"No more items"**.
+   - When the bar is `screen`-pinned it overlaps content, so the **Sweep
+     IntersectionObserver shrinks its root's bottom edge** by the bar's
+     intrusion (a row tucked behind it isn't "fully visible"); in the default
+     `list` position the footer sits below the fold, so that inset is 0.
 
 8. **Pull-to-refresh** — re-runs the view's fetch **and** force-checks for a
    newer bundle. Identical to newshacker.
@@ -682,9 +710,17 @@ loopback/link-local/private/metadata targets and redirects to them.
    on titles for MVP; body search deferred). Search-glass in the header
    right-actions group, suppressed on `/search`. Same placement.
 
-10. **Settings** — `/settings`: subscriptions/folders, OPML in/out, theme
-    (light/dark/system), palette (Ink/Grape), account/sign-out. Theme and
-    palette are also accessible directly in the drawer's **Appearance** section.
+10. **Settings** — `/settings`: subscriptions/folders, OPML in/out,
+    **Reading**, **Bottom toolbar**, palette (Ink/Grape), theme
+    (light/dark/system), account/sign-out. Theme and palette are also accessible
+    directly in the drawer's **Appearance** section.
+    - **Reading** — a single per-device toggle, **Hide articles as you scroll
+      past** (`readmo:hide-on-scroll`, **off by default**), wiring the auto-hide
+      behavior in *List toolbar → Auto-hide on scroll*.
+    - **Bottom toolbar** — a two-option per-device picker (`readmo:bottom-bar`)
+      choosing where the bottom action bar sits: **Bottom of list** (the
+      default — the relative end-of-list footer) or **Bottom of screen** (pinned
+      to the viewport foot). See *Bottom action bar*.
 
 11. **Keyboard shortcuts** — same letter scheme (see below).
 

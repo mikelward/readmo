@@ -10,6 +10,11 @@ import { _resetNetworkStatusForTests } from '../lib/networkStatus';
 import type { FeedItem } from '../lib/types';
 import { resetPromoDismissedCacheForTest } from '../hooks/usePromoDismissed';
 import {
+  BOTTOM_BAR_KEY,
+  HIDE_ON_SCROLL_KEY,
+  resetReadingPrefsCacheForTest,
+} from '../hooks/useReadingPrefs';
+import {
   installIntersectionObserverMock,
   setVisibilityForTest,
   uninstallIntersectionObserverMock,
@@ -60,6 +65,7 @@ describe('ItemList', () => {
     // wrong reason).
     window.localStorage.clear();
     resetPromoDismissedCacheForTest();
+    resetReadingPrefsCacheForTest();
   });
 
   afterEach(() => {
@@ -227,6 +233,107 @@ describe('ItemList', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('sweep-btn')).toBeDisabled();
+    });
+  });
+
+  describe('auto-hide on scroll (readmo:hide-on-scroll)', () => {
+    it('marks an unpinned row Done once it scrolls off the top', async () => {
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      const source = new MockDataSource(`test-${Math.random()}`);
+      renderHome(source);
+
+      const firstRow = (await screen.findAllByTestId('item-row'))[0];
+      const titleText =
+        within(firstRow).getByTestId('item-title').textContent;
+
+      // Simulate the row scrolling fully off the top of the viewport.
+      act(() => {
+        setVisibilityForTest(firstRow.closest('li')!, 0);
+      });
+
+      await waitFor(() => {
+        const titles = screen
+          .queryAllByTestId('item-title')
+          .map((n) => n.textContent);
+        expect(titles).not.toContain(titleText);
+      });
+    });
+
+    it('shields a pinned row from auto-hide', async () => {
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      const source = new MockDataSource(`test-${Math.random()}`);
+      // Pin the first item up front so it leads the list and stays put.
+      const page = await source.getHomeItems();
+      const pinned = page.items[0].item;
+      source.stateStore.set(pinned.id, 'pinned', true);
+
+      renderHome(source);
+      const firstRow = (await screen.findAllByTestId('item-row'))[0];
+      const titleEl = within(firstRow).getByTestId('item-title');
+      expect(titleEl).toHaveTextContent(pinned.title);
+      const titleText = titleEl.textContent;
+
+      act(() => {
+        setVisibilityForTest(firstRow.closest('li')!, 0);
+      });
+
+      // Give any (incorrect) hide a chance to flush, then assert it survived.
+      await Promise.resolve();
+      expect(
+        screen.getAllByTestId('item-title').map((n) => n.textContent),
+      ).toContain(titleText);
+    });
+
+    it('restores the whole scroll burst with one Undo', async () => {
+      const user = userEvent.setup();
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      const source = new MockDataSource(`test-${Math.random()}`);
+      renderHome(source);
+
+      const titles = () =>
+        screen.queryAllByTestId('item-title').map((n) => n.textContent);
+
+      let rows = await screen.findAllByTestId('item-row');
+      const first = within(rows[0]).getByTestId('item-title').textContent;
+      const second = within(rows[1]).getByTestId('item-title').textContent;
+
+      // Scroll the first row off the top → auto-hidden.
+      act(() => setVisibilityForTest(rows[0].closest('li')!, 0));
+      await waitFor(() => expect(titles()).not.toContain(first));
+
+      // Scroll the next row off too, within the batch window.
+      rows = screen.getAllByTestId('item-row');
+      act(() => setVisibilityForTest(rows[0].closest('li')!, 0));
+      await waitFor(() => expect(titles()).not.toContain(second));
+
+      // A single Undo brings back BOTH, not just the last one.
+      await user.click(screen.getByTestId('undo-btn'));
+      await waitFor(() => {
+        const t = titles();
+        expect(t).toContain(first);
+        expect(t).toContain(second);
+      });
+    });
+
+    it('leaves rows alone when the setting is off (default)', async () => {
+      const source = new MockDataSource(`test-${Math.random()}`);
+      renderHome(source);
+
+      const firstRow = (await screen.findAllByTestId('item-row'))[0];
+      const titleText =
+        within(firstRow).getByTestId('item-title').textContent;
+
+      act(() => {
+        setVisibilityForTest(firstRow.closest('li')!, 0);
+      });
+
+      await Promise.resolve();
+      expect(
+        screen.getAllByTestId('item-title').map((n) => n.textContent),
+      ).toContain(titleText);
     });
   });
 
@@ -737,6 +844,10 @@ describe('ItemList', () => {
 
   it('More pages down through loaded rows, then settles on "No more items" at the foot', async () => {
     const user = userEvent.setup();
+    // The page-down pager is a pinned-bar ('screen') behavior; in the default
+    // relative mode the bar lives at the foot so "More" just fetches.
+    window.localStorage.setItem(BOTTOM_BAR_KEY, 'screen');
+    resetReadingPrefsCacheForTest();
     const scrollBySpy = vi.fn();
     vi.stubGlobal('scrollBy', scrollBySpy);
     vi.stubGlobal('scrollTo', vi.fn());
@@ -776,5 +887,36 @@ describe('ItemList', () => {
       expect(screen.getByTestId('more-btn')).toHaveTextContent('No more items');
     });
     expect(screen.getByTestId('more-btn')).toBeDisabled();
+  });
+
+  it('relative bar (default): More fetches the next page without a page-down scroll', async () => {
+    const user = userEvent.setup();
+    const scrollBySpy = vi.fn();
+    vi.stubGlobal('scrollBy', scrollBySpy);
+    vi.stubGlobal('scrollTo', vi.fn());
+
+    // Loaded rows extend below the fold AND another page is fetchable. In the
+    // default relative mode "More" should fetch straight away (no second tap to
+    // page down first), since the reader only reaches it at the list foot.
+    Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
+    Object.defineProperty(window, 'scrollY', { value: 0, configurable: true });
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      value: 2400,
+      configurable: true,
+    });
+
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const items = (await source.getHomeItems()).items;
+    const { fetchPage } = renderPaged(source, items, 5); // multiple pages
+
+    await screen.findAllByTestId('item-row');
+    const callsBefore = fetchPage.mock.calls.length;
+
+    await user.click(screen.getByTestId('more-btn'));
+
+    await waitFor(() => {
+      expect(fetchPage.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
+    expect(scrollBySpy).not.toHaveBeenCalled();
   });
 });

@@ -20,7 +20,15 @@ const FULLY_VISIBLE_RATIO = 0.999;
 // the viewport by those insets (`useStickyInset`). Mirrors newshacker's
 // `StoryList` sweep wiring, plus the bottom inset readmo needs because — unlike
 // newshacker's relative footer — its bottom toolbar is pinned over content.
-export function useInViewIds(): {
+interface Options {
+  /** Called with the ids of rows that have just scrolled fully off the *top* of
+   * the viewport (above the sticky chrome) after having been fully visible.
+   * Drives the optional auto-hide-on-scroll behavior; omit it for plain Sweep
+   * visibility tracking. */
+  onExitTop?: (ids: ItemId[]) => void;
+}
+
+export function useInViewIds(opts: Options = {}): {
   inViewIds: ReadonlySet<ItemId>;
   /** Stable per-id callback ref to attach to each row element. */
   getRowRef: (id: ItemId) => (el: HTMLElement | null) => void;
@@ -30,21 +38,56 @@ export function useInViewIds(): {
   const observerRef = useRef<IntersectionObserver | null>(null);
   const { top: topInset, bottom: bottomInset } = useStickyInset();
 
+  // Keep the latest callback in a ref so toggling the feature on/off never
+  // recreates the observer (its effect only depends on the insets).
+  const onExitTopRef = useRef(opts.onExitTop);
+  onExitTopRef.current = opts.onExitTop;
+
+  // Rows that have been fully visible at least once. A row is only a candidate
+  // for "scrolled off the top" once it's actually been seen — this excludes
+  // rows still below the fold (never intersected) from being auto-hidden on the
+  // first observer callback.
+  const seenRef = useRef<Set<ItemId>>(new Set());
+
   useEffect(() => {
     if (typeof IntersectionObserver === 'undefined') return;
     const io = new IntersectionObserver(
       (entries) => {
-        setInViewIds((prev) => {
-          const next = new Set(prev);
-          for (const entry of entries) {
-            const el = entry.target as HTMLElement;
-            const id = el.dataset.itemId;
-            if (!id) continue;
-            if (entry.intersectionRatio >= FULLY_VISIBLE_RATIO) next.add(id);
-            else next.delete(id);
+        const exitedTop: ItemId[] = [];
+        const nowVisible: ItemId[] = [];
+        const nowHidden: ItemId[] = [];
+        for (const entry of entries) {
+          const el = entry.target as HTMLElement;
+          const id = el.dataset.itemId;
+          if (!id) continue;
+          if (entry.intersectionRatio >= FULLY_VISIBLE_RATIO) {
+            nowVisible.push(id);
+            seenRef.current.add(id);
+          } else {
+            nowHidden.push(id);
+            // A previously-seen row that's now fully out of view: report it only
+            // if it left via the *top* edge (scrolled past while reading down),
+            // not the bottom (scrolled back up). rootBounds is unavailable in
+            // some environments (jsdom) — treat its absence as a top exit, which
+            // the seen-guard already keeps from firing on below-the-fold rows.
+            if (!entry.isIntersecting && seenRef.current.has(id)) {
+              const rb = entry.rootBounds;
+              const exitedViaTop = rb
+                ? entry.boundingClientRect.bottom <= rb.top
+                : true;
+              if (exitedViaTop) exitedTop.push(id);
+            }
           }
-          return next;
-        });
+        }
+        if (nowVisible.length || nowHidden.length) {
+          setInViewIds((prev) => {
+            const next = new Set(prev);
+            for (const id of nowVisible) next.add(id);
+            for (const id of nowHidden) next.delete(id);
+            return next;
+          });
+        }
+        if (exitedTop.length) onExitTopRef.current?.(exitedTop);
       },
       {
         threshold: [0, FULLY_VISIBLE_RATIO, 1],
@@ -75,6 +118,13 @@ export function useInViewIds(): {
       if (prev && prev !== el) {
         io?.unobserve(prev);
         rowEls.current.delete(id);
+        // Forget that this row was ever seen once it leaves the DOM. Otherwise a
+        // row that was auto-hidden (or manually marked Done) and then restored
+        // via Undo remounts *above* the viewport, and its first non-intersecting
+        // observation — still flagged "seen" — would immediately re-report a top
+        // exit and hide it again, defeating Undo. A restored row must be fully
+        // re-seen before it can auto-hide again (Codex P2 on PR #111).
+        seenRef.current.delete(id);
         setInViewIds((s) => {
           if (!s.has(id)) return s;
           const next = new Set(s);

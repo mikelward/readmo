@@ -179,6 +179,12 @@ export class ItemStateStore {
   // sweep batch" (SPEC.md *List toolbar*). Only hide-style mutations record
   // here; pin/favorite/done toggles are not toolbar-undoable.
   private lastUndo: UndoBatch | null = null;
+  // Identity of the action that produced `lastUndo`. `hideMany` only *extends*
+  // the existing batch when the caller passes the SAME key — so a stream of
+  // auto-hide-on-scroll dismissals (one stable key for the burst) accumulates,
+  // but any intervening keyless dismissal (swipe / Sweep) replaces the batch and
+  // can't be re-extended by a later scroll hide. null = no extendable batch.
+  private lastUndoKey: string | number | null = null;
   // Optional write-through: invoked with the set of boolean fields a mutation
   // actually CHANGED (prev→next diff), so a backing data source can persist just
   // those (SupabaseDataSource routes this to the set_item_state RPC). Sending the
@@ -329,18 +335,39 @@ export class ItemStateStore {
   }
 
   /** Sweep: dismiss many items as done in a single undoable batch. No-op
-   * when `ids` is empty. */
-  hideMany(ids: ItemId[], now: number = Date.now()): void {
+   * when `ids` is empty.
+   *
+   * `batchKey` lets a stream of dismissals accumulate into one undoable batch:
+   * when it matches the key of the current `lastUndo`, the new ids are appended
+   * instead of replacing it — so an auto-hide-on-scroll burst (one stable key
+   * for the burst, see ItemList) restores as a single Undo. A keyless call
+   * (swipe / Sweep) always starts a fresh batch and clears the key, so an
+   * intervening manual dismissal can't be bundled into a later scroll burst.
+   * Ids already in the batch keep their *original* prior state, so a re-delivered
+   * id can't overwrite the real pre-hide snapshot with the already-Done state. */
+  hideMany(
+    ids: ItemId[],
+    now: number = Date.now(),
+    { batchKey }: { batchKey?: string | number } = {},
+  ): void {
     if (ids.length === 0) return;
-    const batch: UndoBatch = [];
+    const extend =
+      batchKey != null && batchKey === this.lastUndoKey && this.lastUndo != null;
+    const base: UndoBatch = extend ? (this.lastUndo as UndoBatch) : [];
+    const seen = new Set(base.map(([id]) => id));
+    const batch: UndoBatch = base;
     for (const id of ids) {
       const prev = this.map[id] ?? DEFAULT_ITEM_STATE;
-      batch.push([id, this.map[id] ?? null]);
+      if (!seen.has(id)) {
+        batch.push([id, this.map[id] ?? null]);
+        seen.add(id);
+      }
       const next = applyMutation(prev, 'done', true, now);
       this.map = { ...this.map, [id]: next };
       this.emitDiff(id, prev, next);
     }
     this.lastUndo = batch;
+    this.lastUndoKey = batchKey ?? null;
     this.persistence.save(this.map);
     this.emit();
   }
@@ -368,6 +395,7 @@ export class ItemStateStore {
     }
     this.map = next;
     this.lastUndo = null;
+    this.lastUndoKey = null;
     this.persistence.save(this.map);
     this.emit();
   }
