@@ -130,4 +130,17 @@ describe('sanitizeContent', () => {
     expect(out).not.toContain('<input');
     expect(out).toContain('<p>ok</p>');
   });
+
+  it('unwraps <small> but keeps its text (presentational lede, not semantic)', () => {
+    // The Economist wraps an article's opening words in <small> for a
+    // small-caps lede; we strip the tag so those words render at body size,
+    // while preserving the words themselves.
+    const out = sanitizeContent(
+      '<p><small>On Monday morning,</small> another bout of history happened.</p>',
+      base,
+    );
+    expect(out).not.toContain('<small');
+    expect(out).toContain('On Monday morning,');
+    expect(out).toContain('another bout of history happened.');
+  });
 });

@@ -256,3 +256,12 @@
   color: var(--rm-accent);
   text-decoration: underline;
 }
+
+/* Belt-and-suspenders for <small>. The sanitizer now strips <small> at storage
+   time (it's presentational, not semantic — e.g. The Economist's small-caps
+   lede), but items stored before that change still carry the tag until they're
+   re-polled. Pin its size to the body copy so those words don't render at the
+   UA's shrunken default mid-paragraph. */
+.reader__body small {
+  font-size: inherit;
+}
