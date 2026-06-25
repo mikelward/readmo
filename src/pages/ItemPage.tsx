@@ -483,9 +483,21 @@ export function ItemPage() {
 
       <div className="reader__modebar">
         {fetchingFull ? (
-          <span className="reader__mode-note" data-testid="fulltext-loading">
-            Loading full article…
-          </span>
+          <>
+            {isSafeHttpUrl(item.url) ? (
+              <button
+                type="button"
+                className="reader__mode-toggle"
+                data-testid="fulltext-open-original"
+                onClick={openOriginal}
+              >
+                Open original
+              </button>
+            ) : null}
+            <span className="reader__mode-note" data-testid="fulltext-loading">
+              Loading full article…
+            </span>
+          </>
         ) : keepReading ? (
           <button
             type="button"
