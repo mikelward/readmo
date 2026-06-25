@@ -2,10 +2,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 import {
   BOTTOM_BAR_KEY,
+  GROUP_BY_FEED_KEY,
   HIDE_ON_SCROLL_KEY,
+  ITEM_SORT_KEY,
   resetReadingPrefsCacheForTest,
   useBottomBarPosition,
+  useGroupByFeed,
   useHideOnScroll,
+  useItemSort,
 } from './useReadingPrefs';
 
 function HideOnScrollProbe() {
@@ -82,6 +86,64 @@ describe('useReadingPrefs', () => {
     expect(screen.getByRole('button')).toHaveTextContent('hide:0 bar:screen');
     expect(window.localStorage.getItem(BOTTOM_BAR_KEY)).toBe('screen');
     expect(window.localStorage.getItem(HIDE_ON_SCROLL_KEY)).toBeNull();
+  });
+
+  describe('item sort order', () => {
+    function SortProbe() {
+      const { itemSort, setItemSort } = useItemSort();
+      return (
+        <button
+          type="button"
+          onClick={() => setItemSort(itemSort === 'newest' ? 'oldest' : 'newest')}
+        >
+          {itemSort}
+        </button>
+      );
+    }
+
+    it("defaults to 'newest'", () => {
+      render(<SortProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent('newest');
+    });
+
+    it("reads a persisted 'oldest' choice on mount", () => {
+      window.localStorage.setItem(ITEM_SORT_KEY, 'oldest');
+      render(<SortProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent('oldest');
+    });
+
+    it('persists a change and reverts to the default', () => {
+      render(<SortProbe />);
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('oldest');
+      expect(window.localStorage.getItem(ITEM_SORT_KEY)).toBe('oldest');
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('newest');
+      expect(window.localStorage.getItem(ITEM_SORT_KEY)).toBe('newest');
+    });
+  });
+
+  describe('group by feed', () => {
+    function GroupProbe() {
+      const { groupByFeed, setGroupByFeed } = useGroupByFeed();
+      return (
+        <button type="button" onClick={() => setGroupByFeed(!groupByFeed)}>
+          {groupByFeed ? 'grouped' : 'flat'}
+        </button>
+      );
+    }
+
+    it('defaults to off (flat)', () => {
+      render(<GroupProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent('flat');
+    });
+
+    it('persists a toggle to localStorage', () => {
+      render(<GroupProbe />);
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('grouped');
+      expect(window.localStorage.getItem(GROUP_BY_FEED_KEY)).toBe('1');
+    });
   });
 
   describe('bottom bar position', () => {

@@ -14,6 +14,20 @@
   position: relative;
 }
 
+/* Group-by-feed section header: a quiet label introducing each feed's run of
+   rows. Not interactive and not a tap zone — purely a visual divider (the feed
+   name is also on every row's meta line, so it's aria-hidden). */
+.item-list__group-header {
+  padding: 0.5rem 1rem 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--rm-meta);
+  background: var(--rm-bg);
+  border-bottom: 1px solid var(--rm-border);
+}
+
 .item-list__skeleton {
   /* Match the live row's compact height (.item-row in ItemRow.css). */
   height: 56px;

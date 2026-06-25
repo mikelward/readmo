@@ -220,6 +220,12 @@
   padding: 0;
 }
 
+.settings__hint {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  color: var(--rm-meta);
+}
+
 .settings__sub,
 .settings__account {
   display: flex;
@@ -227,6 +233,36 @@
   gap: 12px;
   padding: 10px 0;
   border-bottom: 1px solid var(--rm-border);
+}
+
+.settings__sub.is-dragging {
+  background: var(--rm-bg-card);
+  opacity: 0.9;
+}
+
+/* Drag handle: a 44×44 touch target (guardrail #2). `touch-action: none` lets
+   the pointer drag work on touch without the page scrolling under the finger. */
+.settings__sub-drag {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--rm-tap);
+  height: var(--rm-tap);
+  margin-left: -10px;
+  border: none;
+  background: none;
+  color: var(--rm-meta);
+  cursor: grab;
+  touch-action: none;
+}
+
+.settings__sub-drag:active {
+  cursor: grabbing;
+}
+
+.settings__sub.is-dragging .settings__sub-drag {
+  color: var(--rm-text);
 }
 
 .settings__sub:last-child {

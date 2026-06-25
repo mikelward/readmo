@@ -4,7 +4,9 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/renderWithProviders';
 import {
   BOTTOM_BAR_KEY,
+  GROUP_BY_FEED_KEY,
   HIDE_ON_SCROLL_KEY,
+  ITEM_SORT_KEY,
   resetReadingPrefsCacheForTest,
 } from '../hooks/useReadingPrefs';
 import { MockDataSource } from '../lib/data/MockDataSource';
@@ -564,6 +566,32 @@ describe('SettingsPage — Reading & Bottom toolbar', () => {
   afterEach(() => {
     window.localStorage.clear();
     resetReadingPrefsCacheForTest();
+  });
+
+  it('toggles "Group by feed" and persists it', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    const toggle = screen.getByRole('checkbox', { name: /group by feed/i });
+    expect(toggle).not.toBeChecked();
+    await user.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(window.localStorage.getItem(GROUP_BY_FEED_KEY)).toBe('1');
+  });
+
+  it('defaults sort order to "Newest first" and switches to "Oldest first"', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    expect(screen.getByRole('radio', { name: 'Newest first' })).toBeChecked();
+    await user.click(screen.getByRole('radio', { name: 'Oldest first' }));
+    expect(screen.getByRole('radio', { name: 'Oldest first' })).toBeChecked();
+    expect(window.localStorage.getItem(ITEM_SORT_KEY)).toBe('oldest');
+  });
+
+  it('renders drag handles for reordering subscriptions', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderWithProviders(<SettingsPage />, { source });
+    const handles = await screen.findAllByTestId('sub-drag-handle');
+    expect(handles.length).toBeGreaterThan(0);
   });
 
   it('toggles "Hide articles as you scroll past" and persists it', async () => {

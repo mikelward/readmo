@@ -19,11 +19,22 @@ export interface Page<T> {
   nextCursor: string | null;
 }
 
+/** Chronological order of the *body* of a feed view. Pinned items always stay
+ * oldest-pinned-first at the top regardless (SPEC.md *Feed views → Pinned*); this
+ * only flips the un-pinned body. Per-device, defaults to `newest`. */
+export type ItemSort = 'newest' | 'oldest';
+
 export interface FeedListOptions {
   /** Page cursor from a previous `Page.nextCursor`; omit for the first page. */
   cursor?: string | null;
   /** Page size; defaults to PAGE_SIZE (30). */
   limit?: number;
+  /** Body order, newest- or oldest-first. Defaults to `newest`. */
+  sort?: ItemSort;
+  /** Group the body by feed (feed-title sections, A→Z), instead of one flat
+   * chronological river. Pinned items stay in the global top section, ungrouped.
+   * No effect on a single-feed view. Defaults to `false`. */
+  groupByFeed?: boolean;
 }
 
 export interface DiscoveredFeed {
@@ -93,6 +104,11 @@ export interface DataSource {
 
   // --- Subscriptions & organization ----------------------------------------
   getSubscriptions(): Promise<Array<{ subscription: Subscription; feed: Feed }>>;
+  /** Persist a new manual feed order (drag-to-reorder in Settings). Pass every
+   * subscribed feed id in the desired order; each row's `sort` is reassigned to
+   * its index. This drives the drawer/Settings list order and the group-by-feed
+   * section order. RLS scopes the writes to the caller's own subscriptions. */
+  reorderSubscriptions(orderedFeedIds: FeedId[]): Promise<void>;
   getFolders(): Promise<Folder[]>;
   getFeed(feedId: FeedId): Promise<Feed | null>;
   discover(url: string): Promise<DiscoveredFeed[]>;

@@ -5,7 +5,7 @@ import { useFeedItems, type FetchPage } from '../hooks/useFeedItems';
 import { useInViewIds } from '../hooks/useInViewIds';
 import { useHideOnScroll, useBottomBarPosition } from '../hooks/useReadingPrefs';
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
-import type { ItemId } from '../lib/types';
+import type { FeedId, ItemId } from '../lib/types';
 import { measureStickyBottomInset, measureTopChromeHeight } from '../lib/stickyInset';
 import { loadFailureCopy, presentableDetail } from '../lib/loadErrorCopy';
 import { LoadError } from './LoadError';
@@ -36,11 +36,16 @@ interface Props {
   fetchPage: FetchPage;
   /** Shown in the empty state, e.g. "No unread items". */
   emptyLabel?: string;
+  /** Render feed-section headers above the body (group-by-feed view). The page
+   * passes the resolved preference; off for single-feed views, where one section
+   * header would be redundant. The DataSource must already return the body
+   * sectioned by feed for the headers to land in the right places. */
+  groupByFeed?: boolean;
 }
 
 /** A feed view (home / folder / single feed): sticky toolbar, item rows with
  * swipe, an explicit "More" button, and the background-refresh status strip. */
-export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
+export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }: Props) {
   const ds = useDataSource();
   const status = useConnectivityStatus();
   const {
@@ -201,6 +206,26 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
     return () => registerSweep(null, 0);
   }, [registerSweep, ds, sweepIds]);
 
+  // Group-by-feed headers: the DataSource returns the list fully sectioned by
+  // feed (each feed's pinned items at the top of its own section, sections in the
+  // user's custom subscription order), so the rows are contiguous by feed and a
+  // header belongs before the first row of each feed run — pinned or not. Keyed
+  // by item id so ItemRows can drop the header in without threading positions.
+  // Recomputed as pages append; the sectioning holds across pages, so a run can
+  // span a page break.
+  const groupHeaders = useMemo(() => {
+    if (!groupByFeed) return undefined;
+    const headers = new Map<ItemId, string>();
+    let lastFeedId: FeedId | null = null;
+    for (const fi of items) {
+      if (fi.item.feedId !== lastFeedId) {
+        headers.set(fi.item.id, fi.feed.title);
+        lastFeedId = fi.item.feedId;
+      }
+    }
+    return headers;
+  }, [groupByFeed, items]);
+
   // Force a confirming refetch when we come back online with nothing to show.
   // The miss-state guard below keys off the *current* status, but on the
   // offline→online transition `status` flips to 'online' while React Query can
@@ -280,6 +305,7 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
               enableSwipe
               listRef={listRef}
               getRowRef={getRowRef}
+              groupHeaders={groupHeaders}
               emptyLabel={emptyLabel ?? 'Nothing here yet.'}
             />
           </>

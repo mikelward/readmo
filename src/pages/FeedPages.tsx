@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useHomeFeed } from '../hooks/useHomeFeed';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { useItemSort, useGroupByFeed } from '../hooks/useReadingPrefs';
 import { ItemList } from '../components/ItemList';
 import { HomeEmptyCoach } from '../components/HomeEmptyCoach';
 import './PageHeader.css';
@@ -12,6 +13,8 @@ import './PageHeader.css';
 export function HomePage() {
   const ds = useDataSource();
   const { homeFeed } = useHomeFeed();
+  const { itemSort } = useItemSort();
+  const { groupByFeed } = useGroupByFeed();
   useDocumentTitle('readmo');
 
   // The drawer's ['subscriptions'] query, but forced to re-read on mount
@@ -51,21 +54,27 @@ export function HomePage() {
   if (subsFresh && subs?.length === 0) {
     return <HomeEmptyCoach />;
   }
+  // Fold the sort/group prefs into both the query key (so a change refetches
+  // from page 1 with the new ordering) and the fetch options.
+  const opts = { sort: itemSort, groupByFeed };
+  const prefKey = `${itemSort}:${groupByFeed ? 'grouped' : 'flat'}`;
   if (homeFeed.kind === 'folder') {
     const name = homeFeed.name;
     return (
       <ItemList
-        viewKey={`home-folder:${name}`}
-        fetchPage={(cursor) => ds.getFolderItems(name, { cursor })}
+        viewKey={`home-folder:${name}:${prefKey}`}
+        fetchPage={(cursor) => ds.getFolderItems(name, { cursor, ...opts })}
         emptyLabel={`No items in ${name}.`}
+        groupByFeed={groupByFeed}
       />
     );
   }
   return (
     <ItemList
-      viewKey="home-all"
-      fetchPage={(cursor) => ds.getHomeItems({ cursor })}
+      viewKey={`home-all:${prefKey}`}
+      fetchPage={(cursor) => ds.getHomeItems({ cursor, ...opts })}
       emptyLabel="You’re all caught up."
+      groupByFeed={groupByFeed}
     />
   );
 }
@@ -74,16 +83,22 @@ export function HomePage() {
 export function FolderPage() {
   const { name = '' } = useParams();
   const ds = useDataSource();
+  const { itemSort } = useItemSort();
+  const { groupByFeed } = useGroupByFeed();
   useDocumentTitle(`${name} · readmo`);
+  const prefKey = `${itemSort}:${groupByFeed ? 'grouped' : 'flat'}`;
   return (
     <>
       <div className="page-header">
         <h1 className="page-header__title">{name}</h1>
       </div>
       <ItemList
-        viewKey={`folder:${name}`}
-        fetchPage={(cursor) => ds.getFolderItems(name, { cursor })}
+        viewKey={`folder:${name}:${prefKey}`}
+        fetchPage={(cursor) =>
+          ds.getFolderItems(name, { cursor, sort: itemSort, groupByFeed })
+        }
         emptyLabel={`No items in ${name}.`}
+        groupByFeed={groupByFeed}
       />
     </>
   );
@@ -93,6 +108,7 @@ export function FolderPage() {
 export function FeedPage() {
   const { feedId = '' } = useParams();
   const ds = useDataSource();
+  const { itemSort } = useItemSort();
   const queryClient = useQueryClient();
   const { data: feed } = useQuery({
     queryKey: ['feed-meta', feedId],
@@ -130,9 +146,11 @@ export function FeedPage() {
           </button>
         ) : null}
       </div>
+      {/* Single feed: sort order applies; grouping-by-feed is a no-op (one
+          feed), so no section headers. */}
       <ItemList
-        viewKey={`feed:${feedId}`}
-        fetchPage={(cursor) => ds.getFeedItems(feedId, { cursor })}
+        viewKey={`feed:${feedId}:${itemSort}`}
+        fetchPage={(cursor) => ds.getFeedItems(feedId, { cursor, sort: itemSort })}
         emptyLabel="No items in this feed yet."
       />
     </>

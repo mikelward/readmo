@@ -13,14 +13,18 @@ import { useTheme } from '../hooks/useTheme';
 import {
   useHideOnScroll,
   useBottomBarPosition,
+  useItemSort,
+  useGroupByFeed,
   type BottomBarPosition,
 } from '../hooks/useReadingPrefs';
+import type { ItemSort } from '../lib/data/DataSource';
+import { ReorderableSubscriptions } from '../components/ReorderableSubscriptions';
 import { useAuth } from '../hooks/useAuth';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useToast } from '../hooks/useToast';
 import { presentableDetail } from '../lib/loadErrorCopy';
 import { FONT_SIZE_LABELS, type FontSize, type Palette, type Theme } from '../lib/theme';
-import type { Feed } from '../lib/types';
+import type { Feed, FeedId } from '../lib/types';
 import './SettingsPage.css';
 import './PageHeader.css';
 
@@ -58,6 +62,8 @@ export function SettingsPage() {
     useTheme();
   const { hideOnScroll, setHideOnScroll } = useHideOnScroll();
   const { bottomBarPosition, setBottomBarPosition } = useBottomBarPosition();
+  const { itemSort, setItemSort } = useItemSort();
+  const { groupByFeed, setGroupByFeed } = useGroupByFeed();
   const { user, signOut } = useAuth();
   const { showToast } = useToast();
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -319,6 +325,12 @@ export function SettingsPage() {
     { value: 'screen', label: 'Bottom of screen' },
   ];
   const fontSizes: FontSize[] = ['15', '16', '17'];
+  // Default first (SPEC.md *Feed views → Sort & grouping*): newest-first is the
+  // default river order; oldest-first is the opt-in.
+  const sortOrders: { value: ItemSort; label: string }[] = [
+    { value: 'newest', label: 'Newest first' },
+    { value: 'oldest', label: 'Oldest first' },
+  ];
 
   return (
     <div className="settings">
@@ -506,39 +518,26 @@ export function SettingsPage() {
 
       <section className="settings__section">
         <h2 className="settings__heading">Subscriptions</h2>
-        <ul className="settings__subs">
-          {subs.map(({ feed, subscription }) => (
-            <li key={feed.id} className="settings__sub">
-              <div className="settings__sub-main">
-                <div className="settings__sub-title">
-                  {subscription.titleOverride ?? feed.title}
-                </div>
-                <div className="settings__sub-url">{feed.url}</div>
-              </div>
-              <label className="settings__mute">
-                <input
-                  type="checkbox"
-                  checked={subscription.muted}
-                  onChange={async (e) => {
-                    await ds.setMuted(feed.id, e.target.checked);
-                    invalidate();
-                  }}
-                />
-                Mute
-              </label>
-              <button
-                type="button"
-                className="settings__unsub"
-                onClick={async () => {
-                  await ds.unsubscribe(feed.id);
-                  invalidate();
-                }}
-              >
-                Unsubscribe
-              </button>
-            </li>
-          ))}
-        </ul>
+        {subs.length > 1 ? (
+          <p className="settings__hint">
+            Drag the handles to set your feed order — it’s used by Group by feed.
+          </p>
+        ) : null}
+        <ReorderableSubscriptions
+          subs={subs}
+          onReorder={async (orderedFeedIds: FeedId[]) => {
+            await ds.reorderSubscriptions(orderedFeedIds);
+            invalidate();
+          }}
+          onMute={async (feedId, muted) => {
+            await ds.setMuted(feedId, muted);
+            invalidate();
+          }}
+          onUnsubscribe={async (feedId) => {
+            await ds.unsubscribe(feedId);
+            invalidate();
+          }}
+        />
       </section>
 
       <section className="settings__section">
@@ -586,7 +585,44 @@ export function SettingsPage() {
               </span>
             </label>
           </li>
+          <li className="settings__toggle">
+            <label className="settings__toggle-label">
+              <input
+                type="checkbox"
+                className="settings__toggle-check"
+                checked={groupByFeed}
+                onChange={(e) => setGroupByFeed(e.target.checked)}
+              />
+              <span className="settings__toggle-text">
+                <span className="settings__toggle-title">Group by feed</span>
+                <span className="settings__toggle-desc">
+                  Section Home and folder lists by feed, in the order your feeds
+                  are arranged below, instead of one merged river.
+                </span>
+              </span>
+            </label>
+          </li>
         </ul>
+      </section>
+
+      <section className="settings__section">
+        <h2 className="settings__heading">Sort order</h2>
+        <div className="settings__theme" role="radiogroup" aria-label="Sort order">
+          {sortOrders.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={itemSort === value}
+              className={
+                'settings__theme-btn' + (itemSort === value ? ' is-active' : '')
+              }
+              onClick={() => setItemSort(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </section>
 
       <section className="settings__section">

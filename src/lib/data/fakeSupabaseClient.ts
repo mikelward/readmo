@@ -270,6 +270,16 @@ function runRpc(
     return { data: row, error: null };
   }
 
+  if (name === 'reorder_subscriptions') {
+    // Atomic reorder (0017): set each named subscription's sort to its position.
+    const feedIds = (params.p_feed_ids ?? []) as string[];
+    feedIds.forEach((feedId, i) => {
+      const s = subByFeed.get(feedId);
+      if (s) s.sort = i;
+    });
+    return { data: null, error: null };
+  }
+
   if (name === 'subscribe_to_feed') {
     // Find-or-create by the public address (the fake matches on site_url), then
     // subscribe; returns the feeds_public row (setof → array).
@@ -315,21 +325,39 @@ function runRpc(
   if (name === 'feed_items') {
     const limit = Math.max(Number(params.p_limit ?? 30), 0);
     const offset = Math.max(Number(params.p_offset ?? 0), 0);
-    const scoped = items.filter((it) => inScope(it.feed_id));
-    const pinned = scoped
-      .filter((it) => stateByItem.get(it.id as string)?.pinned)
-      .sort((a, b) => pinMs(a) - pinMs(b) || idDesc(a, b)); // section 0: pinned_at asc
+    // Mirror 0016_feed_items_sort_group.sql: p_sort flips the body order;
+    // p_group_by_feed sections by the subscription `sort` with each feed's
+    // pinned items at the top of its section (flat keeps a global pinned top).
+    const sortAsc = params.p_sort === 'oldest';
+    const groupByFeed = Boolean(params.p_group_by_feed);
     const hiddenActive = (st: Row | undefined) =>
       Boolean(st?.hidden) &&
       typeof st?.hidden_at === 'string' &&
       Date.now() - Date.parse(st.hidden_at) <= TTL_MS; // Hidden expires after the TTL
-    const body = scoped
+    const isPinned = (it: Row) => Boolean(stateByItem.get(it.id as string)?.pinned);
+    const feedSort = (it: Row) =>
+      Number(subByFeed.get(it.feed_id as string)?.sort ?? Number.POSITIVE_INFINITY);
+    const combined = items
+      .filter((it) => inScope(it.feed_id))
       .filter((it) => {
+        // Pinned rows are kept regardless; the body drops Done/active-Hidden.
+        if (isPinned(it)) return true;
         const st = stateByItem.get(it.id as string);
-        return !(st && (st.pinned || st.done || hiddenActive(st)));
+        return !(st && (st.done || hiddenActive(st)));
       })
-      .sort((a, b) => sortMs(b) - sortMs(a) || idDesc(a, b)); // section 1: sort_at desc
-    const combined = [...pinned, ...body];
+      .sort((a, b) => {
+        if (groupByFeed) {
+          const fa = feedSort(a);
+          const fb = feedSort(b);
+          if (fa !== fb) return fa - fb;
+        }
+        const pa = isPinned(a);
+        const pb = isPinned(b);
+        if (pa !== pb) return pa ? -1 : 1;
+        if (pa) return pinMs(a) - pinMs(b) || idDesc(a, b); // oldest pin first
+        const d = sortMs(a) - sortMs(b);
+        return (sortAsc ? d : -d) || idDesc(a, b);
+      });
     return {
       data: combined.slice(offset, offset + limit),
       error: null,

@@ -630,7 +630,23 @@ loopback/link-local/private/metadata targets and redirects to them.
    - **`/folder/:name`** — a folder's merge. **`/feed/:feedId`** — one feed.
    - **Pinned prepended to the top** of every feed view, rendered once,
      oldest-pinned first; **pinning a body row keeps its position** (Sweep
-     consolidates) — newshacker's exact *Story feeds* rule.
+     consolidates) — newshacker's exact *Story feeds* rule. (When grouping by
+     feed — below — pinned items lead **their own feed's section** rather than a
+     global top section.)
+   - **Sort & grouping** (per-device — see *Settings → Sort order* and *Group by
+     feed*; applied server-side so they hold across pages, not a client re-sort
+     of loaded pages):
+     - **Sort order** (`readmo:item-sort`, default **`newest`**) sets the body's
+       chronological order — **newest-first** (default) or **oldest-first** —
+       on Home, folders, and single feeds. Pinned ordering is unaffected (always
+       oldest-pin first within its section).
+     - **Group by feed** (`readmo:group-by-feed`, default **off**) sections Home
+       and folder lists by feed instead of one merged river. Sections follow the
+       user's **manual feed order** (the `subscriptions.sort` field, set by
+       drag-to-reorder in Settings); within a section the chosen sort order
+       applies, and that feed's pinned items sit at the top of the section. A
+       feed-name header introduces each section (decorative — the name is also on
+       every row, so it's `aria-hidden`). No effect on a single-feed view.
    - **Done and Hidden filtered out**; **Opened** items render with the faded
      title.
    - **Initial paint one page (30 items)**; further pages only via an explicit
@@ -724,13 +740,25 @@ loopback/link-local/private/metadata targets and redirects to them.
    right-actions group, suppressed on `/search`. Same placement.
 
 10. **Settings** — `/settings`: subscriptions/folders, OPML in/out,
-    **Reading**, **Bottom toolbar**, palette (Ink/Grape), theme
+    **Reading**, **Sort order**, **Bottom toolbar**, palette (Ink/Grape), theme
     (light/dark/system), text size (Small/Medium/Large), account/sign-out.
     Theme, palette, and text size are also accessible directly in the drawer's
     **Appearance** section.
-    - **Reading** — a single per-device toggle, **Hide articles as you scroll
-      past** (`readmo:hide-on-scroll`, **off by default**), wiring the auto-hide
-      behavior in *List toolbar → Auto-hide on scroll*.
+    - **Subscriptions** — the feed list is **drag-to-reorder**: each row has a
+      drag handle (left) that's both pointer-draggable (mouse + touch) and
+      keyboard-operable (focus it, then ArrowUp/ArrowDown), so reordering isn't
+      mouse-only. The order persists to `subscriptions.sort` (via
+      `reorderSubscriptions`) and drives both the drawer/Settings list order and
+      the *Group by feed* section order. Rows stay within the **3-tap-zone cap**:
+      drag handle, Mute, Unsubscribe.
+    - **Reading** — per-device toggles: **Hide articles as you scroll past**
+      (`readmo:hide-on-scroll`, **off by default**), wiring the auto-hide
+      behavior in *List toolbar → Auto-hide on scroll*; and **Group by feed**
+      (`readmo:group-by-feed`, **off by default**), sectioning Home/folder lists
+      by feed (see *Feed views → Sort & grouping*).
+    - **Sort order** — a two-option per-device picker (`readmo:item-sort`)
+      choosing the feed body's chronological order: **Newest first** (the
+      default) or **Oldest first**. See *Feed views → Sort & grouping*.
     - **Bottom toolbar** — a two-option per-device picker (`readmo:bottom-bar`)
       choosing where the bottom action bar sits: **Bottom of list** (the
       default — the relative end-of-list footer) or **Bottom of screen** (pinned

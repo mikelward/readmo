@@ -53,4 +53,32 @@ describe('ItemRows', () => {
     await user.click(screen.getByTestId('row-action'));
     expect(toggled).toEqual([items[0].item.id]);
   });
+
+  it('renders a group header before the item it is keyed to (group-by-feed)', async () => {
+    const items = await sampleItems(3);
+    const headers = new Map<string, string>([
+      [items[0].item.id, 'First Feed'],
+      [items[2].item.id, 'Second Feed'],
+    ]);
+    const { container } = renderWithProviders(
+      <ItemRows items={items} emptyLabel="Nothing here." groupHeaders={headers} />,
+    );
+    const headerEls = container.querySelectorAll('.item-list__group-header');
+    expect([...headerEls].map((el) => el.textContent)).toEqual([
+      'First Feed',
+      'Second Feed',
+    ]);
+    // Decorative (the feed name is also on each row's meta line).
+    expect(headerEls[0]).toHaveAttribute('aria-hidden', 'true');
+
+    // Each header sits immediately before its keyed row in document order.
+    const firstHeader = headerEls[0];
+    const firstRow = container.querySelector(
+      `[data-item-id="${items[0].item.id}"]`,
+    );
+    expect(firstHeader.nextElementSibling).toBe(firstRow);
+
+    // A row with no header entry doesn't get one.
+    expect(container.querySelectorAll('.item-list__group-header')).toHaveLength(2);
+  });
 });
