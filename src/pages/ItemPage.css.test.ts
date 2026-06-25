@@ -56,4 +56,12 @@ describe('reader body typography contract', () => {
     expect(body['font-size']).toBe('1rem');
     expect(body['line-height']).toBe('1.4');
   });
+
+  // The sanitizer strips <small> at storage time (presentational lede, e.g. The
+  // Economist's small-caps opener), but items stored before that change still
+  // carry the tag. This rule pins any surviving <small> to body size so those
+  // words don't render at the UA's shrunken default mid-paragraph.
+  it('neutralizes <small> size so a stored lede tracks body copy', () => {
+    expect(declarationsFor('.reader__body small')['font-size']).toBe('inherit');
+  });
 });

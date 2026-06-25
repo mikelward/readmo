@@ -15,12 +15,18 @@ import sanitizeHtml from 'sanitize-html';
 // A reading-oriented allow-list: structural and inline text tags, media, and
 // tables. Notably absent: <script>, <style>, <iframe> (except via a tight
 // transform below if ever needed), <form>, and any event-handler attribute.
+// Also absent: <small> — its only role in feeds is presentational (e.g. The
+// Economist wraps the opening words of a body in <small> for a small-caps lede),
+// and since we strip inline styles the publisher's actual styling is gone
+// anyway. Dropping the tag (its text is kept) avoids rendering those words at
+// the UA's shrunken default. See the reader CSS for the belt-and-suspenders
+// rule that also neutralizes any <small> already stored before this change.
 const ALLOWED_TAGS = [
   'a', 'abbr', 'address', 'article', 'aside', 'b', 'blockquote', 'br',
   'caption', 'cite', 'code', 'col', 'colgroup', 'data', 'dd', 'del', 'details',
   'dfn', 'div', 'dl', 'dt', 'em', 'figcaption', 'figure', 'footer', 'h1', 'h2',
   'h3', 'h4', 'h5', 'h6', 'header', 'hr', 'i', 'img', 'ins', 'kbd', 'li',
-  'mark', 'nav', 'ol', 'p', 'pre', 'q', 's', 'samp', 'section', 'small',
+  'mark', 'nav', 'ol', 'p', 'pre', 'q', 's', 'samp', 'section',
   'span', 'strong', 'sub', 'summary', 'sup', 'table', 'tbody', 'td', 'tfoot',
   'th', 'thead', 'time', 'tr', 'u', 'ul', 'wbr',
   // Media: audio for podcast enclosures, source for responsive images.
