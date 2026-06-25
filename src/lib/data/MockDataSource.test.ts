@@ -143,3 +143,106 @@ describe('MockDataSource fetchFullText', () => {
     });
   });
 });
+
+describe('MockDataSource sort order', () => {
+  // Seed publish order (newest→oldest): item-1 … item-10 (see seed.ts).
+  it('defaults to newest-first', async () => {
+    const ds = new MockDataSource(`test-${Math.random()}`);
+    const page = await ds.getHomeItems();
+    const idx = (id: string) => page.items.findIndex((fi) => fi.item.id === id);
+    expect(idx('item-1')).toBeLessThan(idx('item-10'));
+  });
+
+  it('sorts oldest-first when asked, across pages', async () => {
+    const ds = new MockDataSource(`test-${Math.random()}`);
+    const all = await ds.getHomeItems({ sort: 'oldest', limit: 100 });
+    const ids = all.items.map((fi) => fi.item.id);
+    // Oldest (item-10) first, newest (item-1) last.
+    expect(ids[0]).toBe('item-10');
+    expect(ids[ids.length - 1]).toBe('item-1');
+    // Pagination respects the order: page 1 starts at the oldest.
+    const p1 = await ds.getHomeItems({ sort: 'oldest', limit: 3 });
+    expect(p1.items[0].item.id).toBe('item-10');
+  });
+
+  it('keeps pinned at the global top regardless of sort order', async () => {
+    const ds = new MockDataSource(`test-${Math.random()}`);
+    ds.stateStore.set('item-1', 'pinned', true, 1000); // newest item, pinned
+    const oldest = await ds.getHomeItems({ sort: 'oldest', limit: 100 });
+    // Even oldest-first, the pinned item leads (pinned section is independent).
+    expect(oldest.items[0].item.id).toBe('item-1');
+  });
+});
+
+describe('MockDataSource group by feed', () => {
+  const order = async (ds: MockDataSource, opts = {}) =>
+    (await ds.getHomeItems({ groupByFeed: true, limit: 100, ...opts })).items.map(
+      (fi) => fi.item.id,
+    );
+
+  it('sections items by feed in subscription order, newest-first within a feed', async () => {
+    const ds = new MockDataSource(`test-${Math.random()}`);
+    // Subscription order: verge(0) nasa(1) css(2) reddit(3).
+    expect(await order(ds)).toEqual([
+      'item-1', 'item-5', 'item-9', // verge, newest-first
+      'item-2', 'item-7', // nasa
+      'item-3', 'item-6', 'item-10', // css
+      'item-4', 'item-8', // reddit-prog
+    ]);
+  });
+
+  it('applies the sort order within each feed section', async () => {
+    const ds = new MockDataSource(`test-${Math.random()}`);
+    expect(await order(ds, { sort: 'oldest' })).toEqual([
+      'item-9', 'item-5', 'item-1', // verge, oldest-first
+      'item-7', 'item-2', // nasa
+      'item-10', 'item-6', 'item-3', // css
+      'item-8', 'item-4', // reddit-prog
+    ]);
+  });
+
+  it('puts a feed’s pinned items at the top of that feed’s section, not a global top', async () => {
+    const ds = new MockDataSource(`test-${Math.random()}`);
+    ds.stateStore.set('item-9', 'pinned', true, 1000); // verge, oldest verge item
+    const ids = await order(ds);
+    // item-9 leads the verge section (not the whole list), then verge body.
+    expect(ids.slice(0, 3)).toEqual(['item-9', 'item-1', 'item-5']);
+    // nasa section still starts where it did.
+    expect(ids.indexOf('item-2')).toBeLessThan(ids.indexOf('item-7'));
+  });
+
+  it('follows a reordered feed order', async () => {
+    const ds = new MockDataSource(`test-${Math.random()}`);
+    await ds.reorderSubscriptions([
+      'feed-css', 'feed-verge', 'feed-nasa', 'feed-reddit-prog', 'feed-park',
+    ]);
+    const ids = await order(ds);
+    // css now leads.
+    expect(ids.slice(0, 3)).toEqual(['item-3', 'item-6', 'item-10']);
+  });
+});
+
+describe('MockDataSource reorderSubscriptions', () => {
+  it('reassigns sort to match the given order', async () => {
+    const ds = new MockDataSource(`test-${Math.random()}`);
+    await ds.reorderSubscriptions([
+      'feed-nasa', 'feed-verge', 'feed-css', 'feed-reddit-prog', 'feed-park',
+    ]);
+    const subs = await ds.getSubscriptions();
+    expect(subs.map((s) => s.feed.id)).toEqual([
+      'feed-nasa', 'feed-verge', 'feed-css', 'feed-reddit-prog', 'feed-park',
+    ]);
+    expect(subs.map((s) => s.subscription.sort)).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it('keeps an unnamed subscription after the listed ones', async () => {
+    const ds = new MockDataSource(`test-${Math.random()}`);
+    // Omit feed-park; it should fall to the end, not vanish.
+    await ds.reorderSubscriptions([
+      'feed-css', 'feed-verge', 'feed-nasa', 'feed-reddit-prog',
+    ]);
+    const subs = await ds.getSubscriptions();
+    expect(subs[0].feed.id).toBe('feed-css');
+    expect(subs[subs.length - 1].feed.id).toBe('feed-park');
+  });
+});

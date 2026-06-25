@@ -1,5 +1,5 @@
-import type { Ref } from 'react';
-import type { FeedItem } from '../lib/types';
+import { Fragment, type Ref } from 'react';
+import type { FeedItem, ItemId } from '../lib/types';
 import { useShareItem } from '../hooks/useShareItem';
 import { ItemRow, type RightAction } from './ItemRow';
 import './ItemList.css';
@@ -24,6 +24,12 @@ interface Props {
    * row's `<li>` is observed for viewport visibility — Sweep hides only the
    * rows fully in view. Omitted by library/search/offline, which don't sweep. */
   getRowRef?: (id: FeedItem['item']['id']) => (el: HTMLElement | null) => void;
+  /** When grouping by feed, maps an item id → the feed-section header to render
+   * immediately before that row (the first row of each feed section). Computed
+   * in {@link ItemList} so the header tracks the server-side feed sectioning
+   * across pages. Header rows aren't navigable (keyboard nav targets
+   * `.item-row__body`) and aren't swept. */
+  groupHeaders?: Map<ItemId, string>;
 }
 
 /** The shared body of a list view: loading skeletons, the empty state, or the
@@ -38,6 +44,7 @@ export function ItemRows({
   listRef,
   rightAction,
   getRowRef,
+  groupHeaders,
 }: Props) {
   const share = useShareItem();
 
@@ -61,21 +68,30 @@ export function ItemRows({
 
   return (
     <ul className="item-list__rows" ref={listRef}>
-      {items.map((fi) => (
-        <li
-          key={fi.item.id}
-          className="item-list__row"
-          data-item-id={fi.item.id}
-          ref={getRowRef?.(fi.item.id)}
-        >
-          <ItemRow
-            feedItem={fi}
-            enableSwipe={enableSwipe}
-            onShare={() => share({ title: fi.item.title, url: fi.item.url })}
-            rightAction={rightAction?.(fi)}
-          />
-        </li>
-      ))}
+      {items.map((fi) => {
+        const header = groupHeaders?.get(fi.item.id);
+        return (
+          <Fragment key={fi.item.id}>
+            {header !== undefined ? (
+              <li className="item-list__group-header" aria-hidden="true">
+                {header}
+              </li>
+            ) : null}
+            <li
+              className="item-list__row"
+              data-item-id={fi.item.id}
+              ref={getRowRef?.(fi.item.id)}
+            >
+              <ItemRow
+                feedItem={fi}
+                enableSwipe={enableSwipe}
+                onShare={() => share({ title: fi.item.title, url: fi.item.url })}
+                rightAction={rightAction?.(fi)}
+              />
+            </li>
+          </Fragment>
+        );
+      })}
     </ul>
   );
 }

@@ -73,30 +73,59 @@ export class MockDataSource implements DataSource {
     return { item: { ...item }, feed: title !== feed.title ? { ...feed, title } : feed };
   }
 
-  /** Build the ordered list for a feed view: pinned first (oldest pin first,
-   * rendered once), then the body newest-first with Done/Hidden filtered. */
-  private orderedFor(predicate: (item: Item) => boolean): FeedItem[] {
+  /** Build the ordered list for a feed view, with Done/Hidden filtered out.
+   *
+   * The body order follows `opts.sort` (newest- or oldest-first by publish
+   * date). Pinned items are always rendered once, oldest-pinned first.
+   *
+   * Where the pinned items sit depends on grouping:
+   *   - **Flat** (default): a single pinned section at the very top of the
+   *     whole list, then the body.
+   *   - **Grouped by feed**: the body is sectioned by feed in the user's custom
+   *     subscription order (drag-to-reorder, the `sort` field), and each feed's
+   *     pinned items sit at the **top of that feed's section** — not lifted out
+   *     to a global top section. So every section is self-contained
+   *     (pinned-first, then the body in the chosen order). */
+  private orderedFor(
+    predicate: (item: Item) => boolean,
+    opts?: FeedListOptions,
+  ): FeedItem[] {
     const now = Date.now();
-    const candidates = this.items.filter(predicate);
+    const sortAsc = opts?.sort === 'oldest';
+    const groupByFeed = opts?.groupByFeed ?? false;
 
-    const pinned: Array<{ item: Item; at: number }> = [];
-    const body: Item[] = [];
-    for (const item of candidates) {
+    const rows: Array<{ fi: FeedItem; pinned: boolean; pinAt: number }> = [];
+    for (const item of this.items) {
+      if (!predicate(item)) continue;
       const st = this.stateStore.get(item.id, now);
       if (st.done || st.hidden) continue; // filtered from every feed
-      if (st.pinned) {
-        pinned.push({ item, at: st.pinnedAt ?? 0 });
-      } else {
-        body.push(item);
-      }
+      const fi = this.toFeedItem(item);
+      if (fi) rows.push({ fi, pinned: !!st.pinned, pinAt: st.pinnedAt ?? 0 });
     }
 
-    pinned.sort((a, b) => a.at - b.at); // oldest-pinned first
-    body.sort((a, b) => b.publishedAt - a.publishedAt); // newest first
+    const byDate = (a: FeedItem, b: FeedItem) =>
+      sortAsc
+        ? a.item.publishedAt - b.item.publishedAt
+        : b.item.publishedAt - a.item.publishedAt;
+    const feedOrder = (feedId: FeedId) =>
+      this.subs.get(feedId)?.sort ?? Number.POSITIVE_INFINITY;
 
-    return [...pinned.map((p) => p.item), ...body]
-      .map((it) => this.toFeedItem(it))
-      .filter((fi): fi is FeedItem => fi !== null);
+    rows.sort((a, b) => {
+      // Grouped: feed section (custom order) is the primary key, so pinned items
+      // stay inside their feed rather than floating to a global top section.
+      if (groupByFeed) {
+        const oa = feedOrder(a.fi.item.feedId);
+        const ob = feedOrder(b.fi.item.feedId);
+        if (oa !== ob) return oa - ob;
+      }
+      // Within a section (a feed when grouped, the whole list when flat): pinned
+      // first, oldest-pinned first; then the body in the chosen date order.
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      if (a.pinned) return a.pinAt - b.pinAt;
+      return byDate(a.fi, b.fi);
+    });
+
+    return rows.map((r) => r.fi);
   }
 
   private paginate(all: FeedItem[], opts?: FeedListOptions): Page<FeedItem> {
@@ -124,7 +153,7 @@ export class MockDataSource implements DataSource {
   async getHomeItems(opts?: FeedListOptions): Promise<Page<FeedItem>> {
     const feedIds = this.subscribedFeedIds({ excludeMuted: true });
     return this.paginate(
-      this.orderedFor((it) => feedIds.has(it.feedId)),
+      this.orderedFor((it) => feedIds.has(it.feedId), opts),
       opts,
     );
   }
@@ -139,7 +168,7 @@ export class MockDataSource implements DataSource {
       if (sub.folder === name) feedIds.add(sub.feedId);
     }
     return this.paginate(
-      this.orderedFor((it) => feedIds.has(it.feedId)),
+      this.orderedFor((it) => feedIds.has(it.feedId), opts),
       opts,
     );
   }
@@ -148,9 +177,10 @@ export class MockDataSource implements DataSource {
     feedId: FeedId,
     opts?: FeedListOptions,
   ): Promise<Page<FeedItem>> {
-    // Single-feed view includes a muted feed's own items.
+    // Single-feed view includes a muted feed's own items. Grouping by feed is a
+    // no-op here (one feed), but sort order still applies.
     return this.paginate(
-      this.orderedFor((it) => it.feedId === feedId),
+      this.orderedFor((it) => it.feedId === feedId, opts),
       opts,
     );
   }
@@ -215,6 +245,23 @@ export class MockDataSource implements DataSource {
       if (feed) out.push({ subscription: { ...sub }, feed: { ...feed } });
     }
     return out.sort((a, b) => a.subscription.sort - b.subscription.sort);
+  }
+
+  async reorderSubscriptions(orderedFeedIds: FeedId[]): Promise<void> {
+    // Reassign `sort` to match the given order. Any subscription not named in
+    // the list keeps its relative position after the listed ones (defensive —
+    // the caller passes the full set, but a concurrent subscribe shouldn't lose
+    // its row). Indices stay dense so the next reorder is well-defined.
+    const ranked = new Map(orderedFeedIds.map((id, i) => [id, i]));
+    const remaining = [...this.subs.values()]
+      .filter((s) => !ranked.has(s.feedId))
+      .sort((a, b) => a.sort - b.sort);
+    let next = orderedFeedIds.length;
+    for (const id of orderedFeedIds) {
+      const sub = this.subs.get(id);
+      if (sub) sub.sort = ranked.get(id)!;
+    }
+    for (const sub of remaining) sub.sort = next++;
   }
 
   async getFolders(): Promise<Folder[]> {

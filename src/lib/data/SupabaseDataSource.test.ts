@@ -425,6 +425,68 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(b.subscription.titleOverride).toBe('Custom');
   });
 
+  it('threads sort + group options into the feed_items RPC', async () => {
+    const env = setup();
+    await env.ds.getHomeItems({ sort: 'oldest', groupByFeed: true });
+    const call = env.fake.rpcCalls.find((c) => c.name === 'feed_items');
+    expect(call?.params).toMatchObject({
+      p_scope: 'home',
+      p_sort: 'oldest',
+      p_group_by_feed: true,
+    });
+  });
+
+  it('defaults the RPC to newest-first, ungrouped', async () => {
+    const env = setup();
+    await env.ds.getHomeItems();
+    const call = env.fake.rpcCalls.find((c) => c.name === 'feed_items');
+    expect(call?.params).toMatchObject({ p_sort: 'newest', p_group_by_feed: false });
+  });
+
+  it('sorts oldest-first when asked (body order flips; pinned stays on top)', async () => {
+    const env = setup();
+    const page = await env.ds.getHomeItems({ sort: 'oldest' });
+    // i2 pinned still leads; body now oldest-first: i3 (day 3) before i6 (day 6).
+    expect(ids(page.items)).toEqual(['i2', 'i3', 'i6']);
+  });
+
+  it('groups by feed in subscription order, pinned at the top of its section', async () => {
+    const env = setup();
+    // Pin a feed-b item so we can see it lead feed-b's section rather than the list.
+    env.fake.store.item_state.push(
+      mkState('i3', { pinned: true, pinned_at: iso(15) }),
+    );
+    const page = await env.ds.getHomeItems({ groupByFeed: true });
+    // feed-a (sort 0): i2 pinned, then i6. feed-b (sort 1): i3 pinned (top of its
+    // own section, not lifted above feed-a).
+    expect(ids(page.items)).toEqual(['i2', 'i6', 'i3']);
+  });
+
+  it('reorderSubscriptions reassigns each subscription sort atomically via one RPC', async () => {
+    const env = setup();
+    await env.ds.reorderSubscriptions(['feed-c', 'feed-a', 'feed-b']);
+    // One transactional RPC, not N per-row UPDATEs (0017).
+    expect(env.fake.rpcCalls).toContainEqual({
+      name: 'reorder_subscriptions',
+      params: { p_feed_ids: ['feed-c', 'feed-a', 'feed-b'] },
+    });
+    const subs = await env.ds.getSubscriptions();
+    expect(subs.map((s) => s.subscription.feedId)).toEqual([
+      'feed-c', 'feed-a', 'feed-b',
+    ]);
+    expect(subs.map((s) => s.subscription.sort)).toEqual([0, 1, 2]);
+  });
+
+  it('a newly subscribed feed appends at the end of the sort order (not a 0 tie)', async () => {
+    const env = setup();
+    await env.ds.subscribe('https://new.example.com/feed');
+    const subs = await env.ds.getSubscriptions();
+    const added = subs.find((s) => s.subscription.feedId === 'feed-new')!;
+    // Existing seed sorts are 0,1,2 → the new feed lands at 3, so Group-by-feed
+    // can section it rather than tying every feed at the schema default 0.
+    expect(added.subscription.sort).toBe(3);
+  });
+
   it('subscribe routes through subscribe_to_feed and triggers an immediate refresh', async () => {
     const env = setup();
     const feed = await env.ds.subscribe('https://new.example.com/feed', 'Tech');

@@ -89,6 +89,39 @@ describe('ItemList', () => {
     });
   });
 
+  it('renders a feed-section header per feed when grouping by feed', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey="home-grouped"
+        fetchPage={(cursor) =>
+          source.getHomeItems({ cursor, groupByFeed: true, limit: 100 })
+        }
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+    const headers = [...container.querySelectorAll('.item-list__group-header')];
+    // Seed has four non-muted feeds with items (verge, nasa, css, reddit-prog).
+    expect(headers.map((h) => h.textContent)).toEqual([
+      'The Verge',
+      'NASA Breaking News',
+      'CSS-Tricks',
+      'r/programming',
+    ]);
+  });
+
+  it('renders no section headers when not grouping', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const { container } = renderHome(source);
+    await screen.findAllByTestId('item-row');
+    expect(
+      container.querySelectorAll('.item-list__group-header'),
+    ).toHaveLength(0);
+  });
+
   it('renders the first page of items with the sticky toolbar', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     renderHome(source);

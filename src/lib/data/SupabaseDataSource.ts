@@ -386,7 +386,15 @@ export class SupabaseDataSource implements DataSource {
     // it, so a page returned before hydration would briefly show default flags.
     await this.ensureHydrated();
     const rows = this.unwrap<Array<ItemRow>>(
-      await this.sb.rpc('feed_items', { ...args, p_limit: limit, p_offset: offset }),
+      await this.sb.rpc('feed_items', {
+        ...args,
+        p_limit: limit,
+        p_offset: offset,
+        // Body ordering/sectioning is applied server-side so it holds across
+        // pages (0016_feed_items_sort_group.sql). Pinned stay oldest-first on top.
+        p_sort: opts?.sort ?? 'newest',
+        p_group_by_feed: opts?.groupByFeed ?? false,
+      }),
     );
     // PostgREST expands composite OUT columns flat: `returns table (item items)`
     // yields `[{ id, feed_id, ... }]`, not `[{ item: { id, ... } }]`. Guard that
@@ -401,7 +409,7 @@ export class SupabaseDataSource implements DataSource {
       throw new Error('feed_items returned rows missing expected item fields.');
     }
     const items = await this.resolveFeedItems(
-      this.overlayLocalState(rows),
+      this.overlayLocalState(rows, opts?.groupByFeed ?? false),
     );
 
     // An empty first page renders the "all caught up" empty state. But the
@@ -437,19 +445,28 @@ export class SupabaseDataSource implements DataSource {
    * is authoritative, but a just-written mutation may not have committed before
    * `useFeedItems` refetches — so overlay the store (which updated synchronously)
    * onto the bounded page: drop items now locally Done/Hidden (TTL-aware via
-   * `stateStore.get`) and re-lift locally-Pinned ones to the top (oldest-pin
-   * first). Operates only on the already-fetched page, so it can't resurrect a
-   * row the server dropped — that self-heals on the next clean refetch.
+   * `stateStore.get`). Operates only on the already-fetched page, so it can't
+   * resurrect a row the server dropped — that self-heals on the next clean
+   * refetch.
+   *
+   * In the flat view it also re-lifts locally-Pinned rows to a global top
+   * section (oldest-pin first), matching the server layout. In the grouped view
+   * the server already places each feed's pinned items at the top of that feed's
+   * section, so lifting them out to a global top would break the grouping — there
+   * we preserve the server order and only drop locally Done/Hidden; a row whose
+   * pin state just changed locally re-settles into its section on the next clean
+   * refetch (feed invalidation triggers one after every mutation).
    */
-  private overlayLocalState(items: ItemRow[]): ItemRow[] {
+  private overlayLocalState(items: ItemRow[], groupByFeed: boolean): ItemRow[] {
     const pinned: Array<{ row: ItemRow; at: number }> = [];
     const body: ItemRow[] = [];
     for (const row of items) {
       const st = this.stateStore.get(row.id);
       if (st.done || st.hidden) continue;
-      if (st.pinned) pinned.push({ row, at: st.pinnedAt ?? 0 });
+      if (!groupByFeed && st.pinned) pinned.push({ row, at: st.pinnedAt ?? 0 });
       else body.push(row);
     }
+    if (groupByFeed) return body; // server already sectioned pinned within feeds
     pinned.sort((a, b) => a.at - b.at);
     return [...pinned.map((p) => p.row), ...body];
   }
@@ -579,6 +596,18 @@ export class SupabaseDataSource implements DataSource {
     Array<{ subscription: Subscription; feed: Feed }>
   > {
     return this.loadSubscriptions();
+  }
+
+  async reorderSubscriptions(orderedFeedIds: FeedId[]): Promise<void> {
+    // One atomic statement (0017's reorder_subscriptions RPC) reassigns every
+    // named subscription's `sort` to its position, scoped to auth.uid(). Doing it
+    // server-side in a single UPDATE means a transient failure can't leave the
+    // order half-rewritten with duplicate/gap sorts — which would corrupt the
+    // grouped feed order until the next full reorder. Negligible cost.
+    const { error } = await this.sb.rpc('reorder_subscriptions', {
+      p_feed_ids: orderedFeedIds,
+    });
+    if (error) throw error instanceof Error ? error : new Error(String(error));
   }
 
   async getFolders(): Promise<Folder[]> {
