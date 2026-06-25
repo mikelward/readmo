@@ -725,6 +725,16 @@ loopback/link-local/private/metadata targets and redirects to them.
    IntersectionObserver whose `rootMargin` shrinks the top by that inset; the
    button disables when nothing unpinned is fully visible. Undo restores the
    last done / swipe / sweep batch. Same component/behavior as newshacker.
+   - **Animation.** Every swept row plays a single **200ms slide-right + fade
+     to zero** together (matches the swipe-right-to-hide direction and the
+     `useSwipeToDismiss` exit, so the broom feels like every row swiped itself
+     away at once); the actual `hideMany` is deferred until the first matching
+     `animationend` bubbles up from a swept `<li>`, with a 2× fallback timer
+     in case the event never fires (background-tab throttling, jsdom, etc.).
+     A pending sweep also commits synchronously on unmount so a navigation
+     mid-animation doesn't drop the tap. Under
+     `prefers-reduced-motion: reduce` the animation and the deferral are both
+     skipped — the hide is immediate.
    - **Auto-hide on scroll** (opt-in, `readmo:hide-on-scroll`, off by default —
      see *Settings → Reading*): when on, each unpinned row is marked **Done the
      moment it scrolls fully off the top** of the viewport (you scrolled past it

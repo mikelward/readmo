@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type AnimationEvent as ReactAnimationEvent,
+} from 'react';
 import { useDataSource } from '../lib/data/context';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { useFeedItems, type FetchPage } from '../hooks/useFeedItems';
@@ -31,6 +38,13 @@ const SCROLL_HIDE_BATCH_WINDOW_MS = 2000;
 // burst on one view would extend another view's stale undo batch. A global
 // sequence makes every burst's key unique across all lists.
 let scrollBurstSeq = 0;
+
+// Sweep animation duration — keep in sync with `.item-list__row--sweeping` in
+// ItemList.css and `EXIT_DURATION_MS` in `useSwipeToDismiss`. Tapping the broom
+// should feel like every row swiped itself away at the same moment. JS holds
+// the actual hide until the matching `animationend` fires (or a 2× fallback
+// timer, in case the event is throttled / suppressed by the browser).
+const SWEEP_ANIMATION_MS = 200;
 
 // Cap on how many pages a single "More" tap will auto-fetch past collapsed-only
 // content before stopping (and leaving "More" available again). A collapsed feed
@@ -289,10 +303,102 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
     [items, inViewIds, ds],
   );
 
+  // Visual "whoosh" when Sweep fires: every fully-visible, unpinned row plays
+  // the slide+fade animation together, then the hide commits once the
+  // animation ends. The commit is driven by the first `animationend` that
+  // bubbles up from the swept `<li>` (so JS follows whatever duration the CSS
+  // defines), with a fallback timer at 2× SWEEP_ANIMATION_MS in case the
+  // event never fires — background-tab throttling, jsdom not synthesizing
+  // animation events, an offscreen row whose animation the browser optimizes
+  // out, etc.
+  const [sweepingIds, setSweepingIds] = useState<ReadonlySet<ItemId>>(
+    () => new Set(),
+  );
+  const sweepPendingIdsRef = useRef<ItemId[] | null>(null);
+  const sweepFallbackTimerRef = useRef<number | null>(null);
+  // Mirror hideMany into a ref so the unmount cleanup below can commit a
+  // pending hide synchronously without re-subscribing the cleanup every
+  // render (hideMany identity is the DataSource's, stable in practice but
+  // we don't want to depend on that).
+  const hideManyRef = useRef(ds.stateStore.hideMany.bind(ds.stateStore));
   useEffect(() => {
-    registerSweep(() => ds.stateStore.hideMany(sweepIds), sweepIds.length);
+    hideManyRef.current = ds.stateStore.hideMany.bind(ds.stateStore);
+  }, [ds]);
+
+  const commitSweep = useCallback(() => {
+    const ids = sweepPendingIdsRef.current;
+    if (!ids) return;
+    sweepPendingIdsRef.current = null;
+    if (sweepFallbackTimerRef.current != null) {
+      window.clearTimeout(sweepFallbackTimerRef.current);
+      sweepFallbackTimerRef.current = null;
+    }
+    ds.stateStore.hideMany(ids);
+    setSweepingIds((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Set(prev);
+      for (const id of ids) next.delete(id);
+      return next;
+    });
+  }, [ds]);
+
+  // If the list unmounts (route change, etc.) while a sweep is still
+  // animating, commit the hide synchronously so the user's tap isn't dropped.
+  useEffect(() => {
+    return () => {
+      const ids = sweepPendingIdsRef.current;
+      if (ids) {
+        hideManyRef.current(ids);
+        sweepPendingIdsRef.current = null;
+      }
+      if (sweepFallbackTimerRef.current != null) {
+        window.clearTimeout(sweepFallbackTimerRef.current);
+        sweepFallbackTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleSweep = useCallback(() => {
+    if (sweepIds.length === 0) return;
+    // Ignore repeat taps while a sweep is already playing out — the second
+    // batch would be identical (hiddenIds hasn't updated yet).
+    if (sweepPendingIdsRef.current !== null) return;
+    const ids = sweepIds.slice();
+    const reducedMotion =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reducedMotion) {
+      ds.stateStore.hideMany(ids);
+      return;
+    }
+    sweepPendingIdsRef.current = ids;
+    setSweepingIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) next.add(id);
+      return next;
+    });
+    sweepFallbackTimerRef.current = window.setTimeout(
+      commitSweep,
+      SWEEP_ANIMATION_MS * 2,
+    );
+  }, [sweepIds, ds, commitSweep]);
+
+  // The first `animationend` from a swept row drives the commit — every `<li>`
+  // animates with the same duration, so one signal is enough. Filter by
+  // animationName so an unrelated descendant animation can't trigger it.
+  const handleListAnimationEnd = useCallback(
+    (e: ReactAnimationEvent<HTMLUListElement>) => {
+      if (e.animationName !== 'item-list__sweep-out') return;
+      commitSweep();
+    },
+    [commitSweep],
+  );
+
+  useEffect(() => {
+    registerSweep(handleSweep, sweepIds.length);
     return () => registerSweep(null, 0);
-  }, [registerSweep, ds, sweepIds]);
+  }, [registerSweep, handleSweep, sweepIds.length]);
 
   // Group-by-feed headers: the DataSource returns the list fully sectioned by
   // feed (each feed's pinned items at the top of its own section, sections in the
@@ -406,6 +512,8 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
             ) : null}
             <ItemRows
               items={items}
+              sweepingIds={sweepingIds}
+              onAnimationEnd={handleListAnimationEnd}
               // Skeletons (not the caught-up label) whenever a fetch is
               // validating an empty feed — the initial load, a reconnect
               // confirm, a boot-time cache-invalidation refetch over an empty
