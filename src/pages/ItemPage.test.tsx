@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useState, type ReactNode } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import { act, screen, waitFor } from '@testing-library/react';
@@ -405,6 +405,38 @@ describe('ItemPage reading mode', () => {
     // Recovered: reveal the full body via Keep reading (no auto-swap).
     await user.click(await screen.findByTestId('reader-keep-reading'));
     expect(await screen.findByText(/recovered full body/)).toBeInTheDocument();
+  });
+
+  it('offers an "Open original" escape hatch while the full article loads', async () => {
+    const user = userEvent.setup();
+    // Hold the full-text fetch open so the reader stays in the loading state
+    // (no racy timing — we settle the gate explicitly at the end).
+    let release: (result: FullTextResult) => void = () => {};
+    class SlowSource extends MockDataSource {
+      fetchFullText(): Promise<FullTextResult> {
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      }
+    }
+    const source = new SlowSource(`test-${Math.random()}`);
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    renderReader(source);
+
+    // The modebar shows the loading note plus an Open-original button so the
+    // reader can jump to the source without waiting for extraction.
+    expect(await screen.findByTestId('fulltext-loading')).toBeInTheDocument();
+    await user.click(screen.getByTestId('fulltext-open-original'));
+    expect(openSpy).toHaveBeenCalledWith(
+      expect.stringContaining('http'),
+      '_blank',
+      'noopener,noreferrer',
+    );
+
+    // Settle the in-flight fetch so no pending promise leaks past the test.
+    act(() => release({ status: 'ok', contentHtml: '<p>full article text</p>' }));
+    await screen.findByTestId('reader-keep-reading');
+    openSpy.mockRestore();
   });
 
   it('offers a manual "Get full article" control for an untruncated feed', async () => {

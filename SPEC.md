@@ -975,7 +975,10 @@ page's discipline is unchanged.
     **reading-view / feed-version toggle** lets the user flip between them. An
     already-cached full body defaults to the reading view. Feeds whose body is
     already complete are not auto-fetched but offer a **"Get full article"**
-    control.
+    control. While the background fetch is in flight the mode bar shows a
+    **"Loading full article…"** note alongside an **"Open original"** button (in
+    the same slot as "Keep reading"), so the reader can jump to the source
+    without waiting for extraction.
   - **Outcomes** (the function returns `{ status, contentHtml }`): `ok`,
     `empty` (paywall/teaser — nothing article-like found), `auth` (publisher
     gated the page even via the Jina fallback → the reader keeps the feed body
