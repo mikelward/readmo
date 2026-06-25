@@ -518,13 +518,34 @@ export function ItemPage() {
           </button>
         ) : fullFailed ? (
           <>
-            <span className="reader__mode-note" data-testid="fulltext-error">
-              {fetched?.status === 'auth'
-                ? 'This article needs you to sign in — open the original.'
-                : fetched?.status === 'empty'
-                  ? 'No readable version found — showing the feed version.'
-                  : 'Couldn’t load the full article — showing the feed version.'}
-            </span>
+            {/* `empty` isn't worth alarming over: the extractor found nothing
+                richer than the feed body already on screen. That covers both a
+                link aggregator like Reddit whose entry already *is* the whole
+                story and a paywall/teaser the backend couldn't expand — and
+                because a short complete entry and a short teaser are
+                indistinguishable by length, we don't try to tell them apart.
+                Either way the feed body stays and the Open-original button below
+                is the escape hatch to the source. `auth`/`unreachable` are real
+                misses that need explaining, so they keep their note. */}
+            {fetched?.status === 'auth' ? (
+              <span className="reader__mode-note" data-testid="fulltext-error">
+                This article needs you to sign in — open the original.
+              </span>
+            ) : fetched?.status === 'empty' ? null : (
+              <span className="reader__mode-note" data-testid="fulltext-error">
+                Couldn’t load the full article — showing the feed version.
+              </span>
+            )}
+            {isSafeHttpUrl(item.url) ? (
+              <button
+                type="button"
+                className="reader__mode-toggle"
+                data-testid="fulltext-open-original"
+                onClick={openOriginal}
+              >
+                Open original
+              </button>
+            ) : null}
             {fetched?.status === 'unreachable' ? (
               <button
                 type="button"
