@@ -92,11 +92,11 @@
 
 .app-drawer__segmented {
   display: flex;
-  /* Wrap rather than let buttons squeeze under the 44px tap floor: both the
-     mode row (light/dark/system) stays one line of three and the palette row
-     (Ink/Grape) one line of two at any realistic width, with wrapping as a
-     safety net on ultra-narrow viewports. Three is the contributor guide's
-     per-row tap-zone cap, which neither row exceeds. */
+  /* Wrap rather than let buttons squeeze under the 44px tap floor: the mode
+     row (light/dark/system) and the text-size row (S/M/L) each stay one line
+     of three, the palette row (Ink/Grape) one line of two, at any realistic
+     width — with wrapping as a safety net on ultra-narrow viewports. Three is
+     the contributor guide's per-row tap-zone cap, which no row exceeds. */
   flex-wrap: wrap;
   gap: 8px;
   margin: 4px 8px 8px;
@@ -141,6 +141,14 @@
   background: var(--rm-bg-card);
   color: var(--rm-accent);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+/* The capital "A" used by the text-size row. Per-button inline font-size sets
+   the scale; line-height: 1 keeps each "A" vertically centered in the shared
+   44px button regardless of glyph size. */
+.app-drawer__size-glyph {
+  font-weight: 700;
+  line-height: 1;
 }
 
 /* Ring the selected palette's swatch so the active choice reads at a glance,

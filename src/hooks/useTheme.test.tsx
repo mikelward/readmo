@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 import { useTheme } from './useTheme';
-import { PALETTE_STORAGE_KEY, THEME_STORAGE_KEY } from '../lib/theme';
+import {
+  FONT_SIZE_STORAGE_KEY,
+  PALETTE_STORAGE_KEY,
+  THEME_STORAGE_KEY,
+} from '../lib/theme';
 
 // Helper: mock `window.matchMedia` so the hook's system-flip effect can
 // subscribe. `fire` flips the mock's reported match state and dispatches
@@ -60,12 +64,14 @@ describe('useTheme', () => {
     window.localStorage.clear();
     document.documentElement.removeAttribute('data-theme');
     document.documentElement.removeAttribute('data-palette');
+    document.documentElement.removeAttribute('data-font-size');
   });
 
   afterEach(() => {
     window.localStorage.clear();
     document.documentElement.removeAttribute('data-theme');
     document.documentElement.removeAttribute('data-palette');
+    document.documentElement.removeAttribute('data-font-size');
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.remove();
     vi.restoreAllMocks();
@@ -113,6 +119,33 @@ describe('useTheme', () => {
     act(() => a.result.current.setPalette('grape'));
     expect(b.result.current.palette).toBe('grape');
     expect(document.documentElement.getAttribute('data-palette')).toBe('grape');
+  });
+
+  it('returns the stored font size and persists changes independently', () => {
+    const { result } = renderHook(() => useTheme());
+    expect(result.current.fontSize).toBe('16');
+
+    act(() => result.current.setFontSize('17'));
+    expect(result.current.fontSize).toBe('17');
+    expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBe('17');
+    expect(document.documentElement.getAttribute('data-font-size')).toBe('17');
+    // Mode/palette attributes are untouched by a text-size change.
+    expect(document.documentElement.hasAttribute('data-theme')).toBe(false);
+    expect(document.documentElement.hasAttribute('data-palette')).toBe(false);
+
+    act(() => result.current.setFontSize('16'));
+    expect(result.current.fontSize).toBe('16');
+    expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBeNull();
+    expect(document.documentElement.hasAttribute('data-font-size')).toBe(false);
+  });
+
+  it('syncs font size across hook instances via the change event', () => {
+    const a = renderHook(() => useTheme());
+    const b = renderHook(() => useTheme());
+
+    act(() => a.result.current.setFontSize('17'));
+    expect(b.result.current.fontSize).toBe('17');
+    expect(document.documentElement.getAttribute('data-font-size')).toBe('17');
   });
 
   it('syncs across hook instances via the change event', () => {

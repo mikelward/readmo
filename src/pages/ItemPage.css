@@ -211,7 +211,9 @@
 
 .reader__body {
   padding: 8px 16px 32px;
-  font-size: 16px;
+  /* `rem`, not px, so the article body tracks the "Text size" choice —
+     1rem is 16px at the default (Medium) and scales to 15/17px with it. */
+  font-size: 1rem;
   line-height: 1.4;
   overflow-wrap: break-word;
 }
