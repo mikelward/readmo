@@ -560,7 +560,11 @@ loopback/link-local/private/metadata targets and redirects to them.
   control, far right, 44×44+, every page. Signed out → "Sign in". Signed in →
   32px avatar (OAuth picture, falling back to an initial-on-color disc —
   deterministic, offline, zero requests); tap → popover with name, link to
-  settings, "Sign out". Not in the drawer.
+  settings, "Sign out". Not in the drawer. Dismissal is the shared dropdown
+  contract (`usePopoverDismiss`, also used by the overflow menu and the feed
+  row menu): closes on Escape or an outside press, and **the first press
+  outside only dismisses** — its trailing click is swallowed, so it never also
+  activates whatever was tapped.
 - **Implementation status.** Real Supabase OAuth (Google / Discord) is wired
   behind the existing `useAuth` / `getActiveUid` shape: when
   `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` are present the buttons start
@@ -828,7 +832,11 @@ loopback/link-local/private/metadata targets and redirects to them.
       **Enter** commits, **Esc** cancels, **blur** commits, and **leaving the
       input empty clears the override** so the row falls back to the
       publisher's title. Rename writes `subscriptions.title_override` and is
-      per-user; an unchanged value is a no-op.
+      per-user; an unchanged value is a no-op. The overflow menu dismisses via
+      the shared dropdown contract (`usePopoverDismiss`): Escape or an outside
+      press closes it, and **the first press outside only dismisses** — its
+      trailing click is swallowed, so dismissing the menu doesn't also activate
+      a neighboring row or control.
     - **Reading** — per-device toggles: **Hide articles as you scroll past**
       (`readmo:hide-on-scroll`, **off by default**), wiring the auto-hide
       behavior in *List toolbar → Auto-hide on scroll*; and **Group by feed**
