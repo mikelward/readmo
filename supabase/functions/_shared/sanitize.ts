@@ -86,15 +86,23 @@ export function sanitizeContent(
       },
       img: (tagName, attribs) => {
         const next: Record<string, string> = { ...attribs };
-        // Absolutize, then route through the same-origin image proxy so the
-        // reader's browser never hits the publisher directly (SPEC.md
-        // *Privacy* / guardrail: no reader IP/UA leak, strips tracking
-        // pixels, doubles as the offline-image source). data: images are
+        // Collapse a responsive srcset to ONE image, then route it through the
+        // same-origin proxy so the reader's browser never hits the publisher
+        // directly (SPEC.md *Privacy* / guardrail: no reader IP/UA leak, strips
+        // tracking pixels, doubles as the offline-image source).
+        //
+        // Why collapse: a multi-width srcset makes the browser fetch a separate
+        // candidate per <img>, and because each width is a distinct proxy URL it
+        // is also a distinct proxy fetch + service-worker cache entry. In a
+        // fixed-width reader column that buys almost nothing, so we pick a single
+        // sensible width server-side (closest to TARGET_SRCSET_WIDTH) and drop
+        // srcset/sizes — exactly one URL is ever requested. data: images are
         // inline and left untouched.
-        const abs = absolutize(attribs.src, baseUrl);
+        const chosen = pickSrcsetCandidate(attribs.srcset) ?? attribs.src;
+        const abs = absolutize(chosen, baseUrl);
         if (abs) next.src = proxify(abs);
-        const srcset = proxifySrcset(attribs.srcset, baseUrl);
-        if (srcset) next.srcset = srcset;
+        delete next.srcset;
+        delete next.sizes;
         // Lazy-load by default (SPEC.md reader view: "images lazy-load").
         if (!next.loading) next.loading = 'lazy';
         return { tagName, attribs: next };
@@ -102,13 +110,19 @@ export function sanitizeContent(
       source: (tagName, attribs) => {
         const next: Record<string, string> = { ...attribs };
         // `<source srcset>` is always an image candidate (in <picture>/<img>),
-        // so it goes through the image proxy. `<source src>` may be a media
-        // enclosure (audio/video), which the image proxy must not touch — we
-        // only absolutize it.
-        const abs = absolutize(attribs.src, baseUrl);
-        if (abs) next.src = abs;
-        const srcset = proxifySrcset(attribs.srcset, baseUrl);
-        if (srcset) next.srcset = srcset;
+        // so it goes through the image proxy. Collapse it to a single width too
+        // (same reason as <img>), keeping media/type so <picture> art-direction
+        // still selects the right source — we just serve one width within it.
+        // `<source src>` may be a media enclosure (audio/video), which the image
+        // proxy must not touch — we only absolutize it.
+        const chosen = pickSrcsetCandidate(attribs.srcset);
+        if (chosen) {
+          const abs = absolutize(chosen, baseUrl);
+          next.srcset = proxify(abs ?? chosen) ?? chosen;
+          delete next.sizes;
+        }
+        const absSrc = absolutize(attribs.src, baseUrl);
+        if (absSrc) next.src = absSrc;
         return { tagName, attribs: next };
       },
       video: (tagName, attribs) => {
@@ -171,20 +185,69 @@ export function proxify(url: string | null | undefined): string | null {
   return `/api/img?url=${encodeURIComponent(url)}`;
 }
 
-/** Absolutize each candidate in a srcset ("url 1x, url 2x") and route it
- * through the image proxy. */
-function proxifySrcset(
-  srcset: string | undefined,
-  base: string | null | undefined,
-): string | null {
+// Target width (CSS px) we collapse a responsive srcset down to. The reader
+// column is narrower than this, so ~1600 stays crisp even on a 2× retina
+// display while avoiding the publisher's largest (often 2000–3000px) original.
+// Tunable: raising it serves sharper/heavier images, lowering it the reverse.
+const TARGET_SRCSET_WIDTH = 1600;
+// Density we collapse an x-descriptor srcset to when there are no width
+// descriptors to compare — 2× covers retina without grabbing a 3× asset.
+const TARGET_SRCSET_DENSITY = 2;
+
+/**
+ * Choose ONE candidate URL from a srcset — the one closest to
+ * `TARGET_SRCSET_WIDTH` — so the proxy serves a single width per image instead
+ * of one fetch (and one cache entry) per candidate. "Closest to the target"
+ * naturally covers both ends: when every candidate is smaller than the target
+ * the largest wins, when every candidate is larger the smallest wins, and a tie
+ * breaks toward the larger (sharper) candidate. Returns the raw (un-proxied,
+ * possibly relative) URL, or null when there's no usable srcset. Width
+ * descriptors (`1424w`) are compared by width; a density-only/descriptor-less
+ * srcset falls back to the candidate closest to `TARGET_SRCSET_DENSITY`.
+ */
+function pickSrcsetCandidate(srcset: string | undefined): string | null {
   if (!srcset) return null;
-  const parts = parseSrcsetCandidates(srcset).map(({ url, descriptor }) => {
-    const abs = absolutize(url, base);
-    const proxied = proxify(abs ?? url) ?? url;
-    return descriptor ? `${proxied} ${descriptor}` : proxied;
+  const candidates = parseSrcsetCandidates(srcset);
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0].url;
+
+  // Prefer width descriptors when any candidate carries one (a valid srcset
+  // can't mix `w` and `x`, but be defensive and let the width group win).
+  const widths = candidates
+    .map((c) => ({ url: c.url, n: parseWidthDescriptor(c.descriptor) }))
+    .filter((c): c is { url: string; n: number } => c.n !== null);
+  if (widths.length > 0) {
+    return closestTo(widths, TARGET_SRCSET_WIDTH).url;
+  }
+
+  // No width descriptors: compare densities, treating a bare candidate as 1×.
+  const densities = candidates.map((c) => ({
+    url: c.url,
+    n: parseDensityDescriptor(c.descriptor) ?? 1,
+  }));
+  return closestTo(densities, TARGET_SRCSET_DENSITY).url;
+}
+
+/** Pick the item whose `n` is nearest `target`; ties favor the larger `n`. */
+function closestTo<T extends { n: number }>(items: T[], target: number): T {
+  return items.reduce((best, cur) => {
+    const dCur = Math.abs(cur.n - target);
+    const dBest = Math.abs(best.n - target);
+    if (dCur < dBest || (dCur === dBest && cur.n > best.n)) return cur;
+    return best;
   });
-  const joined = parts.join(', ');
-  return joined || null;
+}
+
+/** Numeric width from a `123w` descriptor, else null. */
+function parseWidthDescriptor(descriptor: string): number | null {
+  const m = /^(\d+)w$/.exec(descriptor.trim());
+  return m ? Number(m[1]) : null;
+}
+
+/** Numeric density from a `2x` / `1.5x` descriptor, else null. */
+function parseDensityDescriptor(descriptor: string): number | null {
+  const m = /^(\d+(?:\.\d+)?)x$/.exec(descriptor.trim());
+  return m ? Number(m[1]) : null;
 }
 
 /**

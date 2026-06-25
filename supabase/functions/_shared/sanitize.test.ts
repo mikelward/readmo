@@ -53,17 +53,20 @@ describe('sanitizeContent', () => {
     expect(out).not.toContain('src="https://pub.example.com/articles/pics/a.png"');
   });
 
-  it('routes srcset candidates through the image proxy, preserving descriptors', () => {
+  it('collapses an x-descriptor srcset to the ~2× candidate as a single src', () => {
     const out = sanitizeContent(
       '<img src="/a.png" srcset="/a.png 1x, /a@2x.png 2x">',
       base,
     );
+    // The 2× candidate is closest to the target density and becomes the lone src.
     expect(out).toContain(
-      '/api/img?url=' + encodeURIComponent('https://pub.example.com/a.png') + ' 1x',
+      'src="/api/img?url=' +
+        encodeURIComponent('https://pub.example.com/a@2x.png') +
+        '"',
     );
-    expect(out).toContain(
-      '/api/img?url=' + encodeURIComponent('https://pub.example.com/a@2x.png') + ' 2x',
-    );
+    // Collapsed: no srcset survives, and only one URL is ever proxied/fetched.
+    expect(out).not.toContain('srcset=');
+    expect(out.match(/\/api\/img\?url=/g)).toHaveLength(1);
   });
 
   it('keeps commas inside a single srcset URL (Cloudflare image-resizing path)', () => {
@@ -78,9 +81,8 @@ describe('sanitizeContent', () => {
       `<img srcset="${url} 1424w">`,
       'https://www.economist.com/science-and-technology/2026/06/24/headline',
     );
-    expect(out).toContain(
-      '/api/img?url=' + encodeURIComponent(url) + ' 1424w',
-    );
+    // Single candidate → it becomes the src, comma-bearing path intact.
+    expect(out).toContain('src="/api/img?url=' + encodeURIComponent(url) + '"');
     // The previous naive split absolutized the "quality=80" fragment against
     // the article URL into this bogus target — it must never be emitted.
     expect(out).not.toContain(
@@ -88,11 +90,12 @@ describe('sanitizeContent', () => {
         'https://www.economist.com/science-and-technology/2026/06/24/quality=80',
       ),
     );
-    // Exactly one proxied candidate, not one per comma-fragment.
+    // Exactly one proxied URL, not one per comma-fragment, and no srcset left.
     expect(out.match(/\/api\/img\?url=/g)).toHaveLength(1);
+    expect(out).not.toContain('srcset=');
   });
 
-  it('proxies multiple comma-bearing srcset candidates with descriptors', () => {
+  it('collapses comma-bearing width candidates to the one closest to 1600px', () => {
     const big =
       'https://img.example.com/cdn-cgi/image/width=1424,quality=80/a.jpg';
     const small =
@@ -101,21 +104,69 @@ describe('sanitizeContent', () => {
       `<img srcset="${big} 1424w, ${small} 712w">`,
       base,
     );
-    expect(out).toContain('/api/img?url=' + encodeURIComponent(big) + ' 1424w');
-    expect(out).toContain('/api/img?url=' + encodeURIComponent(small) + ' 712w');
+    // 1424 is nearer 1600 than 712 → the larger candidate wins, as the lone src.
+    expect(out).toContain('src="/api/img?url=' + encodeURIComponent(big) + '"');
+    expect(out).not.toContain(encodeURIComponent(small));
+    expect(out.match(/\/api\/img\?url=/g)).toHaveLength(1);
   });
 
-  it('proxies descriptor-less srcset candidates (comma-only separator)', () => {
+  it('picks the width closest to 1600px when every candidate exceeds it', () => {
     const out = sanitizeContent(
-      '<img srcset="/a.png, /b.png">',
+      '<img srcset="/w2000.jpg 2000w, /w2400.jpg 2400w, /w3000.jpg 3000w">',
       base,
     );
+    // All above the target → the smallest (2000w) is nearest 1600, so it wins;
+    // the giant 3000w original is never served.
     expect(out).toContain(
-      '/api/img?url=' + encodeURIComponent('https://pub.example.com/a.png'),
+      'src="/api/img?url=' +
+        encodeURIComponent('https://pub.example.com/w2000.jpg') +
+        '"',
     );
+    expect(out).not.toContain('w3000.jpg');
+    expect(out.match(/\/api\/img\?url=/g)).toHaveLength(1);
+  });
+
+  it('drops srcset (and an img sizes hint) after collapsing to one width', () => {
+    const out = sanitizeContent(
+      '<img src="/s.jpg" srcset="/a.jpg 800w, /b.jpg 1600w" sizes="100vw">',
+      base,
+    );
+    // The exact-target 1600w candidate is chosen as the single src.
     expect(out).toContain(
-      '/api/img?url=' + encodeURIComponent('https://pub.example.com/b.png'),
+      'src="/api/img?url=' +
+        encodeURIComponent('https://pub.example.com/b.jpg') +
+        '"',
     );
+    expect(out).not.toContain('srcset=');
+    expect(out).not.toContain('sizes=');
+  });
+
+  it('collapses descriptor-less srcset candidates to a single image', () => {
+    const out = sanitizeContent('<img srcset="/a.png, /b.png">', base);
+    // Both are bare (1×); the tie favors the first, the only proxied URL.
+    expect(out).toContain(
+      'src="/api/img?url=' +
+        encodeURIComponent('https://pub.example.com/a.png') +
+        '"',
+    );
+    expect(out.match(/\/api\/img\?url=/g)).toHaveLength(1);
+  });
+
+  it('collapses <source srcset> inside <picture> to one width, keeping media', () => {
+    const out = sanitizeContent(
+      '<picture><source media="(min-width: 800px)" srcset="/wide-800.jpg 800w, /wide-1600.jpg 1600w" sizes="100vw"><img src="/fallback.jpg"></picture>',
+      base,
+    );
+    // The source keeps its art-direction media query but collapses to the
+    // 1600w candidate; the 800w one and the now-pointless sizes hint are gone.
+    expect(out).toContain('media="(min-width: 800px)"');
+    expect(out).toContain(
+      encodeURIComponent('https://pub.example.com/wide-1600.jpg'),
+    );
+    expect(out).not.toContain(
+      encodeURIComponent('https://pub.example.com/wide-800.jpg'),
+    );
+    expect(out).not.toContain('sizes=');
   });
 
   it('leaves inline data: images un-proxied', () => {
