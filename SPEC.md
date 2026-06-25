@@ -1223,11 +1223,18 @@ keys differ; the strategies map one-to-one:
   legacy boolean `online === (status === 'online')` is kept for callers that
   only gate on connected-or-not, and React Query's `onlineManager` is held in
   sync with it. `useOnlineStatus` returns the boolean; `useConnectivityStatus`
-  returns the three-way status. Caveat: `navigator.onLine` lags on mobile, so in
-  the brief window after a real disconnect where the OS still says online, a
-  failed fetch reads as "Down" until the `offline` event lands — we accept
-  blaming the server during that ambiguity rather than mislabeling a real outage
-  as the user being offline (the bug this replaced).
+  returns the three-way status. `navigator.onLine` lags on mobile, so a *single*
+  failed fetch with the OS still claiming online reads as "Down" — we don't
+  mislabel a one-off server blip as the user being offline. But we don't wait out
+  `navigator.onLine` forever: the recovery probe targets the always-up
+  `/auth/v1/health` endpoint, so **two consecutive probe failures**
+  (`OFFLINE_AFTER_PROBE_FAILURES`) — no HTTP response at all, i.e. we can't reach
+  the network — flip the status to **"Offline"** on their own, without the
+  `offline` event ever landing. A genuinely-down but *reachable* backend answers
+  the probe with a 4xx/5xx (counted as success), so it stays "Down" and never
+  trips the offline path. This is what stopped the pill from sitting on "Down"
+  (or flapping "Down" ↔ "online", never showing "Offline") when the device is
+  genuinely offline but `navigator.onLine` is stuck `true`.
 - **"Down" self-heals.** Going `backend-unreachable` pauses React Query
   (`onlineManager.setOnline(false)`), so no app read fires to notice the backend
   recover — left alone the "Down" pill would stick on screen indefinitely (worse
@@ -1235,17 +1242,22 @@ keys differ; the strategies map one-to-one:
   `networkStatus.ts` re-probes the SW-bypassing liveness endpoint
   (`confirmBackendReachable`, `/auth/v1/health`) every 30s, and immediately on
   regained window focus / tab visibility, until liveness is re-confirmed. The
-  probe's lifecycle keys on a liveness flag, **not** on the connectivity status:
-  a Workbox cache hit (`reportFetchSuccess(false)`) can flip the status back to
-  `online` and clear the pill without proving the backend is reachable, so if the
-  probe stopped on that it would leave us *falsely* online while the backend is
-  still down. The doubt is set on any `goOffline` and cleared only by a
-  **cache-bypassing** success — a probe, or a non-GET request the backend
-  accepted (Workbox runtime caching is GET-only, so a POST/PATCH/DELETE always
-  reached the origin; a GET might be a cache hit). A cache-only "recovery" thus
-  clears the pill but keeps probing, and the next probe re-latches Down if the
-  backend is genuinely down. **Cost:** negligible — one in-process GoTrue GET (no
-  Postgres) every 30s, only while liveness is in doubt.
+  probe's lifecycle keys on a liveness flag (`awaitingLiveness`), **not** on the
+  connectivity status. That same flag stops the flap: **while awaiting liveness
+  confirmation (and a probe is configured), a Workbox cache hit
+  (`reportFetchSuccess(false)`) can no longer flip us back to `online`** — a
+  cache-served GET proves nothing about reachability. The doubt is set on any
+  `goOffline` (so suppression takes effect the instant we go down — no window
+  before the first probe) and cleared only by a **cache-bypassing** success — a
+  probe, or a non-GET request the backend accepted (Workbox runtime caching is
+  GET-only, so a POST/PATCH/DELETE always reached the origin; a GET might be a
+  cache hit). So the pill settles on "Down" immediately, then "Offline" after two
+  *recovery-timer* failures, instead of bouncing on every cache hit. Only the
+  serial recovery-timer probe advances the offline counter — opportunistic probes
+  (focus/visibility/empty-read confirmations, which can overlap on one tab return)
+  adjudicate the status but don't count, so a single instant can't trip "Offline".
+  **Cost:** negligible — one in-process GoTrue GET (no Postgres) every 30s, only
+  while liveness is in doubt.
 - **Offline reader fallback:** an **unpinned** article whose detail read can't
   reach the network still opens to its **RSS body**, recovered from a list page
   already on the device — list payloads carry `content_html` (only
