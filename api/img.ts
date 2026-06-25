@@ -69,7 +69,7 @@ export function buildAnonHeaders(
 
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'GET') {
-    return new Response('Method not allowed', { status: 405 });
+    return uncacheableError('Method not allowed', 405);
   }
 
   // SUPABASE_URL is the canonical name. Also accept VITE_SUPABASE_URL and
@@ -81,7 +81,7 @@ export default async function handler(req: Request): Promise<Response> {
     process.env.VITE_SUPABASE_URL ??
     process.env.NEXT_PUBLIC_SUPABASE_URL;
   if (!base) {
-    return new Response('Image proxy not configured', { status: 503 });
+    return uncacheableError('Image proxy not configured', 503);
   }
 
   // Supabase edge-function gateway requires the anon key on every request.
@@ -94,7 +94,7 @@ export default async function handler(req: Request): Promise<Response> {
 
   const target = new URL(req.url).searchParams.get('url');
   const upstream = buildUpstreamUrl(base, target);
-  if (!upstream) return new Response('Missing url', { status: 400 });
+  if (!upstream) return uncacheableError('Missing url', 400);
 
   let res: Response;
   try {
@@ -102,7 +102,7 @@ export default async function handler(req: Request): Promise<Response> {
       headers: { Accept: 'image/*', ...buildAnonHeaders(anonKey) },
     });
   } catch {
-    return new Response('Proxy error', { status: 502 });
+    return uncacheableError('Proxy error', 502);
   }
 
   const contentType = res.headers.get('content-type');
@@ -111,19 +111,42 @@ export default async function handler(req: Request): Promise<Response> {
   // Only gate successful responses so the upstream's own 4xx/5xx pass through
   // with their original status instead of being masked as 415.
   if (res.ok && !isServeableImageType(contentType)) {
-    return new Response('Unsupported image type', { status: 415 });
+    return uncacheableError('Unsupported image type', 415);
   }
 
-  // Pass through the status and image bytes, preserving content-type and the
-  // long immutable cache-control the `img` function already sets.
   const headers = new Headers();
   if (contentType) headers.set('content-type', contentType);
-  const cacheControl = res.headers.get('cache-control');
-  if (cacheControl) headers.set('cache-control', cacheControl);
+  if (res.ok) {
+    // Success: carry the long immutable cache-control the `img` function sets so
+    // a shared cache (Cloudflare in front of /api/img) and the SW can keep the
+    // bytes. This is the ONLY path that should be cacheable.
+    const cacheControl = res.headers.get('cache-control');
+    if (cacheControl) headers.set('cache-control', cacheControl);
+  } else {
+    // Upstream error passed through with its original status — never let a
+    // shared cache store it. A transient publisher 5xx or a hotlink 403 must not
+    // get frozen at the edge for the image's week-long TTL.
+    headers.set('cache-control', 'no-store');
+  }
   // Stop MIME sniffing and neutralize any script execution if this response is
   // ever loaded as a top-level document rather than via <img>.
   headers.set('x-content-type-options', 'nosniff');
   headers.set('content-security-policy', "default-src 'none'; sandbox");
 
   return new Response(res.body, { status: res.status, headers });
+}
+
+/**
+ * Build a non-cacheable error response. `Cache-Control: no-store` keeps any
+ * shared cache in front of `/api/img` (Cloudflare, once it fronts the app for
+ * rate limiting) from caching a failure: under a "cache everything" rule a
+ * transient hotlink 403 or publisher 5xx would otherwise stick for the long
+ * image TTL and stay broken even after the upstream recovers. Only the 200
+ * image-bytes path is cacheable.
+ */
+export function uncacheableError(body: string, status: number): Response {
+  return new Response(body, {
+    status,
+    headers: { 'cache-control': 'no-store' },
+  });
 }
