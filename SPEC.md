@@ -116,7 +116,7 @@ Everything else about the visual system mirrors newshacker.
 - **App header layout:** three slots in a single sticky row. The drawer
   toggle is pinned to the viewport's left edge and the account chip to the
   viewport's right edge so both stay reachable at any width; the centered
-  inner (brand mark + wordmark, Offline pill, Search) keeps the 720px
+  inner (brand mark + wordmark, Offline pill, Search, Settings) keeps the 720px
   article column max-width so it aligns with the list below. Safe-area
   insets reserve space for landscape-iPhone notches on the edge controls.
 - **Navigation drawer sections:** Home (feed picker — All subscriptions or a folder), Library (Pinned / Favorites / Done / Opened / Offline), Folders (folder nav, hidden when none exist), Feeds (subscription list), Appearance (mode + palette + text-size segmented controls), App (Settings, Debug).
@@ -767,7 +767,8 @@ loopback/link-local/private/metadata targets and redirects to them.
     **Reading**, **Sort order**, **Bottom toolbar**, palette (Ink/Grape), theme
     (light/dark/system), text size (Small/Medium/Large), account/sign-out.
     Theme, palette, and text size are also accessible directly in the drawer's
-    **Appearance** section.
+    **Appearance** section. A gear icon sits at the right end of the header's
+    inner row (after Search) so settings is one tap away from any page.
     - **Subscriptions** — the feed list is **drag-to-reorder**: each row has a
       drag handle (left) that's both pointer-draggable (mouse + touch) and
       keyboard-operable (focus it, then ArrowUp/ArrowDown), so reordering isn't

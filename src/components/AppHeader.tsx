@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
-import { BrandMark, Menu, Search } from './icons';
+import { BrandMark, Menu, Search, Settings } from './icons';
 import { AppDrawer } from './AppDrawer';
 import { HeaderAccountMenu } from './HeaderAccountMenu';
 import './AppHeader.css';
@@ -59,6 +59,14 @@ export function AppHeader() {
             aria-label="Search"
           >
             <Search />
+          </Link>
+
+          <Link
+            to="/settings"
+            className="app-header__icon-btn"
+            aria-label="Settings"
+          >
+            <Settings />
           </Link>
         </div>
 

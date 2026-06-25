@@ -33,7 +33,9 @@
   flex: 1 1 auto;
   display: flex;
   align-items: center;
-  gap: 4px;
+  /* 8px gap satisfies the >=8px-between-tap-zones guardrail for the
+   * Search/Settings pair (and any future action added here). */
+  gap: 8px;
   height: var(--rm-header-h);
   max-width: 720px;
   margin: 0 auto;
@@ -41,10 +43,47 @@
   min-width: 0;
 }
 
+/* Wide viewport: pull the edge controls out of flow and let the inner
+ * center on the viewport via `justify-content`. Below this breakpoint the
+ * default flex layout above keeps the inner snugly between the
+ * variable-width edge buttons; above it we have room for the full 720px
+ * centered column plus comfortable edge insets, and `margin: 0 auto` would
+ * otherwise drift the inner off-center (left) whenever the right-side
+ * account chip is wider than the left-side drawer toggle, putting the
+ * brand and right-side actions out of alignment with the 720px article/
+ * hero column directly below. */
+@media (min-width: 880px) {
+  .app-header {
+    justify-content: center;
+  }
+  .app-header__edge {
+    position: absolute;
+    top: env(safe-area-inset-top);
+    bottom: 0;
+  }
+  .app-header__edge--left {
+    left: max(8px, env(safe-area-inset-left));
+    margin-left: 0;
+  }
+  .app-header__edge--right {
+    right: max(8px, env(safe-area-inset-right));
+    margin-right: 0;
+  }
+  .app-header__inner {
+    flex: 0 1 auto;
+    width: 100%;
+    margin: 0;
+  }
+}
+
 .app-header__icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  /* Don't let flex compression squeeze the icon below its 44px tap floor on
+   * narrow phones — the brand row shrinks (via the wordmark media query
+   * below) before the action targets do. */
+  flex: 0 0 var(--rm-tap);
   width: var(--rm-tap);
   height: var(--rm-tap);
   border: none;
@@ -80,6 +119,18 @@
 
 .app-header__brand-text {
   display: inline-block;
+}
+
+/* On sub-390px phones (iPhone SE 1/2/3 / Mini / 320–375 CSS px) the inner
+ * can't fit the brand mark + wordmark alongside both icon actions and the
+ * right-side account chip — the wordmark drops out so the brand mark stays
+ * as a home affordance and the two 44px tap targets keep their floor. The
+ * breakpoint sits just below 390 (iPhone 12/13/14/15) so modern phones
+ * keep the wordmark. */
+@media (max-width: 389px) {
+  .app-header__brand-text {
+    display: none;
+  }
 }
 
 .app-header__spacer {
