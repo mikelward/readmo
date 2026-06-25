@@ -65,3 +65,53 @@ describe('reader body typography contract', () => {
     expect(declarationsFor('.reader__body small')['font-size']).toBe('inherit');
   });
 });
+
+describe('standalone image sizing contract', () => {
+  // SPEC.md "Reader view → Body": standalone images are full-bleed, but a
+  // source narrower than the reading column must NOT be upscaled (that's what
+  // made low-res images blurry). The guard: block images cap at their intrinsic
+  // size via `width: auto` + `max-width` rather than a forced `width`.
+  for (const selector of [
+    '.reader__body > img',
+    '.reader__body > figure img',
+    '.reader__body > picture img',
+    '.reader__body > table img',
+  ]) {
+    it(`does not force-upscale ${selector}`, () => {
+      const decl = declarationsFor(selector);
+      // A forced `width: 100%` / `calc(...)` is the upscaling bug; width must
+      // track the intrinsic size instead.
+      expect(decl.width).toBe('auto');
+      // Still bounded to the column / full feed area.
+      expect(decl['max-width']).toBeDefined();
+    });
+  }
+
+  // Direct-child images and reflowed-table images are *wider* than their padded
+  // containing block at full-bleed, so the breakout must be an explicit -16px
+  // margin, NOT `margin: auto` — per CSS 2.1 §10.3.3 auto margins collapse to 0
+  // for an over-wide block, dropping the left breakout and overflowing right.
+  for (const selector of ['.reader__body > img', '.reader__body > table img']) {
+    it(`breaks ${selector} out of the body padding with a fixed -16px margin`, () => {
+      const decl = declarationsFor(selector);
+      expect(decl['margin-left']).toBe('-16px');
+      // Must not reintroduce the buggy auto-centering on the over-wide box.
+      expect(decl['margin-right']).not.toBe('auto');
+    });
+  }
+
+  // Figure/picture images sit inside an already-broken-out band (the wrapper
+  // carries the -16px margins), so `max-width: 100%` never exceeds the
+  // containing block: auto margins are safe and center sub-band images.
+  for (const selector of [
+    '.reader__body > figure img',
+    '.reader__body > picture img',
+  ]) {
+    it(`centers ${selector} within its breakout band`, () => {
+      const decl = declarationsFor(selector);
+      expect(decl['max-width']).toBe('100%');
+      expect(decl['margin-left']).toBe('auto');
+      expect(decl['margin-right']).toBe('auto');
+    });
+  }
+});

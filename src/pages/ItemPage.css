@@ -196,10 +196,24 @@
 /* Direct-child images/pictures and figure-wrapped images are standalone block
    media — break out of the 16px body padding for full feed-area width
    (edge-to-edge on mobile, up to the reading column width on desktop —
-   720px, 860px at ≥960px). */
+   720px, 860px at ≥960px).
+
+   `width: auto` (not a forced `width`) caps each image at its *intrinsic*
+   resolution: a source narrower than the column renders at its natural pixel
+   size instead of being upscaled to full-bleed and going blurry. `max-width`
+   still bounds large images to the full feed area.
+
+   The breakout itself stays an explicit negative margin (NOT `margin: auto`):
+   the containing block here is the padded `.reader__body` content box, so a
+   column-or-wider image is *wider* than its containing block — and per CSS
+   2.1 §10.3.3 auto margins are then treated as 0, which would drop the left
+   breakout and overflow the image to the right. The fixed `-16px` left margin
+   reaches the feed edge for a wide image; a narrower one simply left-aligns at
+   that edge (never upscaled). */
 .reader__body > img {
   display: block;
-  width: calc(100% + 32px);
+  width: auto;
+  height: auto;
   max-width: calc(100% + 32px);
   margin-left: -16px;
   border-radius: 0;
@@ -211,11 +225,18 @@
   margin: 0 -16px;
 }
 
+/* `<figure>`/`<picture>` already carry the -16px breakout, so the image's
+   containing block IS the full feed band: `max-width: 100%` equals it, so a
+   wide image hits `width == containing block` (auto margins resolve to 0 →
+   full-bleed) and a narrower one centers — auto margins are safe here. */
 .reader__body > figure img,
 .reader__body > picture img {
   display: block;
-  width: 100%;
+  width: auto;
+  height: auto;
   max-width: 100%;
+  margin-left: auto;
+  margin-right: auto;
   border-radius: 0;
 }
 
@@ -239,7 +260,7 @@
 
 .reader__body > table img {
   display: block;
-  width: calc(100% + 32px);
+  width: auto;
   max-width: calc(100% + 32px);
   margin-left: -16px;
   height: auto;

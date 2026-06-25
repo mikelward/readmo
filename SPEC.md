@@ -930,8 +930,10 @@ page's discipline is unchanged.
   appropriately (`<audio>` for podcasts, image/figure, else a download link).
   **Standalone images** — direct children of the body or wrapped in `<figure>`
   or `<picture>` — are full-bleed (edge-to-edge on mobile, full feed-column
-  width on desktop). Inline images inside `<p>`, `<li>`, etc. keep their
-  natural size. `<figcaption>` text is inset 16px to align with body copy.
+  width on desktop), but capped at the source's intrinsic resolution: an image
+  smaller than the column renders at its natural pixel size rather than being
+  upscaled and blurred. Inline images inside `<p>`, `<li>`, etc.
+  keep their natural size. `<figcaption>` text is inset 16px to align with body copy.
   Direct-child `<table>` elements (Reddit and similar feeds embed a thumbnail
   in a layout table) are reflowed as a block stack so the image leads
   full-bleed above the text summary. **Body copy is 1rem (16px at the default
