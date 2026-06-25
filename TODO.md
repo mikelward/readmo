@@ -149,6 +149,23 @@ constraint is documented in more detail.
   stall. Revisit if a stuck batch query is ever seen pinning a connection. See
   `0013_user_query_statement_timeout.sql` and SCALING.md.
 
+## UI / layout
+
+- **Consider upping the tap targets and/or the min row height to match
+  newshacker's density.** readmo currently keys the list row body's `min-height`
+  to the bare `--rm-tap: 44px` touch floor (`ItemRow.css`), so a non-wrapping
+  row is `44 + 12px` padding = **56px** (see the hard-coded skeleton height in
+  `ItemList.css`). newshacker instead sets story rows to **48px** above the same
+  44px touch floor (`--tap-min: 48px`), making its rows `48 + 12` = **60px**.
+  Net effect: on the same viewport readmo packs ~7% more rows (~18.3 vs ~17),
+  which reads as more cramped — counter to guardrail #9 ("match newshacker's UX
+  by default"). Two ways to close the gap: (a) give `.item-row__body` its own
+  `min-height: 48px` (and bump the `56px` skeleton to `60px`) while keeping
+  `--rm-tap: 44px` as the genuine touch floor for buttons — targeted, doesn't
+  inflate other controls; or (b) raise `--rm-tap` to 48px, which also enlarges
+  every pin button / control keyed off it. Lean toward (a). Update `SPEC.md`'s
+  story-row layout section in the same commit.
+
 ## Infrastructure / hosting
 
 - **Consider consolidating the frontend onto Cloudflare (Vercel → CF Pages).**
