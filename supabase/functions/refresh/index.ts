@@ -43,7 +43,10 @@ Deno.serve(async (req: Request) => {
 
 async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return preflight();
-  if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
+  if (req.method !== 'POST') {
+    console.warn(`refresh: rejected ${req.method} (POST only)`);
+    return json({ error: 'POST only' }, 405);
+  }
 
   // Turn away known-bad old builds first — the targeted kill switch for a
   // client shipped with a refetch-loop bug. Cheapest possible reject (a header
@@ -54,6 +57,7 @@ async function handle(req: Request): Promise<Response> {
   const minClientBuild = Number(Deno.env.get('MIN_CLIENT_BUILD') ?? '0');
   const gate = checkClientBuild(req.headers.get(CLIENT_BUILD_HEADER), minClientBuild);
   if (!gate.allowed) {
+    console.warn(`refresh: rejected stale client build (floor ${gate.floor})`);
     return json({ error: 'client too old, please update', minBuild: gate.floor }, 426);
   }
 
@@ -64,6 +68,7 @@ async function handle(req: Request): Promise<Response> {
   // Shed abusive callers before touching Postgres.
   const limit = REFRESH_LIMIT.take(rateLimitKey(authHeader), Date.now());
   if (!limit.allowed) {
+    console.warn(`refresh: rate-limited caller (retry after ${limit.retryAfterS}s)`);
     return json({ error: 'rate limited', retryAfterSeconds: limit.retryAfterS }, 429, {
       'Retry-After': String(limit.retryAfterS),
     });

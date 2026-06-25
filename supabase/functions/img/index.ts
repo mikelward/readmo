@@ -12,6 +12,7 @@
 
 // @ts-nocheck — runs under Deno, not node/tsc.
 import { safeFetch, SsrfError } from '../_shared/ssrf.ts';
+import { redactUrl } from '../_shared/urlSafety.ts';
 
 // Only proxy real image bytes — never let the endpoint relay arbitrary content
 // types (it would otherwise become an open SSRF/exfil relay).
@@ -29,7 +30,10 @@ function isServeableImageType(contentType: string): boolean {
 
 Deno.serve(async (req: Request) => {
   const target = new URL(req.url).searchParams.get('url');
-  if (!target) return new Response('Missing url', { status: 400 });
+  if (!target) {
+    console.warn('img: rejected request with no url param');
+    return new Response('Missing url', { status: 400 });
+  }
 
   try {
     const res = await safeFetch(target, {
@@ -37,12 +41,23 @@ Deno.serve(async (req: Request) => {
       maxBytes: MAX_IMAGE_BYTES,
       headers: { Accept: 'image/*', 'User-Agent': 'Readmo/1.0 (+https://readmo.app)' },
     });
-    if (res.status >= 400) return new Response('Upstream error', { status: 502 });
+    if (res.status >= 400) {
+      // Log the upstream status so a 502 here is diagnosable. Without this the
+      // platform only records a bare EDGE_FUNCTION_ERROR/502 with no hint that
+      // it was the *upstream* refusing (e.g. a publisher 403/404 on a mangled
+      // URL), not our code crashing. Redact to scheme://host — an image URL can
+      // carry a signed param / subscriber token, and the full URL is already in
+      // the platform request log for correlation (guardrail #6, like the
+      // poll/full-text paths).
+      console.warn(`img: upstream HTTP ${res.status} for ${redactUrl(target)}`);
+      return new Response('Upstream error', { status: 502 });
+    }
 
     const contentType = res.headers.get('content-type') ?? '';
     if (!isServeableImageType(contentType)) {
       // Refuse non-image responses (and SVG) — strips beacons, blocks content
       // smuggling, and closes the same-origin SVG-script XSS vector.
+      console.warn(`img: non-image content-type "${contentType}" for ${redactUrl(target)}`);
       return new Response('Not an image', { status: 415 });
     }
 
@@ -61,10 +76,10 @@ Deno.serve(async (req: Request) => {
     });
   } catch (err) {
     if (err instanceof SsrfError) {
-      console.warn('img: blocked by SSRF guard:', err.message, '(', target, ')');
+      console.warn('img: blocked by SSRF guard:', err.message, '(', redactUrl(target), ')');
       return new Response('Blocked', { status: 400 });
     }
-    console.error('img: proxy error for', target, ':', err);
+    console.error('img: proxy error for', redactUrl(target), ':', err);
     return new Response('Proxy error', { status: 502 });
   }
 });
