@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useIsRestoring, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
@@ -10,8 +10,9 @@ import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { formatAge, formatDisplayDomain, isSafeHttpUrl } from '../lib/itemMeta';
 import { fullTextStaleTime, looksTruncated } from '../lib/fullText';
 import type { FullTextResult } from '../lib/fullText';
-import type { Feed, Item, ItemState, ItemStateField } from '../lib/types';
+import type { Item, ItemState, ItemStateField } from '../lib/types';
 import { TooltipButton } from '../components/TooltipButton';
+import { ItemRowMenu, type ItemRowMenuItem } from '../components/ItemRowMenu';
 import { LoadError } from '../components/LoadError';
 import { loadFailureCopy } from '../lib/loadErrorCopy';
 import {
@@ -40,7 +41,6 @@ interface ReaderToolbarProps {
    * toolbars don't collide. */
   placement: 'top' | 'bottom';
   item: Item;
-  feed: Feed;
   state: ItemState;
   wide: boolean;
   onBack: () => void;
@@ -49,12 +49,18 @@ interface ReaderToolbarProps {
   set: (field: ItemStateField, value: boolean) => void;
   markDone: () => void;
   share: (item: { title: string; url: string }) => void;
+  /** Whether the shared overflow menu is currently open (drives the More
+   * button's aria-expanded). The menu itself lives at the page level so
+   * the top and bottom bars share one instance — see newshacker's Thread. */
+  menuOpen: boolean;
+  /** Open the shared overflow menu anchored to the given element (the More
+   * button of whichever bar was tapped). */
+  onOpenMenu: (anchor: HTMLElement | null) => void;
 }
 
 function ReaderToolbar({
   placement,
   item,
-  feed,
   state,
   wide,
   onBack,
@@ -63,8 +69,10 @@ function ReaderToolbar({
   set,
   markDone,
   share,
+  menuOpen,
+  onOpenMenu,
 }: ReaderToolbarProps) {
-  const [moreOpen, setMoreOpen] = useState(false);
+  const moreBtnRef = useRef<HTMLButtonElement>(null);
   const sfx = placement === 'bottom' ? '-bottom' : '';
 
   return (
@@ -157,62 +165,18 @@ function ReaderToolbar({
 
         <div className="reader__more">
           <TooltipButton
+            ref={moreBtnRef}
             type="button"
             className="reader__action"
             tooltip="More"
             aria-label="More actions"
             aria-haspopup="menu"
-            aria-expanded={moreOpen}
-            onClick={() => setMoreOpen((o) => !o)}
+            aria-expanded={menuOpen}
+            onClick={() => onOpenMenu(moreBtnRef.current)}
             data-testid={`reader-more${sfx}`}
           >
             <MoreVert />
           </TooltipButton>
-          {moreOpen ? (
-            <div
-              className={
-                'reader__more-menu' +
-                (placement === 'bottom' ? ' reader__more-menu--up' : '')
-              }
-              role="menu"
-              onMouseLeave={() => setMoreOpen(false)}
-            >
-              {!wide ? (
-                <>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="reader__more-item"
-                    onClick={() => {
-                      setMoreOpen(false);
-                      toggle('favorite');
-                    }}
-                  >
-                    {state.favorite ? 'Unfavorite' : 'Favorite'}
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="reader__more-item"
-                    onClick={() => {
-                      setMoreOpen(false);
-                      share({ title: item.title, url: item.url });
-                    }}
-                  >
-                    Share
-                  </button>
-                </>
-              ) : null}
-              <Link
-                to={`/feed/${feed.id}`}
-                role="menuitem"
-                className="reader__more-item"
-                onClick={() => setMoreOpen(false)}
-              >
-                Open feed
-              </Link>
-            </div>
-          ) : null}
         </div>
       </div>
     </div>
@@ -335,6 +299,59 @@ export function ItemPage() {
 
   const goBack = useCallback(() => navigate(-1), [navigate]);
 
+  // Shared overflow menu for the reader's top + bottom bars. Lifted to the
+  // page (like newshacker's Thread) so both ⋮ buttons drive one menu
+  // instance — the shared ItemRowMenu, which brings anchored-popover
+  // placement, Escape / click-outside dismissal, and the first-tap-only
+  // swallow with it.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
+  const openMenu = useCallback(
+    (anchor: HTMLElement | null) => {
+      // Toggle closed when the same anchor is tapped again — standard
+      // popover behavior, matching newshacker's thread menu.
+      setMenuOpen((prev) => {
+        if (prev && menuAnchor === anchor) {
+          setMenuAnchor(null);
+          return false;
+        }
+        setMenuAnchor(anchor);
+        return true;
+      });
+    },
+    [menuAnchor],
+  );
+  const closeMenu = useCallback(() => {
+    setMenuOpen(false);
+    setMenuAnchor(null);
+  }, []);
+  // Favorite/Share live on the bar as inline icons on wide viewports, so
+  // they drop out of the menu there to avoid duplicate entry points; below
+  // 960px they stay here. Open feed is always in the menu.
+  const menuItems = useMemo<ItemRowMenuItem[]>(() => {
+    if (!resolved) return [];
+    const it = resolved.item;
+    const items: ItemRowMenuItem[] = [];
+    if (!wide) {
+      items.push({
+        key: 'favorite',
+        label: state.favorite ? 'Unfavorite' : 'Favorite',
+        onSelect: () => toggle('favorite'),
+      });
+      items.push({
+        key: 'share',
+        label: 'Share',
+        onSelect: () => share({ title: it.title, url: it.url }),
+      });
+    }
+    items.push({
+      key: 'open-feed',
+      label: 'Open feed',
+      onSelect: () => navigate(`/feed/${resolved.feed.id}`),
+    });
+    return items;
+  }, [resolved, wide, state.favorite, toggle, share, navigate]);
+
   // Reader keyboard shortcuts: o open original, p pin, f favorite, d done.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -414,7 +431,6 @@ export function ItemPage() {
 
   const toolbarProps = {
     item,
-    feed,
     state,
     wide,
     onBack: goBack,
@@ -427,7 +443,19 @@ export function ItemPage() {
 
   return (
     <article className="reader">
-      <ReaderToolbar placement="top" {...toolbarProps} />
+      <ReaderToolbar
+        placement="top"
+        {...toolbarProps}
+        menuOpen={menuOpen}
+        onOpenMenu={openMenu}
+      />
+      <ItemRowMenu
+        open={menuOpen}
+        title={item.title}
+        items={menuItems}
+        anchorEl={menuAnchor}
+        onClose={closeMenu}
+      />
 
       <header className="reader__header">
         <Link to={`/feed/${feed.id}`} className="reader__source">
@@ -526,7 +554,12 @@ export function ItemPage() {
         </div>
       )}
 
-      <ReaderToolbar placement="bottom" {...toolbarProps} />
+      <ReaderToolbar
+        placement="bottom"
+        {...toolbarProps}
+        menuOpen={menuOpen}
+        onOpenMenu={openMenu}
+      />
     </article>
   );
 }

@@ -86,6 +86,30 @@ describe('ItemPage (reader)', () => {
     expect(state.done).toBe(true);
     expect(state.pinned).toBe(false);
   });
+
+  it('opens the shared overflow menu from the More button and dismisses it on an outside tap', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReader(source);
+    const more = await screen.findByTestId('reader-more');
+    await user.click(more);
+    // The reader now uses the shared ItemRowMenu (anchored popover), not the
+    // old bespoke mouse-leave dropdown — so it carries Open feed and the
+    // narrow-viewport Favorite/Share, and dismisses on outside tap / Escape.
+    const menu = await screen.findByTestId('item-row-menu');
+    expect(menu).toHaveAttribute('data-variant', 'popover');
+    expect(screen.getByTestId('item-row-menu-open-feed')).toHaveTextContent(
+      'Open feed',
+    );
+    // A tap outside the menu dismisses it (the bespoke menu only closed on
+    // mouse-leave, which never fires on touch).
+    act(() => {
+      document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('item-row-menu')).toBeNull();
+    });
+  });
 });
 
 describe('ItemPage reading mode', () => {
