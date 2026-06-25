@@ -629,6 +629,50 @@ describe('ItemList', () => {
       });
     });
 
+    it('ignores a swept row that also scrolls off mid-animation, so Undo restores it', async () => {
+      // Race: tap Sweep (hide is deferred ~200ms for the animation), then
+      // scroll a swept row off the top before the animation commits. Without
+      // the guard, the keyed auto-hide fires first ("not done" baseline →
+      // marks done), then Sweep's keyless commit fires with a "done"
+      // baseline and replaces the auto-hide undo batch — Undo then leaves
+      // that row hidden. With the guard, the auto-hide IO skips ids that
+      // are mid-sweep, so Sweep's batch is the only one for those ids and
+      // Undo restores them.
+      const user = userEvent.setup();
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      const source = new MockDataSource(`test-${Math.random()}`);
+      renderHome(source);
+
+      const rows = await screen.findAllByTestId('item-row');
+      const firstTitle = within(rows[0]).getByTestId('item-title').textContent;
+
+      // Tap Sweep — animation in flight, hide not yet committed.
+      await user.click(screen.getByTestId('sweep-btn'));
+      // The first row is mid-sweep; while wearing the animation class, the
+      // IO reports it as fully off-screen (the user scrolled it past the top
+      // after tapping the broom). The guard must reject this so the
+      // auto-hide undo batch never claims this id.
+      act(() => {
+        setVisibilityForTest(rows[0].closest('li')!, 0);
+      });
+
+      // Let Sweep's fallback timer commit the deferred hide.
+      await waitFor(() => {
+        expect(screen.queryAllByTestId('item-row').length).toBe(0);
+      });
+
+      // Undo restores the swept batch — including the row that also scrolled
+      // off mid-animation.
+      await user.click(screen.getByTestId('undo-btn'));
+      await waitFor(() => {
+        const titles = screen
+          .getAllByTestId('item-title')
+          .map((n) => n.textContent);
+        expect(titles).toContain(firstTitle);
+      });
+    });
+
     it('leaves rows alone when the setting is off (default)', async () => {
       const source = new MockDataSource(`test-${Math.random()}`);
       renderHome(source);
