@@ -305,14 +305,14 @@ export function BrandMark({
     >
       {/* Tile + letterform read from the palette tokens (CSS custom props only
           resolve via `style`, not the `fill` presentation attribute), so the
-          mark follows the active palette — charcoal ink by default, deep
+          mark follows the active palette — near-black ink by default, deep
           grape under Grape. Fallbacks keep it correct if rendered outside
           the app. */}
       <rect
         width="512"
         height="512"
         rx="96"
-        style={{ fill: 'var(--rm-brand-tile, #363636)' }}
+        style={{ fill: 'var(--rm-brand-tile, #1a1a1a)' }}
       />
       <text
         x="256"

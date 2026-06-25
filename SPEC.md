@@ -128,7 +128,7 @@ Everything else about the visual system mirrors newshacker.
   both clear 4.5:1. Mode drives
   the `data-theme` attribute, palette drives `data-palette`; each palette ships
   its own light and dark variants. The brand mark's tile follows the palette
-  (charcoal ink tile by default, deep grape under Grape) via the
+  (near-black ink tile by default, deep grape under Grape) via the
   `--rm-brand-tile` / `--rm-brand-fg` tokens; the non-ink palette freezes the
   tile to its deep accent across both modes for recognizability.
   In the drawer the palette picker renders each option as a two-tone color
