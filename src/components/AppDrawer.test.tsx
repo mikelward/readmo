@@ -135,4 +135,35 @@ describe('AppDrawer', () => {
       expect(onClose).not.toHaveBeenCalled();
     });
   });
+
+  describe('Appearance — text size', () => {
+    it('renders Small, Medium, Large A-glyph buttons in one segmented row', () => {
+      renderDrawer();
+      const group = screen.getByRole('radiogroup', { name: 'Text size' });
+      expect(group).toHaveClass('app-drawer__segmented');
+      // Three buttons — at the per-row tap-zone cap, not over it.
+      for (const name of ['Small', 'Medium', 'Large']) {
+        const btn = screen.getByRole('radio', { name });
+        expect(btn).toBeInTheDocument();
+        // Accessible name comes from aria-label; the visible glyph is just "A".
+        expect(btn).toHaveTextContent('A');
+      }
+    });
+
+    it('marks the stored font size as checked', () => {
+      vi.spyOn(themeLib, 'getStoredFontSize').mockReturnValue('17');
+      renderDrawer();
+      expect(screen.getByRole('radio', { name: 'Large' })).toHaveAttribute('aria-checked', 'true');
+      expect(screen.getByRole('radio', { name: 'Medium' })).toHaveAttribute('aria-checked', 'false');
+    });
+
+    it('calls setStoredFontSize and does not close the drawer when a size is clicked', async () => {
+      const user = userEvent.setup();
+      const setSpy = vi.spyOn(themeLib, 'setStoredFontSize').mockImplementation(() => {});
+      const { onClose } = renderDrawer();
+      await user.click(screen.getByRole('radio', { name: 'Small' }));
+      expect(setSpy).toHaveBeenCalledWith('15');
+      expect(onClose).not.toHaveBeenCalled();
+    });
+  });
 });

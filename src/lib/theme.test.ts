@@ -1,14 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  FONT_SIZE_STORAGE_KEY,
   PALETTE_STORAGE_KEY,
   THEME_CHANGE_EVENT,
   THEME_STORAGE_KEY,
+  applyFontSize,
   applyPalette,
   applyTheme,
   applyThemeColorMeta,
+  getStoredFontSize,
   getStoredPalette,
   getStoredTheme,
   resolveTheme,
+  setStoredFontSize,
   setStoredPalette,
   setStoredTheme,
 } from './theme';
@@ -223,5 +227,64 @@ describe('palette', () => {
     setStoredTheme('dark');
     // mode flip under grape → dark grape bg
     expect(meta.content).toBe('#1a141f');
+  });
+});
+
+describe('font size', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    document.documentElement.removeAttribute('data-font-size');
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+    document.documentElement.removeAttribute('data-font-size');
+  });
+
+  it('defaults to "16" when storage is empty', () => {
+    expect(getStoredFontSize()).toBe('16');
+  });
+
+  it('reads a stored font size and ignores garbage', () => {
+    window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '17');
+    expect(getStoredFontSize()).toBe('17');
+    // '18' is no longer an offered size, so it's rejected like any garbage.
+    window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '18');
+    expect(getStoredFontSize()).toBe('16');
+    window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '99');
+    expect(getStoredFontSize()).toBe('16');
+  });
+
+  it('setStoredFontSize persists a non-default size and sets the attribute', () => {
+    setStoredFontSize('15');
+    expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBe('15');
+    expect(document.documentElement.getAttribute('data-font-size')).toBe('15');
+
+    setStoredFontSize('17');
+    expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBe('17');
+    expect(document.documentElement.getAttribute('data-font-size')).toBe('17');
+  });
+
+  it('setStoredFontSize("16") clears the attribute and the key', () => {
+    setStoredFontSize('17');
+    setStoredFontSize('16');
+    expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBeNull();
+    expect(document.documentElement.hasAttribute('data-font-size')).toBe(false);
+  });
+
+  it('applyFontSize toggles the attribute without touching storage', () => {
+    applyFontSize('17');
+    expect(document.documentElement.getAttribute('data-font-size')).toBe('17');
+    expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBeNull();
+    applyFontSize('16');
+    expect(document.documentElement.hasAttribute('data-font-size')).toBe(false);
+  });
+
+  it('setStoredFontSize fires a change event', () => {
+    const handler = vi.fn();
+    window.addEventListener(THEME_CHANGE_EVENT, handler);
+    setStoredFontSize('17');
+    expect(handler).toHaveBeenCalledTimes(1);
+    window.removeEventListener(THEME_CHANGE_EVENT, handler);
   });
 });

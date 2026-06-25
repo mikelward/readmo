@@ -46,11 +46,14 @@ describe('reader toolbar positioning contract', () => {
 
 describe('reader body typography contract', () => {
   // SPEC.md "Reader view → Body": long-form article copy is set one step
-  // larger and denser than newshacker's 15px comment text. Guards against a
-  // silent revert to the smaller 15px / 1.6 the reader shipped with.
-  it('sets 16px body copy with 1.4 line-height', () => {
+  // larger and denser than newshacker's 15px comment text. Sized in `rem`
+  // (1rem = 16px at the default root) so the body tracks the Settings
+  // "Text size" choice; guards both against a silent revert to the smaller
+  // 15px / 1.6 the reader shipped with AND against pinning it back to px,
+  // which would stop it scaling with the text-size setting.
+  it('sets 1rem (16px at default) body copy with 1.4 line-height', () => {
     const body = declarationsFor('.reader__body');
-    expect(body['font-size']).toBe('16px');
+    expect(body['font-size']).toBe('1rem');
     expect(body['line-height']).toBe('1.4');
   });
 });

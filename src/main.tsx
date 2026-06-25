@@ -11,8 +11,10 @@ import { MockDataSource } from './lib/data/MockDataSource';
 import { SupabaseDataSource } from './lib/data/SupabaseDataSource';
 import { isSupabaseConfigured } from './lib/supabase/client';
 import {
+  applyFontSize,
   applyPalette,
   applyTheme,
+  getStoredFontSize,
   getStoredPalette,
   getStoredTheme,
 } from './lib/theme';
@@ -75,9 +77,11 @@ const queryClient = new QueryClient({
 // prefixing of the Workbox runtime caches, land with real multi-user auth in PR2.
 const bootUid = getActiveUid();
 
-// Apply the stored theme + palette before first paint to avoid a flash.
+// Apply the stored theme + palette + text size before first paint to avoid a
+// flash.
 applyTheme(getStoredTheme());
 applyPalette(getStoredPalette());
+applyFontSize(getStoredFontSize());
 
 // Reconcile on-device caches for this user BEFORE building the persister/data
 // source or painting: migrate legacy global stores into the user's scope, and

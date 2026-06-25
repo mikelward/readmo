@@ -61,7 +61,21 @@
 
   --rm-header-h: 56px;
 
+  /* Base body text size. The settings "Text size" picker overrides this via the
+     `data-font-size` attribute on <html>; 16px is the default (no attribute). */
+  --rm-font-size: 16px;
+
   color-scheme: light;
+}
+
+/* Text-size scale (settings "Text size" picker). Orthogonal to mode/palette, so
+   it lives in its own attribute and only overrides the one token. */
+:root[data-font-size='15'] {
+  --rm-font-size: 15px;
+}
+
+:root[data-font-size='17'] {
+  --rm-font-size: 17px;
 }
 
 :root[data-theme='dark'] {
@@ -256,13 +270,19 @@ body {
   padding: 0;
 }
 
+/* Anchor `rem` to the chosen text size: most of the UI sizes type in `rem`,
+   which resolves against the root element, so the "Text size" setting has to
+   move the root font-size (not just body) for that type to scale. */
+html {
+  font-size: var(--rm-font-size);
+}
+
 body {
   background: var(--rm-bg);
   color: var(--rm-text);
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
     sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
-  font-size: 16px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   -webkit-text-size-adjust: 100%;

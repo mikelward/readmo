@@ -119,7 +119,7 @@ Everything else about the visual system mirrors newshacker.
   inner (brand mark + wordmark, Offline pill, Search) keeps the 720px
   article column max-width so it aligns with the list below. Safe-area
   insets reserve space for landscape-iPhone notches on the edge controls.
-- **Navigation drawer sections:** Home (feed picker — All subscriptions or a folder), Library (Pinned / Favorites / Done / Opened / Offline), Folders (folder nav, hidden when none exist), Feeds (subscription list), Appearance (mode + palette segmented controls), App (Settings, Debug).
+- **Navigation drawer sections:** Home (feed picker — All subscriptions or a folder), Library (Pinned / Favorites / Done / Opened / Offline), Folders (folder nav, hidden when none exist), Feeds (subscription list), Appearance (mode + palette + text-size segmented controls), App (Settings, Debug).
 - **Dark mode:** full light/dark/system via tokens.
 - **Palette:** two color families selectable in the drawer's Appearance section (and also in Settings), orthogonal to the
   light/dark/**mode** axis — **Ink** (default, the monochrome ink-on-paper above)
@@ -136,6 +136,19 @@ Everything else about the visual system mirrors newshacker.
   text label, with the active palette's swatch ringed, laid out in a single
   flex row (matching the mode row of three above it, within the per-row
   tap-zone cap); Settings keeps the text buttons.
+- **Text size:** a third orthogonal appearance axis with three steps — Small
+  (15px), Medium (16px, default), Large (17px). Selectable in **two** places:
+  Settings ("Text size" section) as text buttons, and the drawer's
+  **Appearance** section as a segmented row of capital-**A** glyphs sized
+  small/medium/large (the conventional font-size control; accessible name from
+  the button's label). The choice drives the `data-font-size` attribute on
+  `<html>` (Medium = 16px owns the bare `:root`, no attribute), which maps to
+  the `--rm-font-size` token; the token sets the **root** (`html`) font-size so
+  the `rem`-based type throughout the UI — including the reader article body —
+  scales with it. Both pickers stay at three tap zones, within the per-row cap.
+  Persisted in `localStorage` under `readmo:fontSize`, applied before first
+  paint (alongside theme/palette) to avoid a flash, and synced across tabs/hook
+  instances via the shared `readmo:themeChanged` event.
 - Icons inlined monochrome SVG (Material Symbols, `fill="currentColor"`), no
   icon font / runtime request.
 
@@ -712,8 +725,9 @@ loopback/link-local/private/metadata targets and redirects to them.
 
 10. **Settings** — `/settings`: subscriptions/folders, OPML in/out,
     **Reading**, **Bottom toolbar**, palette (Ink/Grape), theme
-    (light/dark/system), account/sign-out. Theme and palette are also accessible
-    directly in the drawer's **Appearance** section.
+    (light/dark/system), text size (Small/Medium/Large), account/sign-out.
+    Theme, palette, and text size are also accessible directly in the drawer's
+    **Appearance** section.
     - **Reading** — a single per-device toggle, **Hide articles as you scroll
       past** (`readmo:hide-on-scroll`, **off by default**), wiring the auto-hide
       behavior in *List toolbar → Auto-hide on scroll*.
@@ -794,9 +808,11 @@ page's discipline is unchanged.
   natural size. `<figcaption>` text is inset 16px to align with body copy.
   Direct-child `<table>` elements (Reddit and similar feeds embed a thumbnail
   in a layout table) are reflowed as a block stack so the image leads
-  full-bleed above the text summary. **Body copy is 16px / line-height 1.4** —
-  a deliberate step up from newshacker's 15px reading text (long-form articles
-  warrant a slightly larger, denser measure than HN comment threads).
+  full-bleed above the text summary. **Body copy is 1rem (16px at the default
+  text size) / line-height 1.4** — a deliberate step up from newshacker's 15px
+  reading text (long-form articles warrant a slightly larger, denser measure
+  than HN comment threads). It is sized in `rem`, so it scales with the
+  Settings "Text size" choice along with the rest of the UI type.
 - **Full-text reading mode (default):** many feeds publish only a truncated
   stub as `content_html`. When the feed body looks truncated (no body, or under
   ~600 chars of visible text — see `src/lib/fullText.ts:looksTruncated`) the

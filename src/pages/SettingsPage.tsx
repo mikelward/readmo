@@ -19,7 +19,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useToast } from '../hooks/useToast';
 import { presentableDetail } from '../lib/loadErrorCopy';
-import type { Palette, Theme } from '../lib/theme';
+import { FONT_SIZE_LABELS, type FontSize, type Palette, type Theme } from '../lib/theme';
 import type { Feed } from '../lib/types';
 import './SettingsPage.css';
 import './PageHeader.css';
@@ -54,7 +54,8 @@ function addFeedDetail(err: unknown): string | undefined {
 export function SettingsPage() {
   const ds = useDataSource();
   const queryClient = useQueryClient();
-  const { theme, palette, setTheme, setPalette } = useTheme();
+  const { theme, palette, fontSize, setTheme, setPalette, setFontSize } =
+    useTheme();
   const { hideOnScroll, setHideOnScroll } = useHideOnScroll();
   const { bottomBarPosition, setBottomBarPosition } = useBottomBarPosition();
   const { user, signOut } = useAuth();
@@ -317,6 +318,7 @@ export function SettingsPage() {
     { value: 'list', label: 'Bottom of list' },
     { value: 'screen', label: 'Bottom of screen' },
   ];
+  const fontSizes: FontSize[] = ['15', '16', '17'];
 
   return (
     <div className="settings">
@@ -643,6 +645,30 @@ export function SettingsPage() {
               onClick={() => setTheme(t)}
             >
               {t[0].toUpperCase() + t.slice(1)}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="settings__section">
+        <h2 className="settings__heading">Text size</h2>
+        <div
+          className="settings__theme"
+          role="radiogroup"
+          aria-label="Text size"
+        >
+          {fontSizes.map((f) => (
+            <button
+              key={f}
+              type="button"
+              role="radio"
+              aria-checked={fontSize === f}
+              className={
+                'settings__theme-btn' + (fontSize === f ? ' is-active' : '')
+              }
+              onClick={() => setFontSize(f)}
+            >
+              {FONT_SIZE_LABELS[f]}
             </button>
           ))}
         </div>

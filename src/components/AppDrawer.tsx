@@ -5,8 +5,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useHomeFeed } from '../hooks/useHomeFeed';
 import { useTheme } from '../hooks/useTheme';
-import type { Theme, Palette } from '../lib/theme';
-import { PALETTE_LABELS, PALETTE_SWATCHES } from '../lib/theme';
+import type { FontSize, Theme, Palette } from '../lib/theme';
+import { FONT_SIZE_LABELS, PALETTE_LABELS, PALETTE_SWATCHES } from '../lib/theme';
 import { TooltipButton } from './TooltipButton';
 import './AppDrawer.css';
 
@@ -42,6 +42,19 @@ const PALETTE_OPTIONS: Array<{ value: Palette; label: string }> = (
   Object.keys(PALETTE_LABELS) as Palette[]
 ).map((value) => ({ value, label: PALETTE_LABELS[value] }));
 
+// The text-size picker renders each option as a capital "A" whose glyph size
+// hints the scale (small / medium / large), echoing the conventional
+// font-size control. The accessible name still comes from the label.
+const FONT_SIZE_OPTIONS: Array<{
+  value: FontSize;
+  label: string;
+  glyph: number;
+}> = [
+  { value: '15', label: FONT_SIZE_LABELS['15'], glyph: 14 },
+  { value: '16', label: FONT_SIZE_LABELS['16'], glyph: 18 },
+  { value: '17', label: FONT_SIZE_LABELS['17'], glyph: 22 },
+];
+
 /** A two-tone disc previewing a palette: paper background + accent, split on
  * the diagonal. Colors come from PALETTE_SWATCHES so the swatch shows each
  * palette's identity regardless of which one is currently applied. */
@@ -70,7 +83,8 @@ const LIBRARY_LINKS = [
 export function AppDrawer({ open, onClose }: Props) {
   const ds = useDataSource();
   const { homeFeed, setHomeFeed } = useHomeFeed();
-  const { theme, palette, setTheme, setPalette } = useTheme();
+  const { theme, palette, fontSize, setTheme, setPalette, setFontSize } =
+    useTheme();
 
   const { data: folders = [] } = useQuery({
     queryKey: ['folders'],
@@ -228,6 +242,33 @@ export function AppDrawer({ open, onClose }: Props) {
                 onClick={(e) => { e.stopPropagation(); setPalette(opt.value); }}
               >
                 <PaletteSwatch palette={opt.value} />
+              </TooltipButton>
+            ))}
+          </div>
+          <div
+            className="app-drawer__segmented"
+            role="radiogroup"
+            aria-label="Text size"
+          >
+            {FONT_SIZE_OPTIONS.map((opt) => (
+              <TooltipButton
+                key={opt.value}
+                type="button"
+                role="radio"
+                aria-checked={fontSize === opt.value}
+                tooltip={opt.label}
+                aria-label={opt.label}
+                className="app-drawer__segmented-btn"
+                data-active={fontSize === opt.value || undefined}
+                onClick={(e) => { e.stopPropagation(); setFontSize(opt.value); }}
+              >
+                <span
+                  className="app-drawer__size-glyph"
+                  style={{ fontSize: opt.glyph }}
+                  aria-hidden="true"
+                >
+                  A
+                </span>
               </TooltipButton>
             ))}
           </div>
