@@ -16,8 +16,7 @@ import { LoadError } from '../components/LoadError';
 import { loadFailureCopy } from '../lib/loadErrorCopy';
 import {
   ArrowBack,
-  CheckCircleFilled,
-  CheckCircleOutline,
+  Check,
   FavoriteFilled,
   FavoriteOutline,
   MoreVert,
@@ -125,7 +124,7 @@ function ReaderToolbar({
           onClick={() => (state.done ? set('done', false) : markDone())}
           data-testid={`reader-done${sfx}`}
         >
-          {state.done ? <CheckCircleFilled /> : <CheckCircleOutline />}
+          <Check />
         </TooltipButton>
 
         {wide ? (

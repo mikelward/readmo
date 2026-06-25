@@ -8,7 +8,7 @@ const REQUIRED = [
   'PushPinFilled',
   'FavoriteOutline',
   'FavoriteFilled',
-  'CheckCircleOutline',
+  'Check',
   'CheckCircleFilled',
   'VisibilityOff',
   'MarkUnread',
