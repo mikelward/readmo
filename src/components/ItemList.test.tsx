@@ -538,6 +538,64 @@ describe('ItemList', () => {
     expect(await screen.findByText(/all caught up/i)).toBeInTheDocument();
   });
 
+  it('freezes the list body height during a background refresh so the window scroll is not clamped to the top', async () => {
+    // Regression: pinning/dismissing invalidates ['feed'], and React Query
+    // refetches the infinite query's pages sequentially, so the rendered list
+    // briefly shrinks mid-refetch. On a short document (e.g. collapsed feed
+    // sections) that let the browser clamp window scrollY toward 0 — jumping the
+    // reader to the top a couple of seconds after they acted. ItemList now
+    // freezes the body's height for the duration of the refresh. jsdom has no
+    // layout, so we stub offsetHeight and assert the min-height lock is applied
+    // while the refresh is in flight and released once it settles.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems();
+
+    let release: (() => void) | null = null;
+    let callCount = 0;
+    const fetchPage = vi.fn(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({ items: seed.items, nextCursor: null });
+      }
+      // The post-invalidation refetch is held open so we can observe the lock.
+      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>((resolve) => {
+        release = () => resolve({ items: seed.items, nextCursor: null });
+      });
+    });
+
+    renderWithProviders(
+      <ItemList
+        viewKey={`refresh-lock-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+
+    const body = screen.getByTestId('item-list-body');
+    // jsdom reports 0 for offsetHeight; pretend the populated list is 1000px
+    // tall so the lock has a concrete value to freeze.
+    Object.defineProperty(body, 'offsetHeight', { value: 1000, configurable: true });
+
+    // A pin emits one store change → useFeedInvalidation invalidates ['feed'] →
+    // one background refetch (callCount → 2), held open below.
+    act(() => {
+      source.stateStore.set(seed.items[0].item.id, 'pinned', true);
+    });
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+
+    // Refresh in flight: the body height is frozen so the document can't shrink
+    // under the scroll offset.
+    expect(body.style.minHeight).toBe('1000px');
+
+    // Refresh settles: the lock is released and natural height resumes.
+    act(() => {
+      release?.();
+    });
+    await waitFor(() => expect(body.style.minHeight).toBe(''));
+  });
+
   it('re-measures end-of-list when a local Done shrinks the rendered list, so the pinned bar fetches instead of paging down', async () => {
     // Regression: renderedCount used to derive from raw `items`, so a local
     // Done that shrunk the rendered list (without a successful refetch) left

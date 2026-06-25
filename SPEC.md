@@ -723,6 +723,13 @@ loopback/link-local/private/metadata targets and redirects to them.
    - **Background refresh status strip** at the foot ("Checking for new
      items…" / "Couldn't refresh." + Retry), appearing only when rows are
      already on screen. Verbatim mirror.
+   - **Scroll position holds across a background refresh.** A pin/dismiss
+     invalidates the feed query, and React Query refetches the loaded pages
+     *sequentially*, so the rendered list briefly shrinks mid-refetch. The list
+     body's height is frozen for the duration of the refresh so the document
+     can't get shorter than the current scroll offset and bounce the reader to
+     the top — most visible with collapsed feed sections, which leave the
+     document short to begin with. The lock releases once the refresh settles.
    - **Pin-to-download promo bar** above the first row ("Pin an article to
      download it"), explaining that pinning warms the offline cache (see
      *Prefetch on Pin/Favorite*). Shown only once rows exist; dismissable via a
