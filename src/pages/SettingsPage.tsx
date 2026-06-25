@@ -156,6 +156,15 @@ export function SettingsPage() {
       // conflicts/is gated must not discard the ones that did commit. Partition
       // the outcomes and let onSuccess surface + invalidate the successes
       // regardless of any failures.
+      //
+      // Snapshot the currently-subscribed feed ids before subscribing so the
+      // curated-override path can tell a fresh add from a re-add of a feed the
+      // user already follows. subscribe() is idempotent and returns the existing
+      // feed unchanged; without this guard a re-add through the curated
+      // suggestion would silently overwrite the user's per-row rename.
+      const preSubIds = new Set(
+        (await ds.getSubscriptions()).map((s) => s.feed.id),
+      );
       const settled = await Promise.allSettled(urls.map((u) => ds.subscribe(u)));
       const feeds: Feed[] = [];
       const errors: unknown[] = [];
@@ -163,9 +172,9 @@ export function SettingsPage() {
         if (r.status === 'fulfilled') feeds.push(r.value);
         else errors.push(r.reason);
       }
-      return { feeds, errors, curatedName, seq };
+      return { feeds, errors, curatedName, seq, preSubIds };
     },
-    onSuccess: async ({ feeds, errors, curatedName, seq }) => {
+    onSuccess: async ({ feeds, errors, curatedName, seq, preSubIds }) => {
       // subscribe() awaits a publisher refresh and can take seconds, during which
       // the input stays editable. If the user has moved on (typed a new URL,
       // started another add) the add context is no longer ours: bumped token.
@@ -184,16 +193,18 @@ export function SettingsPage() {
           });
         return;
       }
-      // If a curated feed came back without a real title (RSS fetch hasn't
-      // completed or failed), pin the curated display name. "No real title"
-      // means the title is the literal fallback string OR mapFeed's site_url
-      // fallback (row.title was null so mapFeed used site_url, e.g.
-      // "nytimes.com"). Only the single curated path carries a name to pin.
+      // Pin the curated display name on a brand-new curated subscribe: the
+      // curated label is the brand the user picked (e.g. "The Economist"),
+      // which beats whatever the publisher's <channel> happens to say (The
+      // Economist's /latest/rss.xml is literally titled "Latest Updates"). The
+      // override is per-user and editable in this settings page, so users can
+      // revert to the publisher's title or pick their own. Only the single
+      // curated path carries a name to pin, AND only when the feed wasn't
+      // already in this user's subscriptions — subscribe() is idempotent for an
+      // existing row, so a curated re-add must never clobber a rename the user
+      // applied earlier.
       const curatedFeed = curatedName && feeds.length === 1 ? feeds[0] : null;
-      const hasRealTitle = curatedFeed
-        ? curatedFeed.title !== 'Untitled feed' && curatedFeed.title !== curatedFeed.siteUrl
-        : false;
-      if (curatedFeed && curatedName && !hasRealTitle) {
+      if (curatedFeed && curatedName && !preSubIds.has(curatedFeed.id)) {
         await ds.setTitleOverride(curatedFeed.id, curatedName).catch(() => {});
       }
       // Always invalidate feed-meta so FeedPage re-fetches the post-subscribe
@@ -214,7 +225,7 @@ export function SettingsPage() {
           ? `Subscribed to ${feeds.length} feed${feeds.length > 1 ? 's' : ''}; ` +
             `${errors.length} couldn’t be added`
           : feeds.length === 1
-            ? `Subscribed to ${hasRealTitle || !curatedName ? feeds[0].title : curatedName}`
+            ? `Subscribed to ${curatedName ?? feeds[0].title}`
             : `Subscribed to ${feeds.length} feeds`;
       showToast({ message });
     },
@@ -543,6 +554,22 @@ export function SettingsPage() {
           }}
           onUnsubscribe={async (feedId) => {
             await ds.unsubscribe(feedId);
+            invalidate();
+          }}
+          onRename={async (feedId, title) => {
+            await ds.setTitleOverride(feedId, title);
+            // The renamed title is embedded as `feed.title` on every cached
+            // FeedItem the user has open. Invalidating ['feed-meta'] and the
+            // standard subscriptions/feed buckets isn't enough — Library
+            // views, Search, Offline, and the Reader page all carry their own
+            // copies of the per-item feed object. Invalidate by key prefix so
+            // any cached entry across those buckets is refetched on next view,
+            // not after the 5-minute stale window expires.
+            queryClient.invalidateQueries({ queryKey: ['feed-meta', feedId] });
+            queryClient.invalidateQueries({ queryKey: ['library'] });
+            queryClient.invalidateQueries({ queryKey: ['search'] });
+            queryClient.invalidateQueries({ queryKey: ['offline'] });
+            queryClient.invalidateQueries({ queryKey: ['item'] });
             invalidate();
           }}
         />

@@ -278,6 +278,26 @@
   font-weight: 600;
 }
 
+.settings__sub-rename {
+  display: block;
+  width: 100%;
+  padding: 4px 6px;
+  margin: 0;
+  border: 1px solid var(--rm-border);
+  border-radius: 4px;
+  background: var(--rm-bg);
+  color: var(--rm-text);
+  font: inherit;
+  font-weight: 600;
+  min-height: var(--rm-tap);
+  box-sizing: border-box;
+}
+
+.settings__sub-rename:focus-visible {
+  outline: 2px solid var(--rm-accent);
+  outline-offset: 0;
+}
+
 .settings__sub-url {
   font-size: 0.8rem;
   color: var(--rm-meta);
@@ -286,14 +306,77 @@
   white-space: nowrap;
 }
 
-.settings__mute {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 0.85rem;
-  color: var(--rm-meta);
+/* Right-side overflow control: a single 44×44 button that opens a per-row
+   menu with Rename / Mute / Unsubscribe. Keeps the row at 3 tap zones
+   (drag handle + non-interactive row body + overflow), per guardrail #2. */
+.settings__sub-actions {
+  position: relative;
+  flex: 0 0 auto;
 }
 
+.settings__sub-overflow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--rm-tap);
+  height: var(--rm-tap);
+  border: none;
+  background: none;
+  color: var(--rm-meta);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.settings__sub-overflow:hover,
+.settings__sub-overflow:focus-visible,
+.settings__sub-overflow[aria-expanded='true'] {
+  color: var(--rm-text);
+  outline: none;
+}
+
+.settings__sub-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 10;
+  min-width: 160px;
+  margin-top: 4px;
+  padding: 4px 0;
+  background: var(--rm-bg);
+  border: 1px solid var(--rm-border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+}
+
+.settings__sub-menuitem {
+  appearance: none;
+  border: none;
+  background: none;
+  text-align: left;
+  font: inherit;
+  color: var(--rm-text);
+  padding: 10px 14px;
+  min-height: var(--rm-tap);
+  cursor: pointer;
+}
+
+.settings__sub-menuitem:hover,
+.settings__sub-menuitem:focus-visible {
+  background: var(--rm-bg-card);
+  outline: none;
+}
+
+.settings__sub-menuitem--danger {
+  color: var(--rm-danger);
+  font-weight: 600;
+}
+
+/* Used by the Account → Sign out button. Matches the prior subscription-row
+   unsubscribe styling (a min-tap-target danger button) so the sign-out tap
+   target stays within guardrail #2's 44×44 floor. */
 .settings__unsub {
   border: none;
   background: none;

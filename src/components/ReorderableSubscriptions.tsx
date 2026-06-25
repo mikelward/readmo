@@ -22,19 +22,27 @@ interface Props {
   onReorder: (orderedFeedIds: FeedId[]) => void | Promise<void>;
   onMute: (feedId: FeedId, muted: boolean) => void;
   onUnsubscribe: (feedId: FeedId) => void;
+  /** Set a per-user display name for `feedId`. Pass `null` to clear the
+   * override and fall back to the publisher's feed title. */
+  onRename: (feedId: FeedId, title: string | null) => void | Promise<void>;
 }
 
-/** The Settings subscriptions list with drag-to-reorder handles. The handle is
+/** The Settings subscriptions list with drag-to-reorder handles. Each row
+ * stays within the **3-tap-zone cap** (CLAUDE.md guardrail #2): drag handle,
+ * non-interactive row body (title + URL), and an overflow (...) button that
+ * opens a per-row menu with Rename / Mute / Unsubscribe. The drag handle is
  * both pointer-draggable (mouse + touch) and keyboard-operable (focus it, then
- * ArrowUp/ArrowDown) so reordering isn't mouse-only. Each row stays within the
- * 3-tap-zone cap: drag handle, Mute, Unsubscribe. Order is held locally for a
- * snappy drag and persisted via `onReorder` on drop / each keyboard move; the
- * parent's refetch then re-syncs `subs`. */
+ * ArrowUp/ArrowDown) so reordering isn't mouse-only. Renaming uses an inline
+ * input that replaces the title slot: Enter commits, Esc cancels, blur commits,
+ * empty clears the override and falls back to the publisher's title. Order is
+ * held locally for a snappy drag and persisted via `onReorder` on drop / each
+ * keyboard move; the parent's refetch then re-syncs `subs`. */
 export function ReorderableSubscriptions({
   subs,
   onReorder,
   onMute,
   onUnsubscribe,
+  onRename,
 }: Props) {
   const propIds = subs.map((s) => s.feed.id);
   const [order, setOrder] = useState<FeedId[]>(propIds);
@@ -127,6 +135,89 @@ export function ReorderableSubscriptions({
   );
 
   const byId = new Map(subs.map((s) => [s.feed.id, s]));
+  // Per-row overflow menu (Rename / Mute / Unsubscribe). Only one open at a
+  // time; clicks outside or Escape close it.
+  const [menuFor, setMenuFor] = useState<FeedId | null>(null);
+  // Inline rename. `editing` tracks which row is in edit mode and the current
+  // draft value; the input is autofocused on entry. Enter commits, Esc cancels,
+  // blur commits. An empty/whitespace-only draft clears the override (null).
+  const [editing, setEditing] = useState<{ id: FeedId; value: string } | null>(
+    null,
+  );
+  const editInputRef = useRef<HTMLInputElement | null>(null);
+  const committing = useRef(false);
+  // Per-feed rename serialization. The input closes synchronously on commit,
+  // so the user can immediately reopen the menu and rename the same row again
+  // before the previous `onRename` write has resolved. Mirroring the reorder
+  // pattern: at most one write per feed is in flight; subsequent commits land
+  // in `queued` and replace any older queued value (latest-wins). The next
+  // write fires only after the previous finally-block runs, so out-of-order
+  // commits to the same row are impossible — the saved title is always the
+  // last one the user actually typed. `undefined` in `queued` means "no
+  // pending value"; `null` is a real value meaning "clear the override".
+  const renameState = useRef(
+    new Map<
+      FeedId,
+      { inFlight: boolean; queued: string | null | undefined }
+    >(),
+  );
+  async function flushRename(id: FeedId) {
+    const state = renameState.current.get(id);
+    if (!state || state.inFlight || state.queued === undefined) return;
+    const value = state.queued;
+    state.queued = undefined;
+    state.inFlight = true;
+    try {
+      await Promise.resolve(onRename(id, value));
+    } finally {
+      state.inFlight = false;
+      if (state.queued !== undefined) void flushRename(id);
+      else renameState.current.delete(id);
+    }
+  }
+  function queueRename(id: FeedId, value: string | null) {
+    let state = renameState.current.get(id);
+    if (!state) {
+      state = { inFlight: false, queued: undefined };
+      renameState.current.set(id, state);
+    }
+    state.queued = value; // latest wins
+    void flushRename(id);
+  }
+  function startEdit(id: FeedId, current: string) {
+    // Clear any stale suppression from the previous edit. The flag is set by
+    // commitEdit/cancelEdit to swallow the synthetic trailing blur React fires
+    // after the input unmounts; if that blur never lands (browsers don't always
+    // deliver it for a removed focused element) it would otherwise persist and
+    // swallow the *next* rename's real blur commit.
+    committing.current = false;
+    setMenuFor(null);
+    setEditing({ id, value: current });
+  }
+  function cancelEdit() {
+    committing.current = true; // suppress the trailing onBlur from re-committing
+    setEditing(null);
+  }
+  function commitEdit(id: FeedId, raw: string, originalTitle: string) {
+    const trimmed = raw.trim();
+    // Empty input clears the override; otherwise only persist if it changed.
+    const next = trimmed === '' ? null : trimmed;
+    // The "unchanged" no-op is only safe when nothing is queued or in flight
+    // for this feed. While a rename is pending the row keeps rendering the
+    // pre-edit title until the parent refetches, so `originalTitle` is stale —
+    // a user retyping the displayed name is undoing their pending edit, not
+    // making a no-op. Always enqueue in that case so the last commit wins.
+    const state = renameState.current.get(id);
+    const hasPending =
+      state !== undefined && (state.inFlight || state.queued !== undefined);
+    if (!hasPending && next !== null && next === originalTitle) {
+      setEditing(null);
+      return;
+    }
+    committing.current = true;
+    setEditing(null);
+    queueRename(id, next);
+  }
   const rowRefs = useRef(new Map<FeedId, HTMLLIElement>());
   // After a keyboard move the row re-renders; restore focus to its handle so a
   // run of ArrowDown presses keeps working.
@@ -138,6 +229,29 @@ export function ReorderableSubscriptions({
       refocus.current = null;
     }
   });
+  // Close the overflow menu on pointer down outside the row or Escape. Rename's
+  // input lives inside the same row, so a press on it doesn't dismiss the menu
+  // through this path — the menu has already been closed by startEdit() at that
+  // point. Use `pointerdown` (not click) so the menu doesn't survive a tap that
+  // also starts a drag.
+  useEffect(() => {
+    if (menuFor === null) return;
+    const onDocPointer = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      const row = target ? rowRefs.current.get(menuFor) : null;
+      if (target && row && row.contains(target)) return;
+      setMenuFor(null);
+    };
+    const onDocKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuFor(null);
+    };
+    document.addEventListener('pointerdown', onDocPointer);
+    document.addEventListener('keydown', onDocKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDocPointer);
+      document.removeEventListener('keydown', onDocKey);
+    };
+  }, [menuFor]);
 
   function collectRects(): Map<FeedId, { top: number; height: number }> {
     const rects = new Map<FeedId, { top: number; height: number }>();
@@ -223,24 +337,96 @@ export function ReorderableSubscriptions({
               <DragHandle width={20} height={20} />
             </button>
             <div className="settings__sub-main">
-              <div className="settings__sub-title">{title}</div>
+              {editing?.id === feed.id ? (
+                <input
+                  ref={(el) => {
+                    editInputRef.current = el;
+                    if (el && document.activeElement !== el) {
+                      el.focus();
+                      el.select();
+                    }
+                  }}
+                  type="text"
+                  className="settings__sub-rename"
+                  aria-label={`Rename ${title}`}
+                  placeholder="Leave blank to use the publisher's title"
+                  value={editing.value}
+                  onChange={(e) =>
+                    setEditing({ id: feed.id, value: e.target.value })
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void commitEdit(feed.id, editing.value, title);
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      cancelEdit();
+                    }
+                  }}
+                  onBlur={() => {
+                    // Cancel/commit already cleared `editing`; suppress to avoid
+                    // a second commit on the trailing focus loss.
+                    if (committing.current) {
+                      committing.current = false;
+                      return;
+                    }
+                    void commitEdit(feed.id, editing.value, title);
+                  }}
+                />
+              ) : (
+                <div className="settings__sub-title">{title}</div>
+              )}
               <div className="settings__sub-url">{feed.url}</div>
             </div>
-            <label className="settings__mute">
-              <input
-                type="checkbox"
-                checked={subscription.muted}
-                onChange={(e) => onMute(feed.id, e.target.checked)}
-              />
-              Mute
-            </label>
-            <button
-              type="button"
-              className="settings__unsub"
-              onClick={() => onUnsubscribe(feed.id)}
-            >
-              Unsubscribe
-            </button>
+            <div className="settings__sub-actions">
+              <button
+                type="button"
+                className="settings__sub-overflow"
+                aria-label={`Actions for ${title}`}
+                aria-haspopup="menu"
+                aria-expanded={menuFor === feed.id}
+                onClick={() =>
+                  setMenuFor((cur) => (cur === feed.id ? null : feed.id))
+                }
+              >
+                <span aria-hidden="true">⋯</span>
+              </button>
+              {menuFor === feed.id ? (
+                <div role="menu" className="settings__sub-menu">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="settings__sub-menuitem"
+                    onClick={() => startEdit(feed.id, title)}
+                  >
+                    Rename
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={subscription.muted}
+                    className="settings__sub-menuitem"
+                    onClick={() => {
+                      setMenuFor(null);
+                      onMute(feed.id, !subscription.muted);
+                    }}
+                  >
+                    {subscription.muted ? 'Unmute' : 'Mute'}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="settings__sub-menuitem settings__sub-menuitem--danger"
+                    onClick={() => {
+                      setMenuFor(null);
+                      onUnsubscribe(feed.id);
+                    }}
+                  >
+                    Unsubscribe
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </li>
         );
       })}
