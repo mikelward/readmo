@@ -335,6 +335,45 @@ describe('ItemList', () => {
         screen.getAllByTestId('item-title').map((n) => n.textContent),
       ).toContain(titleText);
     });
+
+    it('does not let two feed views share an undo batch (unique burst keys)', async () => {
+      const user = userEvent.setup();
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const pool = (await source.getHomeItems()).items;
+      const a = pool.slice(0, 2);
+      const b = pool.slice(2, 4);
+      // Each view returns its own slice, filtering out rows marked Done (as the
+      // real feed query does) so an auto-hidden row drops on refetch.
+      const fp = (items: typeof pool) => () =>
+        Promise.resolve({
+          items: items.filter((fi) => !source.stateStore.get(fi.item.id).done),
+          nextCursor: null as string | null,
+        });
+      renderWithProviders(
+        <>
+          <ItemList viewKey="view-a" fetchPage={fp(a)} emptyLabel="x" />
+          <ItemList viewKey="view-b" fetchPage={fp(b)} emptyLabel="x" />
+        </>,
+        { source },
+      );
+      const aTitle = a[0].item.title;
+      const bTitle = b[0].item.title;
+      await screen.findByText(aTitle);
+
+      // Auto-hide a row on view A, then a row on view B (separate mounts whose
+      // per-view batch counters both start at 0).
+      act(() => setVisibilityForTest(screen.getByText(aTitle).closest('li')!, 0));
+      await waitFor(() => expect(screen.queryByText(aTitle)).toBeNull());
+      act(() => setVisibilityForTest(screen.getByText(bTitle).closest('li')!, 0));
+      await waitFor(() => expect(screen.queryByText(bTitle)).toBeNull());
+
+      // One Undo restores only the latest burst (B's row); A's stays hidden.
+      await user.click(screen.getAllByTestId('undo-btn')[0]);
+      await waitFor(() => expect(screen.getByText(bTitle)).toBeInTheDocument());
+      expect(screen.queryByText(aTitle)).toBeNull();
+    });
   });
 
   it('renders the More button inside the bottom toolbar', async () => {
