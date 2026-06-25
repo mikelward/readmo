@@ -758,7 +758,9 @@ page's discipline is unchanged.
   natural size. `<figcaption>` text is inset 16px to align with body copy.
   Direct-child `<table>` elements (Reddit and similar feeds embed a thumbnail
   in a layout table) are reflowed as a block stack so the image leads
-  full-bleed above the text summary.
+  full-bleed above the text summary. **Body copy is 16px / line-height 1.4** —
+  a deliberate step up from newshacker's 15px reading text (long-form articles
+  warrant a slightly larger, denser measure than HN comment threads).
 - **Full-text reading mode (default):** many feeds publish only a truncated
   stub as `content_html`. When the feed body looks truncated (no body, or under
   ~600 chars of visible text — see `src/lib/fullText.ts:looksTruncated`) the
