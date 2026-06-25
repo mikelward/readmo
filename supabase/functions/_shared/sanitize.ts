@@ -185,10 +185,14 @@ export function proxify(url: string | null | undefined): string | null {
   return `/api/img?url=${encodeURIComponent(url)}`;
 }
 
-// Target width (CSS px) we collapse a responsive srcset down to. The reader
-// column is narrower than this, so ~1600 stays crisp even on a 2× retina
-// display while avoiding the publisher's largest (often 2000–3000px) original.
-// Tunable: raising it serves sharper/heavier images, lowering it the reverse.
+// Target width (CSS px) we collapse a responsive srcset down to. Because we
+// drop srcset and serve a single src, the browser can no longer upgrade to a
+// higher-res variant on retina — so this one width must already cover the
+// densest common case. The reader column is 720px (mobile) / 860px (wider
+// screens), so at 2× DPR the most demanding case wants ~1720px; 1600 stays
+// near-crisp there while avoiding the publisher's largest (often 2000–3000px)
+// original. Tunable: raising it serves sharper/heavier images, lowering it the
+// reverse.
 const TARGET_SRCSET_WIDTH = 1600;
 // Density we collapse an x-descriptor srcset to when there are no width
 // descriptors to compare — 2× covers retina without grabbing a 3× asset.
