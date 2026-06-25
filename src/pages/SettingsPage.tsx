@@ -9,6 +9,7 @@ import {
   type DiscoveredFeed,
 } from '../lib/data/DataSource';
 import { buildInfo, summarizeBuild } from '../lib/buildInfo';
+import { expandFeedShorthand } from '../lib/feedShorthand';
 import { useTheme } from '../hooks/useTheme';
 import { useAuth } from '../hooks/useAuth';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
@@ -272,7 +273,12 @@ export function SettingsPage() {
       subscribeFeeds.mutate({ urls: [url], curatedName: selectedSuggestionName.current, seq });
       return;
     }
-    discoverFeeds.mutate({ url, seq });
+    // Expand a Reddit shorthand ("r/sub") to its full reddit.com URL before
+    // discovery; reflect it in the box so the user sees what's being added. The
+    // server derives the .rss feed form from there (SPEC.md "Feed discovery").
+    const expanded = expandFeedShorthand(url);
+    if (expanded !== url) setFeedUrl(expanded);
+    discoverFeeds.mutate({ url: expanded, seq });
   };
 
   const toggleCandidate = (url: string) => {

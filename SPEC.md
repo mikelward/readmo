@@ -387,6 +387,15 @@ folders       (user_id FK, name, sort)
   the logged-out home/popular `…/.rss`. Reddit feeds parse as standard Atom
   through the normal pipeline; the post body (selftext / link) lands in
   `content_html` and is sanitized like any other feed.
+  - **Reddit shorthand in the add-feed box.** Typing the same `r/<sub>`
+    shorthand used on Reddit itself — `r/programming`, `u/<user>`,
+    `user/<user>`, optionally with a leading slash and a sort/search/multireddit
+    tail (`r/news/top`, `r/news/search?q=…`) — expands to the full
+    `https://www.reddit.com/r/<sub>` URL on submit (and the box updates to show
+    it), so discovery's existing Reddit handling derives the `.rss` feed. The
+    first path segment must be exactly `r`, `u`, or `user`; a real hostname
+    (`r.jina.ai/feed`) has a dot before the slash and is left untouched for the
+    normal `https://`-prepend + discovery path.
 - All discovery fetches go through the **SSRF-hardened fetcher** below
   (discovery is the highest-risk path — a brand-new user-supplied URL).
 

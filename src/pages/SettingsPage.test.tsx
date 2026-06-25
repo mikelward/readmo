@@ -256,6 +256,33 @@ describe('SettingsPage — Add a feed', () => {
     },
   );
 
+  it('expands a Reddit "r/sub" shorthand to a full reddit.com URL before discovery', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const discover = vi.spyOn(source, 'discover');
+    renderWithProviders(<SettingsPage />, { source });
+
+    await addFeed('r/programming');
+
+    await screen.findByText(/^Subscribed to /);
+    // Discovery is handed the expanded URL, not the raw shorthand.
+    expect(discover).toHaveBeenCalledWith('https://www.reddit.com/r/programming');
+  });
+
+  it('reflects the expanded Reddit shorthand in the box when a picker opens', async () => {
+    // A multi-feed discovery leaves the box populated (no auto-subscribe/clear),
+    // so the box should show the expanded URL the user is choosing feeds for.
+    const source = new MultiFeedSource(`test-${Math.random()}`);
+    renderWithProviders(<SettingsPage />, { source });
+
+    await addFeed('r/programming');
+
+    await screen.findByRole('group', { name: /choose feeds/i });
+    expect(screen.getByLabelText('Feed URL')).toHaveProperty(
+      'value',
+      'https://www.reddit.com/r/programming',
+    );
+  });
+
   it('subscribes to the discovered feed and confirms by title', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     const before = (await source.getSubscriptions()).length;
