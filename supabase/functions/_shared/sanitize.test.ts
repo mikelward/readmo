@@ -66,6 +66,58 @@ describe('sanitizeContent', () => {
     );
   });
 
+  it('keeps commas inside a single srcset URL (Cloudflare image-resizing path)', () => {
+    // The Economist (and many CDNs) embed comma-separated params in the URL
+    // path: /cdn-cgi/image/width=1424,quality=80,format=auto/…/img.jpg.
+    // Splitting srcset naively on "," shredded this into fragments like
+    // "quality=80", which then absolutized into a bogus article-relative URL
+    // the image proxy could only 502 on. The whole URL must survive intact.
+    const url =
+      'https://www.economist.com/cdn-cgi/image/width=1424,quality=80,format=auto/content-assets/images/img.jpg';
+    const out = sanitizeContent(
+      `<img srcset="${url} 1424w">`,
+      'https://www.economist.com/science-and-technology/2026/06/24/headline',
+    );
+    expect(out).toContain(
+      '/api/img?url=' + encodeURIComponent(url) + ' 1424w',
+    );
+    // The previous naive split absolutized the "quality=80" fragment against
+    // the article URL into this bogus target — it must never be emitted.
+    expect(out).not.toContain(
+      encodeURIComponent(
+        'https://www.economist.com/science-and-technology/2026/06/24/quality=80',
+      ),
+    );
+    // Exactly one proxied candidate, not one per comma-fragment.
+    expect(out.match(/\/api\/img\?url=/g)).toHaveLength(1);
+  });
+
+  it('proxies multiple comma-bearing srcset candidates with descriptors', () => {
+    const big =
+      'https://img.example.com/cdn-cgi/image/width=1424,quality=80/a.jpg';
+    const small =
+      'https://img.example.com/cdn-cgi/image/width=712,quality=80/a.jpg';
+    const out = sanitizeContent(
+      `<img srcset="${big} 1424w, ${small} 712w">`,
+      base,
+    );
+    expect(out).toContain('/api/img?url=' + encodeURIComponent(big) + ' 1424w');
+    expect(out).toContain('/api/img?url=' + encodeURIComponent(small) + ' 712w');
+  });
+
+  it('proxies descriptor-less srcset candidates (comma-only separator)', () => {
+    const out = sanitizeContent(
+      '<img srcset="/a.png, /b.png">',
+      base,
+    );
+    expect(out).toContain(
+      '/api/img?url=' + encodeURIComponent('https://pub.example.com/a.png'),
+    );
+    expect(out).toContain(
+      '/api/img?url=' + encodeURIComponent('https://pub.example.com/b.png'),
+    );
+  });
+
   it('leaves inline data: images un-proxied', () => {
     const dataUri = 'data:image/png;base64,iVBORw0KGgo=';
     const out = sanitizeContent(`<img src="${dataUri}">`, base);
