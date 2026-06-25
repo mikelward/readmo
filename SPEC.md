@@ -977,8 +977,14 @@ they live in the overflow. (No Upvote — RSS has no votes.)
   Pin/Done/⋮ land at the same x-position — handy right where you finish reading,
   since this bar is the relative footer at the article's end.
 - **More ⋮** overflow: Favorite/Share (when not inline), **Open feed**, **Copy
-  link**, **Mute feed**. Anchored dropdown (sheet fallback), 44px touch / dense
-  pointer.
+  link**, **Mute feed**. This is the **shared `ItemRowMenu`** component (the same
+  one the feed list rows use, and the mirror of newshacker's thread ⋮) — lifted
+  to the reader page so the top and bottom bars drive one instance. Anchored
+  dropdown next to the ⋮ button (sheet fallback when no anchor), 44px touch /
+  dense pointer. Dismisses on click-outside or Escape; **the first tap outside an
+  open menu only dismisses it** — that gesture's trailing click is swallowed, so
+  it never also activates whatever sits underneath (an item row's stretched link,
+  a neighboring row, a toolbar button); a second tap is needed to act.
 - **Share** shares the **original article URL** (publishers want canonical-page
   traffic; there's no on-site discussion page to prefer — the one place Readmo
   differs from newshacker, which shared its own `/item/:id`). Web Share API +

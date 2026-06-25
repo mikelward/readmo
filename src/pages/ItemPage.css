@@ -103,42 +103,10 @@
   position: relative;
 }
 
-.reader__more-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  min-width: 160px;
-  background: var(--rm-bg-elevated);
-  border: 1px solid var(--rm-border);
-  border-radius: var(--rm-radius);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2);
-  padding: 4px;
-  z-index: 40;
-}
-
-/* In the bottom bar the menu opens upward so it isn't clipped off-screen. */
-.reader__more-menu--up {
-  top: auto;
-  bottom: calc(100% + 4px);
-}
-
-.reader__more-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  padding: 10px 12px;
-  font-size: 0.95rem;
-  color: var(--rm-text);
-  text-decoration: none;
-  border-radius: 6px;
-  cursor: pointer;
-  min-height: 40px;
-}
+/* The overflow menu itself is the shared ItemRowMenu (anchored popover,
+   portaled to <body>); its styling lives in ItemRowMenu.css. */
 
 @media (hover: hover) {
-  .reader__more-item:hover,
   .reader__action:hover {
     background: var(--rm-bg);
   }
