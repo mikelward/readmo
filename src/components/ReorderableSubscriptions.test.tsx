@@ -100,6 +100,42 @@ describe('ReorderableSubscriptions', () => {
     expect(onReorder).toHaveBeenCalledWith(['b', 'c', 'a']);
   });
 
+  it('serializes in-flight persists so a slow earlier write cannot beat a later one', async () => {
+    // onReorder returns a promise we resolve manually, simulating a slow RPC.
+    const resolvers: Array<() => void> = [];
+    const onReorder = vi.fn(
+      (_ids: FeedId[]) => new Promise<void>((res) => resolvers.push(res)),
+    );
+    render(
+      <ReorderableSubscriptions
+        subs={[entry('a', 'Alpha', 0), entry('b', 'Beta', 1), entry('c', 'Gamma', 2)]}
+        onReorder={onReorder}
+        onMute={vi.fn()}
+        onUnsubscribe={vi.fn()}
+      />,
+    );
+    const handles = () => screen.getAllByTestId('sub-drag-handle');
+
+    // Move 1: a down → [b,a,c]; flush debounce → first RPC starts (stays pending).
+    fireEvent.keyDown(handles()[0], { key: 'ArrowDown' });
+    flushPersist();
+    expect(onReorder).toHaveBeenCalledTimes(1);
+    expect(onReorder).toHaveBeenLastCalledWith(['b', 'a', 'c']);
+
+    // Move 2 while RPC1 is still in flight: a (now index 1) down → [b,c,a].
+    fireEvent.keyDown(handles()[1], { key: 'ArrowDown' });
+    flushPersist();
+    // Queued behind the in-flight write, not fired as a second concurrent RPC.
+    expect(onReorder).toHaveBeenCalledTimes(1);
+
+    // Resolve RPC1 → the queued final order is sent next, after it (in order).
+    await act(async () => {
+      resolvers[0]();
+    });
+    expect(onReorder).toHaveBeenCalledTimes(2);
+    expect(onReorder).toHaveBeenLastCalledWith(['b', 'c', 'a']);
+  });
+
   it('does not persist a move past the ends', () => {
     const { onReorder } = setup();
     const handles = screen.getAllByTestId('sub-drag-handle');
