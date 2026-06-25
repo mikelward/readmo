@@ -22,6 +22,20 @@ afterEach(() => {
   _resetNetworkStatusForTests();
 });
 
+describe('AppHeader actions', () => {
+  it('exposes a Settings gear that links to /settings', () => {
+    renderWithProviders(<AppHeader />);
+    const gear = screen.getByRole('link', { name: 'Settings' });
+    expect(gear).toHaveAttribute('href', '/settings');
+  });
+
+  it('exposes a Search glass that links to /search', () => {
+    renderWithProviders(<AppHeader />);
+    const search = screen.getByRole('link', { name: 'Search' });
+    expect(search).toHaveAttribute('href', '/search');
+  });
+});
+
 describe('AppHeader connectivity pill', () => {
   it('shows no pill while online', () => {
     renderWithProviders(<AppHeader />);
