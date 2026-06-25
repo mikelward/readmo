@@ -303,6 +303,40 @@ function runRpc(
     return { data: [row], error: null };
   }
 
+  if (name === 'feed_unread_counts') {
+    // Per-feed unread count: subscribed-feed items that are not Done, active
+    // Hidden, or active Opened (each TTL'd at 30 days). Like this fake's
+    // feed_items, it omits the window/floor bound — valid for the small seeds
+    // tests use (every item is within the per-feed floor), and consistent with
+    // the mock's count for those seeds.
+    const wanted = new Set((params.p_feed_ids ?? []) as string[]);
+    const activeFlag = (st: Row | undefined, flag: string, at: string) =>
+      Boolean(st?.[flag]) &&
+      typeof st?.[at] === 'string' &&
+      Date.now() - Date.parse(st[at] as string) <= TTL_MS;
+    const counts = new Map<string, number>();
+    for (const id of wanted) counts.set(id, 0);
+    for (const it of items) {
+      const fid = it.feed_id as string;
+      if (!wanted.has(fid) || !subByFeed.has(fid)) continue;
+      const st = stateByItem.get(it.id as string);
+      // A pinned item always counts (a pin is a to-do, read or not); other
+      // items drop out once Done, active Hidden, or active Opened.
+      if (
+        activeFlag(st, 'done', 'done_at') ||
+        activeFlag(st, 'hidden', 'hidden_at') ||
+        (!st?.pinned && activeFlag(st, 'opened', 'opened_at'))
+      ) {
+        continue;
+      }
+      counts.set(fid, (counts.get(fid) ?? 0) + 1);
+    }
+    return {
+      data: [...counts].map(([feed_id, n]) => ({ feed_id, n })),
+      error: null,
+    };
+  }
+
   const scope = params.p_scope as string;
   const folder = (params.p_folder ?? null) as string | null;
   const feedId = (params.p_feed_id ?? null) as string | null;

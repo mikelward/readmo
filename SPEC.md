@@ -260,6 +260,18 @@ published is recent — you always see at least its latest handful. Both are kno
 - **Flat vs. grouped:** in group-by-feed / single-feed views a quiet feed's
   floor items sit at the top of its section; in the flat river they sort to the
   bottom by date (an "older, but here's the latest from quiet feeds" tail).
+- **Per-feed unread count.** `getFeedUnreadCounts(feedIds)` (server RPC
+  `feed_unread_counts`, mirrored in `MockDataSource`) returns, per feed, how many
+  of its **listable** items (the window ∪ floor ∪ pinned set above) are **unread /
+  to-do** — not Done or active Hidden, and either **pinned** or not active
+  **Opened**. A pinned item always counts (a pin is a to-do, read or not); any
+  other item drops out once Opened. It's index-bounded like
+  `feed_items`. **Foundation only for now:** the RPC + client method ship here to
+  back a planned **group-by-feed section-header unread badge** (so a collapsed
+  feed will still show how much it holds unread) — the header *display* lands with
+  the grouped-view pagination work, not in this change. (Server-side count, so it
+  can briefly lag a just-applied local open/done until the outbox syncs; it
+  self-heals on the feed refetch that every triage write triggers.)
 
 Rationale: readmo has no upstream ranker (unlike newshacker, whose HN
 `top`/`best` lists are already recency-bounded), so an explicit window + floor

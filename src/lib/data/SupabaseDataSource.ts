@@ -493,6 +493,30 @@ export class SupabaseDataSource implements DataSource {
     return this.feedView({ p_scope: 'feed', p_folder: null, p_feed_id: feedId }, opts);
   }
 
+  async getFeedUnreadCounts(
+    feedIds: FeedId[],
+  ): Promise<Record<FeedId, number>> {
+    const counts: Record<FeedId, number> = {};
+    for (const id of feedIds) counts[id] = 0;
+    if (feedIds.length === 0) return counts;
+    // Server-side count (RLS scopes it to the caller's subscriptions). It reads
+    // the server's item_state, so it can briefly lag a just-applied local
+    // open/done until the outbox syncs — fine for a badge; it self-heals on the
+    // next refetch (feed invalidation after a triage write triggers one).
+    //
+    // Batch the feed-id list (one response row per feed) so no single response
+    // approaches the PostgREST row cap — otherwise a caller with a very large
+    // subscription list would get a truncated response and the missing feeds
+    // would stay at their prefilled 0, falsely reading as "nothing unread".
+    for (const batch of chunk(feedIds, ID_LOOKUP_CHUNK)) {
+      const rows = this.unwrap<Array<{ feed_id: string; n: number | string }>>(
+        await this.sb.rpc('feed_unread_counts', { p_feed_ids: batch }),
+      );
+      for (const r of rows) counts[r.feed_id] = Number(r.n) || 0;
+    }
+    return counts;
+  }
+
   async getItem(id: ItemId): Promise<FeedItem | null> {
     const row = this.unwrap<ItemRow | null>(
       await this.sb.from('items').select(ITEM_DETAIL_COLS).eq('id', id).maybeSingle(),

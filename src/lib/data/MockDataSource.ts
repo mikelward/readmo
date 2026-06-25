@@ -229,6 +229,44 @@ export class MockDataSource implements DataSource {
     );
   }
 
+  async getFeedUnreadCounts(
+    feedIds: FeedId[],
+  ): Promise<Record<FeedId, number>> {
+    const now = Date.now();
+    const freshAfter = now - this.homeWindowMs;
+    const want = new Set(feedIds);
+
+    // Gather each wanted feed's non-dismissed items (Done/active-Hidden drop
+    // out, same as the list), bucketed by feed for the per-feed floor ranking.
+    const byFeed = new Map<FeedId, Array<{ item: Item; st: ItemState }>>();
+    for (const item of this.items) {
+      if (!want.has(item.feedId)) continue;
+      const st = this.stateStore.get(item.id, now);
+      if (st.done || st.hidden) continue;
+      const arr = byFeed.get(item.feedId);
+      if (arr) arr.push({ item, st });
+      else byFeed.set(item.feedId, [{ item, st }]);
+    }
+
+    const counts: Record<FeedId, number> = {};
+    for (const id of feedIds) counts[id] = 0;
+    for (const [feedId, arr] of byFeed) {
+      // Newest-first so the per-feed floor keeps a sparse feed's latest items.
+      arr.sort((a, b) => b.item.publishedAt - a.item.publishedAt);
+      let n = 0;
+      arr.forEach(({ item, st }, rank) => {
+        // Listable = window ∪ floor ∪ pinned (mirrors orderedFor / feed_items).
+        // A pinned item always counts (a pin is a to-do, read or not); other
+        // listable items drop out once Opened.
+        const listable =
+          st.pinned || item.publishedAt >= freshAfter || rank < this.feedFloor;
+        if (listable && (st.pinned || !st.opened)) n += 1;
+      });
+      counts[feedId] = n;
+    }
+    return counts;
+  }
+
   async getItem(id: ItemId): Promise<FeedItem | null> {
     const item = this.items.find((it) => it.id === id);
     return item ? this.toFeedItem(item) : null;

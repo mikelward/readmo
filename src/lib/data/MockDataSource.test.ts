@@ -107,6 +107,43 @@ describe('MockDataSource freshness window + per-feed floor', () => {
   });
 });
 
+describe('MockDataSource getFeedUnreadCounts', () => {
+  const FEEDS = ['feed-verge', 'feed-nasa', 'feed-css', 'feed-reddit-prog'];
+
+  it('counts each feed’s listable items, all unread by default', async () => {
+    const ds = new MockDataSource(`test-${Math.random()}`);
+    expect(await ds.getFeedUnreadCounts(FEEDS)).toEqual({
+      'feed-verge': 3,
+      'feed-nasa': 2,
+      'feed-css': 3,
+      'feed-reddit-prog': 2,
+    });
+  });
+
+  it('excludes Opened, Done, and active Hidden items', async () => {
+    const ds = new MockDataSource(`test-${Math.random()}`);
+    ds.stateStore.set('item-1', 'opened', true); // verge
+    ds.stateStore.set('item-5', 'done', true); // verge
+    const counts = await ds.getFeedUnreadCounts(['feed-verge']);
+    // verge had item-1/5/9; opened + done drop out, leaving item-9.
+    expect(counts['feed-verge']).toBe(1);
+  });
+
+  it('still counts a pinned item even when it has been opened (a pin is a to-do)', async () => {
+    const ds = new MockDataSource(`test-${Math.random()}`);
+    ds.stateStore.set('item-9', 'pinned', true); // verge, pinned
+    ds.stateStore.set('item-9', 'opened', true); // …and read
+    // item-9 is pinned, so it counts despite being opened; item-1/5 unread → 3.
+    expect((await ds.getFeedUnreadCounts(['feed-verge']))['feed-verge']).toBe(3);
+  });
+
+  it('returns 0 for a feed with nothing unread', async () => {
+    const ds = new MockDataSource(`test-${Math.random()}`);
+    // feed-park has no items in the seed.
+    expect((await ds.getFeedUnreadCounts(['feed-park']))['feed-park']).toBe(0);
+  });
+});
+
 describe('MockDataSource library + subscriptions', () => {
   it('resolves ids for library views preserving order', async () => {
     const ds = fresh();
