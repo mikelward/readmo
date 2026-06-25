@@ -24,12 +24,14 @@ describe('desktop wider-column invariants', () => {
     );
   });
 
-  it('widens the header inner to 860px at the same breakpoint so it tracks the column', () => {
+  it('widens the header inner toward 860px at the same breakpoint, reserving edge gutter', () => {
     // Phone baseline keeps the header inner aligned with the 720px column.
     expect(headerCss).toMatch(/\.app-header__inner\s*\{[^}]*max-width:\s*720px/s);
-    // Desktop: header inner grows with .app-main to stay aligned with the list.
+    // Desktop: header inner grows toward .app-main's 860px to track the column,
+    // but clamps to leave ~100px/side gutter so the absolutely-positioned edge
+    // controls (esp. the signed-out "Sign in" chip) never overlap the inner.
     expect(headerCss).toMatch(
-      /@media\s*\(min-width:\s*960px\)\s*\{\s*\.app-header__inner\s*\{[^}]*max-width:\s*860px/s,
+      /@media\s*\(min-width:\s*960px\)\s*\{\s*\.app-header__inner\s*\{[^}]*max-width:\s*min\(860px,\s*calc\(100vw - 200px\)\)/s,
     );
   });
 });
