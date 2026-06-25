@@ -691,7 +691,10 @@ loopback/link-local/private/metadata targets and redirects to them.
        user's **manual feed order** (the `subscriptions.sort` field, set by
        drag-to-reorder in Settings); within a section the chosen sort order
        applies, and that feed's pinned items sit at the top of the section. A
-       feed-name header introduces each section. No effect on a single-feed view.
+       feed-name header introduces each section, painted on the white card
+       surface (`--rm-bg-card`) rather than the page background so it reads as a
+       crisp band; its pressed state falls back to the page background
+       (`--rm-bg`) so the tap still registers. No effect on a single-feed view.
      - **Collapse / expand sections** (group-by-feed only). Each section header
        is a **tap target** that toggles its section collapsed (rows hidden, a
        chevron flips); the header stays visible. Per-device and **persisted**
