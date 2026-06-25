@@ -20,6 +20,7 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   { name: 'The Guardian', feedUrl: 'https://www.theguardian.com/world/rss', category: 'News' },
   { name: 'New York Times', feedUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml', category: 'News' },
   { name: 'Washington Post', feedUrl: 'https://feeds.washingtonpost.com/rss/world', category: 'News' },
+  { name: 'Los Angeles Times', feedUrl: 'https://www.latimes.com/rss2.0.xml', category: 'News' },
   { name: 'Axios', feedUrl: 'https://api.axios.com/feed/', category: 'News' },
   { name: 'Vox', feedUrl: 'https://www.vox.com/rss/index.xml', category: 'News' },
   { name: 'Politico', feedUrl: 'https://www.politico.com/rss/politicopicks.xml', category: 'News' },
@@ -28,7 +29,12 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   { name: 'NZZ', feedUrl: 'https://www.nzz.ch/recent.rss', category: 'News' },
   { name: 'The Age', feedUrl: 'https://www.theage.com.au/rss/feed.xml', category: 'News' },
   { name: 'Sydney Morning Herald', feedUrl: 'https://www.smh.com.au/rss/feed.xml', category: 'News' },
+  { name: 'The Australian', feedUrl: 'https://www.theaustralian.com.au/feed', category: 'News' },
   { name: 'The Globe and Mail', feedUrl: 'https://www.theglobeandmail.com/arc/outboundfeeds/rss/', category: 'News' },
+  { name: 'USA Today', feedUrl: 'https://rssfeeds.usatoday.com/usatoday-NewsTopStories', category: 'News' },
+  { name: 'HuffPost', feedUrl: 'https://www.huffpost.com/section/front-page/feed', category: 'News' },
+  { name: 'Fox News', feedUrl: 'https://moxie.foxnews.com/google-publisher/latest.xml', category: 'News' },
+  { name: 'The Boston Globe', feedUrl: 'https://www.bostonglobe.com/rss/bdc/breaking', category: 'News' },
 
   // Opinion & Analysis
   { name: 'The Atlantic', feedUrl: 'https://www.theatlantic.com/feed/all/', category: 'Opinion & Analysis' },
@@ -55,6 +61,12 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   { name: 'Slashdot', feedUrl: 'https://rss.slashdot.org/Slashdot/slashdot', category: 'Technology' },
   { name: 'Tom\'s Hardware', feedUrl: 'https://www.tomshardware.com/feeds/all', category: 'Technology' },
   { name: 'AnandTech', feedUrl: 'https://www.anandtech.com/rss/', category: 'Technology' },
+  { name: 'GSMArena', feedUrl: 'https://www.gsmarena.com/rss-news-reviews.php3', category: 'Technology' },
+  { name: 'Android Authority', feedUrl: 'https://www.androidauthority.com/feed/', category: 'Technology' },
+  { name: 'Android Police', feedUrl: 'https://www.androidpolice.com/feed/', category: 'Technology' },
+  { name: 'The Register', feedUrl: 'https://www.theregister.com/headlines.atom', category: 'Technology' },
+  { name: 'Phoronix', feedUrl: 'https://www.phoronix.com/rss.php', category: 'Technology' },
+  { name: 'OSNews', feedUrl: 'https://www.osnews.com/feed/', category: 'Technology' },
 
   // Programming
   { name: 'GitHub Blog', feedUrl: 'https://github.blog/feed/', category: 'Programming' },
@@ -65,6 +77,18 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   { name: 'Coding Horror', feedUrl: 'https://blog.codinghorror.com/rss/', category: 'Programming' },
   { name: 'Joel on Software', feedUrl: 'https://www.joelonsoftware.com/feed/', category: 'Programming' },
   { name: 'Daring Fireball', feedUrl: 'https://daringfireball.net/feeds/main', category: 'Programming' },
+  { name: 'Lobsters', feedUrl: 'https://lobste.rs/rss', category: 'Programming' },
+  { name: 'DEV Community', feedUrl: 'https://dev.to/feed', category: 'Programming' },
+  { name: 'freeCodeCamp', feedUrl: 'https://www.freecodecamp.org/news/rss/', category: 'Programming' },
+  { name: 'Martin Fowler', feedUrl: 'https://martinfowler.com/feed.atom', category: 'Programming' },
+  { name: 'Julia Evans', feedUrl: 'https://jvns.ca/atom.xml', category: 'Programming' },
+  { name: 'Scott Hanselman', feedUrl: 'https://feeds.hanselman.com/ScottHanselman', category: 'Programming' },
+  { name: 'The Old New Thing', feedUrl: 'https://devblogs.microsoft.com/oldnewthing/feed', category: 'Programming' },
+
+  // AI
+  { name: 'Anthropic News', feedUrl: 'https://www.anthropic.com/news/rss.xml', category: 'AI' },
+  { name: 'OpenAI News', feedUrl: 'https://openai.com/news/rss.xml', category: 'AI' },
+  { name: 'Google DeepMind', feedUrl: 'https://deepmind.google/blog/rss.xml', category: 'AI' },
 
   // Science
   { name: 'NASA Breaking News', feedUrl: 'https://www.nasa.gov/rss/dyn/breaking_news.rss', category: 'Science' },
@@ -74,6 +98,10 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   { name: 'Scientific American', feedUrl: 'https://www.scientificamerican.com/platform/syndication/rss/', category: 'Science' },
   { name: 'Nature News', feedUrl: 'https://www.nature.com/nature.rss', category: 'Science' },
   { name: 'The Planetary Society', feedUrl: 'https://www.planetary.org/rss/articles', category: 'Science' },
+  { name: 'Quanta Magazine', feedUrl: 'https://www.quantamagazine.org/feed/', category: 'Science' },
+  { name: 'Space.com', feedUrl: 'https://www.space.com/feeds/all', category: 'Science' },
+  { name: 'IEEE Spectrum', feedUrl: 'https://spectrum.ieee.org/feeds/feed.rss', category: 'Science' },
+  { name: 'Astronomy Picture of the Day', feedUrl: 'https://apod.nasa.gov/apod.rss', category: 'Science' },
 
   // Business & Finance
   { name: 'Wall Street Journal', feedUrl: 'https://feeds.a.dj.com/rss/RSSWorldNews.xml', category: 'Business & Finance' },
@@ -81,6 +109,18 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   { name: 'Financial Times', feedUrl: 'https://www.ft.com/rss/home/us', category: 'Business & Finance' },
   { name: 'Forbes', feedUrl: 'https://www.forbes.com/real-time/feed2/', category: 'Business & Finance' },
   { name: 'MarketWatch', feedUrl: 'https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines', category: 'Business & Finance' },
+  { name: 'Business Insider', feedUrl: 'https://www.businessinsider.com/rss', category: 'Business & Finance' },
+  { name: 'Money Saving Expert', feedUrl: 'https://www.moneysavingexpert.com/feed/', category: 'Business & Finance' },
+
+  // Travel
+  { name: 'Conde Nast Traveler', feedUrl: 'https://www.cntraveler.com/feed/rss', category: 'Travel' },
+  { name: 'The Points Guy', feedUrl: 'https://thepointsguy.com/feed/', category: 'Travel' },
+  { name: 'View from the Wing', feedUrl: 'https://viewfromthewing.com/feed/', category: 'Travel' },
+  { name: 'One Mile at a Time', feedUrl: 'https://onemileatatime.com/feed/', category: 'Travel' },
+  { name: 'Frequent Miler', feedUrl: 'https://frequentmiler.com/feed/', category: 'Travel' },
+
+  // Health
+  { name: 'NHS England News', feedUrl: 'https://www.england.nhs.uk/feed/', category: 'Health' },
   { name: 'Quartz', feedUrl: 'https://qz.com/feed', category: 'Business & Finance' },
   { name: 'Inc.', feedUrl: 'https://www.inc.com/rss/', category: 'Business & Finance' },
   { name: 'Fast Company', feedUrl: 'https://www.fastcompany.com/latest/rss', category: 'Business & Finance' },
@@ -98,6 +138,19 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   { name: 'Vulture', feedUrl: 'https://www.vulture.com/rss/all.xml', category: 'Culture' },
   { name: 'Consequence of Sound', feedUrl: 'https://consequenceofsound.net/feed/', category: 'Culture' },
 
+  // YouTube
+  // YouTube exposes a public Atom feed per channel at
+  // https://www.youtube.com/feeds/videos.xml?channel_id=<UC…>. The IDs below
+  // are stable and tied to the channel for life — handles like @MKBHD can
+  // change, the UC… ID can't.
+  { name: 'MKBHD', feedUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCBJycsmduvYEL83R_U4JriQ', category: 'YouTube' },
+  { name: 'Linus Tech Tips', feedUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCXuqSBlHAE6Xw-yeJA0Tunw', category: 'YouTube' },
+  { name: 'Veritasium', feedUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCHnyfMqiRRG1u-2MsSQLbXA', category: 'YouTube' },
+  { name: 'Kurzgesagt', feedUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCsXVk37bltHxD1rDPwtNM8Q', category: 'YouTube' },
+  { name: '3Blue1Brown', feedUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCYO_jab_esuFRV4b17AJtAw', category: 'YouTube' },
+  { name: 'NASA', feedUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCLA_DiR1FfKNvjuUpBHmylQ', category: 'YouTube' },
+  { name: 'TED Talks', feedUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCAuUUnT6oDeKwE6v1NGQxug', category: 'YouTube' },
+
   // Reddit
   { name: 'Reddit Popular', feedUrl: 'https://www.reddit.com/r/popular.rss', category: 'Reddit' },
   { name: 'Reddit World News', feedUrl: 'https://www.reddit.com/r/worldnews.rss', category: 'Reddit' },
@@ -109,6 +162,7 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   // Podcasts / Newsletters
   { name: 'Wait But Why', feedUrl: 'https://waitbutwhy.com/feed', category: 'Newsletters' },
   { name: 'Stratechery', feedUrl: 'https://stratechery.com/feed/', category: 'Newsletters' },
+  { name: 'Gates Notes', feedUrl: 'https://www.gatesnotes.com/rss', category: 'Newsletters' },
 
   // Fun
   { name: 'xkcd', feedUrl: 'https://xkcd.com/rss.xml', category: 'Fun' },

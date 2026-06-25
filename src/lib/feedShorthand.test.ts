@@ -84,4 +84,46 @@ describe('expandFeedShorthand', () => {
   it('returns empty string for blank input', () => {
     expect(expandFeedShorthand('   ')).toBe('');
   });
+
+  it('expands a YouTube handle shorthand', () => {
+    expect(expandFeedShorthand('youtube/mkbhd')).toBe(
+      'https://www.youtube.com/@mkbhd',
+    );
+  });
+
+  it('accepts the yt/ alias', () => {
+    expect(expandFeedShorthand('yt/Veritasium')).toBe(
+      'https://www.youtube.com/@Veritasium',
+    );
+  });
+
+  it('tolerates a leading @ in the YouTube shorthand', () => {
+    expect(expandFeedShorthand('youtube/@mkbhd')).toBe(
+      'https://www.youtube.com/@mkbhd',
+    );
+  });
+
+  it('accepts a leading slash on the YouTube shorthand', () => {
+    expect(expandFeedShorthand('/youtube/mkbhd')).toBe(
+      'https://www.youtube.com/@mkbhd',
+    );
+  });
+
+  it('preserves handle case (handles are case-sensitive on YouTube)', () => {
+    expect(expandFeedShorthand('YouTube/MKBHD')).toBe(
+      'https://www.youtube.com/@MKBHD',
+    );
+  });
+
+  it('does not mistake a hostname whose first label is youtube/yt', () => {
+    expect(expandFeedShorthand('youtube.com/@mkbhd')).toBe(
+      'youtube.com/@mkbhd',
+    );
+    expect(expandFeedShorthand('yt.example.com')).toBe('yt.example.com');
+  });
+
+  it('does not expand a dangling youtube prefix with no handle', () => {
+    expect(expandFeedShorthand('youtube/')).toBe('youtube/');
+    expect(expandFeedShorthand('yt/')).toBe('yt/');
+  });
 });
