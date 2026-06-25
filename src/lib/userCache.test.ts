@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearUserCaches,
+  COLLAPSED_FEEDS_KEY,
   itemStateKey,
   outboxKey,
   reconcileUserCachesOnBoot,
@@ -29,6 +30,7 @@ describe('clearUserCaches', () => {
     window.localStorage.setItem(outboxKey('u1'), 'queued-writes');
     window.localStorage.setItem(rqCacheKey('u2'), 'keep'); // another user's data
     window.localStorage.setItem(outboxKey('u2'), 'keep'); // another user's outbox
+    window.localStorage.setItem(COLLAPSED_FEEDS_KEY, '["feed-1"]'); // subscription-derived
 
     const del = vi.fn().mockResolvedValue(true);
     vi.stubGlobal('caches', { delete: del });
@@ -39,6 +41,9 @@ describe('clearUserCaches', () => {
     expect(window.localStorage.getItem(itemStateKey('u1'))).toBeNull();
     // The departing user's queued offline writes are purged too.
     expect(window.localStorage.getItem(outboxKey('u1'))).toBeNull();
+    // The collapsed-feeds set is subscription-derived, so it must not survive an
+    // account change on a shared device (guardrail #8).
+    expect(window.localStorage.getItem(COLLAPSED_FEEDS_KEY)).toBeNull();
     // A different user's persisted data is untouched.
     expect(window.localStorage.getItem(rqCacheKey('u2'))).toBe('keep');
     expect(window.localStorage.getItem(outboxKey('u2'))).toBe('keep');

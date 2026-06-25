@@ -4,8 +4,9 @@ import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { useFeedItems, type FetchPage } from '../hooks/useFeedItems';
 import { useInViewIds } from '../hooks/useInViewIds';
 import { useHideOnScroll, useBottomBarPosition } from '../hooks/useReadingPrefs';
+import { useCollapsedFeeds } from '../hooks/useCollapsedFeeds';
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
-import type { FeedId, ItemId } from '../lib/types';
+import type { FeedId, FeedItem, ItemId } from '../lib/types';
 import { measureStickyBottomInset, measureTopChromeHeight } from '../lib/stickyInset';
 import { loadFailureCopy, presentableDetail } from '../lib/loadErrorCopy';
 import { LoadError } from './LoadError';
@@ -30,6 +31,34 @@ const SCROLL_HIDE_BATCH_WINDOW_MS = 2000;
 // burst on one view would extend another view's stale undo batch. A global
 // sequence makes every burst's key unique across all lists.
 let scrollBurstSeq = 0;
+
+// Cap on how many pages a single "More" tap will auto-fetch past collapsed-only
+// content before stopping (and leaving "More" available again). A collapsed feed
+// with many pages of unread rows would otherwise let one tap pull the whole feed;
+// this bounds it while still skipping past hidden runs to the next visible rows.
+const MAX_AUTO_SKIP_PAGES = 10;
+
+/** How many list elements a page set renders: in the group-by-feed view, one
+ * header per feed section plus each non-collapsed row (a collapsed feed shows
+ * only its header); otherwise just the row count. The list is contiguous by
+ * feed, so a section boundary is a feed-id change. */
+function renderedCountIn(
+  list: FeedItem[],
+  groupByFeed: boolean,
+  collapsed: Set<FeedId>,
+): number {
+  if (!groupByFeed) return list.length;
+  let count = 0;
+  let lastFeedId: FeedId | null = null;
+  for (const fi of list) {
+    if (fi.item.feedId !== lastFeedId) {
+      count += 1; // section header
+      lastFeedId = fi.item.feedId;
+    }
+    if (!collapsed.has(fi.item.feedId)) count += 1; // visible row
+  }
+  return count;
+}
 
 interface Props {
   viewKey: string;
@@ -130,6 +159,26 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
   const pinnedBar = bottomBarPosition === 'screen';
   const [atListEnd, setAtListEnd] = useState(false);
 
+  // Collapse/expand of feed sections (group-by-feed only). Read here, near the
+  // top, because the end-of-list measurement and the "More" fetch loop both
+  // depend on how many rows are actually *shown* — collapsing hides rows without
+  // changing `items.length`. Per-device and persisted, so a section stays
+  // collapsed across reloads and between grouped views.
+  const { collapsed, toggle, collapseAll, expand } = useCollapsedFeeds();
+  // Mirror into a ref so the async "More" loop (which spans renders) reads the
+  // latest set without a stale closure.
+  const collapsedRef = useRef<Set<FeedId>>(new Set());
+  collapsedRef.current = collapsed;
+  // Number of list elements actually rendered: one header per feed section plus
+  // each non-collapsed row (a collapsed feed shows only its header). When not
+  // grouping this is just items.length. Drives the end-of-list re-measure and the
+  // auto-skip loop — both treat a newly rendered header (even a collapsed feed's)
+  // as visible progress, not just rows.
+  const renderedCount = useMemo(
+    () => renderedCountIn(items, groupByFeed, collapsed),
+    [groupByFeed, items, collapsed],
+  );
+
   useEffect(() => {
     const check = () => {
       const doc = document.documentElement;
@@ -144,8 +193,11 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
       window.removeEventListener('scroll', check);
       window.removeEventListener('resize', check);
     };
-    // Re-measure when the row count changes — a new page grows the document.
-  }, [items.length]);
+    // Re-measure when the *rendered* row count changes — a new page grows the
+    // document, and collapsing/expanding sections shrinks/grows it without
+    // changing items.length (which would otherwise leave atListEnd stale and
+    // strand the pinned-bar "More" on its page-down branch).
+  }, [renderedCount]);
 
   // Anchors the fetch-and-scroll path: the id of the last row before a tap that
   // triggers a fetch (ids are stable across a plain page fetch — no state change
@@ -153,7 +205,16 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
   // it renders.
   const pendingAnchorId = useRef<string | null>(null);
 
-  const handleMore = useCallback(() => {
+  // How many list elements a given page set would render (headers + visible
+  // rows), via the live collapsed ref so the async loop below isn't stale. Used
+  // to keep fetching past pages that render nothing new — but a newly appearing
+  // section header (even a collapsed feed's) counts as progress and stops it.
+  const renderedCountOf = useCallback(
+    (list: typeof items) => renderedCountIn(list, groupByFeed, collapsedRef.current),
+    [groupByFeed],
+  );
+
+  const handleMore = useCallback(async () => {
     // Pinned bar only: bottom of the loaded list still below the fold → page
     // down to it. In relative mode the reader is already at the foot, so skip
     // straight to the fetch.
@@ -164,11 +225,25 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
       window.scrollBy({ top: Math.max(page, 200), behavior: 'smooth' });
       return;
     }
-    // At the end with another page available → fetch it; the effect scrolls its
-    // first row just below the top chrome once it lands.
+    // At the end with another page available → fetch it; the effect scrolls the
+    // first new element below the top chrome once it lands. When grouping with
+    // collapsed sections, a fetched page can render nothing new (all hidden rows
+    // of a continuing collapsed feed) — keep fetching (bounded) until something
+    // new is rendered (a visible row OR a new section header) or the feed is
+    // exhausted, so "More" never lands the reader on a page that shows nothing.
     pendingAnchorId.current = items[items.length - 1]?.item.id ?? null;
-    fetchMore();
-  }, [pinnedBar, atListEnd, items, fetchMore]);
+    const baselineRendered = renderedCountOf(items);
+    let totalLoaded = items.length;
+    for (let i = 0; i < MAX_AUTO_SKIP_PAGES; i++) {
+      const res = await fetchMore();
+      const all = res.data?.pages.flatMap((p) => p.items) ?? [];
+      // No new page appended (true end, or a fetch error) → stop.
+      if (all.length <= totalLoaded) break;
+      totalLoaded = all.length;
+      // Something new rendered (a row or a new header), or nothing left → done.
+      if (renderedCountOf(all) > baselineRendered || !(res.hasNextPage ?? false)) break;
+    }
+  }, [pinnedBar, atListEnd, items, fetchMore, renderedCountOf]);
 
   useEffect(() => {
     const anchorId = pendingAnchorId.current;
@@ -176,11 +251,24 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
     const anchorIndex = items.findIndex((fi) => fi.item.id === anchorId);
     // Wait until the appended page has rendered (a row now follows the anchor).
     if (anchorIndex === -1 || anchorIndex >= items.length - 1) return;
+    // Scroll to the first appended element that's actually rendered — a section
+    // header (a collapsed feed has one but no visible rows) or a row. Hidden rows
+    // aren't in the DOM, so they're skipped; during an auto-skip the early pages
+    // may render nothing, in which case we wait for a header/row to land.
+    let target: Element | null = null;
+    for (let i = anchorIndex + 1; i < items.length; i++) {
+      const id = items[i].item.id;
+      const el =
+        document.querySelector(`[data-header-for="${id}"]`) ??
+        document.querySelector(`[data-item-id="${id}"]`);
+      if (el instanceof HTMLElement) {
+        target = el;
+        break;
+      }
+    }
+    if (!(target instanceof HTMLElement)) return; // appended elements still all hidden
     pendingAnchorId.current = null;
-    const firstNewId = items[anchorIndex + 1].item.id;
-    const row = document.querySelector(`[data-item-id="${firstNewId}"]`);
-    if (!(row instanceof HTMLElement)) return;
-    const top = row.getBoundingClientRect().top + window.scrollY - measureTopChromeHeight();
+    const top = target.getBoundingClientRect().top + window.scrollY - measureTopChromeHeight();
     // Browsers honoring prefers-reduced-motion fall back to an instant scroll.
     window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
   }, [items]);
@@ -215,16 +303,40 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
   // span a page break.
   const groupHeaders = useMemo(() => {
     if (!groupByFeed) return undefined;
-    const headers = new Map<ItemId, string>();
+    const headers = new Map<ItemId, { feedId: FeedId; title: string }>();
     let lastFeedId: FeedId | null = null;
     for (const fi of items) {
       if (fi.item.feedId !== lastFeedId) {
-        headers.set(fi.item.id, fi.feed.title);
+        headers.set(fi.item.id, { feedId: fi.item.feedId, title: fi.feed.title });
         lastFeedId = fi.item.feedId;
       }
     }
     return headers;
   }, [groupByFeed, items]);
+
+  // "Collapse all" / "Expand all" in the top toolbar act on the feeds currently
+  // in view — the distinct feed ids across the loaded pages, in order.
+  const feedIdsInView = useMemo(() => {
+    if (!groupByFeed) return [] as FeedId[];
+    const seen = new Set<FeedId>();
+    const out: FeedId[] = [];
+    for (const fi of items) {
+      if (!seen.has(fi.item.feedId)) {
+        seen.add(fi.item.feedId);
+        out.push(fi.item.feedId);
+      }
+    }
+    return out;
+  }, [groupByFeed, items]);
+  const collapseControls =
+    groupByFeed && feedIdsInView.length > 0
+      ? {
+          onCollapseAll: () => collapseAll(feedIdsInView),
+          onExpandAll: () => expand(feedIdsInView),
+          allCollapsed: feedIdsInView.every((id) => collapsed.has(id)),
+          anyCollapsed: feedIdsInView.some((id) => collapsed.has(id)),
+        }
+      : undefined;
 
   // Force a confirming refetch when we come back online with nothing to show.
   // The miss-state guard below keys off the *current* status, but on the
@@ -266,7 +378,7 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
 
   return (
     <div className="item-list">
-      <ListToolbar />
+      <ListToolbar collapse={collapseControls} />
 
       <PullToRefresh onRefresh={async () => { await ds.refresh(); await refetch(); await checkForServiceWorkerUpdate(); }}>
         {showMissState ? (
@@ -306,6 +418,8 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
               listRef={listRef}
               getRowRef={getRowRef}
               groupHeaders={groupHeaders}
+              collapsedFeeds={groupByFeed ? collapsed : undefined}
+              onToggleCollapse={groupByFeed ? toggle : undefined}
               emptyLabel={emptyLabel ?? 'Nothing here yet.'}
             />
           </>

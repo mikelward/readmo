@@ -45,6 +45,48 @@
   gap: 8px;
 }
 
+/* Collapse all / Expand all (group-by-feed, top bar only) — compact text
+   buttons on the left, mirroring the .list-toolbar__more text-button style. */
+.list-toolbar__collapse {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.list-toolbar__text-btn {
+  min-height: var(--rm-tap);
+  padding: 6px 10px;
+  border: 1px solid var(--rm-border-strong);
+  border-radius: var(--rm-radius);
+  background: var(--rm-bg-card);
+  color: var(--rm-accent);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+@media (pointer: fine) {
+  .list-toolbar__text-btn {
+    min-height: 32px;
+  }
+}
+
+@media (hover: hover) {
+  .list-toolbar__text-btn:not(:disabled):hover {
+    background: var(--rm-bg);
+  }
+}
+
+.list-toolbar__text-btn:not(:disabled):active {
+  background: var(--rm-border);
+}
+
+.list-toolbar__text-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .list-toolbar__button {
   display: inline-flex;
   align-items: center;

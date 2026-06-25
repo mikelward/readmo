@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/renderWithProviders';
@@ -54,11 +54,11 @@ describe('ItemRows', () => {
     expect(toggled).toEqual([items[0].item.id]);
   });
 
-  it('renders a group header before the item it is keyed to (group-by-feed)', async () => {
+  it('renders a static group header before the item it is keyed to', async () => {
     const items = await sampleItems(3);
-    const headers = new Map<string, string>([
-      [items[0].item.id, 'First Feed'],
-      [items[2].item.id, 'Second Feed'],
+    const headers = new Map([
+      [items[0].item.id, { feedId: items[0].item.feedId, title: 'First Feed' }],
+      [items[2].item.id, { feedId: items[2].item.feedId, title: 'Second Feed' }],
     ]);
     const { container } = renderWithProviders(
       <ItemRows items={items} emptyLabel="Nothing here." groupHeaders={headers} />,
@@ -68,17 +68,70 @@ describe('ItemRows', () => {
       'First Feed',
       'Second Feed',
     ]);
-    // Decorative (the feed name is also on each row's meta line).
-    expect(headerEls[0]).toHaveAttribute('aria-hidden', 'true');
+    // No toggle handler → a static, decorative label (no button).
+    expect(container.querySelector('[data-testid="group-toggle"]')).toBeNull();
 
     // Each header sits immediately before its keyed row in document order.
-    const firstHeader = headerEls[0];
     const firstRow = container.querySelector(
       `[data-item-id="${items[0].item.id}"]`,
     );
-    expect(firstHeader.nextElementSibling).toBe(firstRow);
+    expect(headerEls[0].nextElementSibling).toBe(firstRow);
+    expect(headerEls).toHaveLength(2);
+  });
 
-    // A row with no header entry doesn't get one.
-    expect(container.querySelectorAll('.item-list__group-header')).toHaveLength(2);
+  it('renders a header toggle button and reports clicks (collapsible)', async () => {
+    const items = await sampleItems(2);
+    const onToggle = vi.fn();
+    const headers = new Map([
+      [items[0].item.id, { feedId: items[0].item.feedId, title: 'Alpha Feed' }],
+    ]);
+    renderWithProviders(
+      <ItemRows
+        items={items}
+        emptyLabel="Nothing here."
+        groupHeaders={headers}
+        collapsedFeeds={new Set()}
+        onToggleCollapse={onToggle}
+      />,
+    );
+    const toggle = screen.getByTestId('group-toggle');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(toggle).toHaveAccessibleName(/Alpha Feed: collapse feed/);
+    await userEvent.setup().click(toggle);
+    expect(onToggle).toHaveBeenCalledWith(items[0].item.feedId);
+  });
+
+  it('hides the rows of a collapsed feed but keeps its header', async () => {
+    const items = await sampleItems(3); // three distinct seed feeds
+    const headers = new Map(
+      items.map((fi) => [fi.item.id, { feedId: fi.item.feedId, title: fi.feed.title }]),
+    );
+    const collapsedFeed = items[0].item.feedId;
+    const { container } = renderWithProviders(
+      <ItemRows
+        items={items}
+        emptyLabel="Nothing here."
+        groupHeaders={headers}
+        collapsedFeeds={new Set([collapsedFeed])}
+        onToggleCollapse={vi.fn()}
+      />,
+    );
+    // All three headers still render…
+    expect(container.querySelectorAll('.item-list__group-header')).toHaveLength(3);
+    // …but the collapsed feed's row is gone, while the others remain.
+    expect(
+      container.querySelector(`[data-item-id="${items[0].item.id}"]`),
+    ).toBeNull();
+    expect(
+      container.querySelector(`[data-item-id="${items[1].item.id}"]`),
+    ).not.toBeNull();
+    // The collapsed header is marked and its toggle reads aria-expanded=false.
+    const collapsedHeader = container.querySelector(
+      '.item-list__group-header--collapsed',
+    );
+    expect(collapsedHeader).not.toBeNull();
+    expect(
+      collapsedHeader!.querySelector('[data-testid="group-toggle"]'),
+    ).toHaveAttribute('aria-expanded', 'false');
   });
 });

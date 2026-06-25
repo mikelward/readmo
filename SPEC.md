@@ -645,8 +645,21 @@ loopback/link-local/private/metadata targets and redirects to them.
        user's **manual feed order** (the `subscriptions.sort` field, set by
        drag-to-reorder in Settings); within a section the chosen sort order
        applies, and that feed's pinned items sit at the top of the section. A
-       feed-name header introduces each section (decorative — the name is also on
-       every row, so it's `aria-hidden`). No effect on a single-feed view.
+       feed-name header introduces each section. No effect on a single-feed view.
+     - **Collapse / expand sections** (group-by-feed only). Each section header
+       is a **tap target** that toggles its section collapsed (rows hidden, a
+       chevron flips); the header stays visible. Per-device and **persisted**
+       (`readmo:collapsed-feeds`, a JSON array of collapsed feed ids), so a
+       section stays collapsed across reloads and between grouped views. The
+       **top toolbar** gains **Collapse all** / **Expand all** buttons (only while
+       grouping with feeds in view) acting on the feeds currently loaded; each
+       disables when it would be a no-op (all already collapsed / nothing
+       collapsed). A collapsed feed's hidden rows aren't navigable or swept.
+       Because feed reads are paged by row, a collapsed feed can span whole
+       hidden pages; **More auto-skips** them — it keeps fetching (bounded) past
+       pages that render nothing new until a new **section header** (even a
+       collapsed feed's) or a visible row appears, or the feed is exhausted, so it
+       never lands the reader on a page showing nothing.
    - **Done and Hidden filtered out**; **Opened** items render with the faded
      title.
    - **Initial paint one page (30 items)**; further pages only via an explicit
@@ -674,7 +687,9 @@ loopback/link-local/private/metadata targets and redirects to them.
    comments. See *Reader view*.
 
 6. **List toolbar** — sticky below the header: right-aligned **Undo** +
-   **Sweep unpinned** (Mark all done). Sweep marks done only the unpinned rows that
+   **Sweep unpinned** (Mark all done). In the **group-by-feed** view it also
+   carries left-aligned **Collapse all** / **Expand all** buttons (see *Feed
+   views → Collapse / expand sections*). Sweep marks done only the unpinned rows that
    are **fully visible right now** — not the whole loaded list — so scrolling
    past content and tapping the broom can't dismiss rows off-screen. A row
    counts as visible iff its bounding box sits entirely inside the viewport
@@ -1097,6 +1112,13 @@ keys differ; the strategies map one-to-one:
   - `readmo:cache-migrated` — one-shot flag marking that the pre-scoping global
     keys were migrated into the signed-in user's scoped keys (so an upgrade
     preserves pins/favorites instead of wiping them).
+  - `readmo:collapsed-feeds` — collapsed feed sections (group-by-feed view). Not
+    uid-*keyed* (a single per-device key), but **subscription-derived**, so it's
+    in the `clearUserCaches` purge list and wiped on every account change — a
+    shared device must not carry one user's collapsed feed ids into the next. The
+    pure-UI per-device prefs (`readmo:item-sort`, `readmo:group-by-feed`,
+    `readmo:hide-on-scroll`, `readmo:bottom-bar`, `readmo:fontSize`, theme) carry
+    no user data and stay global.
 
   On any auth transition the departing **user's** scoped keys are purged and the
   app reloads (re-keying the singletons); the anonymous scope is preserved so an
