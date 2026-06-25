@@ -43,3 +43,14 @@ describe('reader toolbar positioning contract', () => {
     expect(bottom.bottom).toBeUndefined();
   });
 });
+
+describe('reader body typography contract', () => {
+  // SPEC.md "Reader view → Body": long-form article copy is set one step
+  // larger and denser than newshacker's 15px comment text. Guards against a
+  // silent revert to the smaller 15px / 1.6 the reader shipped with.
+  it('sets 16px body copy with 1.4 line-height', () => {
+    const body = declarationsFor('.reader__body');
+    expect(body['font-size']).toBe('16px');
+    expect(body['line-height']).toBe('1.4');
+  });
+});
