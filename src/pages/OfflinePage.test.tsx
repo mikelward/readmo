@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { act, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '../test/renderWithProviders';
@@ -11,25 +11,89 @@ describe('OfflinePage', () => {
     vi.unstubAllGlobals();
   });
 
-  it('lists items from the warmed per-item cache when the batch fetch fails offline', async () => {
-    // Source whose batch fetch fails (Supabase offline) but whose getItem still
-    // seeds the per-item cache (as useOfflineCacheLock does).
-    class OfflineBatchSource extends MockDataSource {
-      async getItemsByIds(): Promise<never> {
-        throw new Error('offline');
-      }
+  /** A client that keeps set data alive (no GC) and never retries, so cache
+   * seeding in a test survives until asserted. */
+  function cacheClient(): QueryClient {
+    return new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Number.POSITIVE_INFINITY } },
+    });
+  }
+
+  it('lists saved items straight from the per-item cache, never fetching', async () => {
+    // If the page tried a batch fetch this would throw and surface an error
+    // instead of the cached row — the offline list must not depend on it.
+    const getItemsByIds = vi.fn(async () => {
+      throw new Error('offline — must not be called');
+    });
+    class NoFetchSource extends MockDataSource {
+      getItemsByIds = getItemsByIds;
     }
-    const source = new OfflineBatchSource(`test-${Math.random()}`);
+    const source = new NoFetchSource(`test-${Math.random()}`);
     source.stateStore.set('item-1', 'pinned', true);
 
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    // Warm the per-item cache the way the lock would.
+    const queryClient = cacheClient();
     const seed = new MockDataSource(`seed-${Math.random()}`);
     queryClient.setQueryData(['item', 'item-1'], await seed.getItem('item-1'));
 
     renderWithProviders(<OfflinePage />, { route: '/offline', source, queryClient });
+
+    expect(
+      await screen.findByText('A foldable phone that actually folds flat, finally'),
+    ).toBeInTheDocument();
+    expect(getItemsByIds).not.toHaveBeenCalled();
+  });
+
+  it('recovers a saved item from a cached feed list when its detail was never warmed', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    source.stateStore.set('item-1', 'favorite', true);
+
+    const queryClient = cacheClient();
+    // No ['item','item-1'] detail — only a feed page that happens to carry it,
+    // the way Home/folder/feed views persist their loaded rows.
+    const seed = new MockDataSource(`seed-${Math.random()}`);
+    const page = await seed.getHomeItems();
+    queryClient.setQueryData(['feed', 'home-all:test'], {
+      pages: [page],
+      pageParams: [null],
+    });
+
+    renderWithProviders(<OfflinePage />, { route: '/offline', source, queryClient });
+
+    expect(
+      await screen.findByText('A foldable phone that actually folds flat, finally'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows the empty copy when nothing is saved', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderWithProviders(<OfflinePage />, {
+      route: '/offline',
+      source,
+      queryClient: cacheClient(),
+    });
+
+    expect(
+      await screen.findByText(/Nothing saved offline yet/i),
+    ).toBeInTheDocument();
+  });
+
+  it('updates live when a saved item is warmed into the cache after mount', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    source.stateStore.set('item-1', 'pinned', true);
+    const queryClient = cacheClient();
+
+    renderWithProviders(<OfflinePage />, { route: '/offline', source, queryClient });
+
+    // Pinned, but its detail isn't cached yet → empty.
+    expect(
+      await screen.findByText(/Nothing saved offline yet/i),
+    ).toBeInTheDocument();
+
+    // The offline-cache lock warms the detail; the list should pick it up.
+    const seed = new MockDataSource(`seed-${Math.random()}`);
+    await act(async () => {
+      queryClient.setQueryData(['item', 'item-1'], await seed.getItem('item-1'));
+    });
 
     expect(
       await screen.findByText('A foldable phone that actually folds flat, finally'),

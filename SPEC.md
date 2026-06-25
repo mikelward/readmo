@@ -1194,8 +1194,17 @@ keys differ; the strategies map one-to-one:
   `QueryObserver` per query blocks GC while bucketed and re-locks from hydrated
   state on mount (so a reload doesn't drop them); an entry is evicted only once
   the item is in NO bucket (so unpinning an item that's still favorited keeps its
-  cache). It reacts to every pin/favorite path centrally, and `/offline` lists
-  these items from the warmed per-item caches when its batch fetch fails offline.
+  cache). It reacts to every pin/favorite path centrally. `/offline` assembles
+  its list **purely from the persisted query cache — it never issues a fetch**,
+  so it doesn't depend on connectivity detection having flipped us offline yet
+  (a hung or mislabeled read would otherwise leave the saved set looking empty):
+  for each saved (pinned-or-favorited) id it reads the warmed `['item', id]`
+  detail, falling back to any copy of the item still in a cached feed/library
+  list (`findCachedFeedItem`) for an item loaded into a list but not yet warmed.
+  The list re-derives on cache mutations (a just-warmed pin appears live) and is
+  guarded by `useIsRestoring` so it doesn't flash the empty copy mid-hydration.
+  (The library views `/pinned` and `/favorites` keep the online-first-with-cache-
+  fallback read, since they legitimately want fresh server data when online.)
   **Standalone images and cross-device sync are not yet wired** — see *Open
   questions*.
 - Pinned/Favorite cache entries lock at `gcTime: Infinity` while the state
