@@ -62,6 +62,7 @@ async function handle(req: Request): Promise<Response> {
   // ever touch the service client, otherwise any holder of a valid project JWT
   // could trigger service-role polling and hammer publishers / run up cost.
   if ((req.headers.get('Authorization') ?? '') !== `Bearer ${serviceKey}`) {
+    console.warn('poll: rejected request without the service-role bearer');
     return json({ error: 'Unauthorized' }, 401);
   }
 

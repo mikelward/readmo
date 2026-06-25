@@ -30,7 +30,10 @@ function json(body: unknown, status = 200): Response {
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
+  if (req.method !== 'POST') {
+    console.warn(`notify-signup: rejected ${req.method} (POST only)`);
+    return json({ error: 'POST only' }, 405);
+  }
 
   // Server-to-server only: the DB trigger calls us with the service-role key as
   // a Bearer token. Require it before doing any work so a stray request (or any
@@ -38,6 +41,7 @@ Deno.serve(async (req: Request) => {
   // deployed with --no-verify-jwt, so this check IS the gate.
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   if ((req.headers.get('Authorization') ?? '') !== `Bearer ${serviceKey}`) {
+    console.warn('notify-signup: rejected request without the service-role bearer');
     return json({ error: 'Unauthorized' }, 401);
   }
 

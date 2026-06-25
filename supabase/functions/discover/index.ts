@@ -26,15 +26,22 @@ import { redactUrl } from '../_shared/urlSafety.ts';
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return preflight();
-  if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
+  if (req.method !== 'POST') {
+    console.warn(`discover: rejected ${req.method} (POST only)`);
+    return json({ error: 'POST only' }, 405);
+  }
 
   let url: string;
   try {
     ({ url } = await req.json());
   } catch {
+    console.warn('discover: rejected request with invalid JSON body');
     return json({ error: 'Invalid JSON body' }, 400);
   }
-  if (typeof url !== 'string' || !url) return json({ error: 'Missing url' }, 400);
+  if (typeof url !== 'string' || !url) {
+    console.warn('discover: rejected request with missing url');
+    return json({ error: 'Missing url' }, 400);
+  }
 
   try {
     // The settings form accepts bare site names (e.g. "example.com"), so

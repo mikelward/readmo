@@ -65,15 +65,20 @@ Deno.serve(async (req: Request) => {
 
 async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return preflight();
-  if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
+  if (req.method !== 'POST') {
+    console.warn(`fulltext: rejected ${req.method} (POST only)`);
+    return json({ error: 'POST only' }, 405);
+  }
 
   let itemId: string | undefined;
   try {
     ({ itemId } = await req.json());
   } catch {
+    console.warn('fulltext: rejected request with invalid JSON body');
     return json({ error: 'Invalid JSON body' }, 400);
   }
   if (typeof itemId !== 'string' || !itemId) {
+    console.warn('fulltext: rejected request with missing itemId');
     return json({ error: 'Missing itemId' }, 400);
   }
 
@@ -95,8 +100,14 @@ async function handle(req: Request): Promise<Response> {
     .select('id, feed_id, url, title, full_content_html')
     .eq('id', itemId)
     .maybeSingle();
-  if (error) return json({ error: error.message }, 400);
-  if (!item) return json({ error: 'Item not found' }, 404);
+  if (error) {
+    console.error(`fulltext: item lookup for ${itemId} failed:`, error);
+    return json({ error: error.message }, 400);
+  }
+  if (!item) {
+    console.warn(`fulltext: item ${itemId} not found or not visible to caller`);
+    return json({ error: 'Item not found' }, 404);
+  }
 
   // Cache hit — serve the previously extracted body without re-fetching.
   if (item.full_content_html) {
