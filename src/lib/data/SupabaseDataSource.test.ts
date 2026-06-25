@@ -462,6 +462,42 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(ids(page.items)).toEqual(['i2', 'i6', 'i3']);
   });
 
+  it('getFeedUnreadCounts: per-feed unread, excluding done/hidden, keeping pinned-unopened', async () => {
+    const env = setup();
+    // feed-a items: i1 (Hidden), i2 (Pinned), i6. feed-b: i3, i4 (Done).
+    const counts = await env.ds.getFeedUnreadCounts(['feed-a', 'feed-b']);
+    // feed-a: i1 hidden (out), i2 pinned-unopened (in), i6 (in) → 2.
+    // feed-b: i3 (in), i4 done (out) → 1.
+    expect(counts).toEqual({ 'feed-a': 2, 'feed-b': 1 });
+  });
+
+  it('getFeedUnreadCounts: an opened (un-pinned) item stops counting', async () => {
+    const env = setup();
+    env.fake.store.item_state.push(mkState('i6', { opened: true, opened_at: recent }));
+    // feed-a: i2 pinned (in), i6 now opened and un-pinned (out) → 1.
+    expect((await env.ds.getFeedUnreadCounts(['feed-a']))['feed-a']).toBe(1);
+  });
+
+  it('getFeedUnreadCounts: batches the feed-id list to stay under the row cap', async () => {
+    const env = setup();
+    // 250 ids → 2 RPC batches (chunk size 200), so no single response (one row
+    // per feed) can be truncated by the PostgREST row cap.
+    const ids = Array.from({ length: 250 }, (_, i) => `f${i}`);
+    await env.ds.getFeedUnreadCounts(ids);
+    const calls = env.fake.rpcCalls.filter((c) => c.name === 'feed_unread_counts');
+    expect(calls.length).toBe(2);
+  });
+
+  it('getFeedUnreadCounts: a pinned item still counts after being opened', async () => {
+    const env = setup();
+    // i2 is already pinned in the seed; mark it opened too.
+    const s = env.fake.store.item_state.find((r) => r.item_id === 'i2')!;
+    s.opened = true;
+    s.opened_at = recent;
+    // feed-a: i2 pinned-and-opened still counts, plus i6 → 2.
+    expect((await env.ds.getFeedUnreadCounts(['feed-a']))['feed-a']).toBe(2);
+  });
+
   it('reorderSubscriptions reassigns each subscription sort atomically via one RPC', async () => {
     const env = setup();
     await env.ds.reorderSubscriptions(['feed-c', 'feed-a', 'feed-b']);

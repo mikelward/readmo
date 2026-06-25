@@ -91,6 +91,15 @@ export interface DataSource {
   getHomeItems(opts?: FeedListOptions): Promise<Page<FeedItem>>;
   getFolderItems(name: string, opts?: FeedListOptions): Promise<Page<FeedItem>>;
   getFeedItems(feedId: FeedId, opts?: FeedListOptions): Promise<Page<FeedItem>>;
+  /** Per-feed **unread / to-do** count for the given feeds: items in the feed's
+   * listable set (freshness window ∪ per-feed floor ∪ pinned) that are **not**
+   * Done or active Hidden, and either **pinned** or not Opened. A pinned item
+   * always counts — a pin is a to-do, read or not — while any other item drops
+   * out once Opened. Keyed by feed id; a feed with nothing outstanding is 0.
+   * Surfaced on the group-by-feed section headers so a collapsed feed still
+   * shows how much it holds, and reusable wherever a per-feed badge is wanted.
+   * Bounded by the same window/floor the list is, so it's cheap. */
+  getFeedUnreadCounts(feedIds: FeedId[]): Promise<Record<FeedId, number>>;
   getItem(id: ItemId): Promise<FeedItem | null>;
   /** Resolve arbitrary ids (used by library views, which span feeds). */
   getItemsByIds(ids: ItemId[]): Promise<FeedItem[]>;
