@@ -48,7 +48,7 @@
    rows. In feed views it's a collapse/expand toggle for the whole section; in
    non-collapsible contexts it's a static label. */
 .item-list__group-header {
-  background: var(--rm-bg);
+  background: var(--rm-bg-card);
   border-bottom: 1px solid var(--rm-border);
 }
 
@@ -99,7 +99,7 @@
 }
 
 .item-list__group-toggle:active {
-  background: var(--rm-bg-card);
+  background: var(--rm-bg);
 }
 
 .item-list__skeleton {
