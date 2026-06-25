@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -541,6 +542,37 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
     (refreshFailed && visibleItems.length === 0) ||
     (!isLoading && visibleItems.length === 0 && status !== 'online');
 
+  // Freeze the list body's height for the duration of a background refresh so
+  // the window scroll can't be yanked to the top under the reader.
+  //
+  // React Query refetches an infinite query's pages *sequentially*, replacing
+  // the data as it goes, so the rendered list briefly shrinks while each loaded
+  // page is re-requested (a pin/dismiss invalidates ['feed'] via
+  // useFeedInvalidation, kicking off exactly this multi-page refetch). On the
+  // real backend that takes a second or two; during it the document gets
+  // shorter than the current scroll offset and the browser clamps window
+  // scrollY toward 0 — so a few seconds after pinning/dismissing, the page jumps
+  // to the top. Group-by-feed with collapsed sections makes it worse: collapsed
+  // feeds render only a short header, so the document is already short and the
+  // clamp lands right at the top. Holding a min-height equal to the pre-refresh
+  // height keeps the document tall enough that scrollY is never clamped; the
+  // lock is released once the refresh settles, and native scroll anchoring
+  // absorbs the small final height delta. `isRefreshing` excludes the
+  // next-page fetch (which legitimately grows the list), so paging is unaffected.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const heightLockedRef = useRef(false);
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    if (isRefreshing && !heightLockedRef.current) {
+      el.style.minHeight = `${el.offsetHeight}px`;
+      heightLockedRef.current = true;
+    } else if (!isRefreshing && heightLockedRef.current) {
+      el.style.minHeight = '';
+      heightLockedRef.current = false;
+    }
+  }, [isRefreshing]);
+
   return (
     <div className="item-list">
       <ListToolbar collapse={collapseControls} />
@@ -561,7 +593,7 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
             );
           })()
         ) : (
-          <>
+          <div className="item-list__body" data-testid="item-list-body" ref={bodyRef}>
             {/* Onboarding hint sits above the rows, but only once items exist —
                 there's nothing to pin under skeletons or an empty feed. */}
             {items.length > 0 ? (
@@ -593,7 +625,7 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
               onToggleCollapse={groupByFeed ? toggle : undefined}
               emptyLabel={emptyLabel ?? 'Nothing here yet.'}
             />
-          </>
+          </div>
         )}
       </PullToRefresh>
 
