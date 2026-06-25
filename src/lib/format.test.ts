@@ -5,6 +5,7 @@ import {
   formatDisplayDomain,
   formatItemMeta,
   formatTimeAgo,
+  formatTimeAgoLong,
   isSafeHttpUrl,
   pluralize,
 } from './format';
@@ -146,6 +147,33 @@ describe('formatTimeAgo', () => {
 
   it('clamps future times to "just now"', () => {
     expect(formatTimeAgo(nowS + 60, now)).toBe('just now');
+  });
+});
+
+describe('formatTimeAgoLong', () => {
+  const now = new Date('2026-04-18T12:00:00Z');
+  const nowS = Math.floor(now.getTime() / 1000);
+
+  it('returns "just now" for < 1 minute', () => {
+    expect(formatTimeAgoLong(nowS - 30, now)).toBe('just now');
+  });
+
+  it('spells out and pluralizes the unit', () => {
+    expect(formatTimeAgoLong(nowS - 60, now)).toBe('1 minute ago');
+    expect(formatTimeAgoLong(nowS - 60 * 2, now)).toBe('2 minutes ago');
+    expect(formatTimeAgoLong(nowS - 60 * 60 * 3, now)).toBe('3 hours ago');
+    expect(formatTimeAgoLong(nowS - 60 * 60 * 24 * 2, now)).toBe('2 days ago');
+    expect(formatTimeAgoLong(nowS - 60 * 60 * 24 * 60, now)).toBe('2 months ago');
+    expect(formatTimeAgoLong(nowS - 60 * 60 * 24 * 400, now)).toBe('1 year ago');
+  });
+
+  it('rolls 360–365 days over to "1 year ago"', () => {
+    expect(formatTimeAgoLong(nowS - 60 * 60 * 24 * 362, now)).toBe('1 year ago');
+    expect(formatTimeAgoLong(nowS - 60 * 60 * 24 * 359, now)).toBe('11 months ago');
+  });
+
+  it('clamps future times to "just now"', () => {
+    expect(formatTimeAgoLong(nowS + 60, now)).toBe('just now');
   });
 });
 

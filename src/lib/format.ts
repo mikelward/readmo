@@ -164,6 +164,29 @@ export function formatTimeAgo(unixSeconds: number, now: Date = new Date()): stri
   return `${y}y`;
 }
 
+/**
+ * Verbose relative time, e.g. `just now`, `2 minutes ago`, `2 days ago`. Unlike
+ * `formatTimeAgo`'s compact `2m`/`2d`, this spells out the unit for prose
+ * contexts like the About section. Same bucket boundaries as `formatTimeAgo`.
+ */
+export function formatTimeAgoLong(unixSeconds: number, now: Date = new Date()): string {
+  const nowS = Math.floor(now.getTime() / 1000);
+  let diff = nowS - unixSeconds;
+  if (diff < 0) diff = 0;
+
+  if (diff < MINUTE) return 'just now';
+  const ago = (n: number, unit: string) => `${n} ${pluralize(n, unit)} ago`;
+  if (diff < HOUR) return ago(Math.floor(diff / MINUTE), 'minute');
+  if (diff < DAY) return ago(Math.floor(diff / HOUR), 'hour');
+  if (diff < MONTH) return ago(Math.floor(diff / DAY), 'day');
+  if (diff < YEAR) {
+    const mo = Math.floor(diff / MONTH);
+    if (mo >= 12) return ago(1, 'year');
+    return ago(mo, 'month');
+  }
+  return ago(Math.floor(diff / YEAR), 'year');
+}
+
 export function pluralize(n: number, singular: string, plural?: string): string {
   return n === 1 ? singular : (plural ?? `${singular}s`);
 }

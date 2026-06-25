@@ -8,7 +8,7 @@ import {
   type AddFeedErrorKind,
   type DiscoveredFeed,
 } from '../lib/data/DataSource';
-import { buildInfo, summarizeBuild } from '../lib/buildInfo';
+import { buildInfo, summarizeBuildAge } from '../lib/buildInfo';
 import { expandFeedShorthand } from '../lib/feedShorthand';
 import { useTheme } from '../hooks/useTheme';
 import {
@@ -736,7 +736,7 @@ export function SettingsPage() {
       <section className="settings__section">
         <h2 className="settings__heading">About</h2>
         <div className="settings__account">
-          <div className="settings__sub-url">{summarizeBuild(buildInfo)}</div>
+          <div className="settings__sub-url">{summarizeBuildAge(buildInfo)}</div>
           <Link className="settings__btn" to="/debug">
             Debug
           </Link>
