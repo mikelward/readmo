@@ -195,7 +195,8 @@
 
 /* Direct-child images/pictures and figure-wrapped images are standalone block
    media — break out of the 16px body padding for full feed-area width
-   (edge-to-edge on mobile, 720px on desktop). */
+   (edge-to-edge on mobile, up to the reading column width on desktop —
+   720px, 860px at ≥960px). */
 .reader__body > img {
   display: block;
   width: calc(100% + 32px);

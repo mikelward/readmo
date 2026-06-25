@@ -321,6 +321,21 @@ button {
   padding: 0 0 env(safe-area-inset-bottom);
 }
 
+/* Desktop/large-tablet: give the reading column a little more room so a
+   1440+ monitor doesn't leave the layout feeling like a phone-stretched-wide.
+   720→860 is ~20% wider; still a readable measure at 16px body text
+   (~120 characters per line is the upper end of comfortable). Same cap for
+   the feed and the reader — the feed at 860 is a modest density improvement
+   and the reader benefits from the wider column. The 960px threshold keeps
+   iPad portrait (768) on the original 720 layout and only kicks in at
+   landscape tablets + laptops; it matches `useWideViewport`'s query and the
+   header inner's matching widen below. Mirrors newshacker's `.app-main`. */
+@media (min-width: 960px) {
+  .app-main {
+    max-width: 860px;
+  }
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
