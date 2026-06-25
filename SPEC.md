@@ -1406,26 +1406,43 @@ keys differ; the strategies map one-to-one:
   (Supabase CLI). Secrets: Supabase URL/anon key client-side; service role +
   OAuth client secrets server-side only — never ship the service role key to
   the client.
-- **Privacy.** Feed **fetching/parsing** is server-side, so for *polling* the
-  publisher sees the poller's IP (shared), not individual readers. This is
-  scoped to polling only and does **not** by itself cover rendered content:
-  feed bodies embed images/tracking pixels the reader would otherwise load from
-  the user's browser, exposing reader IP/UA. Readmo therefore ships a
-  **server-side image proxy** — rewrite `<img src>` (and other sub-resource
-  URLs) in stored `content_html` to a same-origin `/api/img?...` endpoint that
-  fetches through the SSRF-hardened helper, caches, and serves the bytes, so
-  the publisher only sees the proxy. The proxy doubles as the offline-image
-  source (*Article images* points at it) and strips third-party pixel beacons.
-  The sanitizer **collapses a responsive `srcset` to a single width** (the
-  candidate closest to ~1600px CSS, erring large for retina sharpness) and drops
-  `srcset`/`sizes`, so each image is one proxy fetch + one cache entry instead of
-  one per advertised width — in a fixed-width reader column the extra widths buy
-  nothing but proxy load. `<picture><source>` art-direction is preserved (media
+- **Image proxy (offline + reliability — *not* privacy).** Article images load
+  through a same-origin `/api/img?url=…` endpoint rather than directly from the
+  publisher. The driver is **user experience, not hiding the reader**:
+  - **Offline.** Same-origin bytes are cleanly cacheable by the service worker
+    (verifiable 200s, byte-accurate quota). A cross-origin `<img>` would cache
+    only as an *opaque* response (~7 MB of quota padding each, success
+    indistinguishable from an error page), so the proxy is what makes `/pinned`
+    and `/favorites` images actually work offline.
+  - **Not getting blocked.** A server-side fetch can set a `Referer` to defeat
+    hotlink protection that a browser embed cannot (the embed's `Referer` is
+    *our* origin, which reads as third-party hotlinking) and can normalize the
+    User-Agent. (Header hardening is a planned follow-up; see the `img` function.)
+
+  Privacy (the publisher sees the proxy IP, not the reader's) is an *incidental*
+  side effect, **not a goal** — and it cuts both ways: funneling every reader's
+  image loads through a few server IPs **concentrates** traffic and risks the
+  publisher rate-limiting or banning the proxy IP. There is **no server-side byte
+  cache today** (Vercel edge-caches only on `s-maxage`/`CDN-Cache-Control`, which
+  `/api/img` does not set; a bare `max-age` is browser-only), so a popular
+  article fetches the same image from the publisher once per *cold client*.
+  Closing that is the main reliability follow-up — see *Shared image cache* under
+  *Open questions*.
+
+  The sanitizer rewrites `<img src>` / `srcset` to the proxy and **collapses a
+  responsive `srcset` to a single width** — the candidate closest to ~1600px CSS
+  (720/860px reader column × ~2× DPR, erring large for retina) — dropping
+  `srcset`/`sizes` so each image is one fetch + one cache entry instead of one
+  per advertised width. `<picture><source>` art-direction is preserved (media
   queries kept; each source likewise collapsed to one width).
-  It serves only raster image types — `image/svg+xml` is **refused** (an SVG
-  served same-origin can run inline script as a top-level document) — and sets
-  `X-Content-Type-Options: nosniff` plus a `default-src 'none'; sandbox` CSP on
-  the bytes as defense in depth.
+
+  **Security (retained regardless of the above):** every fetch goes through the
+  SSRF-hardened helper (guardrail #6 — this is a security control, independent of
+  the privacy framing); only raster image types are served — `image/svg+xml` is
+  **refused** (a same-origin SVG can run inline script as a top-level document) —
+  with `X-Content-Type-Options: nosniff` plus a `default-src 'none'; sandbox` CSP
+  on the bytes as defense in depth. Tracking-pixel stripping falls out of this
+  for free but, again, isn't the point.
 
 ## Analytics
 
@@ -1434,6 +1451,32 @@ keys differ; the strategies map one-to-one:
 
 ## Open questions
 
+- **Shared image cache (image-proxy reliability).** Today `/api/img` has no
+  server-side byte cache, so each cold client re-fetches the same image from the
+  publisher through one of a few server IPs — the concentration that risks a
+  publisher ban (see *Image proxy*). Options, cheapest-first (guardrail #5 —
+  cost/reliability up front):
+  1. **Vercel Edge Cache via `s-maxage`** (+ `stale-while-revalidate`) on the
+     `/api/img` shim response. **Cost: negligible** (included in Vercel; no new
+     service). Cuts publisher hits from once-per-cold-client to roughly
+     once-per-edge-POP per image (~tens globally, not thousands). Caveats:
+     per-POP not global; Edge response-size limits may bypass the largest
+     images. Confirm current behavior empirically with `curl -sI` on a preview
+     and reading `x-vercel-cache:` (expected `MISS`/`BYPASS` today). **Do this
+     first.**
+  2. **Persistent shared cache in Supabase Storage**, keyed by a hash of the
+     normalized URL: `img` checks Storage → serve on hit; on miss fetch the
+     publisher once, validate (type/size), store, serve. Yields **exactly one
+     publisher fetch per image, globally** — the strongest ban-avoidance — and
+     clean same-origin bytes for offline. **Cost: low but non-zero** — Storage
+     egress on every cache-serve plus stored bytes; free tier (~1 GB + egress)
+     likely covers early usage, needs an eviction/TTL policy and a size cap.
+     Escalate to this only if (1) proves insufficient.
+  3. **Cloudflare in front of `/api/img`** (Cache API / CDN) — viable if a CF
+     layer is added for other reasons; otherwise more infra than it's worth now.
+  Pair whichever we pick with **`Referer`/User-Agent hardening** on the `img`
+  fetch to cut 403s from hotlink protection. Sequencing: deploy the new failure
+  logging, read the real upstream-status mix in the `img` logs, then choose.
 - **Item retention / GC** — items per feed; exact pin-against-GC rule for
   Pinned/Favorite/Done. Start generous (e.g. 90 days or 200 items/feed,
   whichever is larger; never GC Pinned/Favorite/Done); revisit with data.
