@@ -218,8 +218,67 @@ describe('SettingsPage — popular feed autocomplete', () => {
     await screen.findByText(/^Subscribed to AP News/);
     // Subscription list should show the curated name, not "Untitled feed".
     await waitFor(() => {
-      expect(screen.getByText('AP News')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Actions for AP News' })).toBeTruthy();
     });
+  });
+
+  it('pins the curated name even when the publisher returns its own real title', async () => {
+    // Regression for The Economist's /latest/rss.xml, whose channel title is
+    // literally "Latest Updates". The user picked "The Economist" from the
+    // curated list; that brand label must win over the publisher's title.
+    class RealTitleSource extends MockDataSource {
+      async subscribe(feedUrl: string): ReturnType<MockDataSource['subscribe']> {
+        const feed = await super.subscribe(feedUrl);
+        return { ...feed, title: 'Latest Updates' };
+      }
+    }
+    const user = userEvent.setup();
+    const source = new RealTitleSource(`test-${Math.random()}`);
+    const setSpy = vi.spyOn(source, 'setTitleOverride');
+    renderWithProviders(<SettingsPage />, { source });
+    const input = screen.getByLabelText('Feed URL') as HTMLInputElement;
+    await user.type(input, 'the economist');
+    await user.click(await screen.findByText('The Economist'));
+    await user.click(screen.getByRole('button', { name: /^Add$/ }));
+    await screen.findByText(/^Subscribed to The Economist/);
+    expect(setSpy).toHaveBeenCalledWith(expect.any(String), 'The Economist');
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: 'Actions for The Economist' }),
+      ).toBeTruthy();
+    });
+    expect(screen.queryByText('Latest Updates')).toBeNull();
+  });
+
+  it('preserves a user rename when re-adding the same curated feed', async () => {
+    // Regression: subscribe() is idempotent, so picking the same curated entry
+    // again must not overwrite a per-row rename the user applied earlier.
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    // Pre-subscribe to AP News (bypasses the curated-name pin so the existing
+    // row has a null override at the start of the test, matching the case the
+    // bug report describes).
+    const apFeed = POPULAR_FEEDS.find((f) => f.name === 'AP News')!;
+    const created = await source.subscribe(apFeed.feedUrl);
+    await source.setTitleOverride(created.id, 'My News');
+    renderWithProviders(<SettingsPage />, { source });
+
+    const setSpy = vi.spyOn(source, 'setTitleOverride');
+
+    // Re-add via the curated suggestion. subscribe() returns the existing
+    // feed; the override must NOT be touched.
+    const input = screen.getByLabelText('Feed URL') as HTMLInputElement;
+    await user.type(input, 'ap news');
+    const listbox = await screen.findByRole('listbox');
+    await user.click(within(listbox).getByText('AP News'));
+    await user.click(screen.getByRole('button', { name: /^Add$/ }));
+    await screen.findByText(/^Subscribed to AP News/);
+
+    expect(setSpy).not.toHaveBeenCalled();
+    const after = (await source.getSubscriptions()).find(
+      (s) => s.feed.id === created.id,
+    );
+    expect(after?.subscription.titleOverride).toBe('My News');
   });
 
   it('closes the dropdown on Escape', async () => {

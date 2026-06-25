@@ -352,12 +352,14 @@ folders       (user_id FK, name, sort)
   bot-blocking issues for popular sites whose homepages reject programmatic
   requests (the RSS endpoint itself is almost always accessible). The dropdown
   is keyboard-navigable: ArrowDown/Up move focus, Enter selects, Escape closes.
-  If the server-side refresh fails to populate the feed's title/`site_url` (the
-  edge function runs but can't reach the feed), the client sets a
-  `title_override` on the subscription using the curated display name, so the
-  subscription always appears with its correct name rather than "Untitled feed".
-  The curated name is captured at the moment the user submits the form, not
-  later, so a concurrent autocomplete interaction can't corrupt the override.
+  When the user subscribes via a curated suggestion, the client always sets the
+  subscription's `title_override` to the curated display name — the brand the
+  user picked beats whatever the publisher's `<channel>` happens to say (e.g.
+  The Economist's `/latest/rss.xml` is literally titled "Latest Updates"). The
+  override is per-user and editable from Settings → Subscriptions (see below),
+  so users can revert to the publisher's title or pick their own. The curated
+  name is captured at the moment the user submits the form, not later, so a
+  concurrent autocomplete interaction can't corrupt the override.
 
 - `POST /api/discover { url }` accepts a site or feed URL; for an HTML page,
   parse `<link rel="alternate" type="application/rss+xml|atom+xml|json">` and
@@ -786,13 +788,19 @@ loopback/link-local/private/metadata targets and redirects to them.
     Theme, palette, and text size are also accessible directly in the drawer's
     **Appearance** section. A gear icon sits at the right end of the header's
     inner row (after Search) so settings is one tap away from any page.
-    - **Subscriptions** — the feed list is **drag-to-reorder**: each row has a
-      drag handle (left) that's both pointer-draggable (mouse + touch) and
-      keyboard-operable (focus it, then ArrowUp/ArrowDown), so reordering isn't
-      mouse-only. The order persists to `subscriptions.sort` (via
-      `reorderSubscriptions`) and drives both the drawer/Settings list order and
-      the *Group by feed* section order. Rows stay within the **3-tap-zone cap**:
-      drag handle, Mute, Unsubscribe.
+    - **Subscriptions** — the feed list is **drag-to-reorder**: each row stays
+      within the **3-tap-zone cap** as drag handle (left), a non-interactive
+      row body (title + URL), and a right-side **overflow (⋯) button** that
+      opens a per-row menu with **Rename / Mute / Unsubscribe**. The drag
+      handle is both pointer-draggable (mouse + touch) and keyboard-operable
+      (focus it, then ArrowUp/ArrowDown), so reordering isn't mouse-only. The
+      order persists to `subscriptions.sort` (via `reorderSubscriptions`) and
+      drives both the drawer/Settings list order and the *Group by feed*
+      section order. Rename uses an inline input that replaces the title slot:
+      **Enter** commits, **Esc** cancels, **blur** commits, and **leaving the
+      input empty clears the override** so the row falls back to the
+      publisher's title. Rename writes `subscriptions.title_override` and is
+      per-user; an unchanged value is a no-op.
     - **Reading** — per-device toggles: **Hide articles as you scroll past**
       (`readmo:hide-on-scroll`, **off by default**), wiring the auto-hide
       behavior in *List toolbar → Auto-hide on scroll*; and **Group by feed**
