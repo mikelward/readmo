@@ -178,15 +178,60 @@ function proxifySrcset(
   base: string | null | undefined,
 ): string | null {
   if (!srcset) return null;
-  const parts = srcset.split(',').map((c) => {
-    const seg = c.trim();
-    if (!seg) return seg;
-    const sp = seg.indexOf(' ');
-    const url = sp === -1 ? seg : seg.slice(0, sp);
-    const descriptor = sp === -1 ? '' : seg.slice(sp);
+  const parts = parseSrcsetCandidates(srcset).map(({ url, descriptor }) => {
     const abs = absolutize(url, base);
-    return (proxify(abs ?? url) ?? url) + descriptor;
+    const proxied = proxify(abs ?? url) ?? url;
+    return descriptor ? `${proxied} ${descriptor}` : proxied;
   });
-  const joined = parts.filter(Boolean).join(', ');
+  const joined = parts.join(', ');
   return joined || null;
+}
+
+/**
+ * Split a `srcset` attribute into `{ url, descriptor }` candidates following
+ * the WHATWG parsing rules: a URL is a run of non-whitespace characters, an
+ * optional descriptor follows after whitespace, and candidates are separated
+ * by commas. Splitting naively on `,` is wrong because image URLs commonly
+ * contain commas — e.g. Cloudflare image-resizing paths like
+ * `/cdn-cgi/image/width=1424,quality=80,format=auto/…/img.jpg`. The naive
+ * split shredded those into fragments, and a fragment like `quality=80` then
+ * absolutized against the article URL into a bogus target the image proxy
+ * could only 502 on. Parsing the URL as a non-whitespace run keeps it intact.
+ */
+function parseSrcsetCandidates(
+  srcset: string,
+): Array<{ url: string; descriptor: string }> {
+  const candidates: Array<{ url: string; descriptor: string }> = [];
+  let i = 0;
+  const n = srcset.length;
+  const isWs = (c: string) => /\s/.test(c);
+
+  while (i < n) {
+    // Skip leading whitespace and comma separators between candidates.
+    while (i < n && (isWs(srcset[i]) || srcset[i] === ',')) i++;
+    if (i >= n) break;
+
+    // The URL is a maximal run of non-whitespace characters.
+    const urlStart = i;
+    while (i < n && !isWs(srcset[i])) i++;
+    let url = srcset.slice(urlStart, i);
+
+    let descriptor = '';
+    if (url.endsWith(',')) {
+      // A trailing comma on the URL means this candidate has no descriptor;
+      // strip it (and any extras) so the comma isn't carried into the URL.
+      url = url.replace(/,+$/, '');
+    } else {
+      // Skip whitespace, then read the descriptor up to the next comma.
+      while (i < n && isWs(srcset[i])) i++;
+      const descStart = i;
+      while (i < n && srcset[i] !== ',') i++;
+      descriptor = srcset.slice(descStart, i).trim();
+      i++; // consume the separating comma
+    }
+
+    if (url) candidates.push({ url, descriptor });
+  }
+
+  return candidates;
 }
