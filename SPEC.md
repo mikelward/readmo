@@ -718,6 +718,9 @@ loopback/link-local/private/metadata targets and redirects to them.
      *Prefetch on Pin/Favorite*). Shown only once rows exist; dismissable via a
      single 44×44 close button, persisted per-device
      (`readmo:promo-dismissed:pin-to-download`).
+   - **Initial-load skeletons** are structured row placeholders (title + meta +
+     button shapes, shimmering), not blank blocks — newshacker's
+     `StoryRowSkeleton`, so the loading feed reads as content arriving.
    - **`/offline`** — items cached on this device.
 
 3. **Item row** — see *Item row layout*. Right-side button = **Pin/Unpin** on
@@ -909,6 +912,10 @@ every zone. Matches newshacker's `.story-row` density.
 Replaces newshacker's *Thread* page. No comments, no votes — the rest of the
 page's discipline is unchanged.
 
+- **Loading:** while the item query is pending the reader shows an
+  article-shaped skeleton (source, two-line title, byline, body lines —
+  shimmering), mirroring newshacker's reader skeleton rather than a bare
+  "Loading…" line. No comment blocks (readmo has no comments).
 - **Header:** source feed (favicon + name, links to `/feed/:feedId`), title
   (links to the original, `target="_blank"`, marks Opened), author, date.
 - **Body:** the sanitized `content_html`; images lazy-load (proxied — see

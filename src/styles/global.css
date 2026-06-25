@@ -38,6 +38,13 @@
   --rm-border: #e6e4dd;
   --rm-border-strong: #d4d1c8;
 
+  /* Loading-skeleton shimmer (Skeletons.css). Derived from the active palette's
+     text + card so the placeholders track light/dark/tinted modes instead of
+     the hardcoded grays they fall back to. Resolved per-element, so the dark and
+     tinted token overrides below flow through automatically. */
+  --skeleton-base: color-mix(in srgb, var(--rm-text) 9%, var(--rm-bg-card));
+  --skeleton-highlight: color-mix(in srgb, var(--rm-text) 4%, var(--rm-bg-card));
+
   --rm-text: #1a1a1a;
   /* opened/read titles: mid-tone below unopened, above meta */
   --rm-read: #4a4a4a;

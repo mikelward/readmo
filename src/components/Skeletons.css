@@ -7,20 +7,37 @@
   }
 }
 
-.skeleton-row,
 .skeleton-thread,
 .skeleton-user {
   padding: 16px 12px;
 }
 
+/* Mirrors .item-row (ItemRow.css): a flex row with the body column on the left
+   and the icon-only pin button on the right, at the same compact height — so
+   loading rows line up with the real rows that replace them. */
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+}
+
+.skeleton-row__body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .skeleton-row__title,
 .skeleton-row__domain,
 .skeleton-row__btn,
-.skeleton-row__meta,
 .skeleton-thread__title,
 .skeleton-thread__article,
 .skeleton-thread__meta,
 .skeleton-thread__comment,
+.skeleton-reader__source,
+.skeleton-reader__title,
+.skeleton-reader__byline,
+.skeleton-reader__line,
 .skeleton-user__id,
 .skeleton-user__stats,
 .skeleton-user__about {
@@ -36,31 +53,24 @@
 }
 
 .skeleton-row__title {
-  height: 14px;
-  margin-bottom: 8px;
+  height: 12px;
+  margin-bottom: 6px;
   width: 90%;
 }
 
 .skeleton-row__title--short {
-  width: 60%;
-}
-
-.skeleton-row__meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 12px;
-  background: none;
-  animation: none;
+  width: 55%;
 }
 
 .skeleton-row__domain {
-  width: 40%;
-  height: 12px;
+  width: 35%;
+  height: 11px;
+  margin-top: 6px;
 }
 
 .skeleton-row__btn {
-  width: 110px;
+  flex: 0 0 auto;
+  width: 36px;
   height: 36px;
   border-radius: 8px;
 }
@@ -89,6 +99,42 @@
   border-radius: 6px;
 }
 
+.skeleton-reader {
+  padding: 20px 16px;
+}
+
+.skeleton-reader__source {
+  height: 12px;
+  width: 30%;
+  margin-bottom: 16px;
+}
+
+.skeleton-reader__title {
+  height: 22px;
+  width: 92%;
+  margin-bottom: 10px;
+}
+
+.skeleton-reader__title--short {
+  width: 65%;
+}
+
+.skeleton-reader__byline {
+  height: 12px;
+  width: 45%;
+  margin: 16px 0 28px;
+}
+
+.skeleton-reader__line {
+  height: 14px;
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.skeleton-reader__line--short {
+  width: 72%;
+}
+
 .skeleton-user__id {
   height: 24px;
   width: 40%;
@@ -113,6 +159,10 @@
   .skeleton-thread__article,
   .skeleton-thread__meta,
   .skeleton-thread__comment,
+  .skeleton-reader__source,
+  .skeleton-reader__title,
+  .skeleton-reader__byline,
+  .skeleton-reader__line,
   .skeleton-user__id,
   .skeleton-user__stats,
   .skeleton-user__about {

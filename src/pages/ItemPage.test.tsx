@@ -35,6 +35,23 @@ afterEach(() => {
 });
 
 describe('ItemPage (reader)', () => {
+  it('shows an article-shaped skeleton while the item loads', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const { container } = renderReader(source);
+    // First synchronous render: the query is pending, so the reader shows the
+    // ReaderSkeleton (not bare "Loading…" text), matching newshacker's reader.
+    // The skeleton is decorative; the reader wrapper is a role="status" live
+    // region with a visually-hidden label so loading is announced.
+    const loading = container.querySelector('.reader--loading');
+    expect(loading).toHaveAttribute('role', 'status');
+    expect(loading).toHaveTextContent('Loading article…');
+    expect(container.querySelector('.skeleton-reader')).toBeInTheDocument();
+    expect(container.querySelector('.skeleton-reader__title')).toBeInTheDocument();
+    // Once the article lands the skeleton is gone.
+    await screen.findByTestId('open-original');
+    expect(container.querySelector('.reader--loading')).not.toBeInTheDocument();
+  });
+
   it('renders the article and marks it opened on view', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     renderReader(source);
