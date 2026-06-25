@@ -47,8 +47,10 @@ copy it:
   touch targets, ≥8px gaps, 48px+ rows, pressed-state on every zone, metadata
   display-only.
 - **Pinned / Favorite / Done — three intents, three buckets**, plus **Hidden**
-  and **Opened**, with the same semantics, the same shields, the same
-  retention. See *Item state model* below.
+  and **Opened**, with the same semantics and the same shields. Retention
+  diverges: only Pinned/Favorite persist forever, Done/Opened are 30-day views,
+  and a **3-day feed freshness window** drops old items (Pinned exempt). See
+  *Item state model* below.
 - **Pinned prepended to the top of every feed**, rendered once, oldest-pinned
   first; pinning a body row keeps its position; **Sweep** consolidates.
 - **Swipe gestures** — swipe-right = Done (dismiss), swipe-left = Pin,
@@ -183,12 +185,13 @@ the only difference is they're DB columns instead of localStorage keys.
   from the row menu, swipe-right, or the reader view action bar; on `/done` the
   row carries a filled check that unmarks done. Marking Done also **unpins**
   (Pin is the queue, Done is where items go when they leave it; mutually
-  exclusive). Done items are filtered out of every feed (permanent). The
-  `hidden` DB column is retained for backward compat but the UI routes all
-  dismissals through `done`; legacy `hidden=true` rows are migrated to
-  `done=true` on first load.
+  exclusive). Done items are filtered out of every feed, and the `/done`
+  completion log is a **30-day** history (see *Retention*). `done` is the **one
+  dismiss concept**: the `hidden` DB column is retained for backward compat but
+  the UI routes all dismissals through `done`, and legacy `hidden=true` rows are
+  migrated to `done=true` on first load.
 - **Opened** — auto, set when you open an item. Fades the title (`--rm-read`),
-  shows on `/opened` (7-day history). "Mark unread" in the row menu clears it.
+  shows on `/opened` (**30-day** history). "Mark unread" in the row menu clears it.
   (newshacker's "N new comments" badge does **not** apply — RSS items don't
   accrue comments — so the opened entry stores only the open timestamp.)
 
@@ -224,9 +227,46 @@ the only difference is they're DB columns instead of localStorage keys.
 - **Enforcement at the mutation layer, not just the UI**: pinning removes Done;
   marking Done removes Pinned.
 
-**Retention (same as newshacker "Retention today"):** Favorite, Pinned, and
-Done are **permanent**; Hidden and Opened expire after **7 days**. (Revisit
-TTLs with real usage data — same standing TODO as newshacker.)
+**Retention:** **Favorite and Pinned are permanent** — the only forever-keep
+states. **Done, Opened, and the legacy Hidden expire after 30 days** (`TTL_MS`),
+collapsing to their default on read (`withRetention`) so `/done` and `/opened`
+auto-prune without a background sweep. This is a deliberate divergence from
+newshacker, where Done is permanent: in readmo the **feed freshness window**
+(below) already drops old items from every list, so a permanent Done would only
+ever bloat the completion log. **To *keep* an item, pin it** — pinning is the
+sole age-exempt path. (Revisit the 30-day TTL with real usage data.)
+
+> **Note — retention is a *read-time view* concept, not a row delete.**
+> `withRetention` collapses an expired flag when state is read; the underlying
+> `item_state` row is not deleted. So the RLS visibility exemption keyed on
+> `done` (see *RLS*) still holds at the DB layer — a long-dismissed item stays
+> *openable*, it just stops appearing in lists.
+
+**Feed freshness window + per-feed floor.** Home, folder, and single-feed list
+views serve an item when it is **pinned**, OR **younger than 3 days**
+(`HOME_WINDOW_MS`), OR among **its feed's newest 10 non-dismissed items**
+(`FEED_FLOOR`). The window declutters a busy feed to "recent only"; the floor
+keeps an **infrequently-updated feed from going blank** when nothing it
+published is recent — you always see at least its latest handful. Both are knobs
+(`HOME_WINDOW_MS` / `FEED_FLOOR`); the server `feed_items` RPC applies the same
+3-day interval and a `row_number()`-per-feed floor in its body branch.
+
+- **Pinned items are exempt** from both — a pin keeps an item regardless of age.
+- The floor ranks only **non-dismissed** items, so marking one Done frees its
+  slot for the next.
+- Nothing about *opening* extends the window/floor: an un-pinned item leaves
+  once it's both past 3 days and beyond its feed's newest 10 (open it → it's in
+  `/opened` for 30 days; want it kept in the feed → pin it).
+- **Flat vs. grouped:** in group-by-feed / single-feed views a quiet feed's
+  floor items sit at the top of its section; in the flat river they sort to the
+  bottom by date (an "older, but here's the latest from quiet feeds" tail).
+
+Rationale: readmo has no upstream ranker (unlike newshacker, whose HN
+`top`/`best` lists are already recency-bounded), so an explicit window + floor
+gives the same "recent + your pins, and never an empty feed" feel. Cost is
+*negligible/negative* — the window bounds the candidate set and the floor is a
+bounded per-feed `row_number()` over it (served by `items(feed_id, sort_at
+desc)`); no new infra or external calls.
 
 **Cross-device sync:** all five states ride the Postgres `item_state` row and
 sync automatically (server is the source of truth — see *Sync*).
@@ -294,12 +334,15 @@ folders       (user_id FK, name, sort)
   therefore has **no** `item_state` row for anyone, which is correct: absence
   of a row means unopened, not-pinned, not-done, not-hidden.
 - The hot query is "feed items across a user's subscriptions, newest first,
-  paginated, minus Done/Hidden, with Pinned lifted to the top." Because
+  paginated, minus Done/Hidden, **inside the freshness window or its feed's
+  newest 10**, with Pinned lifted to the top (and Pinned exempt)." Because
   `item_state` is sparse, the feed query **drives from `subscriptions` →
   `items` and LEFT JOINs `item_state`** (on `user_id = auth.uid()`), treating a
   missing row as the default state — so new items surface immediately without
   requiring a pre-inserted state row. Filters read as
-  `WHERE NOT COALESCE(is.done, false) AND NOT COALESCE(is.hidden, false)`;
+  `WHERE NOT COALESCE(is.done, false) AND NOT COALESCE(is.hidden, false) AND (items.sort_at > now() - interval '3 days' OR row_number() OVER (PARTITION BY feed_id ORDER BY sort_at DESC) <= 10)`;
+  the window bound also lets the planner range-scan `items(feed_id, sort_at desc)`
+  instead of walking a feed's full history. Pinned items skip the window;
   the Opened fade reads `COALESCE(is.opened, false)`; Pinned items are
   collected by a separate small query (`item_state.pinned = true` for the user)
   and prepended. Newest-first sorts on `sort_at` (= `coalesce(published_at,
@@ -324,8 +367,12 @@ folders       (user_id FK, name, sort)
   **or (b)** has a **permanent** item_state row pointing at the item
   (`EXISTS (SELECT 1 FROM item_state st WHERE st.item_id = items.id AND st.user_id = auth.uid() AND (st.pinned OR st.favorite OR st.done))`,
   parent feed by extension). Branch (b) is **required** so unsubscribing
-  doesn't orphan permanent Pinned/Favorite/Done items pinned against GC.
-  (Hidden/Opened are TTL'd and get no such exemption.) Enforce via RLS
+  doesn't orphan kept Pinned/Favorite/Done items pinned against GC. The `done`
+  exemption is a *row-access* grant, not a list filter: it keeps a dismissed
+  item openable even after it ages out of the feed, and it holds at the DB layer
+  because the `item_state` row persists (the 30-day Done TTL is a read-time view
+  collapse, not a delete — see *Retention*). Hidden/Opened get no such exemption.
+  Enforce via RLS
   predicates or a security-definer view/RPC applying the same test. The poller
   writes with the service role, bypassing RLS.
 - **Keep feed secrets out of client-readable metadata.** The fetchable URL may
@@ -616,7 +663,9 @@ loopback/link-local/private/metadata targets and redirects to them.
   the server-side `feed_items` RPC (`0006_feed_rpcs.sql`), which drives from
   `subscriptions` → `items` and LEFT JOINs `item_state` (scoped to `auth.uid()`)
   and returns one combined, already-paged sequence — Pinned first (oldest-first),
-  then the body newest-first by `sort_at` with Done/Hidden excluded — so each page
+  then the body newest-first by `sort_at` with Done/Hidden excluded and only
+  items inside the 3-day freshness window or their feed's newest 10 (Pinned
+  exempt) — so each page
   is bounded to the page size and the client never sends an unbounded
   `feed_id`/exclusion `IN (…)` list. Item/library reads (`feeds_public`, chunked
   id lookups), search, subscriptions/folders, and the `discover`/`refresh` Edge
@@ -1054,8 +1103,8 @@ they live in the overflow. (No Upvote — RSS has no votes.)
 | `/feed/:feedId` | single feed |
 | `/pinned` | pinned items (active reading list) |
 | `/favorites` | favorite items (permanent) |
-| `/done` | completed items |
-| `/opened` | recently opened (7-day history) |
+| `/done` | completed items (30-day history) |
+| `/opened` | recently opened (30-day history) |
 | `/offline` | items cached on this device |
 | `/item/:id` | reader view |
 | `/search` | search over feed + item titles |
@@ -1501,8 +1550,11 @@ keys differ; the strategies map one-to-one:
 - **Item retention / GC** — items per feed; exact pin-against-GC rule for
   Pinned/Favorite/Done. Start generous (e.g. 90 days or 200 items/feed,
   whichever is larger; never GC Pinned/Favorite/Done); revisit with data.
-- **TTLs** — reconsider Pinned/Done permanence and Hidden/Opened 7-day windows
-  with usage data (same standing TODO as newshacker).
+- **TTLs, window & floor** — the 30-day Done/Opened retention, the 3-day feed
+  freshness window, and the 10-item per-feed floor (`TTL_MS` / `HOME_WINDOW_MS`
+  / `FEED_FLOOR`) are first-cut values; revisit with usage data. Consider
+  whether the window/floor should be user-configurable or per-feed rather than
+  single constants.
 - **Realtime sync** — ship in MVP or rely on refetch-on-focus + PTR? (Leaning
   defer.)
 - **Full-text fetch — shipped (lazy on open + cached on pin).** Readability

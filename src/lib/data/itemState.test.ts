@@ -69,30 +69,34 @@ describe('applyMutation', () => {
 });
 
 describe('withRetention', () => {
-  it('expires Hidden after 7 days', () => {
+  it('expires Hidden after the retention window', () => {
     const s = state({ hidden: true, hiddenAt: NOW });
     expect(withRetention(s, NOW + TTL_MS + 1).hidden).toBe(false);
     expect(withRetention(s, NOW + TTL_MS - 1).hidden).toBe(true);
   });
 
-  it('expires Opened after 7 days', () => {
+  it('expires Opened after the retention window', () => {
     const s = state({ opened: true, openedAt: NOW });
     expect(withRetention(s, NOW + TTL_MS + 1).opened).toBe(false);
+    expect(withRetention(s, NOW + TTL_MS - 1).opened).toBe(true);
   });
 
-  it('never expires Pinned/Favorite/Done', () => {
+  it('expires Done after the retention window (30-day completion log)', () => {
+    const s = state({ done: true, doneAt: NOW });
+    expect(withRetention(s, NOW + TTL_MS + 1).done).toBe(false);
+    expect(withRetention(s, NOW + TTL_MS - 1).done).toBe(true);
+  });
+
+  it('never expires Pinned or Favorite', () => {
     const s = state({
       pinned: true,
       pinnedAt: NOW,
       favorite: true,
       favoriteAt: NOW,
-      done: true,
-      doneAt: NOW,
     });
     const out = withRetention(s, NOW + 10 * TTL_MS);
     expect(out.pinned).toBe(true);
     expect(out.favorite).toBe(true);
-    expect(out.done).toBe(true);
   });
 });
 
@@ -168,14 +172,51 @@ describe('ItemStateStore', () => {
     expect(store.get('item-1', NOW + TTL_MS + 1).hidden).toBe(false);
   });
 
+  it('re-dismissing an item whose Done expired re-stamps and emits the sink', () => {
+    const store = new ItemStateStore(memoryPersistence());
+    store.set('z', 'done', true, NOW); // a Done row that will age out
+    const calls: Array<[string, Partial<Record<string, boolean>>]> = [];
+    store.setMutationSink((id, changed) => calls.push([id, changed]));
+
+    const later = NOW + TTL_MS + 1; // Done has expired; UI shows it as not-done
+    expect(store.get('z', later).done).toBe(false);
+
+    // Re-dismissing must register as a real transition (not a no-op diff against
+    // the still-raw `done:true`), so the sink fires and the timestamp re-stamps.
+    store.set('z', 'done', true, later);
+    expect(calls).toEqual([['z', { done: true }]]);
+    expect(store.get('z', later).done).toBe(true); // no longer expired
+  });
+
+  it('undo after re-dismissing an expired Done reverts the sink write too', () => {
+    const store = new ItemStateStore(memoryPersistence());
+    store.set('z', 'done', true, NOW); // stale Done
+    const calls: Array<[string, Partial<Record<string, boolean>>]> = [];
+    store.setMutationSink((id, changed) => calls.push([id, changed]));
+
+    const later = NOW + TTL_MS + 1;
+    store.hideMany(['z'], later); // re-dismiss the (effectively not-done) item
+    store.undoLast();
+
+    // Dismiss sends done:true; Undo must send done:false so the server doesn't
+    // keep it dismissed after the next hydrate.
+    expect(calls).toEqual([
+      ['z', { done: true }],
+      ['z', { done: false }],
+    ]);
+    expect(store.get('z', later).done).toBe(false);
+  });
+
   describe('hideMany undo batching', () => {
+    // Read state back at NOW (the mutation time) so the 30-day Done retention
+    // doesn't collapse the flag — these assert batching, not retention.
     it('replaces the undo batch by default (one Undo restores the last call only)', () => {
       const store = new ItemStateStore(memoryPersistence());
       store.hideMany(['a'], NOW);
       store.hideMany(['b'], NOW); // keyless → new batch
       store.undoLast();
-      expect(store.get('a').done).toBe(true); // a stays hidden
-      expect(store.get('b').done).toBe(false); // only the last batch restored
+      expect(store.get('a', NOW).done).toBe(true); // a stays hidden
+      expect(store.get('b', NOW).done).toBe(false); // only the last batch restored
     });
 
     it('accumulates same-key dismissals so one Undo restores the whole burst', () => {
@@ -183,14 +224,14 @@ describe('ItemStateStore', () => {
       store.hideMany(['a'], NOW, { batchKey: 1 });
       store.hideMany(['b'], NOW, { batchKey: 1 });
       store.hideMany(['c'], NOW, { batchKey: 1 });
-      expect(store.get('a').done).toBe(true);
-      expect(store.get('b').done).toBe(true);
-      expect(store.get('c').done).toBe(true);
+      expect(store.get('a', NOW).done).toBe(true);
+      expect(store.get('b', NOW).done).toBe(true);
+      expect(store.get('c', NOW).done).toBe(true);
 
       store.undoLast();
-      expect(store.get('a').done).toBe(false);
-      expect(store.get('b').done).toBe(false);
-      expect(store.get('c').done).toBe(false);
+      expect(store.get('a', NOW).done).toBe(false);
+      expect(store.get('b', NOW).done).toBe(false);
+      expect(store.get('c', NOW).done).toBe(false);
     });
 
     it('starts a fresh batch when the key changes', () => {
@@ -198,8 +239,8 @@ describe('ItemStateStore', () => {
       store.hideMany(['a'], NOW, { batchKey: 1 });
       store.hideMany(['b'], NOW, { batchKey: 2 }); // new burst
       store.undoLast();
-      expect(store.get('a').done).toBe(true); // earlier burst untouched
-      expect(store.get('b').done).toBe(false);
+      expect(store.get('a', NOW).done).toBe(true); // earlier burst untouched
+      expect(store.get('b', NOW).done).toBe(false);
     });
 
     it('does not bundle a keyless dismissal between two same-key scroll hides', () => {
@@ -210,9 +251,9 @@ describe('ItemStateStore', () => {
       // The later scroll hide must NOT re-extend the manual batch; it starts a
       // fresh one, so Undo restores only 'b'.
       store.undoLast();
-      expect(store.get('b').done).toBe(false);
-      expect(store.get('a').done).toBe(true);
-      expect(store.get('m').done).toBe(true);
+      expect(store.get('b', NOW).done).toBe(false);
+      expect(store.get('a', NOW).done).toBe(true);
+      expect(store.get('m', NOW).done).toBe(true);
     });
 
     it('preserves the original prior state when an id is re-delivered into the batch', () => {
@@ -224,8 +265,8 @@ describe('ItemStateStore', () => {
       store.hideMany(['a'], NOW, { batchKey: 1 });
 
       store.undoLast();
-      expect(store.get('a').done).toBe(false);
-      expect(store.get('a').pinned).toBe(true); // original pin restored, not lost
+      expect(store.get('a', NOW).done).toBe(false);
+      expect(store.get('a', NOW).pinned).toBe(true); // original pin restored, not lost
     });
   });
 
