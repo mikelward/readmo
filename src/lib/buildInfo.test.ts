@@ -5,6 +5,7 @@ import {
   buildInfoRows,
   shortBranch,
   summarizeBuild,
+  summarizeBuildAge,
 } from './buildInfo';
 
 function makeInfo(overrides: Partial<BuildInfo> = {}): BuildInfo {
@@ -69,6 +70,51 @@ describe('summarizeBuild', () => {
   });
 });
 
+describe('summarizeBuildAge', () => {
+  it('shows the build sequence number and the spelled-out age', () => {
+    expect(
+      summarizeBuildAge(
+        makeInfo({ commitCount: 100, buildTime: '2026-06-23T01:00:00.000Z' }),
+        new Date('2026-06-23T01:02:00.000Z'),
+      ),
+    ).toBe('Build 100 · 2 minutes ago');
+    expect(
+      summarizeBuildAge(
+        makeInfo({ commitCount: 100, buildTime: '2026-06-21T01:00:00.000Z' }),
+        new Date('2026-06-23T01:00:00.000Z'),
+      ),
+    ).toBe('Build 100 · 2 days ago');
+  });
+
+  it('says "just now" for a fresh build', () => {
+    expect(
+      summarizeBuildAge(
+        makeInfo({ commitCount: 100, buildTime: '2026-06-23T01:00:00.000Z' }),
+        new Date('2026-06-23T01:00:30.000Z'),
+      ),
+    ).toBe('Build 100 · just now');
+  });
+
+  it('drops the sequence number when the commit count is unavailable', () => {
+    expect(
+      summarizeBuildAge(
+        makeInfo({ commitCount: 0, buildTime: '2026-06-21T01:00:00.000Z' }),
+        new Date('2026-06-23T01:00:00.000Z'),
+      ),
+    ).toBe('2 days ago');
+  });
+
+  it('drops the age when the build time is missing', () => {
+    expect(summarizeBuildAge(makeInfo({ commitCount: 100, buildTime: '' }))).toBe('Build 100');
+  });
+
+  it('falls back when neither piece is available', () => {
+    expect(summarizeBuildAge(makeInfo({ commitCount: 0, buildTime: '' }))).toBe(
+      'Build info unavailable',
+    );
+  });
+});
+
 describe('buildInfoRows', () => {
   // now = 4h after commitTime, 3h after buildTime
   const now = new Date('2026-06-23T04:00:00.000Z');
@@ -87,10 +133,10 @@ describe('buildInfoRows', () => {
     ]);
   });
 
-  it('formats commitTime and buildTime as relative time', () => {
+  it('formats commitTime and buildTime as verbose relative time', () => {
     const rows = buildInfoRows(makeInfo(), now);
-    expect(rows.find((r) => r.label === 'Committed')?.value).toBe('4h');
-    expect(rows.find((r) => r.label === 'Built')?.value).toBe('3h');
+    expect(rows.find((r) => r.label === 'Committed')?.value).toBe('4 hours ago');
+    expect(rows.find((r) => r.label === 'Built')?.value).toBe('3 hours ago');
   });
 
   it('omits rows whose value is missing', () => {

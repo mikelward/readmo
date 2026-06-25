@@ -960,7 +960,7 @@ they live in the overflow. (No Upvote — RSS has no votes.)
 | `/search` | search over feed + item titles |
 | `/settings` | subscriptions, folders, OPML, theme, account |
 | `/signin` | OAuth sign-in (unauthenticated landing) |
-| `/debug` | build/runtime/config diagnostics; no auth gate, public/presence info only (no secrets). Headline is `<branch-leaf> <commit-count> (<short-sha>)`, e.g. `main 100 (abcdef)`. Linked from Settings → About. |
+| `/debug` | build/runtime/config diagnostics; no auth gate, public/presence info only (no secrets). Headline is `<branch-leaf> <commit-count> (<short-sha>)`, e.g. `main 100 (abcdef)`; the Committed/Built rows use the verbose `2 days ago` age format. Linked from Settings → About, which shows the build sequence number and age (e.g. `Build 100 · 2 days ago`) — no SHA — next to the Debug link. |
 
 ---
 

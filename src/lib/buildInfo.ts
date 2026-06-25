@@ -3,7 +3,7 @@
 // the injected global so callers import a typed value and the display logic
 // stays pure + unit-testable.
 
-import { formatTimeAgo } from './format';
+import { formatTimeAgoLong } from './format';
 
 export interface BuildInfo {
   /** 'production' | 'preview' | 'development' (Vercel) or 'local'. */
@@ -51,6 +51,24 @@ export function summarizeBuild(info: BuildInfo): string {
 }
 
 /**
+ * Build sequence number and age for the About section, e.g.
+ * `Build 100 · 2 days ago`. The sequence number is the commit count
+ * (≈ "build number"); the age uses the verbose `formatTimeAgoLong`. Either
+ * piece is dropped when its metadata is missing (shallow checkout); falls
+ * back to `Build info unavailable` when neither is present. Pass `now` in
+ * tests to keep relative-time assertions deterministic.
+ */
+export function summarizeBuildAge(info: BuildInfo, now: Date = new Date()): string {
+  const parts: string[] = [];
+  if (info.commitCount > 0) parts.push(`Build ${info.commitCount}`);
+  if (info.buildTime) {
+    const seconds = Math.floor(new Date(info.buildTime).getTime() / 1000);
+    parts.push(formatTimeAgoLong(seconds, now));
+  }
+  return parts.length > 0 ? parts.join(' · ') : 'Build info unavailable';
+}
+
+/**
  * Label/value rows for the build section of /debug. Rows whose value is
  * missing are omitted so a shallow checkout doesn't render blank fields.
  * Pass `now` in tests to keep relative-time assertions deterministic.
@@ -73,13 +91,13 @@ export function buildInfoRows(
   if (info.commitTime) {
     rows.push({
       label: 'Committed',
-      value: formatTimeAgo(Math.floor(new Date(info.commitTime).getTime() / 1000), now),
+      value: formatTimeAgoLong(Math.floor(new Date(info.commitTime).getTime() / 1000), now),
     });
   }
   if (info.buildTime) {
     rows.push({
       label: 'Built',
-      value: formatTimeAgo(Math.floor(new Date(info.buildTime).getTime() / 1000), now),
+      value: formatTimeAgoLong(Math.floor(new Date(info.buildTime).getTime() / 1000), now),
     });
   }
   return rows;
