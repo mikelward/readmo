@@ -409,6 +409,23 @@ folders       (user_id FK, name, sort)
     first path segment must be exactly `r`, `u`, or `user`; a real hostname
     (`r.jina.ai/feed`) has a dot before the slash and is left untouched for the
     normal `https://`-prepend + discovery path.
+- **YouTube channels are first-class.** Each YouTube channel exposes a public
+  Atom feed at `https://www.youtube.com/feeds/videos.xml?channel_id=<UC…>`,
+  and the channel page advertises it via `<link rel="alternate"
+  type="application/rss+xml">`, so the existing discovery path picks it up
+  from any channel URL (`/@handle`, `/channel/UC…`, `/c/…`, `/user/…`) with
+  no special server handling needed.
+  - **YouTube shorthand in the add-feed box.** Typing `youtube/<handle>` or
+    the brief alias `yt/<handle>` — with or without a leading `@` or `/` —
+    expands to `https://www.youtube.com/@<handle>` on submit (and the box
+    updates to show it). Handle case is preserved (YouTube handles are
+    case-sensitive). A real hostname (`youtube.com/@mkbhd`, `yt.example.com`)
+    has a dot before the slash and is left untouched for the normal
+    `https://`-prepend + discovery path.
+- **Facebook and Instagram do not expose public feeds** and are not
+  supported. Facebook removed RSS in 2015; Instagram never offered it. The
+  only access paths are third-party scrapers (RSSHub, RSSBridge, Bridgy)
+  which violate ToS or require self-hosting and are deferred indefinitely.
 - All discovery fetches go through the **SSRF-hardened fetcher** below
   (discovery is the highest-risk path — a brand-new user-supplied URL).
 
