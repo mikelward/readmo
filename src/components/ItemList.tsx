@@ -24,6 +24,13 @@ import './ItemList.css';
 // on screen.
 const SCROLL_HIDE_BATCH_WINDOW_MS = 2000;
 
+// Module-level monotonic source of auto-hide burst keys. The store's undo batch
+// key is global (one shared DataSource across every feed view), so a per-mount
+// counter that always starts at 0 would let two ItemList mounts collide — a
+// burst on one view would extend another view's stale undo batch. A global
+// sequence makes every burst's key unique across all lists.
+let scrollBurstSeq = 0;
+
 interface Props {
   viewKey: string;
   fetchPage: FetchPage;
@@ -91,7 +98,9 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
       if (toHide.length === 0) return;
       const now = Date.now();
       if (now - lastScrollHideAt.current >= SCROLL_HIDE_BATCH_WINDOW_MS) {
-        scrollBatchKey.current += 1; // a gap ends the burst; start a new batch
+        // A gap ends the burst; mint a globally-unique key for the new one so it
+        // can't extend another view's (or this view's prior) undo batch.
+        scrollBatchKey.current = ++scrollBurstSeq;
       }
       lastScrollHideAt.current = now;
       ds.stateStore.hideMany(toHide, now, { batchKey: scrollBatchKey.current });

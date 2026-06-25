@@ -224,4 +224,47 @@ describe('useInViewIds onExitTop', () => {
     // It must NOT be auto-hidden again — Undo would otherwise be unusable.
     expect(seen).toEqual([['a']]);
   });
+
+  function EnablableRow({
+    on,
+    onExit,
+  }: {
+    on: boolean;
+    onExit: (ids: ItemId[]) => void;
+  }) {
+    const { getRowRef } = useInViewIds({ onExitTop: on ? onExit : undefined });
+    return (
+      <ul>
+        <li data-item-id="a" ref={getRowRef('a')} />
+      </ul>
+    );
+  }
+
+  it('does not report a row already scrolled past while the feature was off', () => {
+    const seen: ItemId[][] = [];
+    const onExit = (ids: ItemId[]) => seen.push(ids);
+    const { rerender } = render(<EnablableRow on={false} onExit={onExit} />);
+    // Visible, then scrolled off the top — all while OFF, so it ends up above the
+    // viewport (out of inViewIds) and was never tracked as seen.
+    fire(entryFor('a', 1));
+    fire(entryFor('a', 0, { rectBottom: 50, rootTop: 100 }));
+    // Enable: seeding from inViewIds excludes the already-passed row.
+    rerender(<EnablableRow on onExit={onExit} />);
+    // Replay its top-exit (as an observer recreation would): not reported.
+    fire(entryFor('a', 0, { rectBottom: 50, rootTop: 100 }));
+    expect(seen).toEqual([]);
+  });
+
+  it('applies to a row already fully visible when the feature is enabled', () => {
+    const seen: ItemId[][] = [];
+    const onExit = (ids: ItemId[]) => seen.push(ids);
+    const { rerender } = render(<EnablableRow on={false} onExit={onExit} />);
+    // Fully visible at the moment the reader enables the feature.
+    fire(entryFor('a', 1));
+    rerender(<EnablableRow on onExit={onExit} />);
+    // Scrolling it off the top now reports it — the setting applies to what's
+    // already on screen.
+    fire(entryFor('a', 0, { rectBottom: 50, rootTop: 100 }));
+    expect(seen).toEqual([['a']]);
+  });
 });

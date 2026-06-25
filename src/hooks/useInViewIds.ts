@@ -42,12 +42,26 @@ export function useInViewIds(opts: Options = {}): {
   // recreates the observer (its effect only depends on the insets).
   const onExitTopRef = useRef(opts.onExitTop);
   onExitTopRef.current = opts.onExitTop;
+  // Latest inViewIds mirrored into a ref so the enable effect can seed from it
+  // without subscribing (depending on inViewIds would re-seed on every scroll).
+  const inViewIdsRef = useRef(inViewIds);
+  inViewIdsRef.current = inViewIds;
 
-  // Rows that have been fully visible at least once. A row is only a candidate
-  // for "scrolled off the top" once it's actually been seen — this excludes
-  // rows still below the fold (never intersected) from being auto-hidden on the
-  // first observer callback.
+  // Rows that have been fully visible at least once *while the feature is on*.
+  // A row is only a candidate for "scrolled off the top" once it's actually been
+  // seen — this excludes rows still below the fold (never intersected). Tracked
+  // only while enabled so rows passed with the setting off aren't retroactively
+  // auto-hidden when it's later turned on — e.g. when a sticky-inset change
+  // recreates the observer below and replays initial non-intersecting entries.
   const seenRef = useRef<Set<ItemId>>(new Set());
+  const enabled = !!opts.onExitTop;
+  useEffect(() => {
+    // On enable, seed with exactly the rows fully visible *right now* so the
+    // feature applies to what's on screen (they dismiss on their next top-exit),
+    // while rows already scrolled past — above the viewport, absent from
+    // inViewIds — stay excluded so they aren't retroactively hidden.
+    if (enabled) seenRef.current = new Set(inViewIdsRef.current);
+  }, [enabled]);
 
   useEffect(() => {
     if (typeof IntersectionObserver === 'undefined') return;
@@ -62,7 +76,10 @@ export function useInViewIds(opts: Options = {}): {
           if (!id) continue;
           if (entry.intersectionRatio >= FULLY_VISIBLE_RATIO) {
             nowVisible.push(id);
-            seenRef.current.add(id);
+            // Only track "seen" while the feature is on (paired with the
+            // clear-on-enable above), so a row fully viewed with auto-hide off
+            // never becomes a scroll-past candidate after a later enable.
+            if (onExitTopRef.current) seenRef.current.add(id);
           } else {
             nowHidden.push(id);
             // A previously-seen row that's now fully out of view: report it only
