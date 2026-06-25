@@ -107,7 +107,7 @@ export function OpenedPage() {
       field="opened"
       actionLabel="Mark unread"
       actionIcon={<MarkUnread />}
-      emptyLabel="Nothing opened in the last 7 days."
+      emptyLabel="Nothing opened in the last 30 days."
       forgettable
     />
   );

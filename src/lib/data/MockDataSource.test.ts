@@ -65,6 +65,48 @@ describe('MockDataSource feed reads', () => {
   });
 });
 
+describe('MockDataSource freshness window + per-feed floor', () => {
+  // item-10 is on feed-css and ~5.8 days old (past the 3-day window). css has
+  // only a few items, so the default floor (10) keeps it visible.
+  it('keeps a quiet feed’s old items via the floor (fewer items than the floor)', async () => {
+    const ds = new MockDataSource(`test-${Math.random()}`);
+    const css = await ds.getFeedItems('feed-css', { limit: 100 });
+    expect(css.items.map((fi) => fi.item.id)).toContain('item-10'); // old but kept
+    const home = await ds.getHomeItems({ limit: 100 });
+    expect(home.items.map((fi) => fi.item.id)).toContain('item-10');
+  });
+
+  it('drops out-of-window items once a feed exceeds the floor', async () => {
+    // floor=1 → only each feed's single newest survives the age cut; older
+    // out-of-window items fall away. css: item-3 (9h, in window) stays; item-10
+    // (~140h, rank 2) is past both the window and the floor → dropped.
+    const ds = new MockDataSource(`test-${Math.random()}`, { feedFloor: 1 });
+    const css = await ds.getFeedItems('feed-css', { limit: 100 });
+    const ids = css.items.map((fi) => fi.item.id);
+    expect(ids).toContain('item-3'); // newest, also within the window
+    expect(ids).not.toContain('item-10'); // past window + beyond floor
+  });
+
+  it('keeps a pinned item regardless of window or floor', async () => {
+    const ds = new MockDataSource(`test-${Math.random()}`, { feedFloor: 1 });
+    ds.stateStore.set('item-10', 'pinned', true); // old css item, beyond floor=1
+    const home = await ds.getHomeItems({ limit: 100 });
+    const ids = home.items.map((fi) => fi.item.id);
+    expect(ids[0]).toBe('item-10'); // pinned section, at the top
+  });
+
+  it('a dismissed item does not occupy a floor slot', async () => {
+    // With floor=1, marking the newest css item done lets the next one take the
+    // floor slot (the floor ranks only non-dismissed items).
+    const ds = new MockDataSource(`test-${Math.random()}`, { feedFloor: 1 });
+    ds.stateStore.set('item-3', 'done', true); // css newest → dismissed
+    const css = await ds.getFeedItems('feed-css', { limit: 100 });
+    const ids = css.items.map((fi) => fi.item.id);
+    expect(ids).not.toContain('item-3'); // dismissed
+    expect(ids).toContain('item-6'); // 30h, in window anyway, now the floor rank-0
+  });
+});
+
 describe('MockDataSource library + subscriptions', () => {
   it('resolves ids for library views preserving order', async () => {
     const ds = fresh();

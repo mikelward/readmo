@@ -52,19 +52,25 @@ export function applyMutation(
   return next;
 }
 
-/** True once a TTL'd field (hidden/opened) has aged past the 7-day window. */
+/** True once a TTL'd field (done/hidden/opened) has aged past the retention
+ * window (SPEC.md *Retention* — 30 days). */
 function expired(at: number | null, now: number): boolean {
   return at !== null && now - at > TTL_MS;
 }
 
-/** Collapse expired Hidden/Opened flags so retention is honored at read time
- * without a background sweep (SPEC.md *Retention*). Permanent states
- * (pinned/favorite/done) are never expired here. */
+/** Collapse expired Done/Hidden/Opened flags so retention is honored at read
+ * time without a background sweep (SPEC.md *Retention*). Only Pinned and
+ * Favorite are permanent; Done is a 30-day completion log, so it expires here
+ * too (which auto-prunes `/done` and lets a long-dismissed item fall back to
+ * its default — though by then it's also past the feed freshness window). */
 export function withRetention(
   state: ItemState,
   now: number = Date.now(),
 ): ItemState {
   let next = state;
+  if (state.done && expired(state.doneAt, now)) {
+    next = { ...next, done: false, doneAt: null };
+  }
   if (state.hidden && expired(state.hiddenAt, now)) {
     next = { ...next, hidden: false, hiddenAt: null };
   }
@@ -170,7 +176,7 @@ export class ItemStateStore {
   // and could re-render in a loop. Keyed on the raw stored object identity
   // (changes only on a real mutation) AND a `validUntil` deadline — the next
   // TTL boundary at which the retained snapshot would change — so a session
-  // left open past the 7-day TTL still re-includes expired rows.
+  // left open past the retention TTL still re-includes expired rows.
   private retainedCache = new Map<
     ItemId,
     { raw: ItemState; out: ItemState; validUntil: number }
@@ -208,7 +214,7 @@ export class ItemStateStore {
     for (const [id, state] of Object.entries(loaded)) {
       if (state.hidden && !state.done && !expired(state.hiddenAt, now)) {
         // Skip rows whose hiddenAt is already past the TTL — they would have
-        // expired and reappeared anyway; don't convert them into permanent Done.
+        // expired and reappeared anyway; don't resurrect them as fresh Done.
         // Also clear hidden/hiddenAt so "Unmark done" / "Forget all" on the
         // Done page leaves the item fully visible again rather than re-hiding it.
         map[id] = { ...applyMutation(state, 'done', true, now), hidden: false, hiddenAt: null };
@@ -249,10 +255,13 @@ export class ItemStateStore {
     }
     const out = withRetention(raw, now);
     // The retained snapshot only changes again when an as-yet-unexpired
-    // Hidden/Opened flag crosses its TTL boundary; cache until the earliest
+    // Done/Hidden/Opened flag crosses its TTL boundary; cache until the earliest
     // such boundary (else forever). This keeps repeated reads referentially
     // stable while never pinning a stale pre-expiry snapshot indefinitely.
     let validUntil = Number.POSITIVE_INFINITY;
+    if (out.done && raw.doneAt !== null) {
+      validUntil = Math.min(validUntil, raw.doneAt + TTL_MS);
+    }
     if (out.hidden && raw.hiddenAt !== null) {
       validUntil = Math.min(validUntil, raw.hiddenAt + TTL_MS);
     }
@@ -319,7 +328,14 @@ export class ItemStateStore {
     value: boolean,
     now: number = Date.now(),
   ): ItemState {
-    const prev = this.map[id] ?? DEFAULT_ITEM_STATE;
+    // Mutate from the retention-effective state, not the raw stored row. A TTL'd
+    // flag (done/hidden/opened) past its window reads as cleared, so an action
+    // on the collapsed value — e.g. re-dismissing an item whose Done expired and
+    // re-entered the freshness window — must register as a real false→true
+    // transition: applyMutation re-stamps the timestamp and emitDiff fires the
+    // sink. Basing `prev` on the raw (still-true) row would make it a no-op and
+    // leave the server's expired done_at un-refreshed.
+    const prev = withRetention(this.map[id] ?? DEFAULT_ITEM_STATE, now);
     const next = applyMutation(prev, field, value, now);
     this.map = { ...this.map, [id]: next };
     this.persistence.save(this.map);
@@ -357,9 +373,14 @@ export class ItemStateStore {
     const seen = new Set(base.map(([id]) => id));
     const batch: UndoBatch = base;
     for (const id of ids) {
-      const prev = this.map[id] ?? DEFAULT_ITEM_STATE;
+      const raw = this.map[id];
+      // Effective (retention-applied) state is the mutation baseline AND the
+      // undo snapshot, so re-dismissing an expired-Done item emits the sink
+      // (false→true) and Undo reverts it on the server too (true→false). See
+      // the note in `set`.
+      const prev = withRetention(raw ?? DEFAULT_ITEM_STATE, now);
       if (!seen.has(id)) {
-        batch.push([id, this.map[id] ?? null]);
+        batch.push([id, raw ? prev : null]);
         seen.add(id);
       }
       const next = applyMutation(prev, 'done', true, now);

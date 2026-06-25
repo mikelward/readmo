@@ -1,10 +1,13 @@
 import {
+  FEED_FLOOR,
+  HOME_WINDOW_MS,
   type Feed,
   type FeedId,
   type FeedItem,
   type Folder,
   type Item,
   type ItemId,
+  type ItemState,
   type Subscription,
 } from '../types';
 import {
@@ -49,8 +52,15 @@ export class MockDataSource implements DataSource {
   private subs = new Map<FeedId, Subscription>();
   private folders: Folder[] = [];
   private seq = 100;
+  private readonly homeWindowMs: number;
+  private readonly feedFloor: number;
 
-  constructor(stateKey = 'readmo:item-state') {
+  constructor(
+    stateKey = 'readmo:item-state',
+    opts: { homeWindowMs?: number; feedFloor?: number } = {},
+  ) {
+    this.homeWindowMs = opts.homeWindowMs ?? HOME_WINDOW_MS;
+    this.feedFloor = opts.feedFloor ?? FEED_FLOOR;
     this.stateStore = new ItemStateStore(localStoragePersistence(stateKey));
     for (const f of SEED_FEEDS) this.feeds.set(f.id, { ...f });
     this.items = SEED_ITEMS.map((it) => ({ ...it }));
@@ -73,7 +83,16 @@ export class MockDataSource implements DataSource {
     return { item: { ...item }, feed: title !== feed.title ? { ...feed, title } : feed };
   }
 
-  /** Build the ordered list for a feed view, with Done/Hidden filtered out.
+  /** Build the ordered list for a feed view, with Done/Hidden filtered out and
+   * the feed freshness window + per-feed floor applied.
+   *
+   * An item is served if it's **pinned**, OR younger than `homeWindowMs`
+   * (3 days), OR among its feed's newest `feedFloor` (10) non-dismissed items.
+   * The floor keeps an infrequently-updated feed from going blank when nothing
+   * it published is recent; the window keeps a busy feed decluttered. Pinned
+   * items are always served regardless of age (SPEC.md *Feed freshness window*).
+   * This mirrors the server `feed_items` RPC (window + `row_number()` floor in
+   * the body branch; the pinned branch is exempt).
    *
    * The body order follows `opts.sort` (newest- or oldest-first by publish
    * date). Pinned items are always rendered once, oldest-pinned first.
@@ -91,14 +110,39 @@ export class MockDataSource implements DataSource {
     opts?: FeedListOptions,
   ): FeedItem[] {
     const now = Date.now();
+    const freshAfter = now - this.homeWindowMs;
     const sortAsc = opts?.sort === 'oldest';
     const groupByFeed = opts?.groupByFeed ?? false;
 
-    const rows: Array<{ fi: FeedItem; pinned: boolean; pinAt: number }> = [];
+    // First pass: gather the non-dismissed candidates and rank each within its
+    // feed by publish date (newest = rank 0), so the per-feed floor can keep a
+    // feed's newest `feedFloor` items even when they're older than the window.
+    const candidates: Array<{ item: Item; st: ItemState }> = [];
+    const byFeed = new Map<FeedId, Item[]>();
     for (const item of this.items) {
       if (!predicate(item)) continue;
       const st = this.stateStore.get(item.id, now);
       if (st.done || st.hidden) continue; // filtered from every feed
+      candidates.push({ item, st });
+      const arr = byFeed.get(item.feedId);
+      if (arr) arr.push(item);
+      else byFeed.set(item.feedId, [item]);
+    }
+    const feedRank = new Map<ItemId, number>();
+    for (const arr of byFeed.values()) {
+      arr.sort((a, b) => b.publishedAt - a.publishedAt);
+      arr.forEach((it, i) => feedRank.set(it.id, i));
+    }
+
+    const rows: Array<{ fi: FeedItem; pinned: boolean; pinAt: number }> = [];
+    for (const { item, st } of candidates) {
+      // Window ∪ floor ∪ pinned: serve recent items, each feed's newest
+      // `feedFloor`, and any pinned item regardless of age. Mirrors feed_items.
+      const served =
+        st.pinned ||
+        item.publishedAt >= freshAfter ||
+        (feedRank.get(item.id) ?? Number.POSITIVE_INFINITY) < this.feedFloor;
+      if (!served) continue;
       const fi = this.toFeedItem(item);
       if (fi) rows.push({ fi, pinned: !!st.pinned, pinAt: st.pinnedAt ?? 0 });
     }
