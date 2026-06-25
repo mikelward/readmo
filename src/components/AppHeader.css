@@ -78,10 +78,18 @@
 
 /* Track the content column's desktop widen: `.app-main` grows 720→860 at
  * 960px (see global.css), so the header inner grows with it to keep the
- * brand/actions aligned with the list/article column directly below. */
+ * brand/actions aligned with the list/article column directly below. Unlike
+ * `.app-main`, the inner shares the row with the absolutely-positioned edge
+ * controls (drawer toggle on the left, account chip on the right), so it
+ * can't take the full 860px until the viewport is wide enough to clear them:
+ * a centered 860px inner leaves only (960 - 860) / 2 = 50px of side gutter,
+ * but the signed-out "Sign in" chip is wider than that and would overlap the
+ * Settings tap target. Reserve ~100px per side so the inner only reaches the
+ * full 860px (column-aligned) once the viewport clears ~1060px, and stays
+ * narrower-but-non-overlapping below that. */
 @media (min-width: 960px) {
   .app-header__inner {
-    max-width: 860px;
+    max-width: min(860px, calc(100vw - 200px));
   }
 }
 
