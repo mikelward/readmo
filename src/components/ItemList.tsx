@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type AnimationEvent as ReactAnimationEvent,
@@ -198,35 +199,6 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
   // latest set without a stale closure.
   const collapsedRef = useRef<Set<FeedId>>(new Set());
   collapsedRef.current = collapsed;
-  // Number of list elements actually rendered: one header per feed section plus
-  // each non-collapsed row (a collapsed feed shows only its header). When not
-  // grouping this is just items.length. Drives the end-of-list re-measure and the
-  // auto-skip loop — both treat a newly rendered header (even a collapsed feed's)
-  // as visible progress, not just rows.
-  const renderedCount = useMemo(
-    () => renderedCountIn(items, groupByFeed, collapsed),
-    [groupByFeed, items, collapsed],
-  );
-
-  useEffect(() => {
-    const check = () => {
-      const doc = document.documentElement;
-      // Within 2px of the maximum scroll offset = the foot of the list is in
-      // view (the sub-pixel slack avoids a sticky "More" at exact bottom).
-      setAtListEnd(window.scrollY + window.innerHeight >= doc.scrollHeight - 2);
-    };
-    check();
-    window.addEventListener('scroll', check, { passive: true });
-    window.addEventListener('resize', check);
-    return () => {
-      window.removeEventListener('scroll', check);
-      window.removeEventListener('resize', check);
-    };
-    // Re-measure when the *rendered* row count changes — a new page grows the
-    // document, and collapsing/expanding sections shrinks/grows it without
-    // changing items.length (which would otherwise leave atListEnd stale and
-    // strand the pinned-bar "More" on its page-down branch).
-  }, [renderedCount]);
 
   // Anchors the fetch-and-scroll path: the id of the last row before a tap that
   // triggers a fetch (ids are stable across a plain page fetch — no state change
@@ -301,6 +273,66 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
     // Browsers honoring prefers-reduced-motion fall back to an instant scroll.
     window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
   }, [items]);
+
+  // Visible items = the cached page minus anything the user has *locally*
+  // marked Done/Hidden after the page landed. The DataSource already filters
+  // those out at fetch time, but a single-row swipe-right or a Sweep flips
+  // the store synchronously while React Query's invalidation triggers a
+  // background refetch; until that refetch lands (or if it fails — offline,
+  // network error) the cached page still carries the dismissed row, and
+  // without this filter the parent `<li>` stays in flow while only its
+  // `<article>` is translated off-screen, leaving a blank gap.
+  //
+  // Force a re-render on every store mutation so the visibleItems filter
+  // below picks up local Done/Hidden flips. A useSyncExternalStore snapshot
+  // tied to `entries().length` would miss the case where `hide()` mutates an
+  // *existing* item-state row (e.g. an item that was already opened): the
+  // map length stays the same, the snapshot value matches by Object.is, and
+  // the subscriber never re-renders. A reducer-counter that bumps on every
+  // emit() is simpler and correct — the filter reads stateStore.get
+  // directly so we don't need a stable snapshot value, just a render trigger.
+  const [, bumpStoreVersion] = useReducer((x: number) => x + 1, 0);
+  useEffect(
+    () => ds.stateStore.subscribe(bumpStoreVersion),
+    [ds],
+  );
+  const visibleItems = items.filter((fi) => {
+    const st = ds.stateStore.get(fi.item.id);
+    return !st.done && !st.hidden;
+  });
+
+  // Number of list elements actually rendered: one header per feed section plus
+  // each non-collapsed row (a collapsed feed shows only its header). When not
+  // grouping this is just visibleItems.length. Drives the end-of-list re-measure
+  // and the auto-skip loop — both treat a newly rendered header (even a
+  // collapsed feed's) as visible progress, not just rows. Keyed off visibleItems
+  // so a swipe/Sweep that shrinks the DOM without a successful refetch still
+  // triggers the re-measure; otherwise the screen-pinned bottom toolbar's
+  // atListEnd would stay false and "More" would stay on its page-down branch
+  // even though the rendered list has no more content below.
+  const renderedCount = useMemo(
+    () => renderedCountIn(visibleItems, groupByFeed, collapsed),
+    [groupByFeed, visibleItems, collapsed],
+  );
+
+  useEffect(() => {
+    const check = () => {
+      const doc = document.documentElement;
+      // Within 2px of the maximum scroll offset = the foot of the list is in
+      // view (the sub-pixel slack avoids a sticky "More" at exact bottom).
+      setAtListEnd(window.scrollY + window.innerHeight >= doc.scrollHeight - 2);
+    };
+    check();
+    window.addEventListener('scroll', check, { passive: true });
+    window.addEventListener('resize', check);
+    return () => {
+      window.removeEventListener('scroll', check);
+      window.removeEventListener('resize', check);
+    };
+    // Re-measure when the *rendered* row count changes — a new page grows the
+    // document, collapsing/expanding sections changes it without changing
+    // items.length, and a local Done/Hidden flip shrinks it without a refetch.
+  }, [renderedCount]);
 
   // Sweepable rows = unpinned rows the reader can *currently see* (Done/Hidden
   // are already filtered out by the DataSource). Sweep hides only the
@@ -421,18 +453,23 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
   // by item id so ItemRows can drop the header in without threading positions.
   // Recomputed as pages append; the sectioning holds across pages, so a run can
   // span a page break.
+  // Headers and feed-ids must follow the same visibleItems list ItemRows
+  // renders — if a locally-Done row was the first of its feed section in
+  // the cached `items`, keying the header off `items` would attach it to a
+  // row that no longer exists, leaving the surviving rows of that feed
+  // without their section header until a successful refetch.
   const groupHeaders = useMemo(() => {
     if (!groupByFeed) return undefined;
     const headers = new Map<ItemId, { feedId: FeedId; title: string }>();
     let lastFeedId: FeedId | null = null;
-    for (const fi of items) {
+    for (const fi of visibleItems) {
       if (fi.item.feedId !== lastFeedId) {
         headers.set(fi.item.id, { feedId: fi.item.feedId, title: fi.feed.title });
         lastFeedId = fi.item.feedId;
       }
     }
     return headers;
-  }, [groupByFeed, items]);
+  }, [groupByFeed, visibleItems]);
 
   // "Collapse all" / "Expand all" in the top toolbar act on the feeds currently
   // in view — the distinct feed ids across the loaded pages, in order.
@@ -440,14 +477,14 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
     if (!groupByFeed) return [] as FeedId[];
     const seen = new Set<FeedId>();
     const out: FeedId[] = [];
-    for (const fi of items) {
+    for (const fi of visibleItems) {
       if (!seen.has(fi.item.feedId)) {
         seen.add(fi.item.feedId);
         out.push(fi.item.feedId);
       }
     }
     return out;
-  }, [groupByFeed, items]);
+  }, [groupByFeed, visibleItems]);
   const collapseControls =
     groupByFeed && feedIdsInView.length > 0
       ? {
@@ -491,10 +528,18 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
   // persisted-empty cache that skips the refetch, or a stale cache answering
   // empty). Claiming "You're all caught up." there is a lie; show the
   // connectivity copy instead. Online + empty is a genuine caught-up state.
+  // Key off visibleItems, not raw items: when the local Done/Hidden overlay
+  // (the swipe-right / Sweep client-side filter above) empties the rendered
+  // list while the device is offline or a background refresh failed, the
+  // user can't confirm with the server that they're actually caught up.
+  // Claiming "You're all caught up" on visibleItems=[] there is the same
+  // lie the existing offline-empty guard catches for items=[]; using
+  // visibleItems unifies the two paths. Sweep + offline now surfaces the
+  // connectivity copy instead of a false caught-up claim.
   const showMissState =
     isError ||
-    (refreshFailed && items.length === 0) ||
-    (!isLoading && items.length === 0 && status !== 'online');
+    (refreshFailed && visibleItems.length === 0) ||
+    (!isLoading && visibleItems.length === 0 && status !== 'online');
 
   return (
     <div className="item-list">
@@ -525,16 +570,20 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
               </PromoBar>
             ) : null}
             <ItemRows
-              items={items}
+              items={visibleItems}
               sweepingIds={sweepingIds}
               onAnimationEnd={handleListAnimationEnd}
               // Skeletons (not the caught-up label) whenever a fetch is
               // validating an empty feed — the initial load, a reconnect
               // confirm, a boot-time cache-invalidation refetch over an empty
-              // persisted page, or a focus/PTR refresh. An empty result isn't
+              // persisted page, or a focus/PTR refresh. Also covers the
+              // post-overlay case: a swipe/Sweep that empties the rendered
+              // list while an invalidating refetch is in flight — keying off
+              // visibleItems holds the loading state instead of flashing the
+              // empty label off an unconfirmed cache. An empty result isn't
               // trustworthy as "all caught up" until the in-flight read that
               // could populate it (or fail and surface the miss-state) settles.
-              isLoading={isLoading || (isFetching && items.length === 0)}
+              isLoading={isLoading || (isFetching && visibleItems.length === 0)}
               skeletonCount={6}
               enableSwipe
               listRef={listRef}

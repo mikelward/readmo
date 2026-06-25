@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { screen, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { ItemRow } from './ItemRow';
@@ -180,5 +180,105 @@ describe('ItemRow', () => {
     expect(within(menu).queryByTestId('item-row-menu-hide')).toBeNull();
     // Share is still available.
     expect(within(menu).getByTestId('item-row-menu-share')).toBeInTheDocument();
+  });
+
+  describe('swipe-right dismissal', () => {
+    // jsdom ships no real PointerEvent constructor, so Testing Library's
+    // fireEvent.pointerDown drops pointerType from the init dict — and the
+    // swipe hook reads pointerType + clientX/clientY off the event. Build a
+    // plain Event and copy the pointer fields onto it (same shape as the
+    // TooltipButton test's `dispatch` helper).
+    function dispatchPointer(
+      target: Element,
+      type: 'pointerdown' | 'pointermove' | 'pointerup',
+      x: number,
+    ) {
+      const evt = new Event(type, { bubbles: true, cancelable: true });
+      Object.assign(evt, {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: x,
+        clientY: 24,
+        button: 0,
+        isPrimary: true,
+      });
+      target.dispatchEvent(evt);
+    }
+
+    function swipeRight(target: Element) {
+      // SWIPE_RATIO * width must clear SWIPE_MIN_PX (56). jsdom's
+      // getBoundingClientRect reports width 0 by default; stub it on the
+      // pointerdown-recorded element so the threshold is 125px and travel
+      // 200px to clear it. The dx > dy * ANGLE_RATIO (1.2) gate also passes
+      // since dy = 0.
+      Object.defineProperty(target, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => ({
+          width: 500, height: 48, top: 0, left: 0, right: 500, bottom: 48,
+          x: 0, y: 0, toJSON: () => ({}),
+        }),
+      });
+      act(() => {
+        dispatchPointer(target, 'pointerdown', 50);
+        dispatchPointer(target, 'pointermove', 250);
+        dispatchPointer(target, 'pointerup', 250);
+      });
+    }
+
+    it('snaps the row back to rest when the dismissal is rolled back (undo)', async () => {
+      // If the data layer keeps the row mounted after the swipe (refetch
+      // delayed/failed) and the toolbar Undo flips `done` back to false,
+      // the dismissed visual state must clear so the row reappears in
+      // place — otherwise the same component stays invisible.
+      vi.useFakeTimers();
+      try {
+        const source = new MockDataSource(`test-${Math.random()}`);
+        renderWithProviders(<ItemRow feedItem={FEED_ITEM} />, { source });
+        const article = screen.getByTestId('item-row');
+        swipeRight(article);
+        act(() => {
+          vi.advanceTimersByTime(250);
+        });
+        expect(source.stateStore.get(FEED_ITEM.item.id).done).toBe(true);
+        // The row is mid-dismissal — translated off + opacity 0.
+        expect(article.getAttribute('style') ?? '').toMatch(/translate3d/);
+
+        // Undo (the toolbar would call restoreLast on the store; here we
+        // flip the flag directly for unit-test focus).
+        act(() => {
+          source.stateStore.set(FEED_ITEM.item.id, 'done', false);
+        });
+        // After the rollback the effect clears the dismissal state, so
+        // the row no longer carries the off-screen transform.
+        expect(article.getAttribute('style') ?? '').not.toMatch(/translate3d/);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('runs handleHide and marks the item done after the exit animation', async () => {
+      // Regression: a rollback-reset effect that fires too eagerly (before
+      // the hook's 200ms timer commits the swipe) would `reset()` the hook
+      // and clear its pending timer, so `handleHide` would never run and
+      // the row would snap back without mutating state. The fix gates the
+      // reset on having observed a true→false transition of `done`; this
+      // test asserts the normal swipe path still commits.
+      vi.useFakeTimers();
+      try {
+        const source = new MockDataSource(`test-${Math.random()}`);
+        renderWithProviders(<ItemRow feedItem={FEED_ITEM} />, { source });
+        const article = screen.getByTestId('item-row');
+        swipeRight(article);
+        // Past EXIT_DURATION_MS the hook's timer fires handleHide, which
+        // sets done in the store. The parent would now unmount the row;
+        // we just assert commit at the data layer.
+        act(() => {
+          vi.advanceTimersByTime(250);
+        });
+        expect(source.stateStore.get(FEED_ITEM.item.id).done).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });
