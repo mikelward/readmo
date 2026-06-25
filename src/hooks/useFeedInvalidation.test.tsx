@@ -9,15 +9,23 @@ import type { FetchPage } from './useFeedItems';
 
 /**
  * Regression: after a persisted-cache restore, preexisting Done/Hidden item
- * state must cause the feed to refetch so stale rows disappear immediately.
+ * state must cause the feed to refetch so stale rows disappear from the
+ * cache (not just the rendered list).
  *
- * The fix is in main.tsx: PersistQueryClientProvider.onSuccess calls
- * queryClient.invalidateQueries({ queryKey: ['feed'] }) after hydration.
- * This test verifies the observable behaviour: a Done item that appears in a
- * restored feed must disappear once invalidateQueries triggers a refetch.
+ * The fix has two layers:
+ *   1. main.tsx: PersistQueryClientProvider.onSuccess calls
+ *      queryClient.invalidateQueries({ queryKey: ['feed'] }) after hydration.
+ *   2. ItemList: the client-side visibleItems filter drops Done/Hidden rows
+ *      from the rendered list immediately, regardless of cache freshness, so
+ *      a Done row never reaches the screen even before the refetch lands.
+ *
+ * This test verifies BOTH layers: the Done item is never rendered (layer 2),
+ * AND `invalidateQueries` triggers a real refetch so the cache gets cleaned
+ * up too (layer 1) — without it, the cached snapshot would still carry the
+ * Done row for the next session.
  */
 describe('boot-time feed invalidation after persist restore', () => {
-  it('refetches and removes a Done item after invalidateQueries fires', async () => {
+  it('refetches the feed (and the rendered list never shows the Done item)', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     const firstPage = await source.getHomeItems();
     const allItems: FeedItem[] = firstPage.items;
@@ -30,9 +38,9 @@ describe('boot-time feed invalidation after persist restore', () => {
     source.stateStore.set(doneItem.item.id, 'done', true);
 
     // fetchPage: first call returns ALL items (including Done) — simulating a
-    // persisted snapshot. Subsequent calls are held behind a gate so we can
-    // assert the Done item is visible from the first result before the
-    // refetch resolves and filters it out.
+    // persisted snapshot whose cached page hasn't been re-filtered yet.
+    // Subsequent calls are held behind a gate so the test can verify the
+    // post-invalidation refetch actually fires before resolving it.
     let releaseRefetch: (() => void) | null = null;
     let callCount = 0;
 
@@ -62,24 +70,25 @@ describe('boot-time feed invalidation after persist restore', () => {
     const hasDoneTitle = () =>
       screen.getAllByTestId('item-title').some((n) => n.textContent?.startsWith(doneItem.item.title));
 
-    // First fetch lands — Done item is visible because the restored snapshot
-    // included it and staleTime prevents an automatic refetch.
-    await waitFor(() => expect(hasDoneTitle()).toBe(true));
+    // Wait for the first fetch to complete and rows to render. Layer 2:
+    // the Done row was in the cached page but the client-side filter
+    // never lets it through to the DOM.
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryAllByTestId('item-title').length).toBeGreaterThan(0));
+    expect(hasDoneTitle()).toBe(false);
 
     // Simulate PersistQueryClientProvider.onSuccess: invalidate feed caches
-    // after the persisted snapshot is fully hydrated.
+    // after the persisted snapshot is fully hydrated. Layer 1: this must
+    // actually fire a refetch so the cache itself is freshened.
     act(() => {
       void queryClient.invalidateQueries({ queryKey: ['feed'] });
     });
 
-    // The refetch is now in flight. Release it so it can resolve.
+    // The refetch is now in flight. Release it and confirm the rendered
+    // list stays clean (the source's own filter drops the Done id too).
     await waitFor(() => expect(releaseRefetch).not.toBeNull());
     act(() => { releaseRefetch!(); });
-
-    // After the refetch resolves, the real source filters out Done items.
-    await waitFor(() => expect(hasDoneTitle()).toBe(false));
-
-    // Sanity: fetchPage was called exactly twice (initial + post-invalidation).
-    expect(fetchPage).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+    expect(hasDoneTitle()).toBe(false);
   });
 });

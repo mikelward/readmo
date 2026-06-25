@@ -432,6 +432,277 @@ describe('ItemList', () => {
     });
   });
 
+  it('drops a locally-done row from the list immediately (no blank gap waiting for refetch)', async () => {
+    // Regression: marking a row Done flips the store synchronously, but the
+    // cached page from React Query still carries it until an invalidating
+    // refetch lands. If the refetch is slow, fails (offline), or returns the
+    // same page because the backend hasn't picked up the change yet, the
+    // swiped `<article>` stays translated off-screen while the parent `<li>`
+    // keeps its 56px height — an indefinite blank gap. The view must drop
+    // the dismissed row from the rendered list as soon as the store flips,
+    // not wait for the data layer.
+    //
+    // Use a custom fetchPage that always returns the SAME page (regardless
+    // of store state). This mirrors the "refetch ran but the server didn't
+    // see the change" path and isolates the client-side filter from the
+    // MockDataSource's own done filtering.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems();
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    renderWithProviders(
+      <ItemList
+        viewKey={`gap-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+
+    const rowsBefore = await screen.findAllByTestId('item-row');
+    // data-item-id sits on the parent `<li>`, not the `<article>`.
+    const firstId = rowsBefore[0].closest('li')!.getAttribute('data-item-id');
+    expect(firstId).not.toBeNull();
+    const countBefore = rowsBefore.length;
+
+    // Flip done directly on the store (what handleHide does at the timer
+    // commit). The fetchPage above never filters, so without the
+    // client-side visibleItems filter the row would stick around.
+    act(() => {
+      source.stateStore.set(firstId!, 'done', true);
+    });
+
+    await waitFor(() => {
+      const after = screen.getAllByTestId('item-row');
+      expect(after).toHaveLength(countBefore - 1);
+      // The dismissed row's `<li>` (data-item-id wrapper) is gone — not
+      // just hidden behind a transform.
+      expect(
+        document.querySelector(`[data-item-id="${firstId}"]`),
+      ).toBeNull();
+    });
+  });
+
+  it('holds the loading state when an in-flight refetch is racing a local Sweep (no premature caught-up flash)', async () => {
+    // Regression: ItemRows.isLoading used to key off raw `items.length`, so
+    // a swipe/Sweep that locally empties the rendered list while an
+    // invalidating refetch was still in flight let the empty label flash
+    // before the refetch settled. The loading guard must follow visibleItems
+    // so an unconfirmed cache can't surface a false "you're all caught up".
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems();
+
+    // First fetch lands immediately; the post-invalidation refetch is held
+    // open so the test can observe the racing window.
+    let release: ((page: Awaited<ReturnType<typeof source.getHomeItems>>) => void) | null = null;
+    let callCount = 0;
+    const fetchPage = vi.fn(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({ items: seed.items, nextCursor: null });
+      }
+      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>((resolve) => {
+        release = (page) => resolve({ items: page.items, nextCursor: page.nextCursor });
+      });
+    });
+    renderWithProviders(
+      <ItemList
+        viewKey={`sweep-mid-refetch-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="You're all caught up."
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+
+    // Mark every row Done in one batch via hideMany — a single emit kicks
+    // off one invalidating refetch (callCount → 2), which we hold open via
+    // the gated promise. Per-id `set` calls would emit once each and
+    // multiply the in-flight refetch count.
+    act(() => {
+      source.stateStore.hideMany(seed.items.map((fi) => fi.item.id));
+    });
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+
+    // Refetch still in flight: must NOT yet show the caught-up label. The
+    // miss-state for online+empty doesn't apply here (status === 'online'),
+    // so the only protection is the loading guard — which must follow
+    // visibleItems, not raw items.
+    expect(screen.queryByText(/all caught up/i)).toBeNull();
+
+    // Let the held refetch land with a server-confirmed empty page.
+    act(() => {
+      release?.({ items: [], nextCursor: null });
+    });
+    expect(await screen.findByText(/all caught up/i)).toBeInTheDocument();
+  });
+
+  it('re-measures end-of-list when a local Done shrinks the rendered list, so the pinned bar fetches instead of paging down', async () => {
+    // Regression: renderedCount used to derive from raw `items`, so a local
+    // Done that shrunk the rendered list (without a successful refetch) left
+    // atListEnd stale — the screen-pinned bottom "More" button stayed on its
+    // page-down branch even though the list had no more content below. The
+    // re-measure trigger must follow visibleItems.
+    const user = userEvent.setup();
+    window.localStorage.setItem(BOTTOM_BAR_KEY, 'screen');
+    resetReadingPrefsCacheForTest();
+    // Tall document at mount → the loaded list end is NOT in view.
+    Object.defineProperty(window, 'innerHeight', { value: 768, configurable: true });
+    Object.defineProperty(window, 'scrollY', { value: 0, configurable: true });
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      value: 5000,
+      configurable: true,
+    });
+    const scrollBy = vi.fn();
+    vi.stubGlobal('scrollBy', scrollBy);
+    vi.stubGlobal('scrollTo', vi.fn());
+
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems();
+    // fetchPage ignores Done state — the cached page stays even when local
+    // Done shrinks the rendered list. Mirrors the slow/failed-refetch path.
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    renderWithProviders(
+      <ItemList
+        viewKey={`shrink-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+
+    // Shrink the rendered list by marking all but one row Done. The DOM
+    // collapses, the document gets short enough that the foot is now in view.
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      value: 100,
+      configurable: true,
+    });
+    act(() => {
+      for (const fi of seed.items.slice(0, -1)) {
+        source.stateStore.set(fi.item.id, 'done', true);
+      }
+    });
+
+    // The pinned-bar "More" must take the (disabled / no-more-items) branch
+    // now that atListEnd has been re-measured to true, NOT the page-down
+    // branch that would scroll into nothing. With the bug, renderedCount
+    // wouldn't change → atListEnd would stay false → tapping More would
+    // call scrollBy.
+    await user.click(screen.getByTestId('more-btn'));
+    expect(scrollBy).not.toHaveBeenCalled();
+  });
+
+  it('shows the offline copy (not "all caught up") when the visible list is emptied by local Done while offline', async () => {
+    // Regression: showMissState used to key off raw `items.length`, but the
+    // client-side visibleItems filter can empty the rendered list while the
+    // cached `items` still has rows. If the device is offline at the same
+    // time, the user can't confirm with the server that they're really
+    // caught up — claiming so is the same lie the offline-empty guard
+    // catches for the items=[] path. visibleItems must drive the guard.
+    Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: false });
+    window.dispatchEvent(new Event('offline'));
+
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems();
+    // staleTime Infinity + retry off so the cached page stays put and no
+    // background refetch races us into a real empty state.
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          gcTime: 0,
+          staleTime: Infinity,
+          networkMode: 'offlineFirst',
+        },
+      },
+    });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    renderWithProviders(
+      <ItemList
+        viewKey={`offline-overlay-empty-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="You're all caught up."
+      />,
+      { source, queryClient },
+    );
+
+    await screen.findAllByTestId('item-row');
+    // Mark every cached row Done locally — visibleItems collapses to [].
+    act(() => {
+      for (const fi of seed.items) {
+        source.stateStore.set(fi.item.id, 'done', true);
+      }
+    });
+
+    // Offline + visibleItems=[] → the offline miss-state must surface, not
+    // a "you're all caught up" empty-label flash.
+    await screen.findByText(/you’re offline/i);
+    expect(screen.queryByText(/all caught up/i)).toBeNull();
+  });
+
+  it('keeps the section header on the surviving row when the first-of-feed is locally done (grouped)', async () => {
+    // Regression: groupHeaders used to key off the unfiltered `items` list,
+    // so if the very first cached row of a feed section was locally marked
+    // Done before the refetch landed, the header attached to a row that no
+    // longer rendered — and the surviving rows of that feed sat without a
+    // header. Header derivation must follow the visibleItems list.
+    //
+    // Use a fetchPage that ALWAYS returns the same sectioned page (ignores
+    // local Done state) so useFeedInvalidation's refetch can't paper over
+    // the bug by silently re-filtering at the source layer.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ groupByFeed: true, limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`grouped-first-done-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+
+    await screen.findAllByTestId('item-row');
+    const headersBefore = container.querySelectorAll('.item-list__group-header');
+    expect(headersBefore.length).toBeGreaterThan(1);
+    // First feed section's first row id is the header's data-header-for.
+    const firstHeader = headersBefore[0] as HTMLElement;
+    const firstSectionFirstId = firstHeader.getAttribute('data-header-for');
+    expect(firstSectionFirstId).not.toBeNull();
+    const headerCountBefore = headersBefore.length;
+
+    // Locally mark that first-of-section row Done.
+    act(() => {
+      source.stateStore.set(firstSectionFirstId!, 'done', true);
+    });
+
+    // The dismissed row is gone; the same number of section headers must
+    // remain — the first section's header now keys off the next visible
+    // row of that feed. With the buggy `items`-based derivation, the
+    // header for the removed id would never match any visibleItem and
+    // the feed-1 header would vanish, dropping headersAfter.length by 1.
+    await waitFor(() => {
+      expect(
+        document.querySelector(`[data-item-id="${firstSectionFirstId}"]`),
+      ).toBeNull();
+    });
+    const headersAfter = container.querySelectorAll('.item-list__group-header');
+    expect(headersAfter.length).toBe(headerCountBefore);
+    // No header is orphaned to the removed id.
+    expect(
+      container.querySelector(`[data-header-for="${firstSectionFirstId}"]`),
+    ).toBeNull();
+  });
+
   it('Sweep plays a slide+fade on every unpinned row before hiding them', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);

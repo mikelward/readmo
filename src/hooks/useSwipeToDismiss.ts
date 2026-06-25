@@ -20,6 +20,22 @@ interface Options {
   onSwipeRight?: () => void;
   onLongPress?: () => void;
   enabled?: boolean;
+  /** Whether a committed swipe in each direction unmounts the row. For
+   * dismissals (`true`) the row stays translated off-screen + opacity 0 after
+   * the handler fires, so the parent's unmount removes the element instead of
+   * snapping it back into place. For save-and-stay actions (`false`,
+   * the default — e.g. swipe-left-to-Pin keeps the row in the list) the
+   * offset/opacity reset to 0 after the handler, snapping the row back to
+   * its resting position. The default preserves the original snap-back
+   * behavior; callers opt in per direction.
+   *
+   * Necessary because the data layer is async — `handleHide` marks the item
+   * Done, but React Query takes a tick to refetch and drop the row, so a
+   * blind snap-back here flashes the row back into place before unmount.
+   * Snapping back early reads as "the swipe didn't take" before the row
+   * finally disappears. */
+  dismissOnLeft?: boolean;
+  dismissOnRight?: boolean;
 }
 
 interface PointerStart {
@@ -35,6 +51,8 @@ export function useSwipeToDismiss({
   onSwipeRight,
   onLongPress,
   enabled = true,
+  dismissOnLeft = false,
+  dismissOnRight = false,
 }: Options) {
   const [offset, setOffset] = useState(0);
   const [dragging, setDragging] = useState(false);
@@ -155,19 +173,26 @@ export function useSwipeToDismiss({
         justSwipedRef.current = true;
         setIsDismissing(true);
         setOffset(dir * Math.max(width, 300));
+        const willDismiss = dir > 0 ? dismissOnRight : dismissOnLeft;
         timeoutRef.current = window.setTimeout(() => {
           handler();
-          // If the parent kept the row mounted (e.g. a shielded action),
-          // reset so the row snaps back instead of staying off-screen.
-          setIsDismissing(false);
-          setOffset(0);
+          // Save-and-stay (the default): the row will remain mounted, so
+          // reset offset/isDismissing to snap it back to its resting
+          // position. Dismissal directions skip the reset and stay
+          // translated off-screen until the parent unmounts the row —
+          // otherwise the row would visibly snap back into place during
+          // the async unmount window and flash before disappearing.
+          if (!willDismiss) {
+            setIsDismissing(false);
+            setOffset(0);
+          }
         }, EXIT_DURATION_MS);
       } else {
         setOffset(0);
         if (wasSwiping) justSwipedRef.current = true;
       }
     },
-    [clearLongPressTimer],
+    [clearLongPressTimer, dismissOnLeft, dismissOnRight],
   );
 
   const onPointerCancel = useCallback(
@@ -181,6 +206,20 @@ export function useSwipeToDismiss({
     },
     [clearLongPressTimer],
   );
+
+  // Snap the row back to rest. The consumer calls this when a committed
+  // dismissal is undone (e.g. toolbar Undo flips `done` back to false before
+  // the refetch dropped the row) or otherwise stays mounted — without it,
+  // the off-screen `dismissOn*` state would leave the same component stuck
+  // invisible until something else forces a remount.
+  const reset = useCallback(() => {
+    if (timeoutRef.current != null) {
+      window.clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    setIsDismissing(false);
+    setOffset(0);
+  }, []);
 
   const onContextMenu = useCallback((e: MouseEvent) => {
     if (justSwipedRef.current || onLongPressRef.current) {
@@ -215,6 +254,7 @@ export function useSwipeToDismiss({
     offset,
     dragging,
     isDismissing,
+    reset,
     style,
     handlers: {
       onPointerDown,

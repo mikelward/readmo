@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import type { FeedItem } from '../lib/types';
@@ -69,11 +69,44 @@ export function ItemRow({
   // Pin shields against every swipe (both directions rubber-band); a swipe
   // whose handler is undefined falls through to snap-back. Library views
   // (enableSwipe=false) bind no swipe handlers, only long-press.
-  const { dragging, isDismissing, style, handlers } = useSwipeToDismiss({
+  const { dragging, isDismissing, reset, style, handlers } = useSwipeToDismiss({
     onSwipeRight: enableSwipe && !pinned ? handleHide : undefined,
     onSwipeLeft: enableSwipe && !pinned ? handlePin : undefined,
     onLongPress: openMenu,
+    // Swipe-right hides the row → it will unmount when the data layer
+    // refetches; hold the off-screen state until then so the row doesn't
+    // visibly snap back during the async unmount window. Swipe-left pins,
+    // which keeps the row mounted (it moves to the top), so it snaps back.
+    dismissOnRight: true,
   });
+
+  // The off-screen state from a swipe-right dismissal persists until the
+  // parent unmounts the row. If the dismissal is rolled back before that
+  // happens — toolbar Undo flips `done` back to false, or a refetch failure
+  // means the row never gets dropped from the page and the user undoes it —
+  // the same component would remain mounted but invisible. Snap it back the
+  // moment `done` reverts.
+  //
+  // Crucial gate: the hook flips `isDismissing` to true on *pointer-up*, but
+  // `handleHide` doesn't run (so `done` doesn't flip) until the 200ms exit
+  // timer fires. A naive `isDismissing && !done` check matches during the
+  // animation and would `reset()` — clearing the pending timer before the
+  // swipe handler runs — making swipe-right silently snap back without
+  // mutating state. Swipe-left Pin never sets `done` at all, same problem.
+  // We must observe `done` going true (the dismissal landed) *first*; only
+  // then does a subsequent false count as an undo.
+  const observedDoneRef = useRef(false);
+  useEffect(() => {
+    if (!isDismissing) {
+      observedDoneRef.current = false;
+      return;
+    }
+    if (done) {
+      observedDoneRef.current = true;
+    } else if (observedDoneRef.current) {
+      reset();
+    }
+  }, [done, isDismissing, reset]);
 
   const swipeOnContextMenu = handlers.onContextMenu;
   const handleContextMenu = useCallback(

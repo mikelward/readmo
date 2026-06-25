@@ -197,6 +197,24 @@ the only difference is they're DB columns instead of localStorage keys.
   the finger and snaps back; the revealed edge label names the outcome
   (`Pinned` on both edges of a pinned row; otherwise `Done` / `Pin`). Same
   `useSwipeToDismiss` fall-through-to-`setOffset(0)` mechanism.
+- **Dismissal swipes hold off-screen until the data layer drops the row.**
+  Because the feed list is paginated via React Query and the refetch that
+  removes a Done row takes a tick, the swipe-right exit animation keeps the
+  row translated off-screen + opacity 0 after `handleHide` fires instead of
+  resetting to rest. Otherwise the row would visibly snap back into place
+  during the async unmount window and flash before disappearing. Swipe-left
+  Pin still snaps back (the row stays mounted and reflows to the top).
+- **The feed view filters Done/Hidden client-side, in addition to the
+  DataSource's fetch-time filter.** The DataSource always returns clean
+  pages, but a local mutation (single-row swipe, Sweep) flips the store
+  synchronously while the invalidating refetch is still in flight — or may
+  fail outright (offline, network error). Without the client-side overlay
+  the dismissed row's `<li>` would keep its 56px in the flow while only its
+  `<article>` was translated off-screen, leaving an indefinite blank gap.
+  `ItemList` subscribes to `ItemStateStore` via `useSyncExternalStore` and
+  excludes any item whose `done`/`hidden` flag is set so the row unmounts
+  the moment the local state flips. Undo restores the flag and the row
+  re-mounts in place.
 - **Enforcement at the mutation layer, not just the UI**: pinning removes Done;
   marking Done removes Pinned.
 
