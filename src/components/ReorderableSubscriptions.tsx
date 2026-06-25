@@ -7,6 +7,7 @@ import {
 } from 'react';
 import type { Feed, FeedId, Subscription } from '../lib/types';
 import { arrayMove, orderForPointer } from '../lib/arrayMove';
+import { usePopoverDismiss } from '../hooks/usePopoverDismiss';
 import { DragHandle } from './icons';
 
 export interface SubscriptionEntry {
@@ -229,29 +230,19 @@ export function ReorderableSubscriptions({
       refocus.current = null;
     }
   });
-  // Close the overflow menu on pointer down outside the row or Escape. Rename's
-  // input lives inside the same row, so a press on it doesn't dismiss the menu
-  // through this path — the menu has already been closed by startEdit() at that
-  // point. Use `pointerdown` (not click) so the menu doesn't survive a tap that
-  // also starts a drag.
-  useEffect(() => {
-    if (menuFor === null) return;
-    const onDocPointer = (e: PointerEvent) => {
-      const target = e.target as Node | null;
-      const row = target ? rowRefs.current.get(menuFor) : null;
-      if (target && row && row.contains(target)) return;
-      setMenuFor(null);
-    };
-    const onDocKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenuFor(null);
-    };
-    document.addEventListener('pointerdown', onDocPointer);
-    document.addEventListener('keydown', onDocKey);
-    return () => {
-      document.removeEventListener('pointerdown', onDocPointer);
-      document.removeEventListener('keydown', onDocKey);
-    };
-  }, [menuFor]);
+  // Shared dropdown dismissal: Escape, outside-press, and the first-press-only
+  // swallow (so dismissing the menu doesn't also activate whatever was tapped —
+  // a neighboring row, another control). The "inside" region is the open row,
+  // so the trigger and Rename input (both inside it) don't dismiss through this
+  // path. See usePopoverDismiss.
+  usePopoverDismiss({
+    open: menuFor !== null,
+    onDismiss: () => setMenuFor(null),
+    isInside: (target) => {
+      const row = menuFor !== null ? rowRefs.current.get(menuFor) : null;
+      return !!row?.contains(target);
+    },
+  });
 
   function collectRects(): Map<FeedId, { top: number; height: number }> {
     const rects = new Map<FeedId, { top: number; height: number }>();

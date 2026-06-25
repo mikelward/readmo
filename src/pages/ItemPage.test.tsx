@@ -104,7 +104,7 @@ describe('ItemPage (reader)', () => {
     // A tap outside the menu dismisses it (the bespoke menu only closed on
     // mouse-leave, which never fires on touch).
     act(() => {
-      document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
     });
     await waitFor(() => {
       expect(screen.queryByTestId('item-row-menu')).toBeNull();

@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { usePopoverDismiss } from '../hooks/usePopoverDismiss';
 import { UserAvatar } from './UserAvatar';
 import './HeaderAccountMenu.css';
 
@@ -13,21 +14,13 @@ export function HeaderAccountMenu() {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
+  // Shared dropdown dismissal: Escape, outside-press, and the first-press-only
+  // swallow — see usePopoverDismiss.
+  usePopoverDismiss({
+    open,
+    onDismiss: () => setOpen(false),
+    isInside: (target) => !!rootRef.current?.contains(target),
+  });
 
   if (!user) {
     return (

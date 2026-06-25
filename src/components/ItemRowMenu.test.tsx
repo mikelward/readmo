@@ -99,7 +99,7 @@ describe('ItemRowMenu popover mode (anchor supplied)', () => {
     }
   });
 
-  it('closes when a mousedown lands outside both the menu and the anchor', () => {
+  it('closes when a press lands outside both the menu and the anchor', () => {
     const anchor = anchorAt({});
     document.body.appendChild(anchor);
     const outside = document.createElement('div');
@@ -110,7 +110,7 @@ describe('ItemRowMenu popover mode (anchor supplied)', () => {
         <ItemRowMenu open title="An item" items={items()} anchorEl={anchor} onClose={onClose} />,
       );
       act(() => {
-        outside.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
       });
       expect(onClose).toHaveBeenCalledTimes(1);
     } finally {
@@ -134,7 +134,7 @@ describe('ItemRowMenu popover mode (anchor supplied)', () => {
         <ItemRowMenu open title="An item" items={items()} anchorEl={anchor} onClose={onClose} />,
       );
       act(() => {
-        outside.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
       });
       const click = new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 });
       act(() => {
@@ -171,7 +171,7 @@ describe('ItemRowMenu popover mode (anchor supplied)', () => {
       // Right-click outside still dismisses, but produces contextmenu /
       // auxclick rather than a primary click, so no swallower is armed.
       act(() => {
-        outside.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 2 }));
+        outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 2 }));
       });
       expect(onClose).toHaveBeenCalledTimes(1);
       // A later, unrelated left click must NOT be swallowed.
@@ -196,14 +196,20 @@ describe('ItemRowMenu popover mode (anchor supplied)', () => {
     document.body.appendChild(outside);
     const onClose = vi.fn();
     try {
-      render(
+      const { rerender } = render(
         <ItemRowMenu open title="An item" items={items()} anchorEl={anchor} onClose={onClose} />,
       );
-      // Primary mousedown arms the swallower, but the gesture ends with
-      // no click (e.g. a drag/selection released elsewhere).
+      // Primary press arms the swallower and dismisses the menu; the gesture
+      // ends with no click (e.g. a drag/selection released elsewhere). The
+      // real parent closes on dismiss, so re-render closed to let the menu's
+      // own outside listener tear down — leaving only the standalone swallower.
       act(() => {
-        outside.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
       });
+      expect(onClose).toHaveBeenCalledTimes(1);
+      rerender(
+        <ItemRowMenu open={false} title="An item" items={items()} anchorEl={anchor} onClose={onClose} />,
+      );
       // A brand-new gesture begins; its pointerdown must tear the stale
       // swallower down so the new gesture's click is not eaten.
       act(() => {
@@ -238,7 +244,7 @@ describe('ItemRowMenu popover mode (anchor supplied)', () => {
       // control with Enter/Space — a click with detail 0 and no
       // preceding pointer event. It must NOT be swallowed.
       act(() => {
-        outside.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
       });
       const kbClick = new MouseEvent('click', {
         bubbles: true,
@@ -256,7 +262,7 @@ describe('ItemRowMenu popover mode (anchor supplied)', () => {
     }
   });
 
-  it('does NOT close when a mousedown lands inside the anchor (the trigger owns toggling)', () => {
+  it('does NOT close when a press lands inside the anchor (the trigger owns toggling)', () => {
     const anchor = anchorAt({});
     document.body.appendChild(anchor);
     const onClose = vi.fn();
@@ -265,7 +271,7 @@ describe('ItemRowMenu popover mode (anchor supplied)', () => {
         <ItemRowMenu open title="An item" items={items()} anchorEl={anchor} onClose={onClose} />,
       );
       act(() => {
-        anchor.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        anchor.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
       });
       expect(onClose).not.toHaveBeenCalled();
     } finally {
