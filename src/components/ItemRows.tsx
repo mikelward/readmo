@@ -1,4 +1,4 @@
-import { Fragment, type Ref } from 'react';
+import { Fragment, type AnimationEventHandler, type Ref } from 'react';
 import type { FeedId, FeedItem, ItemId } from '../lib/types';
 import { useShareItem } from '../hooks/useShareItem';
 import { ItemRow, type RightAction } from './ItemRow';
@@ -43,6 +43,13 @@ interface Props {
   /** Toggle a feed's collapsed state (tapping its header). When provided the
    * header renders as a button; otherwise it's a static label. */
   onToggleCollapse?: (feedId: FeedId) => void;
+  /** Ids currently playing the sweep-out animation — their `<li>` carries the
+   * `--sweeping` modifier so it slides + fades together with its peers. The
+   * parent commits the hide on the matching `animationend`. */
+  sweepingIds?: ReadonlySet<ItemId>;
+  /** Fired on the list `<ul>`; the parent watches for the
+   * `item-list__sweep-out` keyframe name to commit the deferred Sweep. */
+  onAnimationEnd?: AnimationEventHandler<HTMLUListElement>;
 }
 
 /** The shared body of a list view: loading skeletons, the empty state, or the
@@ -60,6 +67,8 @@ export function ItemRows({
   groupHeaders,
   collapsedFeeds,
   onToggleCollapse,
+  sweepingIds,
+  onAnimationEnd,
 }: Props) {
   const share = useShareItem();
 
@@ -82,7 +91,7 @@ export function ItemRows({
   }
 
   return (
-    <ul className="item-list__rows" ref={listRef}>
+    <ul className="item-list__rows" ref={listRef} onAnimationEnd={onAnimationEnd}>
       {items.map((fi) => {
         const header = groupHeaders?.get(fi.item.id);
         const collapsed = collapsedFeeds?.has(fi.item.feedId) ?? false;
@@ -123,7 +132,10 @@ export function ItemRows({
             ) : null}
             {collapsed ? null : (
               <li
-                className="item-list__row"
+                className={
+                  'item-list__row' +
+                  (sweepingIds?.has(fi.item.id) ? ' item-list__row--sweeping' : '')
+                }
                 data-item-id={fi.item.id}
                 ref={getRowRef?.(fi.item.id)}
               >

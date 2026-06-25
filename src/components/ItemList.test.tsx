@@ -432,6 +432,105 @@ describe('ItemList', () => {
     });
   });
 
+  it('Sweep plays a slide+fade on every unpinned row before hiding them', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    // Pin the first row so it stays put through the sweep — it must never wear
+    // the animation class even while the unpinned rows are sliding out.
+    const page = await source.getHomeItems();
+    const pinnedTitle = page.items[0].item.title;
+    source.stateStore.set(page.items[0].item.id, 'pinned', true);
+
+    renderHome(source);
+    await screen.findAllByTestId('item-row');
+
+    await user.click(screen.getByTestId('sweep-btn'));
+
+    // The hide is deferred until the sweep-out animation finishes, so the
+    // unpinned rows stay in the DOM for a moment wearing `--sweeping`. The
+    // pinned row never gets the class.
+    const pinnedRow = screen.getByText(pinnedTitle).closest('li')!;
+    expect(pinnedRow.className).not.toContain('item-list__row--sweeping');
+    const sweepingRows = document.querySelectorAll('.item-list__row--sweeping');
+    expect(sweepingRows.length).toBeGreaterThan(0);
+    // The pinned row is still mounted alongside its sweeping peers.
+    expect(screen.getByText(pinnedTitle)).toBeInTheDocument();
+
+    // Fallback timer eventually commits the hide — only the pinned row
+    // survives.
+    await waitFor(() => {
+      const rows = screen.getAllByTestId('item-row');
+      expect(rows).toHaveLength(1);
+      expect(within(rows[0]).getByTestId('item-title')).toHaveTextContent(
+        pinnedTitle,
+      );
+    });
+  });
+
+  it('Sweep commits on animationend (not just the fallback timer)', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderHome(source);
+    const rowsBefore = await screen.findAllByTestId('item-row');
+    const firstTitle = within(rowsBefore[0]).getByTestId('item-title').textContent;
+
+    await user.click(screen.getByTestId('sweep-btn'));
+
+    // Rows are still mounted, wearing the sweeping class — the fallback
+    // timer (400ms) hasn't fired yet.
+    const sweeping = document.querySelectorAll('.item-list__row--sweeping');
+    expect(sweeping.length).toBeGreaterThan(0);
+
+    // Synthesize a matching animationend on one of the swept rows. Handler
+    // filters by animationName === 'item-list__sweep-out' and commits once,
+    // so the whole batch hides immediately.
+    act(() => {
+      const ev = new Event('animationend', { bubbles: true }) as AnimationEvent;
+      Object.defineProperty(ev, 'animationName', {
+        value: 'item-list__sweep-out',
+      });
+      sweeping[0].dispatchEvent(ev);
+    });
+
+    await waitFor(() => {
+      const titles = screen.queryAllByTestId('item-title').map((n) => n.textContent);
+      expect(titles).not.toContain(firstTitle);
+    });
+  });
+
+  it('Sweep skips the animation and the delay when prefers-reduced-motion is set', async () => {
+    const user = userEvent.setup();
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: query === '(prefers-reduced-motion: reduce)',
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia;
+    try {
+      const source = new MockDataSource(`test-${Math.random()}`);
+      renderHome(source);
+      await screen.findAllByTestId('item-row');
+
+      await user.click(screen.getByTestId('sweep-btn'));
+
+      // Reduced-motion path hides immediately — rows gone on the very next
+      // render, and no row ever wore the sweeping class.
+      await waitFor(() => {
+        expect(screen.queryAllByTestId('item-row').length).toBe(0);
+      });
+      expect(
+        document.querySelector('.item-list__row--sweeping'),
+      ).toBeNull();
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
+  });
+
   it('disables Sweep when no row is fully visible', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     renderHome(source);
