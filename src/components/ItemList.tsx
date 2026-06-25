@@ -133,13 +133,28 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
   // so Undo only ever reaches back to what the reader was just looking at.
   const lastScrollHideAt = useRef(0);
   const scrollBatchKey = useRef(0);
+  // Forward-declared so handleExitTop can read the latest pending-sweep ids
+  // without re-subscribing the observer. Populated by handleSweep below.
+  const sweepPendingIdsRef = useRef<ItemId[] | null>(null);
   const handleExitTop = useCallback(
     (ids: ItemId[]) => {
       // Skip rows that are pinned (shielded) or already Done/Hidden — a
       // re-delivered id (e.g. observer recreation on a sticky-inset change
       // before the refetch drops the row) must not re-enter hideMany and
       // clobber the undo baseline with the already-Done state.
+      //
+      // Also skip rows that are mid-sweep: tapping Sweep registers a pending
+      // batch (animation in flight, hideMany deferred). If a swept row also
+      // scrolls off the top before the animation commits, the keyed auto-hide
+      // fires first → marks done with baseline "not done" → then the keyless
+      // sweep commit fires for the same id with baseline "already done",
+      // replacing the auto-hide undo batch with one that's a no-op on undo.
+      // Pressing Undo after such a race would leave the swept-and-scrolled
+      // row hidden. The user tapped Sweep first, so Sweep owns the dismissal
+      // for those ids; the auto-hide IO ignores them.
+      const sweeping = sweepPendingIdsRef.current;
       const toHide = ids.filter((id) => {
+        if (sweeping && sweeping.includes(id)) return false;
         const st = ds.stateStore.get(id);
         return !st.pinned && !st.done && !st.hidden;
       });
@@ -314,7 +329,6 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
   const [sweepingIds, setSweepingIds] = useState<ReadonlySet<ItemId>>(
     () => new Set(),
   );
-  const sweepPendingIdsRef = useRef<ItemId[] | null>(null);
   const sweepFallbackTimerRef = useRef<number | null>(null);
   // Mirror hideMany into a ref so the unmount cleanup below can commit a
   // pending hide synchronously without re-subscribing the cleanup every
