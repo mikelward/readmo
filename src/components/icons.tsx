@@ -84,16 +84,19 @@ export function FavoriteFilled(props: IconProps) {
   );
 }
 
-// ---- Done (check_circle) --------------------------------------------------
+// ---- Done (check) ---------------------------------------------------------
 
-export function CheckCircleOutline(props: IconProps) {
+// A bare check mark (Material Symbols `check`) for the reader's Done toggle —
+// the done state is conveyed by the accent color, not a surrounding circle.
+export function Check(props: IconProps) {
   return (
     <MaterialIcon {...props}>
-      <path d="m424-296 282-282-56-56-226 226-114-114-56 56 170 170Zm56 216q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Zm0-320Z" />
+      <path d="M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z" />
     </MaterialIcon>
   );
 }
 
+// `check_circle` (filled) still backs the Library "Done" section glyph.
 export function CheckCircleFilled(props: IconProps) {
   return (
     <MaterialIcon {...props}>
