@@ -14,6 +14,26 @@
   position: relative;
 }
 
+/* Sweep feedback: the visible batch animates out together (slide right + fade)
+   before hideMany commits, so the broom tap reads as an explicit dismissal of
+   exactly the rows in view — newshacker parity. Keep the duration in lockstep
+   with SWEEP_ANIM_MS in ItemList.tsx, which schedules hideMany after it. */
+.item-list__row--dismissing {
+  pointer-events: none;
+  transform: translate3d(100%, 0, 0);
+  opacity: 0;
+  transition:
+    transform 200ms ease-out,
+    opacity 200ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .item-list__row--dismissing {
+    transform: none;
+    transition: opacity 120ms linear;
+  }
+}
+
 /* Group-by-feed section header: a quiet label introducing each feed's run of
    rows. In feed views it's a collapse/expand toggle for the whole section; in
    non-collapsible contexts it's a static label. */

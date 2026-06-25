@@ -721,8 +721,12 @@ loopback/link-local/private/metadata targets and redirects to them.
    counts as visible iff its bounding box sits entirely inside the viewport
    minus the sticky chrome (header + toolbar), tracked by an
    IntersectionObserver whose `rootMargin` shrinks the top by that inset; the
-   button disables when nothing unpinned is fully visible. Undo restores the
-   last done / swipe / sweep batch. Same component/behavior as newshacker.
+   button disables when nothing unpinned is fully visible. Tapping it slides
+   the visible batch right + fades it together in a short (~200ms) animation
+   before `hideMany` commits, so the broom reads as an explicit unison
+   dismissal of exactly the rows in view (newshacker parity);
+   `prefers-reduced-motion` falls back to a plain opacity fade. Undo restores
+   the last done / swipe / sweep batch. Same component/behavior as newshacker.
    - **Auto-hide on scroll** (opt-in, `readmo:hide-on-scroll`, off by default —
      see *Settings → Reading*): when on, each unpinned row is marked **Done the
      moment it scrolls fully off the top** of the viewport (you scrolled past it

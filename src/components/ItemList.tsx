@@ -25,6 +25,13 @@ import './ItemList.css';
 // on screen.
 const SCROLL_HIDE_BATCH_WINDOW_MS = 2000;
 
+// How long the swept rows animate (slide right + fade) before hideMany commits
+// and the refetch drops them. Matches the swipe-right dismiss exit duration so
+// the sweep feels like every visible row swiping right in unison — newshacker's
+// Sweep feedback. Short enough that Undo, which is enabled by hideMany firing,
+// is reachable in a single deliberate tap right after.
+const SWEEP_ANIM_MS = 200;
+
 // Module-level monotonic source of auto-hide burst keys. The store's undo batch
 // key is global (one shared DataSource across every feed view), so a per-mount
 // counter that always starts at 0 would let two ItemList mounts collide — a
@@ -289,10 +296,69 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
     [items, inViewIds, ds],
   );
 
+  // Rows currently animating out as part of an in-flight sweep — the ItemRows
+  // child marks each one with the dismissing class so they slide-right + fade
+  // in unison. Cleared by the next sweep (replaces the set) and pruned to live
+  // ids on every items update, so a stale id can't pin a row invisible after
+  // Undo brings it back.
+  const [dismissingIds, setDismissingIds] = useState<ReadonlySet<ItemId>>(
+    () => new Set(),
+  );
+  const sweepTimerRef = useRef<number | null>(null);
+  const pendingSweepRef = useRef<ItemId[] | null>(null);
   useEffect(() => {
-    registerSweep(() => ds.stateStore.hideMany(sweepIds), sweepIds.length);
+    if (dismissingIds.size === 0) return;
+    const live = new Set(items.map((fi) => fi.item.id));
+    let stale = false;
+    for (const id of dismissingIds) {
+      if (!live.has(id)) {
+        stale = true;
+        break;
+      }
+    }
+    if (!stale) return;
+    const next = new Set<ItemId>();
+    for (const id of dismissingIds) if (live.has(id)) next.add(id);
+    setDismissingIds(next);
+  }, [items, dismissingIds]);
+
+  // Commit any pending sweep immediately (no animation). Used on unmount so the
+  // user's intent isn't dropped, and at the start of a new sweep so two rapid
+  // taps don't leak the first timer or mix the batches in undo.
+  const flushPendingSweep = useCallback(() => {
+    if (sweepTimerRef.current != null) {
+      window.clearTimeout(sweepTimerRef.current);
+      sweepTimerRef.current = null;
+    }
+    const ids = pendingSweepRef.current;
+    pendingSweepRef.current = null;
+    if (ids && ids.length > 0) ds.stateStore.hideMany(ids);
+  }, [ds]);
+  useEffect(() => () => flushPendingSweep(), [flushPendingSweep]);
+
+  useEffect(() => {
+    if (sweepIds.length === 0) {
+      registerSweep(null, 0);
+      return;
+    }
+    const handle = () => {
+      // A second tap mid-animation: commit the first batch immediately so its
+      // undo entry is preserved (a fresh hideMany would otherwise replace the
+      // not-yet-applied prior batch), then start the new one.
+      flushPendingSweep();
+      const ids = sweepIds.slice();
+      pendingSweepRef.current = ids;
+      setDismissingIds(new Set(ids));
+      sweepTimerRef.current = window.setTimeout(() => {
+        sweepTimerRef.current = null;
+        const pending = pendingSweepRef.current;
+        pendingSweepRef.current = null;
+        if (pending && pending.length > 0) ds.stateStore.hideMany(pending);
+      }, SWEEP_ANIM_MS);
+    };
+    registerSweep(handle, sweepIds.length);
     return () => registerSweep(null, 0);
-  }, [registerSweep, ds, sweepIds]);
+  }, [registerSweep, ds, sweepIds, flushPendingSweep]);
 
   // Group-by-feed headers: the DataSource returns the list fully sectioned by
   // feed (each feed's pinned items at the top of its own section, sections in the
@@ -420,6 +486,7 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
               groupHeaders={groupHeaders}
               collapsedFeeds={groupByFeed ? collapsed : undefined}
               onToggleCollapse={groupByFeed ? toggle : undefined}
+              dismissingIds={dismissingIds}
               emptyLabel={emptyLabel ?? 'Nothing here yet.'}
             />
           </>

@@ -43,6 +43,10 @@ interface Props {
   /** Toggle a feed's collapsed state (tapping its header). When provided the
    * header renders as a button; otherwise it's a static label. */
   onToggleCollapse?: (feedId: FeedId) => void;
+  /** Ids being animated out as part of an in-flight Sweep. Rows in the set get
+   * the dismissing class so the visible batch slides right + fades together
+   * before hideMany commits — matches newshacker's Sweep feedback. */
+  dismissingIds?: ReadonlySet<ItemId>;
 }
 
 /** The shared body of a list view: loading skeletons, the empty state, or the
@@ -60,6 +64,7 @@ export function ItemRows({
   groupHeaders,
   collapsedFeeds,
   onToggleCollapse,
+  dismissingIds,
 }: Props) {
   const share = useShareItem();
 
@@ -123,7 +128,12 @@ export function ItemRows({
             ) : null}
             {collapsed ? null : (
               <li
-                className="item-list__row"
+                className={
+                  'item-list__row' +
+                  (dismissingIds?.has(fi.item.id)
+                    ? ' item-list__row--dismissing'
+                    : '')
+                }
                 data-item-id={fi.item.id}
                 ref={getRowRef?.(fi.item.id)}
               >

@@ -448,6 +448,43 @@ describe('ItemList', () => {
     });
   });
 
+  it('Sweep hides visible rows in expanded groups when grouping by feed', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderGrouped(source);
+    await screen.findAllByTestId('item-row');
+
+    expect(screen.getByTestId('sweep-btn')).toBeEnabled();
+    await user.click(screen.getByTestId('sweep-btn'));
+
+    await waitFor(() => {
+      expect(screen.queryAllByTestId('item-row').length).toBe(0);
+    });
+  });
+
+  it('marks the swept rows as dismissing so they animate out together', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const { container } = renderHome(source);
+    const rowsBefore = await screen.findAllByTestId('item-row');
+    const sweepCount = rowsBefore.length;
+    expect(sweepCount).toBeGreaterThan(1);
+
+    await user.click(screen.getByTestId('sweep-btn'));
+
+    // The dismiss class is applied to every visible row synchronously with the
+    // click, before hideMany commits — that's what produces the unison slide.
+    const dismissing = container.querySelectorAll(
+      '.item-list__row--dismissing',
+    );
+    expect(dismissing.length).toBe(sweepCount);
+
+    // And the rows still unmount once hideMany commits after the animation.
+    await waitFor(() => {
+      expect(screen.queryAllByTestId('item-row').length).toBe(0);
+    });
+  });
+
   describe('auto-hide on scroll (readmo:hide-on-scroll)', () => {
     it('marks an unpinned row Done once it scrolls off the top', async () => {
       window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
