@@ -7,8 +7,9 @@ import { HeaderAccountMenu } from './HeaderAccountMenu';
 import './AppHeader.css';
 
 /** App header: drawer toggle pinned to the viewport's left edge, brand
- * mark + wordmark and the Offline pill / Search glass inside a 720px
- * centered inner (aligned with the article column), and the account chip
+ * mark + wordmark and the Offline pill / Search glass inside a centered
+ * inner (720px, widening to 860px at ≥960px to track `.app-main`; aligned
+ * with the article column), and the account chip
  * pinned to the viewport's right edge. Present on every page; the account
  * chip is always-visible per SPEC.md *Auth*. */
 export function AppHeader() {

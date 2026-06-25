@@ -46,12 +46,12 @@
 /* Wide viewport: pull the edge controls out of flow and let the inner
  * center on the viewport via `justify-content`. Below this breakpoint the
  * default flex layout above keeps the inner snugly between the
- * variable-width edge buttons; above it we have room for the full 720px
- * centered column plus comfortable edge insets, and `margin: 0 auto` would
- * otherwise drift the inner off-center (left) whenever the right-side
- * account chip is wider than the left-side drawer toggle, putting the
- * brand and right-side actions out of alignment with the 720px article/
- * hero column directly below. */
+ * variable-width edge buttons; above it we have room for the full centered
+ * column (720px, widening to 860px at 960px — see below) plus comfortable
+ * edge insets, and `margin: 0 auto` would otherwise drift the inner
+ * off-center (left) whenever the right-side account chip is wider than the
+ * left-side drawer toggle, putting the brand and right-side actions out of
+ * alignment with the article/hero column directly below. */
 @media (min-width: 880px) {
   .app-header {
     justify-content: center;
@@ -73,6 +73,15 @@
     flex: 0 1 auto;
     width: 100%;
     margin: 0;
+  }
+}
+
+/* Track the content column's desktop widen: `.app-main` grows 720→860 at
+ * 960px (see global.css), so the header inner grows with it to keep the
+ * brand/actions aligned with the list/article column directly below. */
+@media (min-width: 960px) {
+  .app-header__inner {
+    max-width: 860px;
   }
 }
 

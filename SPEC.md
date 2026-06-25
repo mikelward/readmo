@@ -116,8 +116,10 @@ Everything else about the visual system mirrors newshacker.
 - **App header layout:** three slots in a single sticky row. The drawer
   toggle is pinned to the viewport's left edge and the account chip to the
   viewport's right edge so both stay reachable at any width; the centered
-  inner (brand mark + wordmark, Offline pill, Search, Settings) keeps the 720px
-  article column max-width so it aligns with the list below. Safe-area
+  inner (brand mark + wordmark, Offline pill, Search, Settings) keeps the
+  article column max-width — 720px, widening to 860px on roomy screens
+  (≥960px), the same breakpoint that widens `.app-main` — so it aligns with
+  the list below. Safe-area
   insets reserve space for landscape-iPhone notches on the edge controls.
 - **Navigation drawer sections:** Home (feed picker — All subscriptions or a folder), Library (Pinned / Favorites / Done / Opened / Offline), Folders (folder nav, hidden when none exist), Feeds (subscription list), Appearance (mode + palette + text-size segmented controls), App (Settings, Debug).
 - **Dark mode:** full light/dark/system via tokens.
