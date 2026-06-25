@@ -339,10 +339,14 @@ folders       (user_id FK, name, sort)
   `item_state` is sparse, the feed query **drives from `subscriptions` →
   `items` and LEFT JOINs `item_state`** (on `user_id = auth.uid()`), treating a
   missing row as the default state — so new items surface immediately without
-  requiring a pre-inserted state row. Filters read as
-  `WHERE NOT COALESCE(is.done, false) AND NOT COALESCE(is.hidden, false) AND (items.sort_at > now() - interval '3 days' OR row_number() OVER (PARTITION BY feed_id ORDER BY sort_at DESC) <= 10)`;
-  the window bound also lets the planner range-scan `items(feed_id, sort_at desc)`
-  instead of walking a feed's full history. Pinned items skip the window;
+  requiring a pre-inserted state row. The body excludes Done/Hidden and serves
+  an item when `items.sort_at > now() - interval '3 days'` **or** it's among its
+  feed's newest 10 non-dismissed. To keep that **index-bounded** (never rank a
+  feed's full archive), `feed_items` assembles the body from three candidate
+  sets — a freshness range scan, a per-feed top-10 `LATERAL … ORDER BY sort_at
+  DESC LIMIT 10`, and the pinned partial index — each riding
+  `items(feed_id, sort_at desc)`, rather than a `row_number()` over all history.
+  Pinned items skip the window/floor;
   the Opened fade reads `COALESCE(is.opened, false)`; Pinned items are
   collected by a separate small query (`item_state.pinned = true` for the user)
   and prepended. Newest-first sorts on `sort_at` (= `coalesce(published_at,
