@@ -240,10 +240,16 @@ export default defineConfig({
             },
             {
               // Article images proxied through our same-origin /api/img
-              // endpoint — StaleWhileRevalidate, capped. Doubles as the
+              // endpoint — CacheFirst, capped. The bytes are content-addressed
+              // (the `?url=` fully determines them) and the proxy serves them
+              // `immutable`, so a cache hit must NOT re-hit the network:
+              // StaleWhileRevalidate fired a background revalidation fetch on
+              // every view, multiplying proxy requests for image-heavy articles
+              // for no benefit. CacheFirst serves cached bytes with zero network;
+              // the maxAgeSeconds cap still bounds staleness. Doubles as the
               // offline-image source (SPEC.md *Privacy* / *Article images*).
               urlPattern: /\/api\/img(?:\?.*)?$/,
-              handler: 'StaleWhileRevalidate',
+              handler: 'CacheFirst',
               options: {
                 cacheName: 'readmo-images',
                 expiration: { maxEntries: 300, maxAgeSeconds: 7 * 24 * 60 * 60 },

@@ -1115,7 +1115,11 @@ keys differ; the strategies map one-to-one:
   TTL, bounded), cache fallback offline. (Same NetworkFirst-over-SWR reasoning.)
 - **Pinned/Favorite item content** — **no expiration** (the exemption
   newshacker grants pinned/favorited items); bounded only by per-origin quota.
-- **Article images** (via the proxy below) — StaleWhileRevalidate, capped.
+- **Article images** (via the proxy below) — **CacheFirst**, capped. The
+  proxied bytes are content-addressed (the `?url=` fully determines them) and
+  served `immutable`, so a cache hit must not re-hit the network; SWR's
+  background revalidation would multiply proxy requests on image-heavy articles
+  for no benefit. The `maxAgeSeconds` cap still bounds staleness.
 - **Favicons** — CacheFirst, long TTL, capped.
 
 ### Persisted query cache (client mirror)
@@ -1412,6 +1416,12 @@ keys differ; the strategies map one-to-one:
   fetches through the SSRF-hardened helper, caches, and serves the bytes, so
   the publisher only sees the proxy. The proxy doubles as the offline-image
   source (*Article images* points at it) and strips third-party pixel beacons.
+  The sanitizer **collapses a responsive `srcset` to a single width** (the
+  candidate closest to ~1600px CSS, erring large for retina sharpness) and drops
+  `srcset`/`sizes`, so each image is one proxy fetch + one cache entry instead of
+  one per advertised width — in a fixed-width reader column the extra widths buy
+  nothing but proxy load. `<picture><source>` art-direction is preserved (media
+  queries kept; each source likewise collapsed to one width).
   It serves only raster image types — `image/svg+xml` is **refused** (an SVG
   served same-origin can run inline script as a top-level document) — and sets
   `X-Content-Type-Options: nosniff` plus a `default-src 'none'; sandbox` CSP on
@@ -1440,8 +1450,8 @@ keys differ; the strategies map one-to-one:
   Pin/Favorite*). Deferred follow-ups:
   - **Image bytes cached via SW.** After warming the item detail and full-text,
     `useOfflineCacheLock` fires background `fetch()` calls for every `/api/img`
-    URL found in the HTML so the service worker's `StaleWhileRevalidate` handler
-    populates the `readmo-images` cache entry for offline reading.
+    URL found in the HTML so the service worker's `CacheFirst` handler populates
+    the `readmo-images` cache entry for offline reading.
   - **TODO — sync the readable version across a user's devices.** The extracted
     body is cached on the shared `items` row server-side, so any device that
     *re-reads* the item gets it; the offline/IndexedDB copy is currently
