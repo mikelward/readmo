@@ -1,6 +1,10 @@
 // @vitest-environment node
-import { describe, it, expect } from 'vitest';
-import { buildAnonHeaders, buildUpstreamUrl, isServeableImageType } from './img.ts';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import handler, {
+  buildAnonHeaders,
+  buildUpstreamUrl,
+  isServeableImageType,
+} from './img.ts';
 
 describe('img proxy — buildUpstreamUrl', () => {
   const base = 'https://abcd1234.supabase.co';
@@ -69,5 +73,78 @@ describe('img proxy — isServeableImageType', () => {
     expect(isServeableImageType('application/xml')).toBe(false);
     expect(isServeableImageType('')).toBe(false);
     expect(isServeableImageType(null)).toBe(false);
+  });
+});
+
+describe('img proxy — handler caching', () => {
+  // Errors must be uncacheable so a shared cache (Cloudflare) can't freeze a
+  // transient failure for the image's long TTL; only the 200 bytes path caches.
+  const url = 'https://app.example/api/img?url=' +
+    encodeURIComponent('https://cdn.example.com/a.png');
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it('marks a wrong-method 405 no-store (no env/fetch needed)', async () => {
+    const res = await handler(new Request(url, { method: 'POST' }));
+    expect(res.status).toBe(405);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('marks a missing-config 503 no-store', async () => {
+    vi.stubEnv('SUPABASE_URL', '');
+    vi.stubEnv('VITE_SUPABASE_URL', '');
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', '');
+    const res = await handler(new Request(url));
+    expect(res.status).toBe(503);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('marks a missing-url 400 no-store', async () => {
+    vi.stubEnv('SUPABASE_URL', 'https://proj.supabase.co');
+    const res = await handler(new Request('https://app.example/api/img'));
+    expect(res.status).toBe(400);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('does NOT inherit a cacheable header on an upstream 4xx/5xx pass-through', async () => {
+    vi.stubEnv('SUPABASE_URL', 'https://proj.supabase.co');
+    vi.stubEnv('SUPABASE_ANON_KEY', 'anon');
+    // Upstream answers a 502 that (wrongly) carries a long cache-control — the
+    // shim must override it with no-store, not pass it through.
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response('upstream boom', {
+        status: 502,
+        headers: {
+          'content-type': 'text/plain',
+          'cache-control': 'public, max-age=604800, immutable',
+        },
+      }),
+    ));
+    const res = await handler(new Request(url));
+    expect(res.status).toBe(502);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('preserves the immutable cache-control on a successful image', async () => {
+    vi.stubEnv('SUPABASE_URL', 'https://proj.supabase.co');
+    vi.stubEnv('SUPABASE_ANON_KEY', 'anon');
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response('PNGBYTES', {
+        status: 200,
+        headers: {
+          'content-type': 'image/png',
+          'cache-control': 'public, max-age=604800, immutable',
+        },
+      }),
+    ));
+    const res = await handler(new Request(url));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('cache-control')).toBe(
+      'public, max-age=604800, immutable',
+    );
+    expect(res.headers.get('content-type')).toBe('image/png');
   });
 });

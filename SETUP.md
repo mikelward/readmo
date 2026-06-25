@@ -205,7 +205,7 @@ The functions:
 | `discover` | `POST /functions/v1/discover` | Discover + validate feed candidates from a site/feed URL (incl. Reddit `.rss`). |
 | `refresh` | `POST /functions/v1/refresh` | On-demand fetch for the caller's subscribed feed(s); debounced. |
 | `fulltext` | `POST /functions/v1/fulltext` | Reading mode: fetch + extract (Readability) + sanitize the full article for a truncated item, cache it on the shared row. RLS-scoped to the caller. |
-| `img` | `GET /functions/v1/img?url=…` | SSRF-hardened image proxy (privacy + offline images). |
+| `img` | `GET /functions/v1/img?url=…` | SSRF-hardened image proxy (offline images + hotlink/reliability; privacy is incidental — see SPEC *Image proxy*). |
 | `notify-signup` | `POST /functions/v1/notify-signup` | Emails the operator over SMTP when a new user signs up. Called server-to-server by the `auth.users` insert trigger (§9); verifies the service-role bearer itself, so deploy with `--no-verify-jwt`. |
 
 > **Same-origin `/api/img` shim (Vercel).** Sanitized `content_html` points
@@ -224,7 +224,47 @@ The functions:
 > is set in the Vercel project env. Cost/reliability: negligible — one extra
 > same-region hop (Vercel → Supabase) on a cache miss, well within Vercel's
 > free Edge invocation tier; on misconfig it returns `503` and images fall back
-> to the broken-image placeholder (no crash).
+> to the broken-image placeholder (no crash). The shim marks every error
+> response `Cache-Control: no-store`; **only** a 200 with image bytes carries the
+> long immutable cache-control, so a shared cache (below) never freezes a
+> transient hotlink 403 / publisher 5xx for the image's week-long TTL.
+
+> **Shared image cache via Cloudflare (recommended).** Without a cache between
+> the publisher and each client's service worker, a popular article fetches the
+> same image from the publisher once per *cold client* through a few server IPs
+> — the concentration that risks the publisher rate-limiting/banning the proxy
+> (SPEC *Image proxy* / *Shared image cache*). Vercel does **not** cache
+> `/api/img` today (its Edge Cache needs `s-maxage`/`CDN-Cache-Control`; the shim
+> sends only `max-age`, which is browser-only). Since Cloudflare already fronts
+> the API for rate limiting (`infra/cf-gateway/`), reuse it for the image bytes
+> with a **Cache Rule** on the image route:
+> - **Match** the image path (the app-origin `/api/img*`, on whichever zone
+>   serves it to browsers) → **Eligible for cache / "Cache Everything"** — a
+>   `/api/...` path with a query string is treated as dynamic and is not cached
+>   by default, so it must be opted in explicitly.
+> - **Cache key = full query string.** The whole image identity is `?url=…`, so
+>   `?url=A` and `?url=B` must be distinct entries (Cloudflare's default — just
+>   don't enable any "ignore query string" option for this path).
+> - **Cache by status:** cache `200` for the long origin TTL (the shim's
+>   `immutable` header is honored); do **not** cache `4xx`/`5xx` (the shim's
+>   `no-store` already signals this — keep the rule from overriding it).
+> - **Ignore cookies** for this path so a stray cookie doesn't bypass the cache
+>   (`/api/img` sets none; auth is header/localStorage-based).
+> - Optional, **free: Tiered Cache** (Smart/Generic Tiered Cache is included on
+>   all plans) — funnels per-POP misses through a regional upper tier, so the
+>   publisher is hit ~once per region instead of once per POP.
+> - Optional, **paid: Argo Smart Routing** (~$5/mo + ~$0.10/GB, per
+>   [Cloudflare pricing](https://www.cloudflare.com/plans/)) — pushes the
+>   collapse toward a single global publisher fetch per image. Only worth it if
+>   free Tiered Cache proves insufficient; **enabling it is a real recurring bill
+>   — don't turn it on without deciding that trade (guardrail #5).**
+>
+> Cost/reliability: the cache itself and the one Rate Limiting Rule are **free**;
+> Tiered Cache is **free**; Argo is the **only paid** option above and stays off
+> by default. A cache HIT never reaches Vercel or Supabase, so it also cuts
+> Vercel Edge invocations. Net: publisher hits drop from once-per-cold-client to
+> ~once-per-POP free (→ ~once-per-region with free Tiered Cache, → ~once globally
+> only with paid Argo).
 
 ---
 

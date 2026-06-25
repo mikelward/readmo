@@ -1457,32 +1457,26 @@ keys differ; the strategies map one-to-one:
 
 ## Open questions
 
-- **Shared image cache (image-proxy reliability).** Today `/api/img` has no
+- **Shared image cache — direction: Cloudflare.** Today `/api/img` has no
   server-side byte cache, so each cold client re-fetches the same image from the
   publisher through one of a few server IPs — the concentration that risks a
-  publisher ban (see *Image proxy*). Options, cheapest-first (guardrail #5 —
-  cost/reliability up front):
-  1. **Vercel Edge Cache via `s-maxage`** (+ `stale-while-revalidate`) on the
-     `/api/img` shim response. **Cost: negligible** (included in Vercel; no new
-     service). Cuts publisher hits from once-per-cold-client to roughly
-     once-per-edge-POP per image (~tens globally, not thousands). Caveats:
-     per-POP not global; Edge response-size limits may bypass the largest
-     images. Confirm current behavior empirically with `curl -sI` on a preview
-     and reading `x-vercel-cache:` (expected `MISS`/`BYPASS` today). **Do this
-     first.**
-  2. **Persistent shared cache in Supabase Storage**, keyed by a hash of the
-     normalized URL: `img` checks Storage → serve on hit; on miss fetch the
-     publisher once, validate (type/size), store, serve. Yields **exactly one
-     publisher fetch per image, globally** — the strongest ban-avoidance — and
-     clean same-origin bytes for offline. **Cost: low but non-zero** — Storage
-     egress on every cache-serve plus stored bytes; free tier (~1 GB + egress)
-     likely covers early usage, needs an eviction/TTL policy and a size cap.
-     Escalate to this only if (1) proves insufficient.
-  3. **Cloudflare in front of `/api/img`** (Cache API / CDN) — viable if a CF
-     layer is added for other reasons; otherwise more infra than it's worth now.
-  Pair whichever we pick with **`Referer`/User-Agent hardening** on the `img`
-  fetch to cut 403s from hotlink protection. Sequencing: deploy the new failure
-  logging, read the real upstream-status mix in the `img` logs, then choose.
+  publisher ban (see *Image proxy*). Cloudflare already fronts the API for rate
+  limiting (`infra/cf-gateway/`), so it's the chosen layer for the image cache
+  too — one layer, both goals, free tier. A **Cache Rule** on the image route
+  (cache-everything, key on the full `?url=` query string, cache 200s only — the
+  shim now sends `Cache-Control: no-store` on every error so a transient 403/5xx
+  can't stick for the long image TTL). Exact Cloudflare settings live in SETUP.md
+  *Shared image cache via Cloudflare*. Cost/reliability (guardrail #5):
+  **negligible** — caching + the rate-limit rule are free, and a HIT never
+  reaches Vercel or Supabase. Drops publisher hits from once-per-cold-client to
+  ~once-per-POP free (→ ~once-per-region with free Tiered Cache; ~once globally
+  only with paid Argo Smart Routing, ~$5/mo — off by default).
+  Considered and rejected: **Vercel Edge Cache** (`s-maxage`) — works but is
+  Vercel-only and doesn't also give rate limiting; **Supabase Storage** —
+  strongest (one global fetch per image) but adds egress cost + an eviction
+  policy, not worth it once Cloudflare is in the path. Pair with **`Referer`/
+  User-Agent hardening** on the `img` fetch to cut hotlink 403s, sequenced behind
+  reading the real upstream-status mix in the new `img` failure logs.
 - **Item retention / GC** — items per feed; exact pin-against-GC rule for
   Pinned/Favorite/Done. Start generous (e.g. 90 days or 200 items/feed,
   whichever is larger; never GC Pinned/Favorite/Done); revisit with data.
