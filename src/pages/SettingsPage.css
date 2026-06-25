@@ -167,6 +167,53 @@
   background: color-mix(in srgb, var(--rm-accent) 10%, transparent);
 }
 
+.settings__toggles,
+.settings__subs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.settings__toggle + .settings__toggle {
+  border-top: 1px solid var(--rm-border);
+}
+
+.settings__toggle-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  min-height: var(--rm-tap);
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings__toggle-check {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  /* Keep the box aligned with the first line of the label text. */
+  margin-top: 2px;
+  accent-color: var(--rm-accent);
+}
+
+.settings__toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings__toggle-title {
+  font-weight: 600;
+  color: var(--rm-text);
+}
+
+.settings__toggle-desc {
+  font-size: 0.8rem;
+  color: var(--rm-meta);
+}
+
 .settings__subs {
   list-style: none;
   margin: 0;

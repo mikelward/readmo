@@ -3,7 +3,9 @@ import { useDataSource } from '../lib/data/context';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { useFeedItems, type FetchPage } from '../hooks/useFeedItems';
 import { useInViewIds } from '../hooks/useInViewIds';
+import { useHideOnScroll, useBottomBarPosition } from '../hooks/useReadingPrefs';
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
+import type { ItemId } from '../lib/types';
 import { measureStickyBottomInset, measureTopChromeHeight } from '../lib/stickyInset';
 import { loadFailureCopy, presentableDetail } from '../lib/loadErrorCopy';
 import { LoadError } from './LoadError';
@@ -14,6 +16,13 @@ import { PromoBar } from './PromoBar';
 import { PullToRefresh } from './PullToRefresh';
 import { useFeedBar } from './FeedBarContext';
 import './ItemList.css';
+
+// Auto-hide-on-scroll dismissals within this window of each other share one
+// undo batch, so a single toolbar Undo restores the whole burst the reader just
+// scrolled past. Mirrors newshacker's DISMISS_BATCH_WINDOW_MS — long enough to
+// cover a fast scroll burst, short enough that Undo only reaches what was just
+// on screen.
+const SCROLL_HIDE_BATCH_WINDOW_MS = 2000;
 
 interface Props {
   viewKey: string;
@@ -51,17 +60,60 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
   }, [error]);
   const listRef = useListKeyboardNav();
   const { registerSweep } = useFeedBar();
-  const { inViewIds, getRowRef } = useInViewIds();
+  const { hideOnScroll } = useHideOnScroll();
 
-  // The bottom toolbar (with "More") is pinned to the viewport foot, so it's
-  // always on screen — `hasMore` alone (another *page* is fetchable) can't drive
-  // it, or it flashes "No more items" while loaded rows still sit below the fold
-  // (the reader isn't at the end, they just haven't scrolled there). So "More"
-  // is a pager: while the bottom of the loaded list is off-screen it scrolls a
-  // page down to reveal more rows; once the list end is in view and another page
-  // exists it fetches that page (and the effect below scrolls its first row up);
-  // only when the end is reached *and* nothing more can be fetched does it
-  // settle into a disabled "No more items".
+  // Auto-hide-on-scroll: when enabled, mark unpinned rows Done the moment they
+  // scroll off the top of the viewport (the user scrolled past them without
+  // pinning). Reuses Sweep's `hideMany` so the feed refetch filters the row out.
+  // Pinned rows are shielded, exactly like Sweep. Off by default (SPEC.md
+  // *Reading settings*).
+  //
+  // Undo restores the whole scroll burst, not just the last row: dismissals
+  // within SCROLL_HIDE_BATCH_WINDOW_MS of each other share one undo batch
+  // (mirrors newshacker's dismiss-batch window). Each burst gets a fresh
+  // `batchKey`; the store only extends a batch with a matching key, so an
+  // intervening swipe/Sweep (a keyless hide) can't be bundled into a later
+  // scroll hide — that manual dismissal replaces the batch and the next scroll
+  // hide starts its own. A gap longer than the window also starts a new burst,
+  // so Undo only ever reaches back to what the reader was just looking at.
+  const lastScrollHideAt = useRef(0);
+  const scrollBatchKey = useRef(0);
+  const handleExitTop = useCallback(
+    (ids: ItemId[]) => {
+      // Skip rows that are pinned (shielded) or already Done/Hidden — a
+      // re-delivered id (e.g. observer recreation on a sticky-inset change
+      // before the refetch drops the row) must not re-enter hideMany and
+      // clobber the undo baseline with the already-Done state.
+      const toHide = ids.filter((id) => {
+        const st = ds.stateStore.get(id);
+        return !st.pinned && !st.done && !st.hidden;
+      });
+      if (toHide.length === 0) return;
+      const now = Date.now();
+      if (now - lastScrollHideAt.current >= SCROLL_HIDE_BATCH_WINDOW_MS) {
+        scrollBatchKey.current += 1; // a gap ends the burst; start a new batch
+      }
+      lastScrollHideAt.current = now;
+      ds.stateStore.hideMany(toHide, now, { batchKey: scrollBatchKey.current });
+    },
+    [ds],
+  );
+  const { inViewIds, getRowRef } = useInViewIds({
+    onExitTop: hideOnScroll ? handleExitTop : undefined,
+  });
+
+  // When the bottom toolbar is pinned to the viewport foot it's always on
+  // screen, so `hasMore` alone (another *page* is fetchable) can't drive "More"
+  // — it would flash "No more items" while loaded rows still sit below the fold.
+  // There it acts as a pager: while the bottom of the loaded list is off-screen
+  // it scrolls a page down to reveal more rows; once the list end is in view and
+  // another page exists it fetches that page; only at the true end does it settle
+  // into a disabled "No more items". In the default *relative* mode the bar lives
+  // at the end of the list, so the reader only reaches "More" once already at the
+  // foot — the pager's page-down branch would force a needless second tap, so
+  // there "More" just fetches (canAdvance = hasMore), matching newshacker.
+  const { bottomBarPosition } = useBottomBarPosition();
+  const pinnedBar = bottomBarPosition === 'screen';
   const [atListEnd, setAtListEnd] = useState(false);
 
   useEffect(() => {
@@ -88,8 +140,10 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
   const pendingAnchorId = useRef<string | null>(null);
 
   const handleMore = useCallback(() => {
-    // Bottom of the loaded list still below the fold → page down to it.
-    if (!atListEnd) {
+    // Pinned bar only: bottom of the loaded list still below the fold → page
+    // down to it. In relative mode the reader is already at the foot, so skip
+    // straight to the fetch.
+    if (pinnedBar && !atListEnd) {
       const page =
         window.innerHeight - measureTopChromeHeight() - measureStickyBottomInset();
       // Browsers honoring prefers-reduced-motion fall back to an instant scroll.
@@ -100,7 +154,7 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
     // first row just below the top chrome once it lands.
     pendingAnchorId.current = items[items.length - 1]?.item.id ?? null;
     fetchMore();
-  }, [atListEnd, items, fetchMore]);
+  }, [pinnedBar, atListEnd, items, fetchMore]);
 
   useEffect(() => {
     const anchorId = pendingAnchorId.current;
@@ -259,9 +313,10 @@ export function ItemList({ viewKey, fetchPage, emptyLabel }: Props) {
         more={
           items.length > 0
             ? {
-                // Enabled while there's anything left to reveal — unseen loaded
-                // rows below the fold, or another fetchable page at the end.
-                canAdvance: !atListEnd || hasMore,
+                // Pinned bar: enabled while there's anything left to reveal —
+                // unseen loaded rows below the fold, or another fetchable page.
+                // Relative bar: "More" only fetches, so it tracks hasMore alone.
+                canAdvance: pinnedBar ? !atListEnd || hasMore : hasMore,
                 isFetching: isFetchingMore,
                 onMore: handleMore,
               }

@@ -168,6 +168,67 @@ describe('ItemStateStore', () => {
     expect(store.get('item-1', NOW + TTL_MS + 1).hidden).toBe(false);
   });
 
+  describe('hideMany undo batching', () => {
+    it('replaces the undo batch by default (one Undo restores the last call only)', () => {
+      const store = new ItemStateStore(memoryPersistence());
+      store.hideMany(['a'], NOW);
+      store.hideMany(['b'], NOW); // keyless → new batch
+      store.undoLast();
+      expect(store.get('a').done).toBe(true); // a stays hidden
+      expect(store.get('b').done).toBe(false); // only the last batch restored
+    });
+
+    it('accumulates same-key dismissals so one Undo restores the whole burst', () => {
+      const store = new ItemStateStore(memoryPersistence());
+      store.hideMany(['a'], NOW, { batchKey: 1 });
+      store.hideMany(['b'], NOW, { batchKey: 1 });
+      store.hideMany(['c'], NOW, { batchKey: 1 });
+      expect(store.get('a').done).toBe(true);
+      expect(store.get('b').done).toBe(true);
+      expect(store.get('c').done).toBe(true);
+
+      store.undoLast();
+      expect(store.get('a').done).toBe(false);
+      expect(store.get('b').done).toBe(false);
+      expect(store.get('c').done).toBe(false);
+    });
+
+    it('starts a fresh batch when the key changes', () => {
+      const store = new ItemStateStore(memoryPersistence());
+      store.hideMany(['a'], NOW, { batchKey: 1 });
+      store.hideMany(['b'], NOW, { batchKey: 2 }); // new burst
+      store.undoLast();
+      expect(store.get('a').done).toBe(true); // earlier burst untouched
+      expect(store.get('b').done).toBe(false);
+    });
+
+    it('does not bundle a keyless dismissal between two same-key scroll hides', () => {
+      const store = new ItemStateStore(memoryPersistence());
+      store.hideMany(['a'], NOW, { batchKey: 1 }); // scroll hide
+      store.hideMany(['m'], NOW); // manual swipe/Sweep (keyless) replaces the batch
+      store.hideMany(['b'], NOW, { batchKey: 1 }); // later scroll hide — same key
+      // The later scroll hide must NOT re-extend the manual batch; it starts a
+      // fresh one, so Undo restores only 'b'.
+      store.undoLast();
+      expect(store.get('b').done).toBe(false);
+      expect(store.get('a').done).toBe(true);
+      expect(store.get('m').done).toBe(true);
+    });
+
+    it('preserves the original prior state when an id is re-delivered into the batch', () => {
+      const store = new ItemStateStore(memoryPersistence());
+      store.set('a', 'pinned', true, NOW); // a starts pinned
+      store.hideMany(['a'], NOW, { batchKey: 1 }); // done clears the pin (prior = pinned)
+      // Re-deliver the same id (e.g. observer recreation before the refetch
+      // drops the row). It must not overwrite the prior snapshot with Done.
+      store.hideMany(['a'], NOW, { batchKey: 1 });
+
+      store.undoLast();
+      expect(store.get('a').done).toBe(false);
+      expect(store.get('a').pinned).toBe(true); // original pin restored, not lost
+    });
+  });
+
   it('returns a referentially-stable snapshot between mutations', () => {
     // useSyncExternalStore requires get() to return the same reference when
     // nothing changed — even for state past its TTL (withRetention clones).

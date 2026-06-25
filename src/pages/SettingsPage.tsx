@@ -10,6 +10,11 @@ import {
 } from '../lib/data/DataSource';
 import { buildInfo, summarizeBuild } from '../lib/buildInfo';
 import { useTheme } from '../hooks/useTheme';
+import {
+  useHideOnScroll,
+  useBottomBarPosition,
+  type BottomBarPosition,
+} from '../hooks/useReadingPrefs';
 import { useAuth } from '../hooks/useAuth';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useToast } from '../hooks/useToast';
@@ -50,6 +55,8 @@ export function SettingsPage() {
   const ds = useDataSource();
   const queryClient = useQueryClient();
   const { theme, palette, setTheme, setPalette } = useTheme();
+  const { hideOnScroll, setHideOnScroll } = useHideOnScroll();
+  const { bottomBarPosition, setBottomBarPosition } = useBottomBarPosition();
   const { user, signOut } = useAuth();
   const { showToast } = useToast();
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -304,6 +311,12 @@ export function SettingsPage() {
 
   const themes: Theme[] = ['light', 'dark', 'system'];
   const palettes: Palette[] = ['ink', 'grape'];
+  // Default first (SPEC.md *Bottom action bar*): the relative end-of-list footer
+  // is the default; pinning to the viewport foot is the opt-in.
+  const bottomBars: { value: BottomBarPosition; label: string }[] = [
+    { value: 'list', label: 'Bottom of list' },
+    { value: 'screen', label: 'Bottom of screen' },
+  ];
 
   return (
     <div className="settings">
@@ -546,6 +559,56 @@ export function SettingsPage() {
               e.target.value = '';
             }}
           />
+        </div>
+      </section>
+
+      <section className="settings__section">
+        <h2 className="settings__heading">Reading</h2>
+        <ul className="settings__toggles">
+          <li className="settings__toggle">
+            <label className="settings__toggle-label">
+              <input
+                type="checkbox"
+                className="settings__toggle-check"
+                checked={hideOnScroll}
+                onChange={(e) => setHideOnScroll(e.target.checked)}
+              />
+              <span className="settings__toggle-text">
+                <span className="settings__toggle-title">
+                  Hide articles as you scroll past
+                </span>
+                <span className="settings__toggle-desc">
+                  Unpinned articles are marked Done once you scroll them off the
+                  top of the screen. Pin an article to keep it.
+                </span>
+              </span>
+            </label>
+          </li>
+        </ul>
+      </section>
+
+      <section className="settings__section">
+        <h2 className="settings__heading">Bottom toolbar</h2>
+        <div
+          className="settings__theme"
+          role="radiogroup"
+          aria-label="Bottom toolbar position"
+        >
+          {bottomBars.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={bottomBarPosition === value}
+              className={
+                'settings__theme-btn' +
+                (bottomBarPosition === value ? ' is-active' : '')
+              }
+              onClick={() => setBottomBarPosition(value)}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </section>
 

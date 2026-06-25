@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { useDataSource } from '../lib/data/context';
+import { useBottomBarPosition } from '../hooks/useReadingPrefs';
 import { useFeedBar } from './FeedBarContext';
 import { TooltipButton } from './TooltipButton';
 import { VerticalAlignTop } from './icons';
@@ -78,6 +79,13 @@ export function ListToolbar({
   const ds = useDataSource();
   const store = ds.stateStore;
   const { sweep, sweepCount } = useFeedBar();
+  const { bottomBarPosition } = useBottomBarPosition();
+
+  // The bottom bar defaults to a relative footer at the end of the list
+  // (newshacker's model); 'screen' pins it to the viewport foot. Only the
+  // bottom bar is positioned this way; the top bar always sticks below the
+  // header.
+  const relative = placement === 'bottom' && bottomBarPosition === 'list';
 
   const canUndo = useSyncExternalStore(
     (cb) => store.subscribe(cb),
@@ -88,7 +96,13 @@ export function ListToolbar({
   const canSweep = !!sweep && sweepCount > 0;
 
   return (
-    <section className={`list-toolbar list-toolbar--${placement}`} aria-label="List actions">
+    <section
+      className={
+        `list-toolbar list-toolbar--${placement}` +
+        (relative ? ' list-toolbar--relative' : '')
+      }
+      aria-label="List actions"
+    >
       <div className="list-toolbar__row" role="toolbar">
         {placement === 'bottom' ? (
           <TooltipButton

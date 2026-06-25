@@ -1,7 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/renderWithProviders';
+import {
+  BOTTOM_BAR_KEY,
+  HIDE_ON_SCROLL_KEY,
+  resetReadingPrefsCacheForTest,
+} from '../hooks/useReadingPrefs';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import { AddFeedError, type DiscoveredFeed } from '../lib/data/DataSource';
 import type { AddFeedErrorKind } from '../lib/data/DataSource';
@@ -548,5 +553,52 @@ describe('SettingsPage — Add a feed', () => {
     });
     const subs = await source.getSubscriptions();
     expect(subs.length).toBeGreaterThan(0);
+  });
+});
+
+describe('SettingsPage — Reading & Bottom toolbar', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+
+  it('toggles "Hide articles as you scroll past" and persists it', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+
+    const toggle = screen.getByRole('checkbox', {
+      name: /hide articles as you scroll past/i,
+    });
+    expect(toggle).not.toBeChecked();
+
+    await user.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(window.localStorage.getItem(HIDE_ON_SCROLL_KEY)).toBe('1');
+  });
+
+  it('defaults the bottom toolbar to "Bottom of list"', () => {
+    renderWithProviders(<SettingsPage />);
+    expect(
+      screen.getByRole('radio', { name: 'Bottom of list' }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole('radio', { name: 'Bottom of screen' }),
+    ).not.toBeChecked();
+  });
+
+  it('switches the bottom toolbar to "Bottom of screen" and persists it', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+
+    await user.click(screen.getByRole('radio', { name: 'Bottom of screen' }));
+
+    expect(
+      screen.getByRole('radio', { name: 'Bottom of screen' }),
+    ).toBeChecked();
+    expect(window.localStorage.getItem(BOTTOM_BAR_KEY)).toBe('screen');
   });
 });
