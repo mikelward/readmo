@@ -275,6 +275,9 @@ body {
    move the root font-size (not just body) for that type to scale. */
 html {
   font-size: var(--rm-font-size);
+  /* Reserve the vertical scrollbar gutter so the viewport width doesn't jump
+     between short pages (no scrollbar) and long pages (scrollbar present). */
+  scrollbar-gutter: stable;
 }
 
 body {
