@@ -384,6 +384,67 @@ describe('ItemPage reading mode', () => {
     expect(screen.getByText(/visible creases/)).toBeInTheDocument();
   });
 
+  it('stays silent and offers Open original when a complete feed entry has no readable version', async () => {
+    const user = userEvent.setup();
+    // A complete feed body (not truncated) that extracts to nothing — the
+    // common link-aggregator case (e.g. a Reddit post where the entry already
+    // is the whole story). Because it isn't truncated it isn't auto-fetched, so
+    // the reader requests reading mode manually.
+    class EmptyLongSource extends MockDataSource {
+      async getItem(id: string): Promise<FeedItem | null> {
+        const fi = await super.getItem(id);
+        if (fi) {
+          fi.item = { ...fi.item, contentHtml: `<p>${'plenty of words '.repeat(60)}</p>` };
+        }
+        return fi;
+      }
+      async fetchFullText(): Promise<FullTextResult> {
+        return { status: 'empty', contentHtml: null };
+      }
+    }
+    const source = new EmptyLongSource(`test-${Math.random()}`);
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    renderReader(source);
+
+    await user.click(await screen.findByTestId('fulltext-get'));
+    // Extraction found nothing, but the feed body is complete — no alarming
+    // note is shown…
+    const openOriginal = await screen.findByTestId('fulltext-open-original');
+    expect(screen.queryByTestId('fulltext-error')).not.toBeInTheDocument();
+
+    // …and the Open-original escape hatch stays put.
+    await user.click(openOriginal);
+    expect(openSpy).toHaveBeenCalledWith(
+      expect.stringContaining('http'),
+      '_blank',
+      'noopener,noreferrer',
+    );
+    openSpy.mockRestore();
+  });
+
+  it('stays silent for a short auto-fetched entry that has no readable version', async () => {
+    // The default item-1 body is short, so it reads as truncated and reading
+    // mode auto-fetches. A short *complete* entry (e.g. a Reddit link post) is
+    // indistinguishable by length from a teaser, so an `empty` result here must
+    // stay silent rather than show the alarming note — only the Open-original
+    // escape hatch and the feed body remain.
+    class EmptySource extends MockDataSource {
+      async fetchFullText(): Promise<FullTextResult> {
+        return { status: 'empty', contentHtml: null };
+      }
+    }
+    const source = new EmptySource(`test-${Math.random()}`);
+    renderReader(source);
+
+    // Wait for the auto-fetch to settle, then assert no note appeared.
+    await screen.findByText(/visible creases/);
+    await waitFor(() =>
+      expect(screen.queryByTestId('fulltext-loading')).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId('fulltext-error')).not.toBeInTheDocument();
+    expect(screen.getByTestId('fulltext-open-original')).toBeInTheDocument();
+  });
+
   it('offers a retry for a transient failure and recovers on retry', async () => {
     const user = userEvent.setup();
     class FlakySource extends MockDataSource {

@@ -987,12 +987,21 @@ page's discipline is unchanged.
     the same slot as "Keep reading"), so the reader can jump to the source
     without waiting for extraction.
   - **Outcomes** (the function returns `{ status, contentHtml }`): `ok`,
-    `empty` (paywall/teaser — nothing article-like found), `auth` (publisher
-    gated the page even via the Jina fallback → the reader keeps the feed body
-    and shows "needs sign-in — open the original"), `unreachable` (fetch
-    failed). Login-gated/paywalled articles cannot be rendered by any reading
-    mode (the user's session lives only in their own browser at the publisher's
-    origin); **Open original** stays the tool for those.
+    `empty` (nothing article-like found), `auth` (publisher gated the page even
+    via the Jina fallback → the reader keeps the feed body and shows "needs
+    sign-in — open the original"), `unreachable` (fetch failed → feed body kept,
+    with a **Try again** and **Open original**). On `empty` the reader stays
+    **silent** — no error note — and just keeps the feed body plus the **Open
+    original** button. This covers both a link aggregator like Reddit whose entry
+    already *is* the whole story and a paywall/teaser the backend couldn't
+    expand; a short complete entry and a short teaser are indistinguishable by
+    length, so the reader doesn't try to tell them apart and relies on **Open
+    original** as the escape hatch in both. In every non-`ok` outcome the mode
+    bar keeps an **Open original** button so the source is always one tap away.
+    Login-gated/paywalled articles
+    cannot be rendered by any reading mode (the user's session lives only in
+    their own browser at the publisher's origin); **Open original** stays the
+    tool for those.
   - **Cost & reliability (guardrail #5):** the only outbound call is the
     publisher fetch (same class as the poller) plus the existing `r.jina.ai`
     403-fallback (already documented) — **no new paid service; cost negligible.**
