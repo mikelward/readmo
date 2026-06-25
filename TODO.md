@@ -70,6 +70,47 @@ constraint is documented in more detail.
   force every popular feed through discovery). See `src/pages/SettingsPage.tsx`
   (`onSubmitAddFeed`) and `src/lib/popularFeeds.ts`.
 
+- **Support sites that don't publish a feed (e.g. inews.co.uk).** Today
+  discovery fails on sites with no `<link rel="alternate">` and no
+  well-known `/feed`/`/rss` path. Two paths considered:
+
+  - **[RSSHub](https://docs.rsshub.app/) (community-maintained scraper that
+    emits RSS).** Open-source Node service with ~1,500 per-site routes
+    (Twitter, YouTube channels, lots of news sites, …). Two consumption
+    modes:
+    - *Public instance* (`rsshub.app`): free, no infra to run, but
+      rate-limited and frequently IP-blocked by upstream publishers; the
+      single shared IP gets hammered, so reliability is poor. Fine for
+      hobby use, not for a reader users depend on.
+    - *Self-hosted*: long-running container with in-process cache. The
+      existing stack doesn't fit well — Supabase Edge Functions are Deno
+      (RSSHub is Node-only); Vercel serverless technically works via
+      RSSHub's "Vercel mode" but the project itself flags it as
+      not-recommended (cold starts kill the cache, ~250 MB bundle bumps
+      against Vercel limits, every poll re-scrapes upstream → faster
+      blocks). The right shape is a $5/mo container on Fly.io / Railway /
+      Render plus Upstash Redis (free tier) for cache/dedup state. Adds
+      one more service to monitor; upstream routes break when sites
+      redesign, but the *community* wears that maintenance, not us.
+    Either way the integration on our side is trivial — RSSHub URLs are
+    just RSS, so the existing poller handles them unchanged. Decision is
+    "is the operational cost worth the coverage."
+
+  - **DIY user-supplied selector.** Per-feed CSS selector
+    (e.g. `article h2 a`) stored on the `feeds` row; the poller fetches
+    via the SSRF-hardened helper and emits one item per match (title +
+    absolute href, no body — tap opens the publisher externally, same
+    path as today's "open original"). Zero extra infra, but fragile:
+    every site redesign silently breaks the feed, and the user has to
+    re-author the selector. Would need a per-feed "last successful
+    parse" health signal and a graceful empty-state in the UI. Lower
+    coverage than RSSHub (one site at a time, by hand), but no third
+    party in the loop.
+
+  Not mutually exclusive — RSSHub for the long tail of popular sites,
+  selector feeds as the always-available fallback. Revisit when a user
+  asks for a no-feed site we care about.
+
 ## Server RPCs
 
 - **Authenticated OPML-export RPC.** `feeds_public` exposes only `site_url`
