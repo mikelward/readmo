@@ -15,6 +15,10 @@ import {
   resetReadingPrefsCacheForTest,
 } from '../hooks/useReadingPrefs';
 import {
+  COLLAPSED_FEEDS_KEY,
+  resetCollapsedFeedsCacheForTest,
+} from '../hooks/useCollapsedFeeds';
+import {
   installIntersectionObserverMock,
   setVisibilityForTest,
   uninstallIntersectionObserverMock,
@@ -66,6 +70,7 @@ describe('ItemList', () => {
     window.localStorage.clear();
     resetPromoDismissedCacheForTest();
     resetReadingPrefsCacheForTest();
+    resetCollapsedFeedsCacheForTest();
   });
 
   afterEach(() => {
@@ -120,6 +125,180 @@ describe('ItemList', () => {
     expect(
       container.querySelectorAll('.item-list__group-header'),
     ).toHaveLength(0);
+  });
+
+  function renderGrouped(source: MockDataSource) {
+    return renderWithProviders(
+      <ItemList
+        viewKey={`grouped-${Math.random()}`}
+        fetchPage={(cursor) =>
+          source.getHomeItems({ cursor, groupByFeed: true, limit: 100 })
+        }
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+  }
+
+  it('collapses a feed section from its header toggle, hiding only its rows', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const { container } = renderGrouped(source);
+    await screen.findAllByTestId('item-row');
+    const before = container.querySelectorAll('[data-item-id]').length;
+    expect(before).toBeGreaterThan(0);
+
+    // Collapse the first feed section (The Verge).
+    const firstToggle = screen.getAllByTestId('group-toggle')[0];
+    expect(firstToggle).toHaveAttribute('aria-expanded', 'true');
+    await user.click(firstToggle);
+
+    expect(screen.getAllByTestId('group-toggle')[0]).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+    // Fewer rows now, but still more than zero (other feeds remain) and all four
+    // headers still present.
+    const after = container.querySelectorAll('[data-item-id]').length;
+    expect(after).toBeGreaterThan(0);
+    expect(after).toBeLessThan(before);
+    expect(container.querySelectorAll('.item-list__group-header')).toHaveLength(4);
+  });
+
+  it('Collapse all hides every row; Expand all restores them', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const { container } = renderGrouped(source);
+    await screen.findAllByTestId('item-row');
+    const total = container.querySelectorAll('[data-item-id]').length;
+
+    await user.click(screen.getByTestId('collapse-all-btn'));
+    // Every section collapsed → no rows, but all four headers remain.
+    expect(container.querySelectorAll('[data-item-id]')).toHaveLength(0);
+    expect(container.querySelectorAll('.item-list__group-header')).toHaveLength(4);
+    expect(screen.getByTestId('collapse-all-btn')).toBeDisabled();
+
+    await user.click(screen.getByTestId('expand-all-btn'));
+    expect(container.querySelectorAll('[data-item-id]')).toHaveLength(total);
+  });
+
+  it('auto-skips collapsed-only pages when tapping More until visible rows appear', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    // One item per page, so a collapsed feed spans several all-hidden pages.
+    renderWithProviders(
+      <ItemList
+        viewKey={`gp-${Math.random()}`}
+        fetchPage={(cursor) =>
+          source.getHomeItems({ cursor, groupByFeed: true, limit: 1 })
+        }
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    // Page 1 is The Verge's first item; collapse The Verge.
+    await screen.findByTestId('item-row');
+    await user.click(screen.getAllByTestId('group-toggle')[0]);
+    expect(screen.queryAllByTestId('item-row')).toHaveLength(0); // all hidden now
+
+    // One More tap should page through the remaining (hidden) Verge items and
+    // land on the next feed's first visible row (NASA, item-2) — not stop on a
+    // page that shows nothing new.
+    await user.click(screen.getByTestId('more-btn'));
+    expect(
+      await screen.findByText(
+        'Webb telescope captures a galaxy cluster bending light',
+      ),
+    ).toBeInTheDocument();
+    // It stopped at the first visible feed — later feeds weren't pulled in.
+    expect(
+      screen.queryByText('Container queries are finally everywhere'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('re-measures end-of-list when sections collapse, so the pinned bar fetches instead of paging down', async () => {
+    const user = userEvent.setup();
+    // Pin the bottom bar to the viewport (where "More" is a pager).
+    window.localStorage.setItem(BOTTOM_BAR_KEY, 'screen');
+    resetReadingPrefsCacheForTest();
+    // Tall document at mount → the loaded list end is NOT in view.
+    Object.defineProperty(window, 'innerHeight', { value: 768, configurable: true });
+    Object.defineProperty(window, 'scrollY', { value: 0, configurable: true });
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      value: 5000,
+      configurable: true,
+    });
+    const scrollBy = vi.fn();
+    vi.stubGlobal('scrollBy', scrollBy);
+    vi.stubGlobal('scrollTo', vi.fn());
+
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderWithProviders(
+      <ItemList
+        viewKey={`pin-${Math.random()}`}
+        fetchPage={(cursor) =>
+          source.getHomeItems({ cursor, groupByFeed: true, limit: 3 })
+        }
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+
+    // Collapsing the first section shrinks the rendered list so the loaded end is
+    // now in view — even though items.length is unchanged.
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      value: 100,
+      configurable: true,
+    });
+    await user.click(screen.getAllByTestId('group-toggle')[0]);
+
+    // The pinned-bar "More" must now take the fetch branch (atListEnd re-measured
+    // true), not the page-down branch — so it doesn't just scroll into nothing.
+    await user.click(screen.getByTestId('more-btn'));
+    expect(scrollBy).not.toHaveBeenCalled();
+  });
+
+  it('stops auto-skip when an already-collapsed feed’s header first appears', async () => {
+    const user = userEvent.setup();
+    // Pre-collapse the first TWO feeds (The Verge, NASA).
+    window.localStorage.setItem(
+      COLLAPSED_FEEDS_KEY,
+      JSON.stringify(['feed-verge', 'feed-nasa']),
+    );
+    resetCollapsedFeedsCacheForTest();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderWithProviders(
+      <ItemList
+        viewKey={`gp-${Math.random()}`}
+        fetchPage={(cursor) =>
+          source.getHomeItems({ cursor, groupByFeed: true, limit: 1 })
+        }
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    // Page 1 is a Verge item (collapsed) — only its header shows, no rows.
+    await screen.findByText('The Verge');
+    expect(screen.queryAllByTestId('item-row')).toHaveLength(0);
+
+    // One More tap pages through the rest of (collapsed) Verge and STOPS as soon
+    // as NASA's header appears — even though NASA is also collapsed, its header is
+    // new visible progress. It must not skip past it to CSS-Tricks.
+    await user.click(screen.getByTestId('more-btn'));
+    expect(await screen.findByText('NASA Breaking News')).toBeInTheDocument();
+    expect(screen.queryByText('CSS-Tricks')).not.toBeInTheDocument();
+  });
+
+  it('shows no collapse controls when not grouping', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderHome(source);
+    await screen.findAllByTestId('item-row');
+    expect(screen.queryByTestId('collapse-all-btn')).toBeNull();
   });
 
   it('renders the first page of items with the sticky toolbar', async () => {

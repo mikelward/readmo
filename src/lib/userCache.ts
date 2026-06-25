@@ -9,6 +9,12 @@
 
 const RQ_CACHE_BASE = 'readmo:rq-cache';
 const ITEM_STATE_BASE = 'readmo:item-state';
+// Collapsed feed-sections set (group-by-feed view, see useCollapsedFeeds). It's a
+// single per-device key rather than uid-scoped — but it holds a *subscription-
+// derived* list of feed ids, so on a shared device it must not survive an account
+// change (guardrail #8). clearUserCaches purges it on every transition; the other
+// per-device prefs (hide-on-scroll, sort, …) carry no user data and stay global.
+export const COLLAPSED_FEEDS_KEY = 'readmo:collapsed-feeds';
 // Suffix SupabaseDataSource appends to the item-state key for its offline write
 // outbox. Defined here so clearUserCaches purges queued mutations with the rest
 // of a departing user's data (SPEC/AGENTS: the outbox is flushed-or-discarded on
@@ -52,6 +58,9 @@ export async function clearUserCaches(uid: string | null): Promise<void> {
     window.localStorage.removeItem(rqCacheKey(uid));
     window.localStorage.removeItem(itemStateKey(uid));
     window.localStorage.removeItem(outboxKey(uid));
+    // Global (not uid-scoped), but subscription-derived — purge it so a departing
+    // user's collapsed feeds don't carry into the next account on a shared device.
+    window.localStorage.removeItem(COLLAPSED_FEEDS_KEY);
   } catch {
     // ignore (storage unavailable/denied)
   }

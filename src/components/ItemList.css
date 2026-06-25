@@ -15,17 +15,61 @@
 }
 
 /* Group-by-feed section header: a quiet label introducing each feed's run of
-   rows. Not interactive and not a tap zone — purely a visual divider (the feed
-   name is also on every row's meta line, so it's aria-hidden). */
+   rows. In feed views it's a collapse/expand toggle for the whole section; in
+   non-collapsible contexts it's a static label. */
 .item-list__group-header {
-  padding: 0.5rem 1rem 0.25rem;
+  background: var(--rm-bg);
+  border-bottom: 1px solid var(--rm-border);
+}
+
+.item-list__group-title {
   font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--rm-meta);
-  background: var(--rm-bg);
-  border-bottom: 1px solid var(--rm-border);
+}
+
+/* Static (non-interactive) header label keeps the original padding. */
+.item-list__group-header > .item-list__group-title {
+  display: block;
+  padding: 0.5rem 1rem 0.25rem;
+}
+
+/* Tappable header: a full-width 44px row toggling the section. The chevron
+   points right when collapsed, down when expanded. */
+.item-list__group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: var(--rm-tap);
+  padding: 0.25rem 1rem;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.item-list__group-chevron {
+  flex: 0 0 auto;
+  color: var(--rm-meta);
+  transform: rotate(90deg); /* expanded: pointing down */
+  transition: transform 0.15s ease;
+}
+
+.item-list__group-header--collapsed .item-list__group-chevron {
+  transform: rotate(0deg); /* collapsed: pointing right */
+}
+
+@media (hover: hover) {
+  .item-list__group-toggle:hover .item-list__group-title {
+    color: var(--rm-text);
+  }
+}
+
+.item-list__group-toggle:active {
+  background: var(--rm-bg-card);
 }
 
 .item-list__skeleton {

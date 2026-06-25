@@ -52,6 +52,17 @@ export interface MoreAction {
   onMore: () => void;
 }
 
+/** Collapse-all / Expand-all controls for the group-by-feed view. Passed to the
+ * top bar only (and only when grouping is on with feeds in view). */
+export interface CollapseAction {
+  onCollapseAll: () => void;
+  onExpandAll: () => void;
+  /** Every feed in view is already collapsed → disable Collapse all. */
+  allCollapsed: boolean;
+  /** At least one feed is collapsed → enable Expand all. */
+  anyCollapsed: boolean;
+}
+
 interface Props {
   /** Where the bar sits. The bottom copy mirrors the top bar but leads with a
    * Back to top button in the left slot, matching the reader's two bars
@@ -65,6 +76,9 @@ interface Props {
    * between Back to top and the Undo/Sweep group. Omit on the top bar and on
    * library footers. */
   more?: MoreAction;
+  /** Group-by-feed views pass this to the top bar to render Collapse all /
+   * Expand all. Omitted when not grouping or on the bottom bar. */
+  collapse?: CollapseAction;
 }
 
 /** Sticky list toolbar: Back to top (bottom bar only) on the left, then
@@ -75,6 +89,7 @@ export function ListToolbar({
   placement = 'top',
   actions = true,
   more,
+  collapse,
 }: Props = {}) {
   const ds = useDataSource();
   const store = ds.stateStore;
@@ -115,6 +130,28 @@ export function ListToolbar({
           >
             <VerticalAlignTop />
           </TooltipButton>
+        ) : null}
+        {collapse ? (
+          <div className="list-toolbar__collapse">
+            <button
+              type="button"
+              className="list-toolbar__text-btn"
+              data-testid="collapse-all-btn"
+              onClick={collapse.allCollapsed ? undefined : collapse.onCollapseAll}
+              disabled={collapse.allCollapsed}
+            >
+              Collapse all
+            </button>
+            <button
+              type="button"
+              className="list-toolbar__text-btn"
+              data-testid="expand-all-btn"
+              onClick={collapse.anyCollapsed ? collapse.onExpandAll : undefined}
+              disabled={!collapse.anyCollapsed}
+            >
+              Expand all
+            </button>
+          </div>
         ) : null}
         {more ? (
           <button
