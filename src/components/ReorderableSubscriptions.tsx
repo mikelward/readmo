@@ -16,8 +16,10 @@ export interface SubscriptionEntry {
 
 interface Props {
   subs: SubscriptionEntry[];
-  /** Persist a new feed order — every feed id, in the desired order. */
-  onReorder: (orderedFeedIds: FeedId[]) => void;
+  /** Persist a new feed order — every feed id, in the desired order. May return a
+   * promise; when it does, persists are serialized so writes can't commit out of
+   * order (see `schedulePersist`). */
+  onReorder: (orderedFeedIds: FeedId[]) => void | Promise<void>;
   onMute: (feedId: FeedId, muted: boolean) => void;
   onUnsubscribe: (feedId: FeedId) => void;
 }
@@ -62,15 +64,43 @@ export function ReorderableSubscriptions({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [membershipKey]);
 
-  // Persist is debounced and only-latest-wins: rapid keyboard moves (or a drag
-  // then a key press) collapse into a single `onReorder` with the final order,
-  // so the writes can't land out of order and leave the server on a stale
-  // intermediate order. `onReorder` is read through a ref so the unmount flush
-  // uses the current callback.
+  // Persist is debounced AND serialized, so only the newest order can win.
+  //
+  //  - Debounce: rapid keyboard moves (or a drag then a key press) collapse into
+  //    one write with the final order.
+  //  - Serialize: only one persist may be in flight at a time. If another move
+  //    lands while a write is still running (the debounce already fired, e.g. on
+  //    a slow network), the new order is queued and sent only after the current
+  //    write resolves — the two RPCs can't race and commit out of order, so the
+  //    server always ends on the last order, not a stale intermediate one. A
+  //    queued order is replaced by any newer one (latest-wins), so a burst still
+  //    sends at most one follow-up write.
+  //
+  // `onReorder` is read through a ref so the unmount flush uses the current
+  // callback.
   const onReorderRef = useRef(onReorder);
   onReorderRef.current = onReorder;
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingOrder = useRef<FeedId[] | null>(null);
+  const inFlight = useRef(false);
+  const queuedOrder = useRef<FeedId[] | null>(null);
+
+  function runPersist(next: FeedId[]) {
+    if (inFlight.current) {
+      queuedOrder.current = next; // newer order supersedes any already queued
+      return;
+    }
+    inFlight.current = true;
+    Promise.resolve(onReorderRef.current(next))
+      .catch(() => {}) // a failed write surfaces via the parent; don't wedge the queue
+      .finally(() => {
+        inFlight.current = false;
+        const q = queuedOrder.current;
+        queuedOrder.current = null;
+        if (q) runPersist(q);
+      });
+  }
+
   function schedulePersist(next: FeedId[]) {
     pendingOrder.current = next;
     if (persistTimer.current) clearTimeout(persistTimer.current);
@@ -78,7 +108,7 @@ export function ReorderableSubscriptions({
       persistTimer.current = null;
       const o = pendingOrder.current;
       pendingOrder.current = null;
-      if (o) onReorderRef.current(o);
+      if (o) runPersist(o);
     }, 300);
   }
   useEffect(
@@ -87,9 +117,12 @@ export function ReorderableSubscriptions({
       // lost.
       if (persistTimer.current) {
         clearTimeout(persistTimer.current);
-        if (pendingOrder.current) onReorderRef.current(pendingOrder.current);
+        if (pendingOrder.current) runPersist(pendingOrder.current);
       }
     },
+    // Unmount-only flush; runPersist only touches refs, so a stable empty dep
+    // array is correct (a fresh closure each render would add no value).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
 
