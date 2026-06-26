@@ -136,19 +136,21 @@
   cursor: pointer;
 }
 
-.item-list__group-action:disabled {
+/* These are TooltipButtons that go inert via aria-disabled (not the native
+   `disabled` attribute) so their tooltip still shows on hover/long-press. */
+.item-list__group-action[aria-disabled='true'] {
   opacity: 0.35;
   cursor: default;
 }
 
 @media (hover: hover) {
-  .item-list__group-action:not(:disabled):hover {
+  .item-list__group-action:not([aria-disabled='true']):hover {
     color: var(--rm-text);
     background: var(--rm-bg-card);
   }
 }
 
-.item-list__group-action:not(:disabled):active {
+.item-list__group-action:not([aria-disabled='true']):active {
   background: var(--rm-bg-card);
 }
 
