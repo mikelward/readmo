@@ -209,7 +209,10 @@ describe('ItemList', () => {
     // Every section collapsed → no rows, but all four headers remain.
     expect(container.querySelectorAll('[data-item-id]')).toHaveLength(0);
     expect(container.querySelectorAll('.item-list__group-header')).toHaveLength(4);
-    expect(screen.getByTestId('collapse-all-btn')).toBeDisabled();
+    expect(screen.getByTestId('collapse-all-btn')).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
 
     await user.click(screen.getByTestId('expand-all-btn'));
     expect(container.querySelectorAll('[data-item-id]')).toHaveLength(total);

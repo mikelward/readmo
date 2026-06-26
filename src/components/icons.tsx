@@ -185,6 +185,28 @@ export function VerticalAlignTop(props: IconProps) {
   );
 }
 
+// ---- Collapse all (unfold_less) -------------------------------------------
+
+// Chevrons pointing toward the center — the group-by-feed "Collapse all".
+export function UnfoldLess(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="m343-160-43-43 180-180 180 180-43 43-137-137-137 137Zm137-417L300-757l43-43 137 137 137-137 43 43-180 180Z" />
+    </MaterialIcon>
+  );
+}
+
+// ---- Expand all (unfold_more) ---------------------------------------------
+
+// Chevrons pointing away from the center — the group-by-feed "Expand all".
+export function UnfoldMore(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M480-120 300-300l44-44 136 136 136-136 44 44-180 180ZM344-612l-44-44 180-180 180 180-44 44-136-136-136 136Z" />
+    </MaterialIcon>
+  );
+}
+
 // ---- Drag handle (drag_indicator) -----------------------------------------
 
 export function DragHandle(props: IconProps) {

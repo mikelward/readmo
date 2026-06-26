@@ -65,6 +65,28 @@ describe('ListToolbar collapse controls', () => {
     expect(screen.queryByTestId('expand-all-btn')).toBeNull();
   });
 
+  it('renders Collapse all / Expand all as icon-only buttons with accessible names', () => {
+    renderWithProviders(
+      <ListToolbar
+        collapse={{
+          onCollapseAll: vi.fn(),
+          onExpandAll: vi.fn(),
+          allCollapsed: false,
+          anyCollapsed: true,
+        }}
+      />,
+    );
+    const collapseAll = screen.getByTestId('collapse-all-btn');
+    const expandAll = screen.getByTestId('expand-all-btn');
+    // Icon-only: the accessible name comes from aria-label, not visible text.
+    expect(collapseAll).toHaveAccessibleName('Collapse all');
+    expect(expandAll).toHaveAccessibleName('Expand all');
+    expect(collapseAll).toHaveTextContent('');
+    expect(expandAll).toHaveTextContent('');
+    expect(collapseAll.querySelector('svg')).not.toBeNull();
+    expect(expandAll.querySelector('svg')).not.toBeNull();
+  });
+
   it('wires Collapse all / Expand all and disables them per state', async () => {
     const onCollapseAll = vi.fn();
     const onExpandAll = vi.fn();
@@ -80,8 +102,10 @@ describe('ListToolbar collapse controls', () => {
     );
     const collapseAll = screen.getByTestId('collapse-all-btn');
     const expandAll = screen.getByTestId('expand-all-btn');
-    expect(collapseAll).toBeEnabled();
-    expect(expandAll).toBeEnabled();
+    // Enabled controls are not soft-disabled (TooltipButton uses aria-disabled,
+    // never the native `disabled` attribute, so the tooltip still surfaces).
+    expect(collapseAll).not.toHaveAttribute('aria-disabled');
+    expect(expandAll).not.toHaveAttribute('aria-disabled');
     const user = userEvent.setup();
     await user.click(collapseAll);
     await user.click(expandAll);
@@ -89,22 +113,29 @@ describe('ListToolbar collapse controls', () => {
     expect(onExpandAll).toHaveBeenCalledTimes(1);
   });
 
-  it('disables Collapse all when everything is already collapsed', () => {
+  it('soft-disables Collapse all when everything is already collapsed', async () => {
+    const onCollapseAll = vi.fn();
     renderWithProviders(
       <ListToolbar
         collapse={{
-          onCollapseAll: vi.fn(),
+          onCollapseAll,
           onExpandAll: vi.fn(),
           allCollapsed: true,
           anyCollapsed: true,
         }}
       />,
     );
-    expect(screen.getByTestId('collapse-all-btn')).toBeDisabled();
-    expect(screen.getByTestId('expand-all-btn')).toBeEnabled();
+    const collapseAll = screen.getByTestId('collapse-all-btn');
+    expect(collapseAll).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByTestId('expand-all-btn')).not.toHaveAttribute(
+      'aria-disabled',
+    );
+    // Soft-disabled: still in the DOM (so its tooltip works) but inert on click.
+    await userEvent.setup().click(collapseAll);
+    expect(onCollapseAll).not.toHaveBeenCalled();
   });
 
-  it('disables Expand all when nothing is collapsed', () => {
+  it('soft-disables Expand all when nothing is collapsed', () => {
     renderWithProviders(
       <ListToolbar
         collapse={{
@@ -115,7 +146,12 @@ describe('ListToolbar collapse controls', () => {
         }}
       />,
     );
-    expect(screen.getByTestId('expand-all-btn')).toBeDisabled();
-    expect(screen.getByTestId('collapse-all-btn')).toBeEnabled();
+    expect(screen.getByTestId('expand-all-btn')).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+    expect(screen.getByTestId('collapse-all-btn')).not.toHaveAttribute(
+      'aria-disabled',
+    );
   });
 });
