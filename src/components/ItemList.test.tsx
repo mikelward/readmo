@@ -699,6 +699,205 @@ describe('ItemList', () => {
     await waitFor(() => expect(body.style.minHeight).toBe(''));
   });
 
+  it('freezes the body at its PRE-sweep height when a grouped section is swept, so the page does not jump', async () => {
+    // Regression: a grouped Sweep drops its rows from `visibleItems`
+    // synchronously, in the same commit the feed invalidation flips
+    // isRefreshing true. The height lock's layout effect measures only on that
+    // edge — so it read the already-shrunken height and froze the document too
+    // short, letting the browser clamp scrollY toward the top (the reported
+    // jump, worst with a whole section swept at once + short collapsed
+    // sections). commitSweep now grabs the height BEFORE hiding the rows.
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ groupByFeed: true, limit: 100 });
+
+    let release: (() => void) | null = null;
+    let callCount = 0;
+    const fetchPage = vi.fn(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({ items: seed.items, nextCursor: null });
+      }
+      // Hold the post-sweep refetch open so isRefreshing stays true and the
+      // lock stays applied while we read it.
+      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>(
+        (resolve) => {
+          release = () => resolve({ items: seed.items, nextCursor: null });
+        },
+      );
+    });
+
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`gp-jump-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+
+    const body = screen.getByTestId('item-list-body');
+    // jsdom has no layout: model offsetHeight as 100px per rendered row, so the
+    // measured height shrinks the instant the swept section's rows leave the
+    // DOM. The lock must capture the height while every row is still present.
+    Object.defineProperty(body, 'offsetHeight', {
+      configurable: true,
+      get: () => container.querySelectorAll('[data-item-id]').length * 100,
+    });
+    const fullRows = container.querySelectorAll('[data-item-id]').length;
+    const fullHeight = fullRows * 100;
+
+    // Sweep the first feed's whole section from its header broom; the commit
+    // fires off the sweep animation's fallback timer.
+    await user.click(screen.getAllByTestId('group-sweep')[0]);
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+
+    // The lock froze the document at its PRE-sweep height, not the shorter
+    // post-sweep height — so window scrollY can't be clamped toward the top.
+    expect(body.style.minHeight).toBe(`${fullHeight}px`);
+    // Sanity: the section really did shrink the rendered list, so a too-late
+    // measurement would have produced a smaller lock.
+    expect(container.querySelectorAll('[data-item-id]').length).toBeLessThan(
+      fullRows,
+    );
+
+    // Releasing the held refetch settles isRefreshing and frees the lock.
+    act(() => release?.());
+    await waitFor(() => expect(body.style.minHeight).toBe(''));
+  });
+
+  it('clears the height lock when the body unmounts (miss-state), so a later refresh re-locks the remounted body', async () => {
+    // Regression (Codex review on #184): lockBodyHeight() takes the lock right
+    // before a Sweep empties the list. Sweeping the list empty while offline
+    // flips it into the miss-state panel, so `.item-list__body` unmounts while
+    // the lock is held. The release effect used to `return` on a null body
+    // without dropping `heightLockedRef`, so the flag stayed stuck true — and
+    // the next refresh on the remounted body skipped the lock entirely,
+    // reintroducing the jump. The body is restored here via Undo (synchronous,
+    // no fetch) so isRefreshing never cycles false to self-heal the stale flag
+    // before the asserting refresh fires on reconnect.
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems();
+
+    let heldRelease: (() => void) | null = null;
+    let callCount = 0;
+    const fetchPage = vi.fn(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({ items: seed.items, nextCursor: null });
+      }
+      // The asserting refresh (paused while offline, resumes on reconnect): held
+      // open so isRefreshing stays true while we read the lock off the body.
+      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>(
+        (resolve) => {
+          heldRelease = () => resolve({ items: seed.items, nextCursor: null });
+        },
+      );
+    });
+
+    renderWithProviders(
+      <ItemList
+        viewKey={`miss-relock-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+
+    // Lock is taken against the live body (1000px tall) when the sweep commits.
+    const bodyA = screen.getByTestId('item-list-body');
+    Object.defineProperty(bodyA, 'offsetHeight', { value: 1000, configurable: true });
+
+    // Go offline, then sweep the list empty → the offline miss-state panel
+    // replaces `.item-list__body`, which unmounts while the lock is held. The
+    // cached page survives (the refetch is merely paused), so Undo can restore.
+    Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: false });
+    window.dispatchEvent(new Event('offline'));
+    _resetNetworkStatusForTests();
+
+    await user.click(screen.getByTestId('sweep-btn'));
+    await waitFor(() =>
+      expect(screen.queryByTestId('item-list-body')).toBeNull(),
+    );
+
+    // Undo restores the swept rows synchronously — body remounts, no fetch
+    // (offline pauses it), so isRefreshing is still false (the old code's
+    // release branch can't fire to paper over the stuck flag).
+    await user.click(screen.getByTestId('undo-btn'));
+    const bodyB = await screen.findByTestId('item-list-body');
+    expect(bodyB).not.toBe(bodyA);
+    Object.defineProperty(bodyB, 'offsetHeight', { value: 1000, configurable: true });
+    expect(bodyB.style.minHeight).toBe('');
+
+    // Reconnect: the paused refetch resumes (held open) → isRefreshing true.
+    // That refresh must re-lock the remounted body; with the stuck flag it
+    // would be skipped and minHeight would stay unset.
+    act(() => {
+      Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: true });
+      window.dispatchEvent(new Event('online'));
+    });
+    await waitFor(() => expect(callCount).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(bodyB.style.minHeight).toBe('1000px'));
+
+    act(() => heldRelease?.());
+    await waitFor(() => expect(bodyB.style.minHeight).toBe(''));
+  });
+
+  it('releases the sweep height lock when no refresh starts (offline partial sweep), so there is no stuck blank tail', async () => {
+    // Regression (Codex review on #184): the sweep pre-lock relies on a
+    // background refresh to drive its release. Offline, a *partial* sweep
+    // (some rows remain) leaves React Query's invalidated refetch paused, so
+    // isRefreshing never flips and — because rows remain — showMissState stays
+    // false too. The release layout effect then never re-runs, and the body
+    // kept its pre-sweep min-height forever: a persistent blank tail. A
+    // post-paint backstop now releases a held lock once nothing is refreshing.
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const fetchPage = vi.fn((cursor: string | null) =>
+      source.getHomeItems({ cursor, groupByFeed: true, limit: 100 }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`offline-partial-sweep-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+
+    const body = screen.getByTestId('item-list-body');
+    Object.defineProperty(body, 'offsetHeight', { value: 1000, configurable: true });
+
+    // Go offline so the post-sweep invalidation's refetch is paused (never
+    // flips isRefreshing).
+    Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: false });
+    window.dispatchEvent(new Event('offline'));
+    _resetNetworkStatusForTests();
+
+    // Sweep only the first feed's section (header broom) — other sections
+    // remain, so the body stays mounted and showMissState stays false.
+    const sectionsBefore = container.querySelectorAll('.item-list__group-header').length;
+    expect(sectionsBefore).toBeGreaterThan(1);
+    await user.click(screen.getAllByTestId('group-sweep')[0]);
+
+    // The section's rows are gone, the body is still mounted with the survivors…
+    await waitFor(() =>
+      expect(container.querySelectorAll('.item-list__group-header').length).toBe(
+        sectionsBefore - 1,
+      ),
+    );
+    expect(screen.getByTestId('item-list-body')).toBe(body);
+    // …and the lock did NOT get stuck: the document settles to its natural
+    // height (no blank tail) even though no refresh ran to release it.
+    await waitFor(() => expect(body.style.minHeight).toBe(''));
+  });
+
   it('re-measures end-of-list when a local Done shrinks the rendered list, so the pinned bar fetches instead of paging down', async () => {
     // Regression: renderedCount used to derive from raw `items`, so a local
     // Done that shrunk the rendered list (without a successful refetch) left

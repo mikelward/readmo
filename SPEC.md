@@ -953,6 +953,11 @@ loopback/link-local/private/metadata targets and redirects to them.
      can't get shorter than the current scroll offset and bounce the reader to
      the top — most visible with collapsed feed sections, which leave the
      document short to begin with. The lock releases once the refresh settles.
+     **Sweep** is the sharper case: it drops its rows the instant the refetch
+     starts (in the same commit), so it grabs the pre-sweep height itself —
+     before the rows leave the DOM — rather than waiting for the refresh edge to
+     measure an already-shrunken list. Matters most when a whole grouped section
+     is swept at once.
    - **Pin-to-download promo bar** above the first row ("Pin an article to
      download it"), explaining that pinning warms the offline cache (see
      *Prefetch on Pin/Favorite*). Shown only once rows exist; dismissable via a
