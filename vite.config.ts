@@ -160,6 +160,30 @@ function supabaseRestCachePattern(): RegExp {
   return /^https:\/\/.*\.supabase\.co\/rest\/v1\/.*/;
 }
 
+/** Matches the `item_state` PostgREST reads, served NetworkOnly (no cache
+ * fallback) so item-state hydration is always live-or-fail. This keeps a
+ * focus/online cross-device resync from reconciling the local store against a
+ * stale cached snapshot (which would revert a just-made pin until reload), and
+ * keeps an offline cold boot from dropping a resync-adopted row against a stale
+ * cached boot snapshot — offline the read simply fails and the store keeps its
+ * last-good localStorage state. (Write bases for an offline edit are seeded from
+ * the persisted store, not the cache; see SupabaseDataSource.) NetworkFirst
+ * already hits the network first when online, so this only changes the
+ * offline/down path. Registered BEFORE the general NetworkFirst REST route so it
+ * wins (Workbox: first match). */
+function supabaseItemStatePattern(): RegExp {
+  const url = process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (url) {
+    try {
+      const host = new URL(url).host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`^https://${host}/rest/v1/item_state(\\?.*)?$`);
+    } catch {
+      // Malformed URL — fall through to the default below.
+    }
+  }
+  return /^https:\/\/.*\.supabase\.co\/rest\/v1\/item_state(\?.*)?$/;
+}
+
 const TEST_BUILD_INFO: BuildInfo = {
   environment: 'test',
   shortSha: 'abc1234',
@@ -241,6 +265,16 @@ export default defineConfig({
                 },
                 cacheableResponse: { statuses: [0, 200] },
               },
+            },
+            {
+              // item_state reads — NetworkOnly (no cache fallback) so item-state
+              // hydration is always live-or-fail and never reconciles the store
+              // against a stale cached snapshot (cross-device resync, or an
+              // offline cold boot). Offline the read fails and the store keeps its
+              // last-good localStorage state. MUST precede the NetworkFirst REST
+              // route below (Workbox: first match).
+              urlPattern: supabaseItemStatePattern(),
+              handler: 'NetworkOnly',
             },
             {
               // Data reads from Supabase REST/RPC — NetworkFirst so a healthy

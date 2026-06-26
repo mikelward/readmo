@@ -704,8 +704,62 @@ loopback/link-local/private/metadata targets and redirects to them.
   independent booleans can't cross-conflict. (newshacker's client-timestamp LWW
   was fine for single-user list reconciliation with no server in the path;
   Readmo has a real backend, so the authoritative clock lives there.)
+- **Refetch-on-focus.** Boot hydration of `item_state` is memoized and never
+  re-runs on its own, so a backgrounded tab would keep showing the pins it
+  loaded at boot. `DataSource.resyncState()` re-pulls the caller's `item_state`
+  rows; `useStateSync` (mounted app-wide) fires it when the tab regains focus or
+  visibility, or the device comes back online, so a pin / favorite / done made
+  on another device syncs in without a manual pull-to-refresh. Overlapping calls
+  coalesce (one tab return can fire both `focus` and `visibilitychange`); the
+  hydrate path's pending overlay preserves an un-synced local write so the
+  re-pull can't clobber a just-made change. The store emits on change → the
+  feed-invalidation hook refetches and the library pages re-read.
+  - **`item_state` reads are `NetworkOnly`** — a dedicated Workbox route
+    (`supabaseItemStatePattern`, registered ahead of the NetworkFirst REST route
+    — `vite.config.ts`) serves them with no cache fallback, so item-state
+    hydration is always *live or it fails*. The read also carries a per-request
+    cache-buster (`item_id=not.eq.<uuid>`, which excludes nothing) so that during
+    a service-worker rollout — when the new bundle can briefly run under the
+    *previous* worker, whose NetworkFirst `/rest/v1/` route would otherwise serve
+    a stale cached 200 — the unique URL has no cache entry and the old worker
+    still goes live-or-fail. So the live-or-fail property holds under any worker
+    version, not just once the new worker activates. That keeps a focus/online resync from
+    reconciling the store against a **stale service-worker cache snapshot** (the
+    failure mode where a focus during a backend blip reverts a just-made pin),
+    AND keeps an offline cold boot from dropping a resync-adopted row against a
+    stale cached boot snapshot. A live read is authoritative, so `hydrate`
+    reconciles fully (server wins, pending writes preserved, genuinely-absent
+    rows dropped). A failed read (offline / backend down) is a no-op — the store
+    keeps its last-good localStorage state; feed/library reads fall back to it,
+    and a resync's memo is swapped only on success. Hydrations are **serialized**
+    (one read at a time; a resync started during an in-flight boot read runs after
+    it), so the last-applied read is always the freshest — its request is sent
+    only after the prior response arrived, so the server executes it later. That
+    avoids assuming client start order matches the server's execution order (which
+    HTTP/2 / server queueing can reorder). `NetworkFirst` already
+    hits the network first when online, so this only changes the offline/down
+    path. The trade: a resync while genuinely offline does nothing until reconnect
+    (the `online` event fires another) — fine, since there's nothing to sync
+    while the server is unreachable, and localStorage is a truer picture of the
+    user's own state than a cached old server read.
+  - **Offline write bases come from the persisted store**, not the cache. Since
+    an offline boot's item-state read fails (no live `observeServerVersions`), the
+    constructor seeds the outbox's optimistic-concurrency versions from the
+    persisted store's per-row `version`s (`seedConfirmedVersions`). So an edit
+    made before the first online read still bases on this device's last-known
+    server version and conflicts/reconciles on reconnect, rather than flushing a
+    blind no-base write. (The seed does not authorize base 0 — only a live read
+    confirms an item is absent.) For the seed to be accurate, a successful write
+    normalizes the persisted store's `version` to the server's returned value
+    (`confirmServerVersion`): the store's `version` is an optimistic per-mutation
+    counter, so coalesced edits (several local toggles → one server write) would
+    otherwise leave it above the server's and seed a too-high base that
+    false-conflicts. For the same reason the local-only hidden→Done migration
+    (constructor and hydrate) preserves the row's existing version rather than
+    bumping it — it rewrites a field without writing the server, so it must not
+    advance the version.
 - Realtime (optional, post-MVP): Supabase Realtime can push `item_state`
-  changes to other open sessions. MVP relies on refetch-on-focus + PTR.
+  changes to other open sessions. MVP relies on the refetch-on-focus above + PTR.
 - **Implementation status.** `SupabaseDataSource` (`src/lib/data/`) implements
   the **read** surface against Postgres + RLS. Home/folder/feed reads run through
   the server-side `feed_items` RPC (`0006_feed_rpcs.sql`), which drives from
@@ -852,6 +906,23 @@ loopback/link-local/private/metadata targets and redirects to them.
        window that the local store hasn't learned (e.g. a cross-device Done) —
        base rows self-heal on the next refetch, but a cached extra row can
        linger until that feed's window changes or the view remounts.
+       - **Sticky displayed window per section.** Each section's displayed set
+         is anchored from its first read (the opening `PER_FEED_WINDOW` rows)
+         and extended only by tapping "More". Refetches that bring fresh
+         server-newer rows into the top of `items` — post-Sweep refills,
+         cross-device drift, RSS items polled in — leave those rows in the
+         cache but **do not paint them**: the section stays anchored on what
+         the reader is already viewing. Concretely this means **Sweep does not
+         auto-refill** (sweeping unpinned rows clears the section to its
+         pinned rows; tap "More" to pull the next full page); and **pinning
+         an "extra" row does not shrink the section** (the pinned id is in
+         the sticky set so promoting it into the base window is a no-op for
+         the displayed list). When a swept section has no pins to anchor it,
+         the section header + "More" still render as a **phantom row** so the
+         reader can pull the next page without remounting; the empty state
+         only appears once every section is genuinely exhausted. Pull-to-
+         refresh resets the sticky set, so the reader can always opt in to
+         the newest top items.
    - **Done and Hidden filtered out**; **Opened** items render with the faded
      title.
    - **Initial paint one page (30 items)** in the flat river; the grouped view

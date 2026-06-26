@@ -125,6 +125,73 @@ describe('ItemStateStore', () => {
     expect(store.get('nope')).toEqual(DEFAULT_ITEM_STATE);
   });
 
+  it('confirmServerVersion normalizes a settled row to the server version, persisted and silent', () => {
+    const p = memoryPersistence();
+    const store = new ItemStateStore(p);
+    let notified = 0;
+    // Two local edits coalesce into a single server write: the optimistic
+    // version bumps twice, but the server row only increments once.
+    store.set('a', 'pinned', true); // optimistic version 1
+    store.set('a', 'pinned', false); // optimistic version 2
+    expect(store.get('a').version).toBe(2);
+    store.subscribe(() => notified++);
+    store.confirmServerVersion('a', 1); // server only reached version 1
+    expect(store.get('a').version).toBe(1);
+    expect(store.get('a').pinned).toBe(false); // fields untouched
+    expect(notified).toBe(0); // no field changed → no emit
+    // Persisted, so the next boot seeds the real server version, not the
+    // inflated optimistic one.
+    expect(new ItemStateStore(p).get('a').version).toBe(1);
+  });
+
+  it('hidden→Done migration (constructor) preserves the server version, not applyMutation’s +1', () => {
+    // A legacy hidden row persisted at version 4. The constructor migrates it to
+    // Done so it surfaces in /done, but that is a local representation change —
+    // it never wrote the server, so the version must stay 4. Bumping it would
+    // seed an inflated optimistic-concurrency base on the next boot (the live
+    // hydrate's real version-4 row can't pull it back down via the monotonic
+    // merge), 40001-conflicting the next edit.
+    // The constructor migration uses real Date.now(), so the hidden timestamp
+    // must be recent (un-expired) for it to fire.
+    const now = Date.now();
+    let saved: Record<string, ItemState> = {
+      a: state({ hidden: true, hiddenAt: now, version: 4 }),
+    };
+    const store = new ItemStateStore({
+      load: () => saved,
+      save: (m) => {
+        saved = m;
+      },
+    });
+    const a = store.get('a', now);
+    expect(a.done).toBe(true);
+    expect(a.hidden).toBe(false);
+    expect(a.version).toBe(4); // preserved, not 5
+  });
+
+  it('hidden→Done migration (hydrate) preserves the server version, not applyMutation’s +1', () => {
+    const store = new ItemStateStore(memoryPersistence());
+    // Server returns a legacy hidden row at version 7; hydrate migrates it to
+    // Done locally but must keep the server's version so seeding stays honest.
+    store.hydrate([['a', state({ hidden: true, hiddenAt: NOW, version: 7 })]], new Map(), NOW);
+    const a = store.get('a', NOW);
+    expect(a.done).toBe(true);
+    expect(a.hidden).toBe(false);
+    expect(a.version).toBe(7); // preserved, not 8
+  });
+
+  it('confirmServerVersion no-ops for an unknown or already-matching row', () => {
+    const store = new ItemStateStore(memoryPersistence());
+    store.confirmServerVersion('missing', 5); // no row → no create, no throw
+    expect(store.get('missing')).toEqual(DEFAULT_ITEM_STATE);
+    store.set('a', 'done', true); // version 1
+    let notified = 0;
+    store.subscribe(() => notified++);
+    store.confirmServerVersion('a', 1); // already at 1
+    expect(store.get('a').version).toBe(1);
+    expect(notified).toBe(0);
+  });
+
   it('write-through sink fires the changed-field diff (set / hide / undo), not on hydrate', () => {
     const store = new ItemStateStore(memoryPersistence());
     const calls: Array<[string, Partial<Record<string, boolean>>]> = [];

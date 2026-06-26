@@ -482,6 +482,12 @@ export class MockDataSource implements DataSource {
     }
   }
 
+  async resyncState(): Promise<void> {
+    // No server to reconcile against — the in-memory store (mirrored to
+    // localStorage) is the source of truth here. Cross-device sync is a
+    // SupabaseDataSource concern; in the mock this is a no-op.
+  }
+
   // --- OPML -----------------------------------------------------------------
 
   async importOpml(xml: string): Promise<{ added: number; skipped: number }> {
