@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { usePopoverDismiss } from '../hooks/usePopoverDismiss';
 import { UserAvatar } from './UserAvatar';
+import { TooltipButton } from './TooltipButton';
 import './HeaderAccountMenu.css';
 
 /** Header account chip (far right, every page). Signed out → a "Sign in"
@@ -32,16 +33,17 @@ export function HeaderAccountMenu() {
 
   return (
     <div className="account-menu" ref={rootRef}>
-      <button
+      <TooltipButton
         type="button"
         className="account-chip"
         aria-haspopup="menu"
         aria-expanded={open}
+        tooltip="Account"
         aria-label="Account"
         onClick={() => setOpen((o) => !o)}
       >
         <UserAvatar name={user.name} avatarUrl={user.avatarUrl} />
-      </button>
+      </TooltipButton>
       {open ? (
         <div className="account-menu__popover" role="menu">
           <div className="account-menu__identity">

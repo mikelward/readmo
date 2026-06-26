@@ -9,6 +9,7 @@ import type { Feed, FeedId, Subscription } from '../lib/types';
 import { arrayMove, orderForPointer } from '../lib/arrayMove';
 import { usePopoverDismiss } from '../hooks/usePopoverDismiss';
 import { DragHandle } from './icons';
+import { TooltipButton } from './TooltipButton';
 
 export interface SubscriptionEntry {
   subscription: Subscription;
@@ -370,9 +371,10 @@ export function ReorderableSubscriptions({
               <div className="settings__sub-url">{feed.url}</div>
             </div>
             <div className="settings__sub-actions">
-              <button
+              <TooltipButton
                 type="button"
                 className="settings__sub-overflow"
+                tooltip="Actions"
                 aria-label={`Actions for ${title}`}
                 aria-haspopup="menu"
                 aria-expanded={menuFor === feed.id}
@@ -381,7 +383,7 @@ export function ReorderableSubscriptions({
                 }
               >
                 <span aria-hidden="true">⋯</span>
-              </button>
+              </TooltipButton>
               {menuFor === feed.id ? (
                 <div role="menu" className="settings__sub-menu">
                   <button
