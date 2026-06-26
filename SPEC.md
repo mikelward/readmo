@@ -979,6 +979,13 @@ loopback/link-local/private/metadata targets and redirects to them.
      mid-animation doesn't drop the tap. Under
      `prefers-reduced-motion: reduce` the animation and the deferral are both
      skipped — the hide is immediate.
+   - **Debounce.** A second sweep tap is ignored while a sweep is already
+     playing out **and** for a short cooldown (~400ms) after it commits. In
+     grouped mode a section refills with the feed's next items the instant the
+     swept rows hide, so without the cooldown a quick second tap (e.g. a feed's
+     broom followed by the toolbar Sweep) would immediately clear the
+     freshly-surfaced rows — reading as "it swept the feed twice". A deliberate
+     later sweep still goes through.
    - **Auto-hide on scroll** (opt-in, `readmo:hide-on-scroll`, off by default —
      see *Settings → Reading*): when on, each unpinned row is marked **Done the
      moment it scrolls fully off the top** of the viewport (you scrolled past it
