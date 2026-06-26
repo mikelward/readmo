@@ -364,6 +364,11 @@ function runRpc(
     // pinned items at the top of its section (flat keeps a global pinned top).
     const sortAsc = params.p_sort === 'oldest';
     const groupByFeed = Boolean(params.p_group_by_feed);
+    // Grouping only: cap each feed's section to its newest this-many rows (0021).
+    const perFeedLimit =
+      groupByFeed && params.p_per_feed_limit != null
+        ? Math.max(Number(params.p_per_feed_limit), 0)
+        : null;
     const hiddenActive = (st: Row | undefined) =>
       Boolean(st?.hidden) &&
       typeof st?.hidden_at === 'string' &&
@@ -384,6 +389,12 @@ function runRpc(
           const fa = feedSort(a);
           const fb = feedSort(b);
           if (fa !== fb) return fa - fb;
+          // Tie on the sort ordinal → keep each feed's rows contiguous by id
+          // (mirrors 0021's feed_id tiebreak in the final ORDER BY), so a section
+          // never splits into interleaved runs.
+          if (a.feed_id !== b.feed_id) {
+            return String(a.feed_id) < String(b.feed_id) ? -1 : 1;
+          }
         }
         const pa = isPinned(a);
         const pb = isPinned(b);
@@ -392,8 +403,26 @@ function runRpc(
         const d = sortMs(a) - sortMs(b);
         return (sortAsc ? d : -d) || idDesc(a, b);
       });
+    // Per-feed window: combined is already sectioned by feed (contiguous), so
+    // keep each feed run's first `perFeedLimit` rows. Mirrors 0021's row_number
+    // partition-by-feed cap.
+    const windowed =
+      perFeedLimit != null
+        ? (() => {
+            const seen = new Map<string, number>();
+            const out: Row[] = [];
+            for (const it of combined) {
+              const fid = it.feed_id as string;
+              const n = seen.get(fid) ?? 0;
+              if (n >= perFeedLimit) continue;
+              seen.set(fid, n + 1);
+              out.push(it);
+            }
+            return out;
+          })()
+        : combined;
     return {
-      data: combined.slice(offset, offset + limit),
+      data: windowed.slice(offset, offset + limit),
       error: null,
     };
   }

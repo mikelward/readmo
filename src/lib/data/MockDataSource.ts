@@ -161,6 +161,12 @@ export class MockDataSource implements DataSource {
         const oa = feedOrder(a.fi.item.feedId);
         const ob = feedOrder(b.fi.item.feedId);
         if (oa !== ob) return oa - ob;
+        // Tie on the custom sort ordinal (possible after unsubscribe+subscribe
+        // reuses an index): keep each feed's rows contiguous by id so a section
+        // never splits into interleaved runs. Mirrors feed_items' ORDER BY.
+        if (a.fi.item.feedId !== b.fi.item.feedId) {
+          return a.fi.item.feedId < b.fi.item.feedId ? -1 : 1;
+        }
       }
       // Within a section (a feed when grouped, the whole list when flat): pinned
       // first, oldest-pinned first; then the body in the chosen date order.
@@ -169,10 +175,36 @@ export class MockDataSource implements DataSource {
       return byDate(a.fi, b.fi);
     });
 
+    // Group-by-feed only: cap each feed's section to its newest `perFeedLimit`
+    // rows (the sort above made each feed run contiguous, pinned-first). The
+    // per-section "More" pages deeper into one feed via getFeedItems. Mirrors
+    // the `feed_items` RPC's p_per_feed_limit window. A single-feed read (no
+    // groupByFeed) is never capped — that's the path "More" pages through.
+    const perFeedLimit = opts?.perFeedLimit;
+    if (groupByFeed && perFeedLimit != null && perFeedLimit >= 0) {
+      const seen = new Map<FeedId, number>();
+      const capped: typeof rows = [];
+      for (const r of rows) {
+        const fid = r.fi.item.feedId;
+        const n = seen.get(fid) ?? 0;
+        if (n >= perFeedLimit) continue;
+        seen.set(fid, n + 1);
+        capped.push(r);
+      }
+      return capped.map((r) => r.fi);
+    }
+
     return rows.map((r) => r.fi);
   }
 
   private paginate(all: FeedItem[], opts?: FeedListOptions): Page<FeedItem> {
+    // Grouped + per-feed windowed: each section is already capped to its newest
+    // `perFeedLimit` rows, so the whole (bounded) river is returned in one page.
+    // The view pages deeper into a single feed via its own "More" (getFeedItems),
+    // not by globally fetching the next page — so there's no global next cursor.
+    if (opts?.groupByFeed && opts?.perFeedLimit != null) {
+      return { items: all, nextCursor: null };
+    }
     const limit = opts?.limit ?? PAGE_SIZE;
     const offset = decodeCursor(opts?.cursor);
     const slice = all.slice(offset, offset + limit);

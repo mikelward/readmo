@@ -462,6 +462,97 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(ids(page.items)).toEqual(['i2', 'i6', 'i3']);
   });
 
+  it('windows each feed section to perFeedLimit and returns one page (group by feed)', async () => {
+    const env = setup();
+    // Cap each section to 1 row. feed-a (i2 pinned, then i6) → just i2;
+    // feed-b (i3) → i3. The clipped i6 is reachable via the per-section More.
+    const page = await env.ds.getHomeItems({ groupByFeed: true, perFeedLimit: 1 });
+    expect(ids(page.items)).toEqual(['i2', 'i3']);
+    // The windowed grouped read is a single page (no global next cursor).
+    expect(page.nextCursor).toBeNull();
+    // The cap was threaded to the RPC.
+    const call = env.fake.rpcCalls.find((c) => c.name === 'feed_items');
+    expect(call?.params).toMatchObject({ p_group_by_feed: true, p_per_feed_limit: 1 });
+
+    // The per-section More re-reads that one feed past the window (offset 1).
+    const more = await env.ds.getFeedItems('feed-a', { cursor: '1', limit: 1 });
+    expect(ids(more.items)).toEqual(['i6']);
+  });
+
+  it('windows each feed independently even when two subscriptions share a sort ordinal', async () => {
+    // The per-feed cap must partition by feed id, not the subscription sort
+    // ordinal — otherwise two feeds sharing a sort value would be ranked as one
+    // window and the first could starve the second out of the opening read.
+    const tables = seed();
+    tables.subscriptions = tables.subscriptions.map((s) =>
+      s.feed_id === 'feed-b' ? { ...s, sort: 0 } : s,
+    );
+    const { ds } = setup(tables);
+    const page = await ds.getHomeItems({ groupByFeed: true, perFeedLimit: 1 });
+    const feeds = new Set(page.items.map((fi) => fi.item.feedId));
+    // Each feed keeps its own 1-row window; neither is starved by the other.
+    expect(feeds.has('feed-a')).toBe(true);
+    expect(feeds.has('feed-b')).toBe(true);
+  });
+
+  it('keeps tied feed sections contiguous (no interleaving / duplicate headers)', async () => {
+    // Two feeds sharing a sort ordinal (reachable after unsubscribe+subscribe
+    // reuses an index) must still emit as two contiguous runs, not interleaved —
+    // otherwise ItemList would render duplicate headers/More for the split feed.
+    const tables: FakeTables = {
+      feeds_public: [
+        { id: 'feed-x', site_url: '', title: 'X', error_count: 0, last_error: null, last_fetched_at: null, next_fetch_at: null, fetch_interval_s: 1800, created_at: null },
+        { id: 'feed-y', site_url: '', title: 'Y', error_count: 0, last_error: null, last_fetched_at: null, next_fetch_at: null, fetch_interval_s: 1800, created_at: null },
+      ],
+      subscriptions: [
+        { feed_id: 'feed-x', folder: null, title_override: null, muted: false, sort: 0 },
+        { feed_id: 'feed-y', folder: null, title_override: null, muted: false, sort: 0 }, // tie
+      ],
+      items: [
+        mkItem('x1', 'feed-x', 2, 'X one'), mkItem('x2', 'feed-x', 1, 'X two'),
+        mkItem('y1', 'feed-y', 2, 'Y one'), mkItem('y2', 'feed-y', 1, 'Y two'),
+      ],
+      item_state: [],
+      folders: [],
+    };
+    const { ds } = setup(tables);
+    const page = await ds.getHomeItems({ groupByFeed: true });
+    const feedSeq = page.items.map((fi) => fi.item.feedId);
+    expect(feedSeq).toHaveLength(4);
+    // Collapsing consecutive duplicates yields one run per feed (== distinct
+    // feeds); an interleaved [x,y,x,y] would collapse to 4 runs.
+    const runs = feedSeq.filter((f, i) => i === 0 || f !== feedSeq[i - 1]);
+    expect(runs).toHaveLength(new Set(feedSeq).size);
+  });
+
+  it('pages windowed grouped reads past the row cap (offset threaded, not forced to 0)', async () => {
+    const env = setup();
+    // A cursor on a windowed grouped read continues from that offset so the next
+    // batch of feed-sections isn't dropped when an account overflows the row cap.
+    await env.ds.getHomeItems({ groupByFeed: true, perFeedLimit: 1, cursor: '1000' });
+    const call = env.fake.rpcCalls.find((c) => c.name === 'feed_items');
+    expect(call?.params).toMatchObject({ p_offset: 1000, p_per_feed_limit: 1 });
+  });
+
+  it('omits the p_per_feed_limit arg entirely on flat/single-feed reads (forward-compatible payload)', async () => {
+    // Sending the 8th arg only for the windowed grouped read keeps flat/folder/
+    // single-feed reads on the 7-arg payload, so a client deployed before
+    // migration 0021 still resolves them against the old 7-arg function
+    // (PostgREST 404s a call carrying an unknown parameter name).
+    const env = setup();
+    await env.ds.getHomeItems(); // flat
+    await env.ds.getFeedItems('feed-a'); // single feed
+    const calls = env.fake.rpcCalls.filter((c) => c.name === 'feed_items');
+    expect(calls.length).toBeGreaterThan(0);
+    for (const c of calls) {
+      expect('p_per_feed_limit' in c.params).toBe(false);
+    }
+    // The grouped windowed read does carry it.
+    await env.ds.getHomeItems({ groupByFeed: true, perFeedLimit: 5 });
+    const grouped = env.fake.rpcCalls.filter((c) => c.name === 'feed_items').at(-1);
+    expect(grouped?.params).toMatchObject({ p_per_feed_limit: 5 });
+  });
+
   it('getFeedUnreadCounts: per-feed unread, excluding done/hidden, keeping pinned-unopened', async () => {
     const env = setup();
     // feed-a items: i1 (Hidden), i2 (Pinned), i6. feed-b: i3, i4 (Done).

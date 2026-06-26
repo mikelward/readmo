@@ -35,6 +35,13 @@ export interface FeedListOptions {
    * chronological river. Pinned items stay in the global top section, ungrouped.
    * No effect on a single-feed view. Defaults to `false`. */
   groupByFeed?: boolean;
+  /** Group-by-feed only: cap each feed's section to its newest this-many
+   * listable items so a busy feed doesn't dump its whole window into the river.
+   * The view's per-section "More" then pages deeper into that one feed (via a
+   * single-feed read), independent of the other sections. Ignored when not
+   * grouping (the flat river pages globally instead) and on a single-feed view.
+   * Threaded to the `feed_items` RPC as `p_per_feed_limit`. */
+  perFeedLimit?: number;
 }
 
 export interface DiscoveredFeed {

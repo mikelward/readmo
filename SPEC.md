@@ -814,15 +814,39 @@ loopback/link-local/private/metadata targets and redirects to them.
        grouping with feeds in view) acting on the feeds currently loaded; each
        disables when it would be a no-op (all already collapsed / nothing
        collapsed). A collapsed feed's hidden rows aren't navigable or swept.
-       Because feed reads are paged by row, a collapsed feed can span whole
-       hidden pages; **More auto-skips** them — it keeps fetching (bounded) past
-       pages that render nothing new until a new **section header** (even a
-       collapsed feed's) or a visible row appears, or the feed is exhausted, so it
-       never lands the reader on a page showing nothing.
+     - **Per-section More + per-feed window** (group-by-feed only). Each section
+       opens showing only its newest **`PER_FEED_WINDOW` (10)** listable rows, so
+       a busy feed doesn't dump its whole freshness window into the river. A
+       **"More"** at the **foot of each section** appends that feed's next page
+       **inline** (another 10), independent of the other sections, until the feed
+       is exhausted — its window ∪ floor ∪ pinned set, the same ceiling the
+       single-feed page shows. The opening view is a **single read**: `feed_items`
+       caps each section to `PER_FEED_WINDOW` rows (`p_per_feed_limit`) and returns
+       every section in one page, so there's **no global bottom "More"** in this
+       view (only Back-to-top remains). The per-section More re-reads that one
+       feed via the **single-feed read** (`getFeedItems` with an offset), never
+       refetching the others. A feed at or under its window (≤ `PER_FEED_WINDOW`)
+       shows **no More**: the opening read **overfetches one row per feed**
+       (`PER_FEED_WINDOW + 1`) purely as a has-more probe — the client renders
+       only the window and shows a section "More" only when that extra row
+       survived, so an exactly-full feed gets no dead button (and no wasted
+       empty fetch). Because
+       the read is bounded by `feeds × PER_FEED_WINDOW`, a **planned per-account
+       feed cap** (`TODO(feed-cap)`) keeps it under PostgREST's 1000-row response
+       cap; until that cap lands, a very large account could clip sections past
+       the row cap. (Drilling into a single feed's own page is the flat pager.)
+       Expanded extra pages get the same live item-state overlay as base rows
+       (locally Done/Hidden are filtered, pin/opened read from the store); the
+       one known staleness is a server-side change to a row *past* the opening
+       window that the local store hasn't learned (e.g. a cross-device Done) —
+       base rows self-heal on the next refetch, but a cached extra row can
+       linger until that feed's window changes or the view remounts.
    - **Done and Hidden filtered out**; **Opened** items render with the faded
      title.
-   - **Initial paint one page (30 items)**; further pages only via an explicit
-     **More** button (no infinite scroll). Same pagination discipline.
+   - **Initial paint one page (30 items)** in the flat river; the grouped view
+     instead loads each feed's first **`PER_FEED_WINDOW` (10)** in one windowed
+     read and grows per section. Further flat pages only via an explicit **More**
+     button (no infinite scroll). Same pagination discipline.
    - **Background refresh status strip** at the foot ("Checking for new
      items…" / "Couldn't refresh." + Retry), appearing only when rows are
      already on screen. Verbatim mirror.

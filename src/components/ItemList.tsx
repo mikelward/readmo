@@ -13,6 +13,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { useFeedItems, type FetchPage } from '../hooks/useFeedItems';
+import type { Page } from '../lib/data/DataSource';
 import { useInViewIds } from '../hooks/useInViewIds';
 import { useHideOnScroll, useBottomBarPosition } from '../hooks/useReadingPrefs';
 import { useCollapsedFeeds } from '../hooks/useCollapsedFeeds';
@@ -78,6 +79,30 @@ function renderedCountIn(
   return count;
 }
 
+/** Fetch a single feed's next page, for the group-by-feed per-section "More".
+ * Mirrors {@link FetchPage} but scoped to one feed (the page wires it to
+ * `getFeedItems(feedId, …)`), so a section can page deeper into its own feed
+ * without disturbing the other sections. */
+export type FetchFeedPage = (
+  feedId: FeedId,
+  cursor: string | null,
+) => Promise<Page<FeedItem>>;
+
+/** A feed section's on-demand pages (group-by-feed per-section "More"): the rows
+ * fetched past its opening window, the server cursor for the next page, whether a
+ * fetch is in flight, and whether the feed is exhausted (`nextCursor === null`).*/
+interface FeedExtra {
+  items: FeedItem[];
+  nextCursor: string | null;
+  loading: boolean;
+  done: boolean;
+  /** Monotonic id of the in-flight fetch that produced/owns this entry. A
+   * settling response only applies if it still matches the entry's id, so a
+   * window-reset (which deletes the entry) or a superseding tap can't be undone
+   * by a stale older response writing its old-offset page back. */
+  reqId: number;
+}
+
 interface Props {
   viewKey: string;
   fetchPage: FetchPage;
@@ -88,12 +113,34 @@ interface Props {
    * header would be redundant. The DataSource must already return the body
    * sectioned by feed for the headers to land in the right places. */
   groupByFeed?: boolean;
+  /** Group-by-feed only: page deeper into a single feed's section. When this and
+   * {@link Props.perFeedLimit} are both set, each section opens windowed to
+   * `perFeedLimit` rows and grows a per-section "More" button at its foot that
+   * appends that feed's next page inline — independent of the other sections and
+   * of the (now single-page) base read. Omitted ⇒ no per-section More. */
+  fetchFeedPage?: FetchFeedPage;
+  /** The per-feed window size the grouped base read was capped to — how many
+   * rows each section opens with, and the offset the first per-section "More"
+   * fetches from. Only meaningful alongside {@link Props.fetchFeedPage}. */
+  perFeedLimit?: number;
 }
 
 /** A feed view (home / folder / single feed): sticky toolbar, item rows with
  * swipe, an explicit "More" button, and the background-refresh status strip. */
-export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }: Props) {
+export function ItemList({
+  viewKey,
+  fetchPage,
+  emptyLabel,
+  groupByFeed = false,
+  fetchFeedPage,
+  perFeedLimit,
+}: Props) {
   const ds = useDataSource();
+  // Per-section "More" is live only when the page wired a single-feed pager AND
+  // told us the window size the base read was capped to. Both come together (the
+  // grouped home/folder reads), so one flag gates the whole feature.
+  const perGroupMore =
+    groupByFeed && !!fetchFeedPage && perFeedLimit != null && perFeedLimit > 0;
   const status = useConnectivityStatus();
   const {
     items,
@@ -299,10 +346,237 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
     () => ds.stateStore.subscribe(bumpStoreVersion),
     [ds],
   );
-  const visibleItems = items.filter((fi) => {
+
+  // Per-section "More" (group-by-feed): each feed's extra pages, fetched on
+  // demand from that feed alone and appended after its base run. The base read
+  // is a single page capped to `perFeedLimit` rows per feed; tapping a section's
+  // More fetches its next page (offset = how many of that feed are already
+  // shown) and merges it inline, leaving every other section untouched. Keyed by
+  // feed id; reset when the view changes so one view's depth never leaks into
+  // another.
+  //
+  // Item *state* on extras stays live: they flow through the same store overlay
+  // as base rows — `visibleItems` drops locally Done/Hidden extras and each
+  // ItemRow reads pin/opened from the store — so any state the store knows is
+  // reflected without a refetch. The known gap is server-side changes to rows
+  // *past* a feed's opening window that the local store hasn't learned (e.g. a
+  // cross-device Done): base rows self-heal via the server's feed_items filter
+  // on the next refetch, but these cached extras don't, so a stale past-window
+  // row can linger until that feed's window membership changes or the view
+  // remounts. Re-validating extras on every refetch was rejected: ['feed']
+  // invalidates on each open/pin/sweep, so it would either churn an extra read
+  // per mutation or collapse expanded sections on a routine open.
+  const [feedExtras, setFeedExtras] = useState<Map<FeedId, FeedExtra>>(
+    () => new Map(),
+  );
+  // Monotonic id stamped on each per-section More fetch, so a response that
+  // settles after its entry was reset or superseded can be discarded.
+  const moreSeqRef = useRef(0);
+  // Drop a view's expanded sections only when the view actually changes (not on
+  // mount), so switching home → folder → a single feed never carries one view's
+  // depth into the next, while a same-view re-render keeps what's expanded.
+  const prevViewKey = useRef(viewKey);
+  useEffect(() => {
+    if (prevViewKey.current !== viewKey) {
+      prevViewKey.current = viewKey;
+      setFeedExtras(new Map());
+    }
+  }, [viewKey]);
+
+  // A feed's extras are paged by server offset off its base window, so if that
+  // window's *membership* shifts under an expanded section — a new item arrives
+  // at its top, or a cross-device state change moves an item in/out of the
+  // window — the old offset no longer lines up and boundary rows could be
+  // skipped. Drop just that feed's extras when its window membership changes, so
+  // the next "More" re-pages from the fresh window. The signature is
+  // order-insensitive, so an in-window reorder (e.g. pinning a row already in
+  // the window) and the far more common no-op refetch after a pin/sweep leave
+  // expanded sections intact rather than collapsing them.
+  const baseWindowSig = useMemo(() => {
+    const m = new Map<FeedId, string>();
+    if (!perGroupMore || perFeedLimit == null) return m;
+    const ids = new Map<FeedId, string[]>();
+    for (const fi of items) {
+      const arr = ids.get(fi.item.feedId);
+      if (arr) arr.push(fi.item.id);
+      else ids.set(fi.item.feedId, [fi.item.id]);
+    }
+    // Sign over the DISPLAYED window only (first perFeedLimit ids), not the
+    // overfetched probe row — so a feed merely gaining/losing its has-more probe
+    // doesn't needlessly drop an expanded section.
+    for (const [feedId, arr] of ids) {
+      m.set(feedId, arr.slice(0, perFeedLimit).sort().join(','));
+    }
+    return m;
+  }, [perGroupMore, perFeedLimit, items]);
+  const prevWindowSig = useRef(baseWindowSig);
+  useEffect(() => {
+    const prev = prevWindowSig.current;
+    prevWindowSig.current = baseWindowSig;
+    if (!perGroupMore) return;
+    setFeedExtras((cur) => {
+      if (cur.size === 0) return cur;
+      let changed = false;
+      const next = new Map(cur);
+      for (const feedId of cur.keys()) {
+        if (baseWindowSig.get(feedId) !== prev.get(feedId)) {
+          next.delete(feedId);
+          changed = true;
+        }
+      }
+      return changed ? next : cur;
+    });
+  }, [perGroupMore, baseWindowSig]);
+
+  const handleFeedMore = useCallback(
+    async (feedId: FeedId) => {
+      if (!fetchFeedPage || perFeedLimit == null) return;
+      const existing = feedExtras.get(feedId);
+      if (existing?.loading || existing?.done) return;
+      // First More for a feed starts after its window (the base read returned
+      // the feed's first `perFeedLimit` listable rows); later taps follow the
+      // server's own next cursor. A locally-dismissed base row doesn't shift the
+      // server offset, so the window size — not the live visible count — is the
+      // right first cursor.
+      const cursor = existing ? existing.nextCursor : String(perFeedLimit);
+      if (cursor === null) return;
+      // Tag this fetch so a response that settles after the entry was reset
+      // (window changed) or superseded (a later tap) is discarded instead of
+      // writing its stale-offset page back over the fresh state.
+      const reqId = (moreSeqRef.current += 1);
+      setFeedExtras((prev) => {
+        const cur = prev.get(feedId);
+        const next = new Map(prev);
+        next.set(feedId, {
+          items: cur?.items ?? [],
+          // Remember the cursor we're attempting (not the last *successful* one),
+          // so if this fetch fails the catch path leaves a retryable cursor. With
+          // the old `cur?.nextCursor ?? null`, a failed *first* More left a null
+          // cursor and the next tap would no-op forever (button stuck visible but
+          // inert) until remount.
+          nextCursor: cursor,
+          loading: true,
+          done: cur?.done ?? false,
+          reqId,
+        });
+        return next;
+      });
+      try {
+        const page = await fetchFeedPage(feedId, cursor);
+        setFeedExtras((prev) => {
+          const cur = prev.get(feedId);
+          // Reset (entry deleted) or superseded (newer reqId) while in flight →
+          // drop this response so it can't reintroduce old-offset rows.
+          if (cur?.reqId !== reqId) return prev;
+          const prevItems = cur.items;
+          const ids = new Set(prevItems.map((fi) => fi.item.id));
+          const appended = [...prevItems];
+          for (const fi of page.items) {
+            if (!ids.has(fi.item.id)) appended.push(fi);
+          }
+          const next = new Map(prev);
+          next.set(feedId, {
+            items: appended,
+            nextCursor: page.nextCursor,
+            loading: false,
+            done: page.nextCursor === null,
+            reqId,
+          });
+          return next;
+        });
+      } catch {
+        // Leave the button tappable again on failure (nothing appended), the
+        // same way the global More stays available after a failed page fetch —
+        // but only if this is still the owning request (else a reset/newer tap
+        // already moved on).
+        setFeedExtras((prev) => {
+          const cur = prev.get(feedId);
+          if (cur?.reqId !== reqId) return prev;
+          const next = new Map(prev);
+          next.set(feedId, { ...cur, loading: false });
+          return next;
+        });
+      }
+    },
+    [fetchFeedPage, perFeedLimit, feedExtras],
+  );
+
+  // The on-demand pages merged into the base river: each feed's first
+  // `perFeedLimit` base rows, then its extras, deduped by id. The grouped read
+  // overfetches one extra row per feed (perFeedLimit + 1) purely as a has-more
+  // probe; that (perFeedLimit + 1)th base row is dropped here so it isn't
+  // rendered (it reappears as the first row of the section's first "More" page).
+  // Other code paths read from this merged list so Sweep, headers, counts and
+  // the end-of-list measurement all see exactly the displayed rows. Identity-
+  // stable (=== items) outside the windowed grouped view, so the flat river and
+  // single-feed views are untouched.
+  const mergedRaw = useMemo(() => {
+    if (!perGroupMore || perFeedLimit == null) return items;
+    const result: FeedItem[] = [];
+    const seen = new Set<ItemId>();
+    let i = 0;
+    while (i < items.length) {
+      const feedId = items[i].item.feedId;
+      let shown = 0;
+      while (i < items.length && items[i].item.feedId === feedId) {
+        const fi = items[i];
+        if (shown < perFeedLimit && !seen.has(fi.item.id)) {
+          seen.add(fi.item.id);
+          result.push(fi);
+          shown += 1;
+        }
+        i++;
+      }
+      const ex = feedExtras.get(feedId);
+      if (ex) {
+        for (const fi of ex.items) {
+          if (!seen.has(fi.item.id)) {
+            seen.add(fi.item.id);
+            result.push(fi);
+          }
+        }
+      }
+    }
+    return result;
+  }, [perGroupMore, perFeedLimit, items, feedExtras]);
+
+  const visibleItems = mergedRaw.filter((fi) => {
     const st = ds.stateStore.get(fi.item.id);
     return !st.done && !st.hidden;
   });
+
+  // Which feed sections should show a "More" at their foot, and which are
+  // mid-fetch. A feed has more when it already holds extras that aren't
+  // exhausted, or — before any expansion — when the base read returned MORE than
+  // the display window (the overfetched probe row survived), proving older rows
+  // exist. Using `> perFeedLimit` (not `>=`) is what keeps an exactly-full feed
+  // — count === window, nothing older — from showing a dead More that fetches an
+  // empty page and vanishes (SPEC: a feed at/under its window shows no More).
+  const baseRawCountByFeed = useMemo(() => {
+    const m = new Map<FeedId, number>();
+    if (!perGroupMore) return m;
+    for (const fi of items) m.set(fi.item.feedId, (m.get(fi.item.feedId) ?? 0) + 1);
+    return m;
+  }, [perGroupMore, items]);
+  const feedsWithMore = useMemo(() => {
+    if (!perGroupMore || perFeedLimit == null) return undefined;
+    const s = new Set<FeedId>();
+    for (const [feedId, count] of baseRawCountByFeed) {
+      const ex = feedExtras.get(feedId);
+      if (ex) {
+        if (!ex.done) s.add(feedId);
+      } else if (count > perFeedLimit) {
+        s.add(feedId);
+      }
+    }
+    return s;
+  }, [perGroupMore, perFeedLimit, baseRawCountByFeed, feedExtras]);
+  const loadingFeeds = useMemo(() => {
+    if (!perGroupMore) return undefined;
+    const s = new Set<FeedId>();
+    for (const [feedId, ex] of feedExtras) if (ex.loading) s.add(feedId);
+    return s;
+  }, [perGroupMore, feedExtras]);
 
   // Number of list elements actually rendered: one header per feed section plus
   // each non-collapsed row (a collapsed feed shows only its header). When not
@@ -344,13 +618,13 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
   // (SPEC.md *List toolbar → Sweep*). Matches newshacker.
   const sweepIds = useMemo(
     () =>
-      items
+      mergedRaw
         .filter(
           (fi) =>
             inViewIds.has(fi.item.id) && !ds.stateStore.get(fi.item.id).pinned,
         )
         .map((fi) => fi.item.id),
-    [items, inViewIds, ds],
+    [mergedRaw, inViewIds, ds],
   );
 
   // Visual "whoosh" when Sweep fires: every fully-visible, unpinned row plays
@@ -450,7 +724,7 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
   // off-screen rows untouched), just partitioned by feed.
   const sweepableByFeed = useMemo(() => {
     const m = new Map<FeedId, ItemId[]>();
-    for (const fi of items) {
+    for (const fi of mergedRaw) {
       if (!inViewIds.has(fi.item.id)) continue;
       if (ds.stateStore.get(fi.item.id).pinned) continue;
       const arr = m.get(fi.item.feedId);
@@ -458,7 +732,7 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
       else m.set(fi.item.feedId, [fi.item.id]);
     }
     return m;
-  }, [items, inViewIds, ds]);
+  }, [mergedRaw, inViewIds, ds]);
 
   const handleSweepFeed = useCallback(
     (feedId: FeedId) => sweepThese(sweepableByFeed.get(feedId) ?? []),
@@ -686,6 +960,9 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
               canUndo={groupByFeed ? canUndo : undefined}
               collapsedFeeds={groupByFeed ? collapsed : undefined}
               onToggleCollapse={groupByFeed ? toggle : undefined}
+              feedsWithMore={perGroupMore ? feedsWithMore : undefined}
+              loadingFeeds={perGroupMore ? loadingFeeds : undefined}
+              onFeedMore={perGroupMore ? handleFeedMore : undefined}
               emptyLabel={emptyLabel ?? 'Nothing here yet.'}
             />
           </div>
@@ -726,7 +1003,13 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
         // exhausted. Matches newshacker, whose footer renders only on a
         // populated feed.
         more={
-          items.length > 0
+          // In the per-section-windowed grouped view the base read is normally a
+          // single page (each section pages itself via its own foot "More"), so
+          // the global pager is suppressed and only Back to top remains. The one
+          // exception: if the windowed read overflowed the row cap (`hasMore`),
+          // the bottom "More" reappears to load the next batch of feed-sections,
+          // so the later feeds aren't stranded.
+          (!perGroupMore || hasMore) && items.length > 0
             ? {
                 // Pinned bar: enabled while there's anything left to reveal —
                 // unseen loaded rows below the fold, or another fetchable page.

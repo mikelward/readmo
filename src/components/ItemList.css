@@ -142,6 +142,44 @@
   background: var(--rm-bg-card);
 }
 
+/* Per-section "More" (group-by-feed): a full-width control at the foot of a
+   feed section that appends that feed's next page inline. Distinct from the
+   global bottom-toolbar More (which is suppressed in this view). */
+.item-list__group-more {
+  list-style: none;
+  border-bottom: 1px solid var(--rm-border);
+}
+
+.item-list__group-more-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: var(--rm-tap);
+  padding: 0.5rem 1rem;
+  border: none;
+  background: none;
+  color: var(--rm-accent);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.item-list__group-more-btn:disabled {
+  color: var(--rm-meta);
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .item-list__group-more-btn:not(:disabled):hover {
+    background: var(--rm-bg-card);
+  }
+}
+
+.item-list__group-more-btn:not(:disabled):active {
+  background: var(--rm-bg-card);
+}
+
 .item-list__group-chevron {
   flex: 0 0 auto;
   color: var(--rm-meta);
