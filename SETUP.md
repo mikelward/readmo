@@ -45,6 +45,12 @@ variables, function deployment, and the scheduled poller. The frontend
    supabase login
    supabase link --project-ref <your-project-ref>
    ```
+   Run `supabase link` **from the repo root** — it writes `supabase/config.toml`
+   relative to the nearest `supabase/` directory, so linking from `$HOME`
+   creates a stray project that the CLI will silently prefer when you later run
+   `make migrate`/`make deploy`, pointing them at the wrong workdir. The
+   `check-link` guard in the `Makefile` will refuse to run if this repo has no
+   local `supabase/config.toml`.
 
 ---
 
