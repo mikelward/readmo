@@ -1080,21 +1080,31 @@ export function ItemList({
     [sweepThese, sweepIds],
   );
 
-  // Per-feed sweepable rows (group-by-feed header Sweep): the fully-visible,
-  // unpinned rows of each feed, so a header's broom dismisses just that feed's
-  // on-screen items. Same shielding as the global Sweep (pinned rows excluded,
-  // off-screen rows untouched), just partitioned by feed.
+  // Per-feed sweepable rows (group-by-feed header Sweep): every unpinned row in
+  // a feed's displayed section, so one tap on a header's broom clears the whole
+  // section the reader is looking at — not just the one or two rows that happen
+  // to be fully inside the viewport at that instant. Item rows are tall, so a
+  // section showing ~6 rows rarely has more than a couple *entirely* on screen;
+  // scoping the broom to those left the rest of the section behind on every tap.
+  //
+  // This intentionally diverges from the global toolbar Sweep (`sweepIds`
+  // above), which stays viewport-scoped: that broom acts on every feed at once,
+  // so it must not dismiss sections the reader hasn't scrolled to. A header
+  // broom is a deliberate, single-section action — "clear this section" — so it
+  // sweeps the section's whole displayed window. Pinned rows are still shielded,
+  // and a collapsed section (showing no rows) has nothing to sweep.
   const sweepableByFeed = useMemo(() => {
     const m = new Map<FeedId, ItemId[]>();
     for (const fi of mergedRaw) {
-      if (!inViewIds.has(fi.item.id)) continue;
-      if (ds.stateStore.get(fi.item.id).pinned) continue;
+      if (collapsed.has(fi.item.feedId)) continue;
+      const st = ds.stateStore.get(fi.item.id);
+      if (st.pinned || st.done || st.hidden) continue;
       const arr = m.get(fi.item.feedId);
       if (arr) arr.push(fi.item.id);
       else m.set(fi.item.feedId, [fi.item.id]);
     }
     return m;
-  }, [mergedRaw, inViewIds, ds]);
+  }, [mergedRaw, collapsed, ds]);
 
   const handleSweepFeed = useCallback(
     (feedId: FeedId) => sweepThese(sweepableByFeed.get(feedId) ?? []),

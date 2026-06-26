@@ -472,6 +472,43 @@ describe('ItemList', () => {
     });
   });
 
+  it('per-feed header Sweep clears the whole section, including rows scrolled off-screen', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`gp-${Math.random()}`}
+        fetchPage={(cursor) =>
+          source.getHomeItems({ cursor, groupByFeed: true, limit: 100 })
+        }
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+    const totalBefore = container.querySelectorAll('[data-item-id]').length;
+
+    // Push one of The Verge's rows below the "fully visible" threshold, as if it
+    // were scrolled partway off-screen. Unlike the viewport-scoped toolbar
+    // Sweep, the header broom is a deliberate "clear this section" action, so it
+    // must still sweep the off-screen row. (Under the old viewport-scoped logic
+    // this swept only the 2 rows that stayed fully visible — the regression the
+    // reader hit: "sweeping a group isn't sweeping more than one or two items".)
+    const vergeRows = container.querySelectorAll('[data-item-id]');
+    act(() => {
+      setVisibilityForTest(vergeRows[0].closest('li')!, 0.4);
+    });
+
+    await user.click(screen.getAllByTestId('group-sweep')[0]);
+    await waitFor(() => {
+      expect(container.querySelectorAll('[data-item-id]').length).toBe(totalBefore - 3);
+    });
+    // The whole Verge section is gone even though one of its rows was off-screen.
+    expect(screen.queryByText('The Verge')).toBeNull();
+    expect(screen.getByText('NASA Breaking News')).toBeInTheDocument();
+  });
+
   it('Sweep only hides rows fully in the viewport, leaving off-screen rows', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
