@@ -180,25 +180,6 @@ describe('ItemStateOutbox', () => {
       expect(h.bases).toEqual([5]);
     });
 
-    it('seeds a write base from a persisted store version (no live hydrate)', async () => {
-      // Offline cold boot: no live read to observe versions, so the base comes
-      // from the persisted store. An edit must base on it, not send a null base.
-      h.outbox.seedConfirmedVersions([['a', 5]]);
-      h.outbox.enqueue('a', { pinned: true });
-      await tick();
-      expect(h.bases).toEqual([5]);
-    });
-
-    it('seeding versions does not authorize base 0 for an unseeded item', async () => {
-      // Unlike a full hydrate, a seed can't confirm an item is absent — so a
-      // brand-new edit on an unseeded item still sends a null base (no check),
-      // never base 0 (which would false-conflict if the row actually exists).
-      h.outbox.seedConfirmedVersions([['a', 5]]); // only 'a' known
-      h.outbox.enqueue('b', { pinned: true });
-      await tick();
-      expect(h.bases).toEqual([null]);
-    });
-
     it('advances the base to the returned version for the next edit', async () => {
       h.outbox.observeServerVersions([['a', 5]]);
       h.setResult({ ok: true, version: 6 });

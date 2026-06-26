@@ -9,7 +9,6 @@ import {
   useSyncExternalStore,
   type AnimationEvent as ReactAnimationEvent,
 } from 'react';
-import { flushSync } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
@@ -342,7 +341,7 @@ export function ItemList({
   // the subscriber never re-renders. A reducer-counter that bumps on every
   // emit() is simpler and correct — the filter reads stateStore.get
   // directly so we don't need a stable snapshot value, just a render trigger.
-  const [storeVersion, bumpStoreVersion] = useReducer((x: number) => x + 1, 0);
+  const [, bumpStoreVersion] = useReducer((x: number) => x + 1, 0);
   useEffect(
     () => ds.stateStore.subscribe(bumpStoreVersion),
     [ds],
@@ -370,23 +369,6 @@ export function ItemList({
   const [feedExtras, setFeedExtras] = useState<Map<FeedId, FeedExtra>>(
     () => new Map(),
   );
-  // Per-feed sticky display window: the set of item ids the user has committed
-  // to viewing in this section. Initialized from the first base read for each
-  // feed (first `perFeedLimit` ids), extended only when the user taps a section
-  // "More" (the appended extras' ids are added below in handleFeedMore), and
-  // wiped on viewKey change or pull-to-refresh. The base read can still pull in
-  // newer rows server-side — Sweep marks rows Done and the global feed
-  // invalidation triggers a refetch — but those new ids are filtered out of
-  // mergedRaw below until the reader explicitly asks for them. This pins the
-  // section's displayed window to the user's view rather than to whatever the
-  // server's "top N non-Done" currently is, which (a) keeps Sweep from auto-
-  // refilling the section with `perFeedLimit − pinned` fresh items and (b)
-  // prevents a pin-an-extra promotion (the pinned id enters the base window)
-  // from collapsing the section back to the base window — the pinned id is in
-  // the sticky set so it stays visible, and so does every other expanded row.
-  const [displayedByFeed, setDisplayedByFeed] = useState<Map<FeedId, Set<ItemId>>>(
-    () => new Map(),
-  );
   // Monotonic id stamped on each per-section More fetch, so a response that
   // settles after its entry was reset or superseded can be discarded.
   const moreSeqRef = useRef(0);
@@ -398,178 +380,65 @@ export function ItemList({
     if (prevViewKey.current !== viewKey) {
       prevViewKey.current = viewKey;
       setFeedExtras(new Map());
-      setDisplayedByFeed(new Map());
     }
   }, [viewKey]);
 
-  // Initialize the sticky display window for any feed seen in `items` that
-  // doesn't have one yet. Takes the first `perFeedLimit` ids of that feed's
-  // run — exactly the rows mergedRaw would have shown on first load — so the
-  // user's initial view matches the server's top window.
-  //
-  // Also EXTENDS an existing sticky window when its ids are still the
-  // contiguous prefix of items[]'s run for that feed AND items[] now carries
-  // more rows than the sticky set. This handles the row-cap-overflow case
-  // (`GROUPED_WINDOW_ROW_CAP` splits a feed's opening window across pages —
-  // first page returns the partial section, second page returned by the
-  // global "More" appends the rest; without extension the partial-window
-  // sticky set would block the rest from rendering and skew the section's
-  // own More cursor). The "still the prefix" check is what keeps this safe
-  // for the cases the sticky window is supposed to gate: a refetch that
-  // brings in fresh-top rows (post-Sweep refill, cross-device drift, polled-
-  // in items) shifts the prefix away from the sticky ids, so the extension
-  // is skipped and those new rows stay hidden until "More" or PTR.
-  useEffect(() => {
-    if (!perGroupMore || perFeedLimit == null) return;
-    setDisplayedByFeed((cur) => {
-      let next: Map<FeedId, Set<ItemId>> | null = null;
-      let i = 0;
-      while (i < items.length) {
-        const feedId = items[i].item.feedId;
-        const existing = cur.get(feedId);
-        const firstIds: ItemId[] = [];
-        let j = i;
-        while (
-          j < items.length &&
-          items[j].item.feedId === feedId &&
-          firstIds.length < perFeedLimit
-        ) {
-          firstIds.push(items[j].item.id);
-          j++;
-        }
-        if (!existing) {
-          if (firstIds.length > 0) {
-            if (!next) next = new Map(cur);
-            next.set(feedId, new Set(firstIds));
-          }
-        } else if (firstIds.length > existing.size) {
-          // Only extend if existing sticky ids are the contiguous prefix of
-          // the current items[] run for this feed — new rows ARRIVING AT THE
-          // TOP would shift the prefix away from sticky and we'd correctly
-          // leave the section anchored.
-          let prefixStillSticky = true;
-          for (let k = 0; k < existing.size && k < firstIds.length; k++) {
-            if (!existing.has(firstIds[k])) {
-              prefixStillSticky = false;
-              break;
-            }
-          }
-          if (prefixStillSticky) {
-            const merged = new Set(existing);
-            for (let k = existing.size; k < firstIds.length; k++) {
-              merged.add(firstIds[k]);
-            }
-            if (!next) next = new Map(cur);
-            next.set(feedId, merged);
-          }
-        }
-        // Skip past the rest of this feed's run.
-        while (i < items.length && items[i].item.feedId === feedId) i++;
-      }
-      return next ?? cur;
-    });
+  // A feed's extras are paged by server offset off its base window, so if that
+  // window's *membership* shifts under an expanded section — a new item arrives
+  // at its top, or a cross-device state change moves an item in/out of the
+  // window — the old offset no longer lines up and boundary rows could be
+  // skipped. Drop just that feed's extras when its window membership changes, so
+  // the next "More" re-pages from the fresh window. The signature is
+  // order-insensitive, so an in-window reorder (e.g. pinning a row already in
+  // the window) and the far more common no-op refetch after a pin/sweep leave
+  // expanded sections intact rather than collapsing them.
+  const baseWindowSig = useMemo(() => {
+    const m = new Map<FeedId, string>();
+    if (!perGroupMore || perFeedLimit == null) return m;
+    const ids = new Map<FeedId, string[]>();
+    for (const fi of items) {
+      const arr = ids.get(fi.item.feedId);
+      if (arr) arr.push(fi.item.id);
+      else ids.set(fi.item.feedId, [fi.item.id]);
+    }
+    // Sign over the DISPLAYED window only (first perFeedLimit ids), not the
+    // overfetched probe row — so a feed merely gaining/losing its has-more probe
+    // doesn't needlessly drop an expanded section.
+    for (const [feedId, arr] of ids) {
+      m.set(feedId, arr.slice(0, perFeedLimit).sort().join(','));
+    }
+    return m;
   }, [perGroupMore, perFeedLimit, items]);
-
-  // No extras-drop effect: with the first-unseen cursor in handleFeedMore
-  // and the row-cache fallback in mergedRaw, the original "drop misaligned
-  // extras when the server view drifts" job is no longer needed. The first
-  // More tap on an empty feed recomputes the cursor against fresh items[]
-  // (so cross-device drift is handled at fetch time, not by deleting state);
-  // later taps follow the server's next cursor and dedup against the cache,
-  // so any minor misalignment after drift causes at most a partial overlap
-  // page, not a skipped or duplicated section. The previous effect also had
-  // a race where it would delete a just-committed extras entry whenever the
-  // base window's top item hadn't been "opted into" by the sticky set — a
-  // common case right after a successful More that brought new ids in via
-  // extras instead of via items[].
+  const prevWindowSig = useRef(baseWindowSig);
+  useEffect(() => {
+    const prev = prevWindowSig.current;
+    prevWindowSig.current = baseWindowSig;
+    if (!perGroupMore) return;
+    setFeedExtras((cur) => {
+      if (cur.size === 0) return cur;
+      let changed = false;
+      const next = new Map(cur);
+      for (const feedId of cur.keys()) {
+        if (baseWindowSig.get(feedId) !== prev.get(feedId)) {
+          next.delete(feedId);
+          changed = true;
+        }
+      }
+      return changed ? next : cur;
+    });
+  }, [perGroupMore, baseWindowSig]);
 
   const handleFeedMore = useCallback(
     async (feedId: FeedId) => {
       if (!fetchFeedPage || perFeedLimit == null) return;
       const existing = feedExtras.get(feedId);
-      if (existing?.loading) return;
-      // An exhausted entry (`done: true`) normally blocks further taps, but
-      // a new top item arriving after exhaustion (cross-device pin, polled
-      // RSS item) shows up as "unseen in base window" — handleFeedMore's
-      // first-unseen cursor logic will fetch starting at that row's
-      // position, so it's reachable via tap. Without this, an exhausted
-      // section's More would no-op and the new row would only be revealed
-      // by pull-to-refresh.
-      const allowed = displayedByFeed.get(feedId);
-      const hasUnseenTop =
-        !!allowed &&
-        (() => {
-          let pos = 0;
-          for (const fi of items) {
-            if (fi.item.feedId !== feedId) continue;
-            if (pos >= perFeedLimit) break;
-            if (!allowed.has(fi.item.id)) return true;
-            pos += 1;
-          }
-          return false;
-        })();
-      if (existing?.done && !hasUnseenTop) return;
-      // Cursor selection — recomputed against the current server view on
-      // EVERY tap (not just the first), so a cross-device Done/Hide that
-      // shrank the feed-items universe doesn't leave the saved nextCursor
-      // pointing past the freshly-filtered row.
-      //
-      // - If the base window contains an id the sticky set hasn't seen
-      //   (a new top item arrived between fetches), cursor = the position
-      //   of that first unseen row. The next page starts at it, so a
-      //   cross-device pin or a polled-in item doesn't get skipped past.
-      // - Otherwise cursor = count of sticky ids the server still carries
-      //   in items[] ∪ extras. That's "how many of the rows I've already
-      //   seen are still in the current view" — exactly the offset for
-      //   the next batch. On a stable view this equals the old nextCursor;
-      //   when the server filtered a row out it shrinks by one (so the
-      //   row that used to follow doesn't get skipped).
-      let cursor: string | null;
-      if (!allowed) {
-        cursor = existing ? existing.nextCursor : String(perFeedLimit);
-      } else {
-        let pos = 0;
-        let firstUnseen = -1;
-        for (const fi of items) {
-          if (fi.item.feedId !== feedId) continue;
-          if (pos >= perFeedLimit) break;
-          if (!allowed.has(fi.item.id)) {
-            firstUnseen = pos;
-            break;
-          }
-          pos += 1;
-        }
-        if (firstUnseen >= 0) {
-          cursor = String(firstUnseen);
-        } else {
-          const inView = new Set<ItemId>();
-          for (const fi of items) {
-            if (fi.item.feedId === feedId && allowed.has(fi.item.id)) {
-              inView.add(fi.item.id);
-            }
-          }
-          if (existing) {
-            for (const fi of existing.items) {
-              if (allowed.has(fi.item.id)) inView.add(fi.item.id);
-            }
-          }
-          let recomputed = inView.size;
-          // Cap to the server's last accepted nextCursor. After a fresh-top
-          // page lands (More #1 fetched cursor='0' for the heavy-refetch
-          // case), older extras can still inflate the sticky-overlap count
-          // past where the just-returned page ended; sending that larger
-          // offset would skip the unseen tail of the fresh window. Only
-          // undercut when the recomputed offset is smaller (server view
-          // genuinely shrank via cross-device Done).
-          if (existing && existing.nextCursor !== null) {
-            const accepted = Number.parseInt(existing.nextCursor, 10);
-            if (!Number.isNaN(accepted)) {
-              recomputed = Math.min(recomputed, accepted);
-            }
-          }
-          cursor = String(recomputed);
-        }
-      }
+      if (existing?.loading || existing?.done) return;
+      // First More for a feed starts after its window (the base read returned
+      // the feed's first `perFeedLimit` listable rows); later taps follow the
+      // server's own next cursor. A locally-dismissed base row doesn't shift the
+      // server offset, so the window size — not the live visible count — is the
+      // right first cursor.
+      const cursor = existing ? existing.nextCursor : String(perFeedLimit);
       if (cursor === null) return;
       // Tag this fetch so a response that settles after the entry was reset
       // (window changed) or superseded (a later tap) is discarded instead of
@@ -594,71 +463,26 @@ export function ItemList({
       });
       try {
         const page = await fetchFeedPage(feedId, cursor);
-        // Track whether the extras updater actually committed this response.
-        // We need to gate the sticky-display update on the same condition: a
-        // stale response that's about to be discarded from feedExtras must
-        // NOT extend the sticky set either, or its old-page ids would re-
-        // enter the displayed window the next time the base refetch pulled
-        // them back in (auto-refill without a fresh tap). `extrasCommitted`
-        // is set inside the updater (a state-derivable closure capture, not
-        // an external side effect) and read after setFeedExtras returns — by
-        // which time React has run the updater (and queued any update for
-        // commit) so the flag reflects the decision the updater made.
-        // Gate BOTH state updates on the same reqId-match decision so a stale
-        // response (e.g. `viewKey` changed mid-flight, which clears
-        // feedExtras outright) can't leak its old page ids into the new
-        // view's sticky display set. flushSync forces React to run the
-        // updater synchronously, so the `committed` flag set inside the
-        // updater reflects the actual commit decision by the time the
-        // sticky update is scheduled.
-        let committed = false;
-        flushSync(() => {
-          setFeedExtras((prev) => {
-            const cur = prev.get(feedId);
-            // Reset (entry deleted) or superseded (newer reqId) while in
-            // flight → drop this response. The extras-drop effect protects
-            // in-flight loading entries (see its `entry.loading` guard) so a
-            // mid-await Sweep doesn't trip this; the remaining trigger is a
-            // deliberate viewKey reset that wiped feedExtras whole.
-            if (cur?.reqId !== reqId) return prev;
-            committed = true;
-            const prevItems = cur.items;
-            const ids = new Set(prevItems.map((fi) => fi.item.id));
-            const appended = [...prevItems];
-            for (const fi of page.items) {
-              if (!ids.has(fi.item.id)) appended.push(fi);
-            }
-            const next = new Map(prev);
-            next.set(feedId, {
-              items: appended,
-              nextCursor: page.nextCursor,
-              loading: false,
-              done: page.nextCursor === null,
-              reqId,
-            });
-            return next;
-          });
-        });
-        if (!committed) return;
-        // Extend the sticky display window with the appended ids so they
-        // survive a refetch — and so that pinning one of them (which moves
-        // the row into the base window in the next fetch) doesn't shrink
-        // the section: the now-base id is already in the sticky set.
-        setDisplayedByFeed((prev) => {
+        setFeedExtras((prev) => {
           const cur = prev.get(feedId);
-          if (!cur) return prev;
-          const next = new Set(cur);
-          let added = false;
+          // Reset (entry deleted) or superseded (newer reqId) while in flight →
+          // drop this response so it can't reintroduce old-offset rows.
+          if (cur?.reqId !== reqId) return prev;
+          const prevItems = cur.items;
+          const ids = new Set(prevItems.map((fi) => fi.item.id));
+          const appended = [...prevItems];
           for (const fi of page.items) {
-            if (!next.has(fi.item.id)) {
-              next.add(fi.item.id);
-              added = true;
-            }
+            if (!ids.has(fi.item.id)) appended.push(fi);
           }
-          if (!added) return prev;
-          const map = new Map(prev);
-          map.set(feedId, next);
-          return map;
+          const next = new Map(prev);
+          next.set(feedId, {
+            items: appended,
+            nextCursor: page.nextCursor,
+            loading: false,
+            done: page.nextCursor === null,
+            reqId,
+          });
+          return next;
         });
       } catch {
         // Leave the button tappable again on failure (nothing appended), the
@@ -674,150 +498,47 @@ export function ItemList({
         });
       }
     },
-    [fetchFeedPage, perFeedLimit, feedExtras, items, displayedByFeed],
+    [fetchFeedPage, perFeedLimit, feedExtras],
   );
 
-  // Per-id cache of FeedItem objects so a sticky row stays renderable even
-  // when a refetch flushes it out of `items[]` and `feedExtras` (e.g. more
-  // than perFeedLimit newer rows arrived at the top between fetches, so the
-  // returned base page no longer contains any of the previously displayed
-  // ids). Populated below from items[] and feedExtras on every render —
-  // mergedRaw falls back to it for sticky ids that didn't make the cut.
-  // This is what backs the SPEC's promise that the section "stays anchored
-  // on what the reader is already viewing" even under heavy refetches.
-  const rowCacheRef = useRef<Map<ItemId, FeedItem>>(new Map());
-  if (perGroupMore) {
-    for (const fi of items) rowCacheRef.current.set(fi.item.id, fi);
-    for (const ex of feedExtras.values()) {
-      for (const fi of ex.items) rowCacheRef.current.set(fi.item.id, fi);
-    }
-  }
-
-  // The on-demand pages merged into the base river: each feed's base rows that
-  // sit in its sticky display window, then its extras, deduped by id. The
-  // sticky window (`displayedByFeed`) is initialized to the first `perFeedLimit`
-  // base ids per feed on first load and extended by tap-More; everything else
-  // — the (perFeedLimit + 1)th overfetched has-more probe, fresh items the
-  // server slotted in after a Sweep, cross-device drift at the top — stays in
-  // `items` but doesn't render here until the reader explicitly asks for it
-  // (a tap on More or a pull-to-refresh). Sticky ids that are no longer in
-  // items[]/feedExtras (cleared by a heavy refetch) fall back to the row cache,
-  // so the displayed window survives even when no live source carries those
-  // rows anymore. Other code paths read from this merged list so Sweep,
-  // headers, counts and the end-of-list measurement all see exactly the
-  // displayed rows. Identity-stable (=== items) outside the windowed grouped
-  // view, so the flat river and single-feed views are untouched.
+  // The on-demand pages merged into the base river: each feed's first
+  // `perFeedLimit` base rows, then its extras, deduped by id. The grouped read
+  // overfetches one extra row per feed (perFeedLimit + 1) purely as a has-more
+  // probe; that (perFeedLimit + 1)th base row is dropped here so it isn't
+  // rendered (it reappears as the first row of the section's first "More" page).
+  // Other code paths read from this merged list so Sweep, headers, counts and
+  // the end-of-list measurement all see exactly the displayed rows. Identity-
+  // stable (=== items) outside the windowed grouped view, so the flat river and
+  // single-feed views are untouched.
   const mergedRaw = useMemo(() => {
     if (!perGroupMore || perFeedLimit == null) return items;
-    void storeVersion; // re-run on store changes so pinned-at-top stays current.
     const result: FeedItem[] = [];
+    const seen = new Set<ItemId>();
     let i = 0;
     while (i < items.length) {
       const feedId = items[i].item.feedId;
-      const allowed = displayedByFeed.get(feedId);
-      // Walk this feed's items[] run once into an ordered slice + id-keyed
-      // map so the order build below can look up FeedItems without rescanning.
-      const baseRun: FeedItem[] = [];
-      const baseById = new Map<ItemId, FeedItem>();
+      let shown = 0;
       while (i < items.length && items[i].item.feedId === feedId) {
         const fi = items[i];
-        if (!baseById.has(fi.item.id)) {
-          baseById.set(fi.item.id, fi);
-          baseRun.push(fi);
+        if (shown < perFeedLimit && !seen.has(fi.item.id)) {
+          seen.add(fi.item.id);
+          result.push(fi);
+          shown += 1;
         }
         i++;
       }
       const ex = feedExtras.get(feedId);
-      const extrasById = new Map<ItemId, FeedItem>();
       if (ex) {
         for (const fi of ex.items) {
-          if (!extrasById.has(fi.item.id)) extrasById.set(fi.item.id, fi);
+          if (!seen.has(fi.item.id)) {
+            seen.add(fi.item.id);
+            result.push(fi);
+          }
         }
       }
-
-      const feedSection: FeedItem[] = [];
-      const feedSeen = new Set<ItemId>();
-      const push = (fi: FeedItem) => {
-        if (feedSeen.has(fi.item.id)) return;
-        feedSeen.add(fi.item.id);
-        feedSection.push(fi);
-      };
-
-      if (allowed) {
-        // Pinned rows lead the section in items[] order — the server sorts
-        // pinned-first within each feed run (see MockDataSource), so walking
-        // baseRun naturally yields that ordering. Gating on `allowed` here
-        // matters: the base read overfetches one row per feed as a has-more
-        // probe, and a feed with more than perFeedLimit pinned rows would
-        // otherwise leak its probe (the (perFeedLimit+1)th pinned row) into
-        // the displayed section before any More tap. New cross-device /
-        // polled-in pins still wait for More/PTR to surface, the same as
-        // non-pinned new rows do.
-        for (const fi of baseRun) {
-          if (!allowed.has(fi.item.id)) continue;
-          if (ds.stateStore.get(fi.item.id).pinned) push(fi);
-        }
-        // Non-pinned rows render in sticky iteration order — the order the
-        // reader actually opted into. Without this, a heavy refetch that
-        // brings fresh top rows into items[] would render them above the
-        // reader's existing anchored rows (which fell back to the row
-        // cache), visibly shoving the anchor down. Look up each sticky id
-        // from items[] → extras → row cache; if all three miss, drop it
-        // (the row truly is gone for now).
-        //
-        // The cost: a row the server filtered out (cross-device Done/Hide,
-        // item retracted) stays visible until the local state store learns
-        // about the change. That's expected to come through the realtime
-        // state-sync path; once `stateStore.get(id).done` flips, the
-        // `visibleItems` filter drops the row. The (acceptable) window of
-        // staleness here is bounded by sync latency, not "until PTR".
-        for (const id of allowed) {
-          if (feedSeen.has(id)) continue;
-          const fi =
-            baseById.get(id) ?? extrasById.get(id) ?? rowCacheRef.current.get(id);
-          if (fi) push(fi);
-        }
-      } else {
-        // No sticky entry yet (init effect hasn't run on the first paint) —
-        // fall back to the "first perFeedLimit base rows" rule so the
-        // section isn't blank. The server already sorts pinned rows to the
-        // top of each feed run, so this naturally yields pin-first ordering
-        // without a separate pinned pass. The init effect lands shortly
-        // after and `allowed` takes over.
-        let shown = 0;
-        for (const fi of baseRun) {
-          if (feedSeen.has(fi.item.id)) continue;
-          if (shown >= perFeedLimit) break;
-          push(fi);
-          shown += 1;
-        }
-      }
-
-      // Any extras the section hasn't surfaced yet (a More that committed
-      // before the sticky-extension update raced through, defensive): append
-      // them after the sticky-ordered tail in extras order. With normal flow
-      // (handleFeedMore commits extras and the sticky extension under
-      // flushSync), the loop is a no-op.
-      if (ex) {
-        for (const fi of ex.items) {
-          if (!feedSeen.has(fi.item.id)) push(fi);
-        }
-      }
-
-      for (const fi of feedSection) result.push(fi);
     }
-    // No trailing fallback for feeds entirely absent from `items[]`. If the
-    // server returns zero rows for a feed it could be a heavy-refetch
-    // boundary (the feed has rows past the page), OR it could be that
-    // cross-device Done/Hide cleared every displayed row from that feed's
-    // scope (the local state store hasn't learned the remote flags so
-    // visibleItems wouldn't drop the cached rows). We can't tell the two
-    // apart from the server response, and resurrecting from cache in the
-    // latter case bypasses self-healing — so the safe default is to let
-    // the section collapse to the empty/phantom state and require a fresh
-    // tap or PTR to reconcile.
     return result;
-  }, [perGroupMore, perFeedLimit, items, feedExtras, displayedByFeed, ds, storeVersion]);
+  }, [perGroupMore, perFeedLimit, items, feedExtras]);
 
   const visibleItems = mergedRaw.filter((fi) => {
     const st = ds.stateStore.get(fi.item.id);
@@ -837,108 +558,25 @@ export function ItemList({
     for (const fi of items) m.set(fi.item.feedId, (m.get(fi.item.feedId) ?? 0) + 1);
     return m;
   }, [perGroupMore, items]);
-  // Per-feed: does the base window contain at least one id the sticky set
-  // hasn't seen yet? This catches the case where Sweep (or cross-device drift)
-  // has the server returning the next `≤ perFeedLimit` non-Done rows: with the
-  // probe-row signal alone, a feed whose remaining unread is exactly the
-  // window would have no More even though every row in `items` is hidden by
-  // the sticky gate. Tracking unseen-in-window keeps More reachable.
-  const hasUnseenInBaseWindow = useMemo(() => {
-    const s = new Set<FeedId>();
-    if (!perGroupMore || perFeedLimit == null) return s;
-    let i = 0;
-    while (i < items.length) {
-      const feedId = items[i].item.feedId;
-      const allowed = displayedByFeed.get(feedId);
-      let pos = 0;
-      while (i < items.length && items[i].item.feedId === feedId) {
-        if (pos < perFeedLimit && allowed && !allowed.has(items[i].item.id)) {
-          s.add(feedId);
-        }
-        pos += 1;
-        i += 1;
-      }
-    }
-    return s;
-  }, [perGroupMore, perFeedLimit, items, displayedByFeed]);
   const feedsWithMore = useMemo(() => {
     if (!perGroupMore || perFeedLimit == null) return undefined;
     const s = new Set<FeedId>();
     for (const [feedId, count] of baseRawCountByFeed) {
       const ex = feedExtras.get(feedId);
-      // Re-enable More for an exhausted feed (`ex.done`) when the base window
-      // has unseen rows — typically a polled-in or cross-device-promoted item
-      // arriving after the user paginated all the way through. Without this
-      // there's no path to reveal the new content short of pull-to-refresh.
       if (ex) {
-        if (!ex.done || hasUnseenInBaseWindow.has(feedId)) s.add(feedId);
-      } else if (count > perFeedLimit || hasUnseenInBaseWindow.has(feedId)) {
+        if (!ex.done) s.add(feedId);
+      } else if (count > perFeedLimit) {
         s.add(feedId);
       }
     }
     return s;
-  }, [perGroupMore, perFeedLimit, baseRawCountByFeed, feedExtras, hasUnseenInBaseWindow]);
-  // Canonical feed rank from the full base read — used by ItemRows to
-  // interleave phantom sections at their proper ordinal position so a swept
-  // middle feed doesn't shift to the end of the rendered list.
-  const feedRank = useMemo(() => {
-    if (!groupByFeed) return undefined;
-    const m = new Map<FeedId, number>();
-    let rank = 0;
-    for (const fi of items) {
-      if (!m.has(fi.item.feedId)) {
-        m.set(fi.item.feedId, rank);
-        rank += 1;
-      }
-    }
-    return m;
-  }, [groupByFeed, items]);
-
-  // Feeds in `feedsWithMore` that ended up with zero visible rows — the
-  // section the reader just swept where nothing pinned remained, so the
-  // sticky display set is all-Done and the new top rows the refetch brought
-  // in are blocked. Without a phantom header + "More" here the whole section
-  // (and on a single-feed home/folder, the page) collapses to the empty state
-  // and the reader can't pull the next page short of pull-to-refresh.
-  // Titles come from `items` (the cached page still carries the feed
-  // metadata even when every base row is filtered out of visibleItems).
-  const emptyMoreSections = useMemo(() => {
-    if (!feedsWithMore || feedsWithMore.size === 0) return undefined;
-    const visibleFeedIds = new Set<FeedId>();
-    for (const fi of visibleItems) visibleFeedIds.add(fi.item.feedId);
-    const out: Array<{ feedId: FeedId; title: string }> = [];
-    const titles = new Map<FeedId, string>();
-    for (const fi of items) {
-      if (!titles.has(fi.item.feedId)) titles.set(fi.item.feedId, fi.feed.title);
-    }
-    for (const feedId of feedsWithMore) {
-      if (visibleFeedIds.has(feedId)) continue;
-      const title = titles.get(feedId);
-      if (title === undefined) continue; // feed dropped out of items entirely
-      out.push({ feedId, title });
-    }
-    return out.length > 0 ? out : undefined;
-  }, [feedsWithMore, visibleItems, items]);
-
+  }, [perGroupMore, perFeedLimit, baseRawCountByFeed, feedExtras]);
   const loadingFeeds = useMemo(() => {
     if (!perGroupMore) return undefined;
     const s = new Set<FeedId>();
     for (const [feedId, ex] of feedExtras) if (ex.loading) s.add(feedId);
-    // While the base query is refetching (typically right after a Sweep that
-    // invalidated it), the cached `items[]` is still the pre-Sweep window — so
-    // the first-page cursor `handleFeedMore` computes off it would count the
-    // just-Done rows as seen and send an offset that skips past the freshest
-    // page the refetch is about to expose. Hold EVERY section "More" in a
-    // loading/disabled state until the refetch settles and the cursor calc
-    // runs against fresh `items[]`. This includes both phantom sections (all-
-    // unpinned sweeps) and live sections anchored by a pinned row that
-    // survived the sweep. The brief disable on a no-op background refresh is
-    // an accepted cost — typically a few hundred ms.
-    if (isFetching && feedsWithMore) {
-      for (const feedId of feedsWithMore) s.add(feedId);
-    }
     return s;
-  }, [perGroupMore, feedExtras, isFetching, feedsWithMore]);
+  }, [perGroupMore, feedExtras]);
 
   // Number of list elements actually rendered: one header per feed section plus
   // each non-collapsed row (a collapsed feed shows only its header). When not
@@ -1269,36 +907,7 @@ export function ItemList({
     <div className="item-list">
       <ListToolbar collapse={collapseControls} />
 
-      <PullToRefresh
-        onRefresh={async () => {
-          await ds.refresh();
-          // React Query's `refetch()` resolves with the new result rather
-          // than throwing on error, so a failed refresh would otherwise
-          // proceed to clear sticky/extras against the stale cached page —
-          // collapsing an expanded section back to its initial window
-          // without any fresh data to anchor it. Gate the reset on a
-          // successful result so a failed PTR is a no-op (the strip's own
-          // error UI surfaces the failure to the user).
-          const res = await refetch();
-          if (res.isError || res.error) {
-            await checkForServiceWorkerUpdate();
-            return;
-          }
-          // Drop the sticky display window AFTER the fresh page lands in the
-          // query cache, so the next render sees the new `items[]` and the
-          // sticky-init effect repopulates the per-feed sets from the fresh
-          // top rows. Clearing it before `refetch()` resolves would let one
-          // render commit against the stale page and re-anchor the sticky
-          // sets to the rows we're trying to refresh away from — the init
-          // effect's `cur.has(feedId)` guard would then keep the section
-          // anchored on the stale ids even after the fresh data arrived.
-          // Section extras reset too so we don't re-merge an old offset
-          // against the new base window.
-          setDisplayedByFeed(new Map());
-          setFeedExtras(new Map());
-          await checkForServiceWorkerUpdate();
-        }}
-      >
+      <PullToRefresh onRefresh={async () => { await ds.refresh(); await refetch(); await checkForServiceWorkerUpdate(); }}>
         {showMissState ? (
           // Copy is a function of BOTH the connectivity status and the actual
           // read error — not status alone. A reachable read that errored is a
@@ -1336,12 +945,7 @@ export function ItemList({
               // empty label off an unconfirmed cache. An empty result isn't
               // trustworthy as "all caught up" until the in-flight read that
               // could populate it (or fail and surface the miss-state) settles.
-              isLoading={
-                isLoading ||
-                (isFetching &&
-                  visibleItems.length === 0 &&
-                  !(emptyMoreSections && emptyMoreSections.length > 0))
-              }
+              isLoading={isLoading || (isFetching && visibleItems.length === 0)}
               skeletonCount={6}
               enableSwipe
               listRef={listRef}
@@ -1359,8 +963,6 @@ export function ItemList({
               feedsWithMore={perGroupMore ? feedsWithMore : undefined}
               loadingFeeds={perGroupMore ? loadingFeeds : undefined}
               onFeedMore={perGroupMore ? handleFeedMore : undefined}
-              emptyMoreSections={perGroupMore ? emptyMoreSections : undefined}
-              feedRank={perGroupMore ? feedRank : undefined}
               emptyLabel={emptyLabel ?? 'Nothing here yet.'}
             />
           </div>

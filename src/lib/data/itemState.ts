@@ -217,19 +217,7 @@ export class ItemStateStore {
         // expired and reappeared anyway; don't resurrect them as fresh Done.
         // Also clear hidden/hiddenAt so "Unmark done" / "Forget all" on the
         // Done page leaves the item fully visible again rather than re-hiding it.
-        // Preserve the row's existing version: this migration is a local
-        // representation change that never wrote the server, so it must NOT
-        // advance the version. applyMutation bumps it +1; keeping that bump would
-        // make `seedConfirmedVersions` seed an inflated optimistic-concurrency
-        // base that the live hydrate's real (lower) server version can't correct
-        // (monotonic merge), 40001-conflicting the next edit. (Cf.
-        // confirmServerVersion for the coalesced-write counterpart.)
-        map[id] = {
-          ...applyMutation(state, 'done', true, now),
-          hidden: false,
-          hiddenAt: null,
-          version: state.version,
-        };
+        map[id] = { ...applyMutation(state, 'done', true, now), hidden: false, hiddenAt: null };
         migrated = true;
       } else {
         map[id] = state;
@@ -317,16 +305,9 @@ export class ItemStateStore {
       const merged = changed ? mergePending(srv, this.map[id], changed, now) : srv;
       // Migrate pre-merge hidden rows that arrive from the server: same logic
       // as the constructor migration so Supabase-hydrated hidden=true/done=false
-      // rows don't stay invisible with /hidden removed. Keep the (server-derived)
-      // version rather than applyMutation's +1, so a migrated row never seeds an
-      // inflated optimistic-concurrency base — see the constructor migration.
+      // rows don't stay invisible with /hidden removed.
       if (merged.hidden && !merged.done && !expired(merged.hiddenAt, now)) {
-        next[id] = {
-          ...applyMutation(merged, 'done', true, now),
-          hidden: false,
-          hiddenAt: null,
-          version: merged.version,
-        };
+        next[id] = { ...applyMutation(merged, 'done', true, now), hidden: false, hiddenAt: null };
       } else {
         next[id] = merged;
       }
@@ -445,27 +426,6 @@ export class ItemStateStore {
     return () => {
       this.listeners.delete(listener);
     };
-  }
-
-  /**
-   * Record the authoritative server `version` for a row after a successful
-   * write, leaving every field value untouched. The store's `version` is
-   * otherwise an optimistic per-mutation counter (`applyMutation` bumps it by
-   * one on every local toggle), so when several local edits coalesce into a
-   * single `set_item_state` write the local version outruns the server's — the
-   * server row only increments once. Left unreconciled, a later cold boot whose
-   * NetworkOnly hydration fails would `seedConfirmedVersions` from that inflated
-   * value and base the next offline edit on a too-high `p_base_version`, which
-   * the RPC rejects as a 40001 conflict and the outbox drops — losing a change
-   * no other device touched. Normalizing the settled row to the confirmed server
-   * version keeps the seed honest. No emit: no field changed, so nothing that
-   * renders item flags needs to re-read; we only persist so the corrected
-   * version survives to the next boot. */
-  confirmServerVersion(id: ItemId, version: number): void {
-    const cur = this.map[id];
-    if (!cur || cur.version === version) return;
-    this.map = { ...this.map, [id]: { ...cur, version } };
-    this.persistence.save(this.map);
   }
 
   /** Notify subscribers without a local state change. Used by the durable outbox

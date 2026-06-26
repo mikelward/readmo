@@ -68,19 +68,6 @@ const ID_LOOKUP_CHUNK = 200;
  * caller-bounded feed count keeps feeds × window well under this. */
 const GROUPED_WINDOW_ROW_CAP = 1000;
 
-/** A throwaway UUID used as a per-request cache-buster on the item_state read
- * (`item_id=not.eq.<uuid>`). Prefers `crypto.randomUUID`; the Math.random
- * fallback is RFC4122-shaped — only uniqueness matters here, not entropy, and a
- * valid-UUID shape keeps it a legal literal for the (uuid) `item_id` column. */
-function cacheBustUuid(): string {
-  const c = globalThis.crypto;
-  if (c?.randomUUID) return c.randomUUID();
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (ch) => {
-    const r = (Math.random() * 16) | 0;
-    return (ch === 'x' ? r : (r & 0x3) | 0x8).toString(16);
-  });
-}
-
 function escapeLike(q: string): string {
   // Treat the user's query literally: escape the LIKE wildcards.
   return q.replace(/[\\%_]/g, (c) => `\\${c}`);
@@ -184,17 +171,6 @@ export class SupabaseDataSource implements DataSource {
   private readonly sb: SupabaseClient;
   private readonly feedCache = new Map<FeedId, Feed>();
   private hydration: Promise<void> | null = null;
-  private resyncing: Promise<void> | null = null;
-  /** A resync was requested while one was already in flight — re-run a fresh one
-   * if the in-flight attempt fails, so a recovery (e.g. an `online` event after
-   * a blip) isn't lost to the coalesce. See resyncState. */
-  private resyncPending = false;
-  /** Serializes item_state hydrations: a new read chains after any in-flight one
-   * so reads run one-at-a-time. The last-applied read is then always the freshest
-   * — its request is sent only after the prior response arrived, so the server
-   * executes it strictly later — without assuming client start order matches the
-   * server's execution order (which HTTP/2 / server queueing can reorder). */
-  private hydrationChain: Promise<void> = Promise.resolve();
   private readonly outbox: ItemStateOutbox;
 
   constructor(stateKey = 'readmo:item-state', client?: SupabaseClient) {
@@ -220,11 +196,6 @@ export class SupabaseDataSource implements DataSource {
         // the write; a 429/5xx hiccup (or a thrown/network error) stays queued
         // and retries, so a short outage can't roll back the user's action.
         const version = (data as ItemStateRow | null)?.version;
-        // Normalize the optimistic store version to the confirmed server version
-        // so a later cold-boot `seedConfirmedVersions` bases offline edits on the
-        // real server version, not an inflated local counter (coalesced edits bump
-        // the local version more than the single server write does).
-        if (!error && version != null) this.stateStore.confirmServerVersion(id, version);
         return { ok: !error, permanent: isPermanentWriteError(error), version };
       },
       localStorageOutboxPersistence(`${stateKey}${OUTBOX_SUFFIX}`),
@@ -251,18 +222,6 @@ export class SupabaseDataSource implements DataSource {
       },
     );
     this.stateStore.setMutationSink((id, changed) => this.outbox.enqueue(id, changed));
-    // Seed the outbox's optimistic-concurrency write bases from the persisted
-    // store's per-row versions. item_state is read NetworkOnly, so an offline
-    // cold boot gets no live hydration to observe versions from; without this
-    // seed, an edit made before the first online read would flush with a null
-    // base ("no check") and could clobber a concurrent change from another
-    // device. The seeded version is this device's last-known server version
-    // (corrected by the next live hydrate), so the edit conflicts/reconciles
-    // instead. Does NOT mark the outbox "fully hydrated" — only a live read
-    // confirms an item is absent (which authorizes base 0).
-    this.outbox.seedConfirmedVersions(
-      this.stateStore.entries().map(([id, s]) => [id, s.version] as const),
-    );
     // Replay anything queued in a prior session now, and again when connectivity
     // returns.
     void this.outbox.flush();
@@ -298,107 +257,43 @@ export class SupabaseDataSource implements DataSource {
     return res.data as T;
   }
 
-  /**
-   * Fetch the caller's item_state rows and overlay them onto the store so
-   * `stateStore.get()` reflects server truth. A live read is authoritative, so
-   * `hydrate` reconciles fully (server rows win, un-synced pending writes
-   * preserved, genuinely-absent rows dropped).
-   *
-   * The read **bypasses the service-worker cache** (NetworkOnly — see
-   * `supabaseItemStatePattern` in vite.config — plus a per-request cache-buster
-   * so an old worker still on the NetworkFirst route can't serve a stale 200
-   * either); it is therefore live or it fails. A live read is authoritative, so
-   * no stale-cache guards are needed.
-   * That's what keeps a focus/online resync from reverting a just-made pin off
-   * an old cached snapshot, AND keeps an offline cold boot from dropping a
-   * resync-adopted row by reconciling against a stale cached boot snapshot:
-   * offline the read simply fails and callers leave the local store on its
-   * last-good (localStorage) state. The outbox's optimistic-concurrency write
-   * bases come from the persisted store instead (constructor
-   * `seedConfirmedVersions`), so an offline edit still conflicts/reconciles on
-   * reconnect rather than flushing a blind no-base write.
-   *
-   * Hydrations are **serialized** (`hydrationChain`): a read doesn't start until
-   * any in-flight one has finished applying. Running them one-at-a-time means the
-   * last to apply is always the freshest — its request is sent only after the
-   * previous response arrived, so the server executes it strictly later. That
-   * avoids assuming the client's start order matches the server's execution order
-   * (HTTP/2 / server-side queueing can reorder concurrent requests), which an
-   * earlier generation-counter approach got wrong: a boot read started first but
-   * executed later could carry a newer cross-device change, yet be dropped
-   * because a resync had already applied.
-   */
-  private runHydration(): Promise<void> {
-    const run = this.hydrationChain.then(
-      () => this.applyHydration(),
-      // A prior hydration's failure must not poison the chain — still run ours.
-      () => this.applyHydration(),
-    );
-    // The chain tracks completion (success or failure) so the next read waits its
-    // turn without inheriting this one's rejection.
-    this.hydrationChain = run.then(
-      () => {},
-      () => {},
-    );
-    return run;
-  }
-
-  /** One serialized hydration: read item_state live and reconcile it into the
-   * store. Only called via {@link runHydration}, so reads never overlap. */
-  private async applyHydration(): Promise<void> {
-    // Snapshot pending writes BEFORE the read: a write that's in flight at boot
-    // (flush + hydration start together) may resolve and clear the outbox while
-    // this select is awaiting, which would otherwise let the just-read pre-write
-    // server row look authoritative and overwrite the optimistic state.
-    const before = this.outbox.pendingChanges();
-    // Append an always-unique `item_id=not.eq.<uuid>` filter (excludes nothing —
-    // no row has that id — so every row is still returned). It makes the request
-    // URL unique per read, which busts any URL-keyed cache. That matters during a
-    // service-worker rollout: a newly-deployed bundle can run for a moment under
-    // the PREVIOUS worker, whose `/rest/v1/` NetworkFirst route (the new
-    // NetworkOnly item_state route doesn't exist until the new worker activates)
-    // could otherwise serve a stale cached 200 that `hydrate` would treat as
-    // authoritative and revert committed local state. A never-seen URL has no
-    // cache entry, so even that old worker goes to network or misses-and-fails —
-    // live-or-fail under any worker version, so the deleted stale-snapshot guards
-    // stay unneeded.
-    const rows = this.unwrap<ItemStateRow[]>(
-      await this.sb.from('item_state').select(ITEM_STATE_COLS).not('item_id', 'eq', cacheBustUuid()),
-    );
-    // Record server versions (monotonic) for the outbox's optimistic-concurrency
-    // base.
-    this.outbox.observeServerVersions(rows.map((r) => [r.item_id, r.version]));
-    // Union with anything pending now, so an enqueue made DURING the select is
-    // preserved too (newer fields win). Either snapshot alone misses one of the
-    // two races; the union covers both.
-    const pending = before;
-    for (const [id, ch] of this.outbox.pendingChanges()) {
-      pending.set(id, { ...pending.get(id), ...ch });
-    }
-    // Overlay un-synced local writes onto server truth (per field) while
-    // clearing genuinely-stale rows.
-    this.stateStore.hydrate(
-      rows.map((r) => [r.item_id, mapItemState(r)] as [ItemId, ItemState]),
-      pending,
-    );
-  }
-
-  /** Memoized hydration, used by every read: once it has succeeded, reads return
-   * the established hydration without re-fetching. A failed attempt clears the
-   * memo (identity-guarded) so the next read retries; a successful background
-   * resync may replace it with a fresher one, and a *failed* resync leaves it
-   * untouched (see `resyncState`) so reads keep using last-good state. */
+  /** Fetch the caller's item_state rows once and overlay them onto the store so
+   * `stateStore.get()` reflects server truth for ordering/filtering. */
   private ensureHydrated(): Promise<void> {
     if (!this.hydration) {
-      const p: Promise<void> = this.runHydration().catch((err) => {
-        // Don't memoize a rejected hydration — a transient/offline/expired-token
-        // failure would otherwise be replayed to every later read forever. Only
-        // clear if THIS attempt is still the memo (a resync may have swapped in a
-        // good one meanwhile), so we never null out a healthy hydration.
-        if (this.hydration === p) this.hydration = null;
+      this.hydration = (async () => {
+        // Snapshot pending writes BEFORE the read: a write that's in flight at
+        // boot (flush + ensureHydrated start together) may resolve and clear the
+        // outbox while this select is awaiting, which would otherwise let the
+        // just-read pre-write server row look authoritative and overwrite the
+        // optimistic state.
+        const before = this.outbox.pendingChanges();
+        const rows = this.unwrap<ItemStateRow[]>(
+          await this.sb.from('item_state').select(ITEM_STATE_COLS),
+        );
+        // Record server versions so a future (not-yet-pending) edit bases its
+        // optimistic-concurrency check on the right version.
+        this.outbox.observeServerVersions(rows.map((r) => [r.item_id, r.version]));
+        // Union with anything pending now, so an enqueue made DURING the select
+        // is preserved too (newer fields win). Either snapshot alone misses one
+        // of the two races; the union covers both.
+        const pending = before;
+        for (const [id, ch] of this.outbox.pendingChanges()) {
+          pending.set(id, { ...pending.get(id), ...ch });
+        }
+        // Overlay un-synced local writes onto server truth (per field) while
+        // clearing genuinely-stale rows.
+        this.stateStore.hydrate(
+          rows.map((r) => [r.item_id, mapItemState(r)] as [ItemId, ItemState]),
+          pending,
+        );
+      })().catch((err) => {
+        // Don't memoize a rejected promise — a transient/offline/expired-token
+        // failure would otherwise be replayed to every later read forever. Clear
+        // it so the next read retries.
+        this.hydration = null;
         throw err;
       });
-      this.hydration = p;
     }
     return this.hydration;
   }
@@ -516,11 +411,7 @@ export class SupabaseDataSource implements DataSource {
     // Ensure item_state is loaded before returning rows: the UI reads per-row
     // pin/opened affordances from the store, and overlayLocalState below consults
     // it, so a page returned before hydration would briefly show default flags.
-    // Best-effort: item_state is read NetworkOnly (live or fail), so when it
-    // fails (offline / backend down) proceed with the last-good localStorage
-    // store rather than failing the whole feed here — the feed_items RPC below is
-    // what surfaces the offline/down miss-state.
-    await this.ensureHydrated().catch(() => {});
+    await this.ensureHydrated();
     const rows = this.unwrap<Array<ItemRow>>(
       await this.sb.rpc('feed_items', {
         ...args,
@@ -709,10 +600,7 @@ export class SupabaseDataSource implements DataSource {
     // Ensure state is hydrated even on the empty-ids path so a direct cold boot
     // into a library route triggers the item_state fetch (which then repopulates
     // the store and re-derives the ids), rather than silently returning empty.
-    // Best-effort: item_state is read NetworkOnly, so offline it fails — fall
-    // back to the last-good localStorage store (the ids already came from it)
-    // rather than failing the whole library read.
-    await this.ensureHydrated().catch(() => {});
+    await this.ensureHydrated();
     if (ids.length === 0) return [];
     const rows = await this.fetchItemRowsByIds(ids);
     const order = new Map(ids.map((id, i) => [id, i]));
@@ -953,71 +841,6 @@ export class SupabaseDataSource implements DataSource {
     // error_count/parked server-side (poll/index.ts). refresh() also drops the
     // stale feedCache so the cleared health is re-read.
     await this.refresh(feedId);
-  }
-
-  // --- sync -----------------------------------------------------------------
-
-  /**
-   * Re-pull server item_state so a pin/favorite/done made on another device
-   * shows up here. Boot hydration is memoized in `this.hydration` and never
-   * re-runs on its own, so without this a backgrounded tab keeps showing the
-   * pins it loaded at boot. The re-pull bypasses the service-worker cache (see
-   * runHydration), so it's live or it fails: a live read fully reconciles the
-   * store with server truth (pending writes preserved); a failed one leaves the
-   * store untouched. The store emits on change → the feed-invalidation hook
-   * refetches and the library pages re-read.
-   *
-   * The memo is swapped to the fresh hydration only on success, so a failed
-   * resync (offline / backend down) leaves last-good state and reads keep
-   * working. Concurrent calls coalesce: a single tab return can fire `focus` AND
-   * `visibilitychange`, and we want one re-pull, not two. We also kick the outbox
-   * so a write stranded while the tab was hidden (online, but no `online` event
-   * fired) gets pushed out — the read side's pending snapshot keeps that
-   * in-flight write safe.
-   */
-  resyncState(): Promise<void> {
-    // Coalesce overlapping calls (a single tab return can fire `focus` AND
-    // `visibilitychange`) — but remember the request, because conditions may
-    // have changed in a way the in-flight attempt won't reflect. Notably an
-    // `online` event can land while a resync started during a connectivity blip
-    // is still in flight and doomed to fail; coalescing into it would lose the
-    // recovery. So if the in-flight attempt fails, we run a fresh one after.
-    if (this.resyncing) {
-      this.resyncPending = true;
-      return this.resyncing;
-    }
-    void this.outbox.flush();
-    const current = (async () => {
-      try {
-        // Swap the memo to the fresh hydration only AFTER it succeeds, so a
-        // failed resync leaves the last-good hydration — and the in-memory store
-        // — intact and reads keep working. The read is NetworkOnly (live or
-        // fail), so a resync never reconciles against a stale cache snapshot.
-        const fresh = this.runHydration();
-        await fresh;
-        this.hydration = fresh;
-      } finally {
-        this.resyncing = null;
-      }
-    })();
-    this.resyncing = current;
-    current.then(
-      // Succeeded — any callers that coalesced got the fresh result; clear the
-      // request so we don't re-pull needlessly.
-      () => {
-        this.resyncPending = false;
-      },
-      // Failed — if another resync was requested while this one ran, run a fresh
-      // one now (e.g. we came back online after a blip). Bounded by real events:
-      // the flag is only set by an incoming call.
-      () => {
-        if (this.resyncPending) {
-          this.resyncPending = false;
-          void this.resyncState().catch(() => {});
-        }
-      },
-    );
-    return current;
   }
 
   // --- OPML -----------------------------------------------------------------

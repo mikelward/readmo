@@ -9,7 +9,6 @@ import { useAuth } from './hooks/useAuth';
 import { useUserCacheScope } from './hooks/useUserCacheScope';
 import { useOfflineCacheLock } from './hooks/useOfflineCacheLock';
 import { useFeedInvalidation } from './hooks/useFeedInvalidation';
-import { useStateSync } from './hooks/useStateSync';
 import { HomePage, FolderPage, FeedPage } from './pages/FeedPages';
 import {
   PinnedPage,
@@ -55,9 +54,6 @@ export default function App() {
   // Invalidate feed caches on any state change, even while the feed list is
   // unmounted (e.g. user marks Done on the reader page then navigates back).
   useFeedInvalidation();
-  // Re-pull item state when the tab regains focus/visibility or comes back
-  // online, so pins/favorites/done changed on another device sync in.
-  useStateSync();
   // Gate rendering across an auth transition: while the previous user's caches
   // are being purged and the app reloads, paint nothing so the next user can't
   // briefly see the previous user's cached content (guardrail #8).
