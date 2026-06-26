@@ -928,10 +928,14 @@ loopback/link-local/private/metadata targets and redirects to them.
        chevron flips); the header stays visible. Per-device and **persisted**
        (`readmo:collapsed-feeds`, a JSON array of collapsed feed ids), so a
        section stays collapsed across reloads and between grouped views. The
-       **top toolbar** gains **Collapse all** / **Expand all** buttons (only while
-       grouping with feeds in view) acting on the feeds currently loaded; each
-       disables when it would be a no-op (all already collapsed / nothing
-       collapsed). A collapsed feed's hidden rows aren't navigable or swept.
+       **top toolbar** gains **Collapse all** / **Expand all** controls (only
+       while grouping with feeds in view) acting on the feeds currently loaded.
+       They are **icon-only** buttons (`unfold_less` / `unfold_more`) with a
+       long-press / hover **tooltip** and an `aria-label` for their names,
+       matching the toolbar's Undo / Sweep icon buttons; each soft-disables
+       (`aria-disabled`, so its tooltip still shows) when it would be a no-op
+       (all already collapsed / nothing collapsed). A collapsed feed's hidden
+       rows aren't navigable or swept.
      - **Per-section More + per-feed window** (group-by-feed only). Each section
        opens showing only its newest **`PER_FEED_WINDOW` (10)** listable rows, so
        a busy feed doesn't dump its whole freshness window into the river. A
@@ -1018,7 +1022,8 @@ loopback/link-local/private/metadata targets and redirects to them.
 
 6. **List toolbar** — sticky below the header: right-aligned **Undo** +
    **Sweep unpinned** (Mark all done). In the **group-by-feed** view it also
-   carries left-aligned **Collapse all** / **Expand all** buttons (see *Feed
+   carries left-aligned **Collapse all** / **Expand all** icon buttons
+   (`unfold_less` / `unfold_more`, with long-press / hover tooltips — see *Feed
    views → Collapse / expand sections*). Sweep marks done only the unpinned rows that
    are **fully visible right now** — not the whole loaded list — so scrolling
    past content and tapping the broom can't dismiss rows off-screen. A row

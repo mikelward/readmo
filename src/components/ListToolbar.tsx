@@ -3,7 +3,7 @@ import { useDataSource } from '../lib/data/context';
 import { useBottomBarPosition } from '../hooks/useReadingPrefs';
 import { useFeedBar } from './FeedBarContext';
 import { TooltipButton } from './TooltipButton';
-import { Sweep, Undo, VerticalAlignTop } from './icons';
+import { Sweep, Undo, UnfoldLess, UnfoldMore, VerticalAlignTop } from './icons';
 import './ListToolbar.css';
 
 function scrollToTop() {
@@ -109,24 +109,28 @@ export function ListToolbar({
         ) : null}
         {collapse ? (
           <div className="list-toolbar__collapse">
-            <button
+            <TooltipButton
               type="button"
-              className="list-toolbar__text-btn"
+              className="list-toolbar__button"
               data-testid="collapse-all-btn"
-              onClick={collapse.allCollapsed ? undefined : collapse.onCollapseAll}
+              onClick={collapse.onCollapseAll}
               disabled={collapse.allCollapsed}
+              tooltip="Collapse all"
+              aria-label="Collapse all"
             >
-              Collapse all
-            </button>
-            <button
+              <UnfoldLess />
+            </TooltipButton>
+            <TooltipButton
               type="button"
-              className="list-toolbar__text-btn"
+              className="list-toolbar__button"
               data-testid="expand-all-btn"
-              onClick={collapse.anyCollapsed ? collapse.onExpandAll : undefined}
+              onClick={collapse.onExpandAll}
               disabled={!collapse.anyCollapsed}
+              tooltip="Expand all"
+              aria-label="Expand all"
             >
-              Expand all
-            </button>
+              <UnfoldMore />
+            </TooltipButton>
           </div>
         ) : null}
         {more ? (
