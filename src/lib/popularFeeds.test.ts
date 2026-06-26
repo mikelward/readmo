@@ -37,15 +37,7 @@ describe('POPULAR_FEEDS', () => {
     expect(byName.get('ABC News (Australia)')).toBe(
       'https://www.abc.net.au/news/feed/45910/rss.xml',
     );
-    expect(byName.get('Herald Sun')).toBe(
-      'https://www.heraldsun.com.au/news/breaking-news/rss',
-    );
-    expect(byName.get('The Daily Telegraph (Sydney)')).toBe(
-      'https://www.dailytelegraph.com.au/news/breaking-news/rss',
-    );
-    expect(byName.get('The Advertiser (Adelaide)')).toBe(
-      'https://www.adelaidenow.com.au/news/breaking-news/rss',
-    );
+    expect(byName.get('SBS News')).toBe('https://www.sbs.com.au/news/feed');
     // Sky News Australia has no native feed; it rides a Google News query feed.
     const sky = byName.get('Sky News Australia');
     expect(sky).toBeDefined();

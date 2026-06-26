@@ -6,9 +6,7 @@ export interface PopularFeed {
 
 export const POPULAR_FEEDS: PopularFeed[] = [
   // News
-  { name: 'AP News', feedUrl: 'https://apnews.com/index.rss', category: 'News' },
   { name: 'BBC News', feedUrl: 'https://feeds.bbci.co.uk/news/rss.xml', category: 'News' },
-  { name: 'Reuters', feedUrl: 'https://feeds.reuters.com/reuters/topNews', category: 'News' },
   { name: 'NPR News', feedUrl: 'https://feeds.npr.org/1001/rss.xml', category: 'News' },
   { name: 'CBS News', feedUrl: 'https://www.cbsnews.com/latest/rss/main', category: 'News' },
   { name: 'ABC News', feedUrl: 'https://feeds.abcnews.com/abcnews/topstories', category: 'News' },
@@ -23,13 +21,11 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   { name: 'Los Angeles Times', feedUrl: 'https://www.latimes.com/rss2.0.xml', category: 'News' },
   { name: 'Axios', feedUrl: 'https://api.axios.com/feed/', category: 'News' },
   { name: 'Vox', feedUrl: 'https://www.vox.com/rss/index.xml', category: 'News' },
-  { name: 'Politico', feedUrl: 'https://www.politico.com/rss/politicopicks.xml', category: 'News' },
   { name: 'The Hill', feedUrl: 'https://thehill.com/news/feed/', category: 'News' },
   { name: 'ProPublica', feedUrl: 'https://feeds.propublica.org/propublica/main', category: 'News' },
   { name: 'NZZ', feedUrl: 'https://www.nzz.ch/recent.rss', category: 'News' },
   { name: 'The Age', feedUrl: 'https://www.theage.com.au/rss/feed.xml', category: 'News' },
   { name: 'Sydney Morning Herald', feedUrl: 'https://www.smh.com.au/rss/feed.xml', category: 'News' },
-  { name: 'The Australian', feedUrl: 'https://www.theaustralian.com.au/feed', category: 'News' },
   // Australia — ABC (public broadcaster), the News Corp metro mastheads, and
   // the Nine/ACM papers. ABC publishes per-section feeds at
   // abc.net.au/news/feed/<id>/rss.xml; "Top Stories" and "Just In" are the two
@@ -38,10 +34,7 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   // redirect rather than direct to skynews.com.au).
   { name: 'ABC News (Australia)', feedUrl: 'https://www.abc.net.au/news/feed/45910/rss.xml', category: 'News' },
   { name: 'ABC News Just In', feedUrl: 'https://www.abc.net.au/news/feed/51120/rss.xml', category: 'News' },
-  { name: 'Herald Sun', feedUrl: 'https://www.heraldsun.com.au/news/breaking-news/rss', category: 'News' },
-  { name: 'The Daily Telegraph (Sydney)', feedUrl: 'https://www.dailytelegraph.com.au/news/breaking-news/rss', category: 'News' },
   { name: 'The Courier-Mail', feedUrl: 'https://www.couriermail.com.au/rss', category: 'News' },
-  { name: 'The Advertiser (Adelaide)', feedUrl: 'https://www.adelaidenow.com.au/news/breaking-news/rss', category: 'News' },
   { name: 'PerthNow', feedUrl: 'https://www.perthnow.com.au/news/feed', category: 'News' },
   { name: 'Brisbane Times', feedUrl: 'https://www.brisbanetimes.com.au/rss/feed.xml', category: 'News' },
   { name: 'WAtoday', feedUrl: 'https://www.watoday.com.au/rss/feed.xml', category: 'News' },
@@ -50,10 +43,8 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   { name: 'The Conversation (Australia)', feedUrl: 'https://theconversation.com/au/articles.atom', category: 'News' },
   { name: 'Sky News Australia', feedUrl: 'https://news.google.com/rss/search?q=site:skynews.com.au+when:7d&hl=en-AU&gl=AU&ceid=AU:en', category: 'News' },
   { name: 'The Globe and Mail', feedUrl: 'https://www.theglobeandmail.com/arc/outboundfeeds/rss/', category: 'News' },
-  { name: 'USA Today', feedUrl: 'https://rssfeeds.usatoday.com/usatoday-NewsTopStories', category: 'News' },
   { name: 'HuffPost', feedUrl: 'https://www.huffpost.com/section/front-page/feed', category: 'News' },
   { name: 'Fox News', feedUrl: 'https://moxie.foxnews.com/google-publisher/latest.xml', category: 'News' },
-  { name: 'The Boston Globe', feedUrl: 'https://www.bostonglobe.com/rss/bdc/breaking', category: 'News' },
 
   // Opinion & Analysis
   { name: 'The Atlantic', feedUrl: 'https://www.theatlantic.com/feed/all/', category: 'Opinion & Analysis' },
@@ -79,7 +70,6 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   { name: 'MacRumors', feedUrl: 'https://feeds.macrumors.com/MacRumors', category: 'Technology' },
   { name: 'Slashdot', feedUrl: 'https://rss.slashdot.org/Slashdot/slashdot', category: 'Technology' },
   { name: 'Tom\'s Hardware', feedUrl: 'https://www.tomshardware.com/feeds/all', category: 'Technology' },
-  { name: 'AnandTech', feedUrl: 'https://www.anandtech.com/rss/', category: 'Technology' },
   { name: 'GSMArena', feedUrl: 'https://www.gsmarena.com/rss-news-reviews.php3', category: 'Technology' },
   { name: 'Android Authority', feedUrl: 'https://www.androidauthority.com/feed/', category: 'Technology' },
   { name: 'Android Police', feedUrl: 'https://www.androidpolice.com/feed/', category: 'Technology' },
@@ -105,7 +95,6 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   { name: 'The Old New Thing', feedUrl: 'https://devblogs.microsoft.com/oldnewthing/feed', category: 'Programming' },
 
   // AI
-  { name: 'Anthropic News', feedUrl: 'https://www.anthropic.com/news/rss.xml', category: 'AI' },
   { name: 'OpenAI News', feedUrl: 'https://openai.com/news/rss.xml', category: 'AI' },
   { name: 'Google DeepMind', feedUrl: 'https://deepmind.google/blog/rss.xml', category: 'AI' },
 
@@ -125,11 +114,8 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   // Business & Finance
   { name: 'Wall Street Journal', feedUrl: 'https://feeds.a.dj.com/rss/RSSWorldNews.xml', category: 'Business & Finance' },
   { name: 'Bloomberg Markets', feedUrl: 'https://feeds.bloomberg.com/markets/news.rss', category: 'Business & Finance' },
-  { name: 'Financial Times', feedUrl: 'https://www.ft.com/rss/home/us', category: 'Business & Finance' },
-  { name: 'Forbes', feedUrl: 'https://www.forbes.com/real-time/feed2/', category: 'Business & Finance' },
   { name: 'MarketWatch', feedUrl: 'https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines', category: 'Business & Finance' },
   { name: 'Business Insider', feedUrl: 'https://www.businessinsider.com/rss', category: 'Business & Finance' },
-  { name: 'Money Saving Expert', feedUrl: 'https://www.moneysavingexpert.com/feed/', category: 'Business & Finance' },
 
   // Travel
   { name: 'Conde Nast Traveler', feedUrl: 'https://www.cntraveler.com/feed/rss', category: 'Travel' },
@@ -145,16 +131,13 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   { name: 'Fast Company', feedUrl: 'https://www.fastcompany.com/latest/rss', category: 'Business & Finance' },
 
   // Sports
-  { name: 'ESPN', feedUrl: 'https://www.espn.com/espn/rss/news', category: 'Sports' },
   { name: 'BBC Sport', feedUrl: 'https://feeds.bbci.co.uk/sport/rss.xml', category: 'Sports' },
-  { name: 'The Athletic', feedUrl: 'https://theathletic.com/rss/', category: 'Sports' },
 
   // Culture & Entertainment
   { name: 'Pitchfork', feedUrl: 'https://pitchfork.com/rss/news/', category: 'Culture' },
   { name: 'Rolling Stone', feedUrl: 'https://www.rollingstone.com/feed/', category: 'Culture' },
   { name: 'Variety', feedUrl: 'https://variety.com/feed/', category: 'Culture' },
   { name: 'The A.V. Club', feedUrl: 'https://www.avclub.com/rss', category: 'Culture' },
-  { name: 'Vulture', feedUrl: 'https://www.vulture.com/rss/all.xml', category: 'Culture' },
   { name: 'Consequence of Sound', feedUrl: 'https://consequenceofsound.net/feed/', category: 'Culture' },
 
   // YouTube
@@ -181,7 +164,6 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   // Podcasts / Newsletters
   { name: 'Wait But Why', feedUrl: 'https://waitbutwhy.com/feed', category: 'Newsletters' },
   { name: 'Stratechery', feedUrl: 'https://stratechery.com/feed/', category: 'Newsletters' },
-  { name: 'Gates Notes', feedUrl: 'https://www.gatesnotes.com/rss', category: 'Newsletters' },
 
   // Fun
   { name: 'xkcd', feedUrl: 'https://xkcd.com/rss.xml', category: 'Fun' },

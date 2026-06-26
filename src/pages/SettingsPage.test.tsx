@@ -160,9 +160,9 @@ describe('SettingsPage — popular feed autocomplete', () => {
   it('shows matching suggestions as the user types', async () => {
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
-    await user.type(screen.getByLabelText('Feed URL'), 'ap news');
+    await user.type(screen.getByLabelText('Feed URL'), 'bbc news');
     expect(await screen.findByRole('listbox')).toBeTruthy();
-    expect(screen.getByText('AP News')).toBeTruthy();
+    expect(screen.getByText('BBC News')).toBeTruthy();
   });
 
   it('shows no suggestions for empty input', async () => {
@@ -174,11 +174,11 @@ describe('SettingsPage — popular feed autocomplete', () => {
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
     const input = screen.getByLabelText('Feed URL') as HTMLInputElement;
-    await user.type(input, 'ap news');
-    const suggestion = await screen.findByText('AP News');
+    await user.type(input, 'bbc news');
+    const suggestion = await screen.findByText('BBC News');
     await user.click(suggestion);
-    const apFeed = POPULAR_FEEDS.find((f) => f.name === 'AP News')!;
-    expect(input.value).toBe(apFeed.feedUrl);
+    const bbcFeed = POPULAR_FEEDS.find((f) => f.name === 'BBC News')!;
+    expect(input.value).toBe(bbcFeed.feedUrl);
     expect(screen.queryByRole('listbox')).toBeNull();
   });
 
@@ -186,12 +186,12 @@ describe('SettingsPage — popular feed autocomplete', () => {
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
     const input = screen.getByLabelText('Feed URL') as HTMLInputElement;
-    await user.type(input, 'ap news');
+    await user.type(input, 'bbc news');
     await screen.findByRole('listbox');
     await user.keyboard('{ArrowDown}{Enter}');
     // After Enter, the input should have the first suggestion's feedUrl.
-    const apFeed = POPULAR_FEEDS.find((f) => f.name === 'AP News')!;
-    expect(input.value).toBe(apFeed.feedUrl);
+    const bbcFeed = POPULAR_FEEDS.find((f) => f.name === 'BBC News')!;
+    expect(input.value).toBe(bbcFeed.feedUrl);
   });
 
   it('subscribes directly without calling discover when a suggestion is selected', async () => {
@@ -200,8 +200,8 @@ describe('SettingsPage — popular feed autocomplete', () => {
     const discoverSpy = vi.spyOn(source, 'discover');
     renderWithProviders(<SettingsPage />, { source });
     const input = screen.getByLabelText('Feed URL') as HTMLInputElement;
-    await user.type(input, 'ap news');
-    await user.click(await screen.findByText('AP News'));
+    await user.type(input, 'bbc news');
+    await user.click(await screen.findByText('BBC News'));
     await user.click(screen.getByRole('button', { name: /^Add$/ }));
     await screen.findByText(/^Subscribed to /);
     expect(discoverSpy).not.toHaveBeenCalled();
@@ -212,14 +212,14 @@ describe('SettingsPage — popular feed autocomplete', () => {
     const source = new RefreshFailSource(`test-${Math.random()}`);
     renderWithProviders(<SettingsPage />, { source });
     const input = screen.getByLabelText('Feed URL') as HTMLInputElement;
-    await user.type(input, 'ap news');
-    await user.click(await screen.findByText('AP News'));
+    await user.type(input, 'bbc news');
+    await user.click(await screen.findByText('BBC News'));
     await user.click(screen.getByRole('button', { name: /^Add$/ }));
     // Toast should use the known name, not "Untitled feed".
-    await screen.findByText(/^Subscribed to AP News/);
+    await screen.findByText(/^Subscribed to BBC News/);
     // Subscription list should show the curated name, not "Untitled feed".
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Actions for AP News' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Actions for BBC News' })).toBeTruthy();
     });
   });
 
@@ -256,11 +256,11 @@ describe('SettingsPage — popular feed autocomplete', () => {
     // again must not overwrite a per-row rename the user applied earlier.
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
-    // Pre-subscribe to AP News (bypasses the curated-name pin so the existing
+    // Pre-subscribe to BBC News (bypasses the curated-name pin so the existing
     // row has a null override at the start of the test, matching the case the
     // bug report describes).
-    const apFeed = POPULAR_FEEDS.find((f) => f.name === 'AP News')!;
-    const created = await source.subscribe(apFeed.feedUrl);
+    const bbcFeed = POPULAR_FEEDS.find((f) => f.name === 'BBC News')!;
+    const created = await source.subscribe(bbcFeed.feedUrl);
     await source.setTitleOverride(created.id, 'My News');
     renderWithProviders(<SettingsPage />, { source });
 
@@ -269,11 +269,11 @@ describe('SettingsPage — popular feed autocomplete', () => {
     // Re-add via the curated suggestion. subscribe() returns the existing
     // feed; the override must NOT be touched.
     const input = screen.getByLabelText('Feed URL') as HTMLInputElement;
-    await user.type(input, 'ap news');
+    await user.type(input, 'bbc news');
     const listbox = await screen.findByRole('listbox');
-    await user.click(within(listbox).getByText('AP News'));
+    await user.click(within(listbox).getByText('BBC News'));
     await user.click(screen.getByRole('button', { name: /^Add$/ }));
-    await screen.findByText(/^Subscribed to AP News/);
+    await screen.findByText(/^Subscribed to BBC News/);
 
     expect(setSpy).not.toHaveBeenCalled();
     const after = (await source.getSubscriptions()).find(
@@ -285,7 +285,7 @@ describe('SettingsPage — popular feed autocomplete', () => {
   it('closes the dropdown on Escape', async () => {
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
-    await user.type(screen.getByLabelText('Feed URL'), 'ap news');
+    await user.type(screen.getByLabelText('Feed URL'), 'bbc news');
     await screen.findByRole('listbox');
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('listbox')).toBeNull();
@@ -567,8 +567,8 @@ describe('SettingsPage — Add a feed', () => {
     // Select a curated suggestion and add it; subscribe resolves with a
     // fallback title, so onSuccess awaits the (gated) setTitleOverride.
     const input = screen.getByLabelText('Feed URL') as HTMLInputElement;
-    await user.type(input, 'ap news');
-    await user.click(await screen.findByText('AP News'));
+    await user.type(input, 'bbc news');
+    await user.click(await screen.findByText('BBC News'));
     await user.click(screen.getByRole('button', { name: /^Add$/ }));
 
     // While the title override is pending, the user starts the next URL.
