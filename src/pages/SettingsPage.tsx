@@ -765,10 +765,6 @@ export function SettingsPage() {
 
       <section className="settings__section">
         <h2 className="settings__heading">Font</h2>
-        <p className="settings__hint">
-          Self-hosted so the app reads the same on every device, instead of
-          relying on whatever fonts your OS happens to have.
-        </p>
         <div className="settings__theme" role="radiogroup" aria-label="Font">
           {fonts.map((f) => (
             <button

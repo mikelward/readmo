@@ -76,6 +76,13 @@ guardrails — read them before opening a PR.
     PR description and your end-of-turn summary. See *Deploying & client/server
     compatibility* below.
 
+12. **Ask before adding wordy in-product copy.** Settings options, controls,
+    and labels should speak for themselves. Don't ship "this is self-hosted
+    so…", "we do this because…", or any other explanatory blurb/hint/aside
+    next to a control without asking first — the control's label is the copy.
+    If a control genuinely needs context, propose the wording and wait for a
+    yes before merging it.
+
 ## Project layout
 
 ```
