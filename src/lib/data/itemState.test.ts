@@ -408,6 +408,71 @@ describe('ItemStateStore', () => {
       expect(store.get('a').pinned).toBe(true);
     });
 
+    it('keeps the local row for a stale-read id (server row predates a confirmed write)', () => {
+      const store = new ItemStateStore(memoryPersistence());
+      store.set('a', 'pinned', true); // a since-confirmed pin
+      // The caller (SupabaseDataSource) determined this server row is older than
+      // the confirmed version, so 'a' is a stale id → keep local, don't revert.
+      store.hydrate(
+        [['a', srv({ pinned: false, version: 4 })]],
+        new Map(),
+        NOW,
+        new Set(['a']),
+      );
+      expect(store.get('a').pinned).toBe(true);
+    });
+
+    it('adopts the server row for a non-stale id even when local version outran (rejected write rollback)', () => {
+      const store = new ItemStateStore(memoryPersistence());
+      store.set('a', 'pinned', true);
+      store.set('a', 'pinned', false); // coalesced optimistic edits → local version 2
+      expect(store.get('a').version).toBe(2);
+      // The write was rejected, so 'a' is NOT a stale id (its confirmed version
+      // never advanced). The rollback read at server version 1 must win — the
+      // local optimistic version outrunning the server must NOT protect it.
+      store.hydrate(
+        [['a', srv({ pinned: true, version: 1 })]],
+        new Map(),
+        NOW,
+        new Set(),
+      );
+      expect(store.get('a').pinned).toBe(true); // reconciled to server truth
+      expect(store.get('a').version).toBe(1);
+    });
+
+    it('keeps a local row the read OMITS when it is a stale-read id (first write to a brand-new item)', () => {
+      const store = new ItemStateStore(memoryPersistence());
+      store.set('a', 'pinned', true); // first write to a brand-new item, just confirmed
+      // The stale resync snapshot omits 'a' entirely (it began before the write),
+      // but the caller marks it stale → keep it instead of dropping it as absent.
+      store.hydrate([], new Map(), NOW, new Set(['a']));
+      expect(store.get('a').pinned).toBe(true);
+    });
+
+    it('still drops a local-only row the read omits when it is NOT stale (genuinely absent)', () => {
+      const store = new ItemStateStore(memoryPersistence());
+      store.set('a', 'pinned', true);
+      store.hydrate([], new Map(), NOW, new Set()); // not pending, not stale → drop
+      expect(store.get('a')).toEqual(DEFAULT_ITEM_STATE);
+    });
+
+    it('keeps a confirmed field on a stale id even when another field is pending', () => {
+      const store = new ItemStateStore(memoryPersistence());
+      store.set('a', 'pinned', true); // confirmed pin (stale id)
+      store.set('a', 'favorite', true); // later edit, still pending
+      // The stale resync returns the pre-pin server row, and 'a' is BOTH pending
+      // (favorite) and stale (pin confirmed after the read began). The stale path
+      // must win so the confirmed pin isn't rebuilt away from the stale snapshot.
+      store.hydrate(
+        [['a', srv({ pinned: false, favorite: false, version: 1 })]],
+        new Map([['a', { favorite: true }]]),
+        NOW,
+        new Set(['a']),
+      );
+      expect(store.get('a').pinned).toBe(true); // confirmed pin kept (not reverted)
+      expect(store.get('a').favorite).toBe(true); // pending favorite kept
+    });
+
     it('adopts an independent server field while keeping the pending one', () => {
       const store = new ItemStateStore(memoryPersistence());
       store.set('a', 'pinned', true); // local pending write: pinned

@@ -337,6 +337,24 @@ describe('ItemStateOutbox', () => {
       await tick();
     });
 
+    it('marks an item confirmed-since only after a successful (not rejected) send', async () => {
+      // The hydrate stale-read guard keys off this: a CONFIRMED write lands in
+      // confirmedSince(epochBeforeIt); a rejected one never does.
+      const epoch0 = h.outbox.writeEpoch();
+      h.outbox.observeServerVersions([['a', 1]]);
+      h.outbox.enqueue('a', { pinned: true });
+      await tick();
+      expect(h.outbox.confirmedSince(epoch0)).toEqual(new Set(['a']));
+
+      // A rejected write does not advance the confirmed epoch.
+      const epoch1 = h.outbox.writeEpoch();
+      h.setResult({ ok: false, permanent: true });
+      h.outbox.observeServerVersions([['b', 1]]);
+      h.outbox.enqueue('b', { pinned: true });
+      await tick();
+      expect(h.outbox.confirmedSince(epoch1)).toEqual(new Set()); // 'b' not confirmed
+    });
+
     it('does not hold a no-base write forever when the hydrate never settles', async () => {
       // The hold relies on the hydrate settling (noteHydrationSettled). If it
       // never does — a NetworkOnly read whose abort never surfaces — the write

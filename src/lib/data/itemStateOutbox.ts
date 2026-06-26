@@ -94,6 +94,14 @@ export class ItemStateOutbox {
   // Last known server version per item, from hydrate observation and successful
   // sends — the base a *fresh* (not-yet-pending) edit will be based on.
   private readonly serverVersion = new Map<ItemId, number>();
+  // Monotonic count of CONFIRMED writes (successful sends), and the epoch each
+  // item was last confirmed at. The hydrate stale-read guard captures the epoch
+  // before a read and asks confirmedSince() which items were confirmed during
+  // it — those must not be reverted/dropped by that read. Only CONFIRMED writes
+  // advance this (a reject never does), and it covers items the read omits
+  // entirely — what a per-returned-row version check can't.
+  private writeEpochCounter = 0;
+  private readonly confirmedEpoch = new Map<ItemId, number>();
   // Whether a full server hydrate has been observed. Until then we can't tell an
   // item with no known version apart from a genuinely-new one, so we send a null
   // base (no check) rather than assume 0 ("expect no row") and false-conflict an
@@ -249,6 +257,26 @@ export class ItemStateOutbox {
     return null;
   }
 
+  /** Monotonic count of writes this device has CONFIRMED (a successful send the
+   * server acknowledged). The hydrate stale-read guard captures this before a
+   * read and asks `confirmedSince` afterward which rows were confirmed in the
+   * meantime, so a read that began before a write can't revert it. */
+  writeEpoch(): number {
+    return this.writeEpochCounter;
+  }
+
+  /** Ids whose latest CONFIRMED write happened after `epoch` — i.e. a hydrate
+   * read captured at `epoch` predates them and must not overwrite/drop their
+   * local state. Distinct from the optimistic version: a REJECTED write never
+   * confirms, so it never lands here and still reconciles to server truth; and
+   * this covers rows the stale read OMITS entirely (a first write to a brand-new
+   * item), which a per-returned-row version check can't. */
+  confirmedSince(epoch: number): Set<ItemId> {
+    const out = new Set<ItemId>();
+    for (const [id, e] of this.confirmedEpoch) if (e > epoch) out.add(id);
+    return out;
+  }
+
   /** Merged un-synced changed-fields per item — both queued and in-flight
    * writes — so hydrate can overlay exactly the pending fields onto server
    * truth. Queued (newer) values win per field over an in-flight send. */
@@ -361,6 +389,9 @@ export class ItemStateOutbox {
           // Success. Advance the known server version; base the item's next
           // queued edit (if any arrived during the send) on it, else clear it.
           delivered = true;
+          // Stamp the confirm epoch so a hydrate read that started before this
+          // write can't revert it (stale-read guard) — see confirmedSince.
+          this.confirmedEpoch.set(id, ++this.writeEpochCounter);
           if (result.version != null) this.serverVersion.set(id, result.version);
           if (this.queue.has(id) && result.version != null) {
             this.base.set(id, result.version);

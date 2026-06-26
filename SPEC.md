@@ -730,7 +730,20 @@ loopback/link-local/private/metadata targets and redirects to them.
     AND keeps an offline cold boot from dropping a resync-adopted row against a
     stale cached boot snapshot. A live read is authoritative, so `hydrate`
     reconciles fully (server wins, pending writes preserved, genuinely-absent
-    rows dropped). Because "absent ⇒ drop the local flag" only holds when the
+    rows dropped) — EXCEPT a **stale-read guard**: it won't let a read that began
+    before a local write CONFIRMED revert that write. Now that feed/library reads
+    no longer block on hydration, an edit can confirm while a slow hydrate's
+    earlier read is still in flight; that response predates the write (and carries
+    no pending entry), so adopting/dropping its row would revert the just-confirmed
+    change. The outbox stamps a monotonic **confirm epoch** on each successful
+    write; `SupabaseDataSource` captures the epoch before a read and asks
+    `confirmedSince()` afterward which items were confirmed in the meantime, and
+    `hydrate` keeps the local row for those — covering both a row the read returns
+    at an older version AND one it **omits entirely** (a first write to a brand-new
+    item). Keyed off CONFIRMED writes only, NOT the store's optimistic
+    per-mutation counter — so a write the server **rejected** (never confirmed) is
+    not protected and still reconciles to server truth. A genuine cross-device
+    update (no local confirm after the read began) still wins. Because "absent ⇒ drop the local flag" only holds when the
     read sees *every* server row, the read is **paged** (keyset by `item_id`,
     1000-row pages until a short page): PostgREST caps a response at 1000 rows, and
     an account that has acted on more than that many items (every pin / favorite /

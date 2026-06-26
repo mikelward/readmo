@@ -318,6 +318,7 @@ export class ItemStateStore {
     rows: Array<[ItemId, ItemState]>,
     pending: ReadonlyMap<ItemId, ChangedFields> = new Map(),
     now: number = Date.now(),
+    staleIds: ReadonlySet<ItemId> = new Set(),
   ): void {
     const serverIds = new Set(rows.map(([id]) => id));
     const next: Record<ItemId, ItemState> = {};
@@ -325,7 +326,26 @@ export class ItemStateStore {
     // just the pending fields onto server truth.
     for (const [id, srv] of rows) {
       const changed = pending.get(id);
-      const merged = changed ? mergePending(srv, this.map[id], changed, now) : srv;
+      const local = this.map[id];
+      let merged: ItemState;
+      if (staleIds.has(id) && local) {
+        // Stale-read guard, checked BEFORE the pending overlay. The caller
+        // (SupabaseDataSource) marked this id as one whose local write CONFIRMED
+        // after this read began — so the read predates it and NONE of its fields
+        // are trustworthy over local. Keep the local row whole: it already
+        // carries both the confirmed fields AND any still-pending optimistic
+        // edits, so both survive. (Letting the pending branch win here would
+        // rebuild the row from the stale server snapshot and overlay only the
+        // pending fields, reverting a confirmed field that isn't itself pending.)
+        // Marked off CONFIRMED writes only, so a REJECTED write is NOT protected
+        // and still reconciles below; the same set also rescues a row this read
+        // OMITS entirely — see the absent-row loop.
+        merged = local;
+      } else if (changed) {
+        merged = mergePending(srv, local, changed, now);
+      } else {
+        merged = srv;
+      }
       // Migrate pre-merge hidden rows that arrive from the server: same logic
       // as the constructor migration so Supabase-hydrated hidden=true/done=false
       // rows don't stay invisible with /hidden removed. Keep the (server-derived)
@@ -342,9 +362,14 @@ export class ItemStateStore {
         next[id] = merged;
       }
     }
-    // Keep local-only rows only while a write for them is still pending.
+    // Keep a local-only row (absent from this read) when a write for it is still
+    // pending, OR when it's a stale-read id — its write CONFIRMED after this read
+    // began, so the read predates the row and would wrongly drop the just-
+    // confirmed state (a first write to a brand-new item the stale snapshot omits).
     for (const id of Object.keys(this.map)) {
-      if (!serverIds.has(id) && pending.has(id)) next[id] = this.map[id];
+      if (!serverIds.has(id) && (pending.has(id) || staleIds.has(id))) {
+        next[id] = this.map[id];
+      }
     }
     if (sameMap(this.map, next)) return;
     this.map = next;

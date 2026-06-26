@@ -404,6 +404,11 @@ export class SupabaseDataSource implements DataSource {
     // this select is awaiting, which would otherwise let the just-read pre-write
     // server row look authoritative and overwrite the optimistic state.
     const before = this.outbox.pendingChanges();
+    // Capture the outbox's write epoch BEFORE the read so we can tell which items
+    // a local write CONFIRMED while this (possibly slow) read was in flight — a
+    // read that began before such a write must not revert or drop it. See the
+    // stale-read guard below and ItemStateStore.hydrate.
+    const readEpoch = this.outbox.writeEpoch();
     // Append an always-unique `item_id=not.eq.<uuid>` filter (excludes nothing —
     // no row has that id — so every row is still returned). It makes the request
     // URL unique per read, which busts any URL-keyed cache. That matters during a
@@ -442,6 +447,14 @@ export class SupabaseDataSource implements DataSource {
       if (page.length < ITEM_STATE_PAGE) break;
       afterId = page[page.length - 1].item_id;
     }
+    // Stale-read guard: items whose local write CONFIRMED after this read began
+    // (so the read predates them). Adopting/dropping their server state would
+    // revert the just-confirmed change. hydrate keeps the local row for these —
+    // covering both a row the read returns at an OLDER version AND one the read
+    // OMITS entirely (a first write to a brand-new item). Keyed off CONFIRMED
+    // writes only, so a REJECTED write (never confirmed) is not protected and
+    // still reconciles to server truth.
+    const staleIds = this.outbox.confirmedSince(readEpoch);
     // Record server versions (monotonic) for the outbox's optimistic-concurrency
     // base.
     this.outbox.observeServerVersions(rows.map((r) => [r.item_id, r.version]));
@@ -457,6 +470,8 @@ export class SupabaseDataSource implements DataSource {
     this.stateStore.hydrate(
       rows.map((r) => [r.item_id, mapItemState(r)] as [ItemId, ItemState]),
       pending,
+      undefined,
+      staleIds,
     );
     // A live read landed: from now on a feed/library read has server-confirmed
     // last-good state to overlay, so it never needs to BLOCK on a re-pull (even

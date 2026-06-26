@@ -501,6 +501,105 @@ describe('SupabaseDataSource reads', () => {
     }
   });
 
+  it('rolls back a rejected write even though the local optimistic version outran the server', async () => {
+    // P1 regression: the hydrate stale-read guard must key off the CONFIRMED
+    // server version (tracked by the outbox), not the store's optimistic counter.
+    // A rejected edit leaves the local version ahead of the server; the reconcile
+    // re-pull returns the real (lower) server version and must still win — else
+    // the UI keeps showing a write the backend refused.
+    const env = setup();
+    await env.ds.getItemsByIds([]); // boot: i2 pinned at server version 1
+    expect(env.ds.stateStore.get('i2').pinned).toBe(true);
+
+    // set_item_state permanently rejects (conflict / lost visibility).
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'set_item_state') {
+        return Promise.resolve({
+          data: null,
+          error: { code: '42501', message: 'conflict' },
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+
+    // A local edit that diverges from server truth and bumps the optimistic
+    // version past the server's (1). Resolve when the reconcile rolls it back.
+    const rolledBack = new Promise<void>((resolve) => {
+      const unsub = env.ds.stateStore.subscribe(() => {
+        const st = env.ds.stateStore.get('i2');
+        if (st.pinned && !st.done) {
+          unsub();
+          resolve();
+        }
+      });
+    });
+    env.ds.stateStore.set('i2', 'done', true); // clears pinned locally; version → 2
+    expect(env.ds.stateStore.get('i2').version).toBeGreaterThan(1);
+    await rolledBack;
+
+    // Reconciled to server truth (pinned, not done) despite local version > server.
+    expect(env.ds.stateStore.get('i2').done).toBe(false);
+    expect(env.ds.stateStore.get('i2').pinned).toBe(true);
+  });
+
+  it('does not drop a brand-new item’s just-confirmed write that a stale resync read omits', async () => {
+    // P2 #8: a resync read that began before the user's first write to a
+    // brand-new item OMITS that item; if the write confirms before the read
+    // applies, the absent-row drop would revert it. The stale-read guard marks
+    // items confirmed after the read began (even ones the read omits) so hydrate
+    // keeps them.
+    const fake = makeFakeSupabase(seed());
+    const realFrom = fake.client.from.bind(fake.client);
+    let releaseResync: () => void = () => {};
+    let resyncStartedResolve!: () => void;
+    const resyncStarted = new Promise<void>((r) => (resyncStartedResolve = r));
+    let reads = 0;
+    fake.client.from = ((table: string) => {
+      if (table !== 'item_state') return realFrom(table);
+      reads += 1;
+      const snapshot = () => ({
+        data: (fake.store.item_state ?? []).map((r) => ({ ...r })),
+        count: null,
+        error: null,
+      });
+      if (reads === 1) return itemStateReadStub(snapshot) as ReturnType<typeof realFrom>;
+      // Resync read: snapshot now (omits the not-yet-written i6), held open.
+      const held = new Promise((res) => {
+        releaseResync = () => res(snapshot());
+      });
+      resyncStartedResolve();
+      return itemStateReadStub(() => held) as ReturnType<typeof realFrom>;
+    }) as typeof fake.client.from;
+
+    // set_item_state succeeds — a genuinely confirmed write.
+    const realRpc = fake.client.rpc.bind(fake.client);
+    fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'set_item_state') {
+        return Promise.resolve({ data: { version: 1 }, error: null });
+      }
+      return realRpc(name, params);
+    }) as typeof fake.client.rpc;
+
+    const ds = new SupabaseDataSource(
+      'readmo:item-state:test',
+      fake.client as unknown as SupabaseClient,
+    );
+    await ds.getItemsByIds([]); // settle boot hydration (read #1) → hydrated
+
+    const resync = ds.resyncState(); // read #2 captures the read epoch, then parks
+    await resyncStarted;
+
+    // First-ever write to brand-new item i6, confirmed while the resync is parked.
+    ds.stateStore.set('i6', 'pinned', true);
+    await new Promise((r) => setTimeout(r)); // let the set_item_state send confirm
+
+    releaseResync(); // resync read returns its pre-write snapshot (no i6)
+    await resync;
+
+    expect(ds.stateStore.get('i6').pinned).toBe(true); // kept, not dropped as absent
+  });
+
   it('resyncState coalesces concurrent calls into a single re-pull', async () => {
     await env.ds.getItemsByIds([]); // settle the eager boot hydration
     const before = env.fake.selectCount('item_state');
