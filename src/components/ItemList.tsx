@@ -1030,6 +1030,33 @@ export function ItemList({
     hideManyRef.current = ds.stateStore.hideMany.bind(ds.stateStore);
   }, [ds]);
 
+  // The list body's height lock (see the useLayoutEffect near the bottom of the
+  // component). Declared here, above commitSweep, because Sweep has to grab the
+  // height BEFORE it removes any rows — see `lockBodyHeight` below.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const heightLockedRef = useRef(false);
+  // Freeze the body at its current rendered height. Idempotent: a no-op if the
+  // lock is already held (so a sweep landing mid-refresh doesn't re-measure at a
+  // momentarily-shrunken height). The matching release lives in the
+  // isRefreshing-driven layout effect below.
+  //
+  // Sweep must call this *before* hideMany hides its rows. Unlike a pin/dismiss
+  // — which leaves the row in place and only shrinks the document later, during
+  // the sequential page refetch — Sweep drops its rows from `visibleItems`
+  // synchronously, in the very same commit that the feed invalidation flips
+  // `isRefreshing` true. So the layout effect, which measures only on that flip,
+  // would read the already-shrunken height and freeze the document too short,
+  // letting the browser clamp scrollY toward the top (the reported jump, worst
+  // with a whole grouped section swept at once and short collapsed sections).
+  // Measuring here, while the swept rows are still in layout, captures the real
+  // pre-sweep height.
+  const lockBodyHeight = useCallback(() => {
+    const el = bodyRef.current;
+    if (!el || heightLockedRef.current) return;
+    el.style.minHeight = `${el.offsetHeight}px`;
+    heightLockedRef.current = true;
+  }, []);
+
   const commitSweep = useCallback(() => {
     const ids = sweepPendingIdsRef.current;
     if (!ids) return;
@@ -1038,6 +1065,8 @@ export function ItemList({
       window.clearTimeout(sweepFallbackTimerRef.current);
       sweepFallbackTimerRef.current = null;
     }
+    // Capture the height while the swept rows are still on screen, then hide.
+    lockBodyHeight();
     ds.stateStore.hideMany(ids);
     setSweepingIds((prev) => {
       if (prev.size === 0) return prev;
@@ -1046,7 +1075,7 @@ export function ItemList({
       return next;
     });
     beginSweepCooldown();
-  }, [ds, beginSweepCooldown]);
+  }, [ds, beginSweepCooldown, lockBodyHeight]);
 
   // If the list unmounts (route change, etc.) while a sweep is still
   // animating, commit the hide synchronously so the user's tap isn't dropped.
@@ -1089,6 +1118,9 @@ export function ItemList({
         typeof window.matchMedia === 'function' &&
         window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       if (reducedMotion) {
+        // No animation to wait on, so the rows leave immediately — grab the
+        // height first, same as the animated commitSweep path does.
+        lockBodyHeight();
         ds.stateStore.hideMany(batch);
         beginSweepCooldown();
         return;
@@ -1104,7 +1136,7 @@ export function ItemList({
         SWEEP_ANIMATION_MS * 2,
       );
     },
-    [ds, commitSweep, beginSweepCooldown],
+    [ds, commitSweep, beginSweepCooldown, lockBodyHeight],
   );
 
   const handleSweep = useCallback(
@@ -1293,11 +1325,29 @@ export function ItemList({
   // lock is released once the refresh settles, and native scroll anchoring
   // absorbs the small final height delta. `isRefreshing` excludes the
   // next-page fetch (which legitimately grows the list), so paging is unaffected.
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const heightLockedRef = useRef(false);
+  //
+  // This effect both takes the lock (on the isRefreshing→true edge) and releases
+  // it (on isRefreshing→false). Sweep is the exception that can't wait for the
+  // edge: it drops rows synchronously in the same commit the refetch starts, so
+  // it grabs the height itself via lockBodyHeight() (declared above, before
+  // commitSweep) while the rows are still on screen. When that's already
+  // happened, the `!heightLockedRef.current` guard makes the take below a no-op
+  // and this effect just handles the release. (bodyRef / heightLockedRef are
+  // declared above so the sweep path can share them.)
+  //
+  // `showMissState` is a dependency because the body can *unmount* while the
+  // lock is held: a Sweep that empties the list while offline (or after a failed
+  // refetch) flips showMissState, replacing `.item-list__body` with the
+  // load-error panel right after lockBodyHeight() took the lock. The lock died
+  // with that element, so when the body is absent we drop the flag — otherwise a
+  // stale `heightLockedRef === true` would make the next remount's refresh skip
+  // the lock entirely and reintroduce the very jump this guards against.
   useLayoutEffect(() => {
     const el = bodyRef.current;
-    if (!el) return;
+    if (!el) {
+      heightLockedRef.current = false;
+      return;
+    }
     if (isRefreshing && !heightLockedRef.current) {
       el.style.minHeight = `${el.offsetHeight}px`;
       heightLockedRef.current = true;
@@ -1305,7 +1355,26 @@ export function ItemList({
       el.style.minHeight = '';
       heightLockedRef.current = false;
     }
-  }, [isRefreshing]);
+  }, [isRefreshing, showMissState]);
+
+  // Backstop release for the sweep pre-lock. lockBodyHeight() takes the lock
+  // synchronously at sweep time and relies on a background refresh to drive the
+  // release (the layout effect above, on the isRefreshing→false edge). But that
+  // refresh might never start: when the reader is offline and sweeps only PART
+  // of the list, React Query's invalidated refetch is paused (isRefreshing never
+  // flips) and — because rows remain — `showMissState` stays false, so the
+  // layout effect never re-runs. The body would then keep its pre-sweep
+  // min-height forever: a persistent blank tail below the surviving rows. This
+  // post-paint effect lets a held lock go once nothing is actually refreshing,
+  // so the document settles to its natural height. It's a no-op online, where
+  // isRefreshing is held true across the bridging refetch (the layout effect
+  // still owns that release), and re-runs after a sweep via `visibleItems`.
+  useEffect(() => {
+    if (!isRefreshing && heightLockedRef.current && bodyRef.current) {
+      bodyRef.current.style.minHeight = '';
+      heightLockedRef.current = false;
+    }
+  }, [isRefreshing, visibleItems.length]);
 
   return (
     <div className="item-list">
