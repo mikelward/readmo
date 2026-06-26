@@ -860,10 +860,16 @@ loopback/link-local/private/metadata targets and redirects to them.
        (broom), in that left-to-right order to match the top toolbar's
        right-anchored cluster. The **count badge** shows that feed's unread/to-do total (from
        `getFeedUnreadCounts`; capped `99+`, hidden at 0), so a collapsed feed
-       still shows how much it holds. **Sweep this feed** marks done only that
-       feed's **fully-visible, unpinned** rows — the same shielding as the
-       toolbar Sweep (off-screen and pinned rows untouched), scoped to the one
-       feed — and disables when that feed has nothing sweepable on screen.
+       still shows how much it holds. **Sweep this feed** marks done that feed's
+       **whole displayed section** — every unpinned row currently shown for the
+       feed (its sticky window), not just the one or two that happen to be fully
+       in the viewport. (This is a deliberate divergence from the **toolbar
+       Sweep**, which stays viewport-scoped because it acts on every feed at
+       once and must not dismiss sections the reader hasn't scrolled to; a
+       header broom is a single, deliberate "clear this section" tap.) **Pinned
+       rows are still shielded**, a **collapsed** section (no rows shown) has
+       nothing to sweep, and the button disables when the feed has no sweepable
+       row in its displayed section.
        **Undo** is the **same single-level global undo** as the toolbar (restore
        the last hide/swipe/sweep batch); it's enabled whenever there's something
        to undo, so the inline Undo next to a header's broom reverts the sweep you
