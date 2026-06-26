@@ -861,6 +861,112 @@ describe('ItemList', () => {
     });
   });
 
+  it('ignores a second sweep tap while the first is still animating', async () => {
+    // A sweep defers its hide until the slide+fade finishes. Tapping any sweep
+    // button again before that settles must be a no-op: the in-flight batch
+    // owns the animation, and a second (different) batch would clobber the
+    // pending ids — committing the wrong rows and stranding the first batch
+    // mid-animation. Here the second tap targets a *different* feed's broom, so
+    // without the guard its rows would be swept and the first feed's rows would
+    // stay stuck wearing `--sweeping` forever.
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const { container } = renderGrouped(source);
+    await screen.findAllByTestId('item-row');
+
+    const totalBefore = container.querySelectorAll('[data-item-id]').length;
+    const brooms = screen.getAllByTestId('group-sweep');
+    expect(brooms.length).toBeGreaterThanOrEqual(2);
+
+    // Sweep the first feed — its visible rows start the slide+fade.
+    await user.click(brooms[0]);
+    const sweepingRows = Array.from(
+      container.querySelectorAll('.item-list__row--sweeping'),
+    );
+    expect(sweepingRows.length).toBeGreaterThan(0);
+    const firstFeedIds = sweepingRows.map((li) => li.getAttribute('data-item-id'));
+
+    // Second tap, a different feed's broom, before the first sweep settles.
+    await user.click(screen.getAllByTestId('group-sweep')[1]);
+    // The guard dropped it — no extra rows joined the animation.
+    expect(
+      container.querySelectorAll('.item-list__row--sweeping'),
+    ).toHaveLength(sweepingRows.length);
+
+    // Commit the in-flight sweep via a matching animationend on a swept row.
+    act(() => {
+      const ev = new Event('animationend', { bubbles: true }) as AnimationEvent;
+      Object.defineProperty(ev, 'animationName', {
+        value: 'item-list__sweep-out',
+      });
+      sweepingRows[0].dispatchEvent(ev);
+    });
+
+    await waitFor(() => {
+      // Nothing is stranded mid-animation, and exactly the first feed's rows
+      // left — the second feed's rows were never swept.
+      expect(
+        container.querySelectorAll('.item-list__row--sweeping'),
+      ).toHaveLength(0);
+    });
+    for (const id of firstFeedIds) {
+      expect(container.querySelector(`[data-item-id="${id}"]`)).toBeNull();
+    }
+    expect(container.querySelectorAll('[data-item-id]').length).toBe(
+      totalBefore - firstFeedIds.length,
+    );
+  });
+
+  it('ignores a toolbar Sweep that lands right after a per-feed sweep commits', async () => {
+    // Repro: tap a feed section's broom, then tap the toolbar Sweep a beat
+    // later — just after the first sweep's animation commits. In grouped mode
+    // the section refills the instant its rows hide, so without a post-commit
+    // cooldown that second tap immediately clears the freshly-surfaced rows
+    // (and every other feed), reading as "it swept the feed twice". The
+    // cooldown drops the rapid follow-up; the other feeds survive.
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const { container } = renderGrouped(source);
+    await screen.findAllByTestId('item-row');
+
+    const totalBefore = container.querySelectorAll('[data-item-id]').length;
+    const brooms = screen.getAllByTestId('group-sweep');
+    expect(brooms.length).toBeGreaterThanOrEqual(2);
+
+    // Sweep the first feed and let it fully commit via animationend.
+    await user.click(brooms[0]);
+    const sweepingRows = Array.from(
+      container.querySelectorAll('.item-list__row--sweeping'),
+    );
+    const firstFeedIds = sweepingRows.map((li) => li.getAttribute('data-item-id'));
+    act(() => {
+      const ev = new Event('animationend', { bubbles: true }) as AnimationEvent;
+      Object.defineProperty(ev, 'animationName', {
+        value: 'item-list__sweep-out',
+      });
+      sweepingRows[0].dispatchEvent(ev);
+    });
+    await waitFor(() => {
+      expect(
+        container.querySelectorAll('.item-list__row--sweeping'),
+      ).toHaveLength(0);
+    });
+
+    // The toolbar Sweep is enabled (other feeds remain) — tapping it within the
+    // cooldown must be dropped, so nothing else is swept.
+    const toolbarSweep = screen.getByTestId('sweep-btn');
+    expect(toolbarSweep).toBeEnabled();
+    await user.click(toolbarSweep);
+
+    expect(
+      container.querySelectorAll('.item-list__row--sweeping'),
+    ).toHaveLength(0);
+    // Only the first feed's rows are gone; every other feed's rows survived.
+    expect(container.querySelectorAll('[data-item-id]').length).toBe(
+      totalBefore - firstFeedIds.length,
+    );
+  });
+
   it('Sweep commits on animationend (not just the fallback timer)', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);

@@ -51,6 +51,15 @@ let scrollBurstSeq = 0;
 // timer, in case the event is throttled / suppressed by the browser).
 const SWEEP_ANIMATION_MS = 200;
 
+// After a sweep commits, ignore further sweep taps for a short beat. In grouped
+// mode a section refills with the feed's next items the instant the swept rows
+// hide, so a quick second tap (e.g. a feed's broom followed by the toolbar
+// Sweep) would immediately clear the just-surfaced rows — reading as "it swept
+// the feed twice". The cooldown extends the in-flight guard past the commit so
+// a rapid follow-up tap is dropped until the list has settled; a deliberate
+// later sweep (well over half a second on) still goes through.
+const SWEEP_COOLDOWN_MS = 400;
+
 // Cap on how many pages a single "More" tap will auto-fetch past collapsed-only
 // content before stopping (and leaving "More" available again). A collapsed feed
 // with many pages of unread rows would otherwise let one tap pull the whole feed;
@@ -639,6 +648,17 @@ export function ItemList({
     () => new Set(),
   );
   const sweepFallbackTimerRef = useRef<number | null>(null);
+  // Set for SWEEP_COOLDOWN_MS after a sweep commits; a non-null timer means a
+  // sweep just settled and a rapid follow-up tap should be ignored.
+  const sweepCooldownTimerRef = useRef<number | null>(null);
+  const beginSweepCooldown = useCallback(() => {
+    if (sweepCooldownTimerRef.current != null) {
+      window.clearTimeout(sweepCooldownTimerRef.current);
+    }
+    sweepCooldownTimerRef.current = window.setTimeout(() => {
+      sweepCooldownTimerRef.current = null;
+    }, SWEEP_COOLDOWN_MS);
+  }, []);
   // Mirror hideMany into a ref so the unmount cleanup below can commit a
   // pending hide synchronously without re-subscribing the cleanup every
   // render (hideMany identity is the DataSource's, stable in practice but
@@ -663,7 +683,8 @@ export function ItemList({
       for (const id of ids) next.delete(id);
       return next;
     });
-  }, [ds]);
+    beginSweepCooldown();
+  }, [ds, beginSweepCooldown]);
 
   // If the list unmounts (route change, etc.) while a sweep is still
   // animating, commit the hide synchronously so the user's tap isn't dropped.
@@ -678,6 +699,10 @@ export function ItemList({
         window.clearTimeout(sweepFallbackTimerRef.current);
         sweepFallbackTimerRef.current = null;
       }
+      if (sweepCooldownTimerRef.current != null) {
+        window.clearTimeout(sweepCooldownTimerRef.current);
+        sweepCooldownTimerRef.current = null;
+      }
     };
   }, []);
 
@@ -687,9 +712,15 @@ export function ItemList({
   const sweepThese = useCallback(
     (ids: ItemId[]) => {
       if (ids.length === 0) return;
-      // Ignore taps while a sweep is already playing out — the second batch
-      // would be stale (hiddenIds hasn't updated yet).
-      if (sweepPendingIdsRef.current !== null) return;
+      // Ignore taps while a sweep is already playing out (the second batch
+      // would be stale — hiddenIds hasn't updated yet) or while the brief
+      // post-commit cooldown is still active, so a rapid follow-up tap can't
+      // immediately re-sweep a section that just refilled.
+      if (
+        sweepPendingIdsRef.current !== null ||
+        sweepCooldownTimerRef.current !== null
+      )
+        return;
       const batch = ids.slice();
       const reducedMotion =
         typeof window !== 'undefined' &&
@@ -697,6 +728,7 @@ export function ItemList({
         window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       if (reducedMotion) {
         ds.stateStore.hideMany(batch);
+        beginSweepCooldown();
         return;
       }
       sweepPendingIdsRef.current = batch;
@@ -710,7 +742,7 @@ export function ItemList({
         SWEEP_ANIMATION_MS * 2,
       );
     },
-    [ds, commitSweep],
+    [ds, commitSweep, beginSweepCooldown],
   );
 
   const handleSweep = useCallback(
