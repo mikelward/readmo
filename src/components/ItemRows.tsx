@@ -69,6 +69,19 @@ interface Props {
   /** Append that feed's next page inline (tapping a section's foot "More"). When
    * provided, sections in `feedsWithMore` render the button. */
   onFeedMore?: (feedId: FeedId) => void;
+  /** Feeds in `feedsWithMore` that have *no* visible rows — typically the
+   * section the reader just swept where nothing pinned remained. Each entry
+   * here renders a phantom header + "More" so the reader can still pull the
+   * next page (without it the swept section vanishes and More becomes
+   * unreachable until pull-to-refresh). Each row carries the feed title at the
+   * call site to avoid a separate feed-metadata lookup. Title-only headers
+   * have no Sweep/Undo (no rows to act on). */
+  emptyMoreSections?: Array<{ feedId: FeedId; title: string }>;
+  /** Canonical feed order (from the full base read, not just visible items),
+   * used to interleave phantom sections at the right ordinal position so a
+   * swept middle feed's header doesn't shift to the end of the list. Lower
+   * ranks render earlier. Only meaningful alongside `emptyMoreSections`. */
+  feedRank?: Map<FeedId, number>;
   /** Ids currently playing the sweep-out animation — their `<li>` carries the
    * `--sweeping` modifier so it slides + fades together with its peers. The
    * parent commits the hide on the matching `animationend`. */
@@ -101,6 +114,8 @@ export function ItemRows({
   feedsWithMore,
   loadingFeeds,
   onFeedMore,
+  emptyMoreSections,
+  feedRank,
   sweepingIds,
   onAnimationEnd,
 }: Props) {
@@ -116,13 +131,112 @@ export function ItemRows({
     );
   }
 
-  if (items.length === 0) {
+  // Empty state only when there are *also* no phantom More-sections to show.
+  // A grouped view that swept its only unpinned section still needs the
+  // section header + More to stay reachable, even when visibleItems is empty.
+  const phantoms = emptyMoreSections ?? [];
+  if (items.length === 0 && phantoms.length === 0) {
     return (
       <div className="item-list__state">
         <p>{emptyLabel}</p>
       </div>
     );
   }
+
+  const renderPhantom = (feedId: FeedId, title: string) => {
+    const collapsed = collapsedFeeds?.has(feedId) ?? false;
+    const feedMoreLoading = loadingFeeds?.has(feedId) ?? false;
+    return (
+      <Fragment key={`empty-more:${feedId}`}>
+        <li
+          className={
+            'item-list__group-header' +
+            (collapsed ? ' item-list__group-header--collapsed' : '')
+          }
+          data-header-for={`empty-more:${feedId}`}
+        >
+          {onToggleCollapse ? (
+            <button
+              type="button"
+              className="item-list__group-toggle"
+              data-testid="group-toggle"
+              aria-expanded={!collapsed}
+              aria-label={`${title}: ${collapsed ? 'expand' : 'collapse'} feed`}
+              onClick={() => onToggleCollapse(feedId)}
+            >
+              <ChevronRight
+                className="item-list__group-chevron"
+                width={18}
+                height={18}
+              />
+              <span className="item-list__group-label">
+                <span className="item-list__group-title">{title}</span>
+              </span>
+            </button>
+          ) : (
+            <span className="item-list__group-title" aria-hidden="true">
+              {title}
+            </span>
+          )}
+          {onUndo ? (
+            <div className="item-list__group-actions">
+              <TooltipButton
+                type="button"
+                className="item-list__group-action"
+                data-testid="group-undo"
+                onClick={canUndo ? onUndo : undefined}
+                disabled={!canUndo}
+                tooltip={canUndo ? 'Undo' : 'Nothing to undo'}
+                aria-label={canUndo ? 'Undo' : 'Nothing to undo'}
+              >
+                <Undo width={20} height={20} />
+              </TooltipButton>
+            </div>
+          ) : null}
+        </li>
+        {collapsed || !onFeedMore ? null : (
+          <li className="item-list__group-more">
+            <button
+              type="button"
+              className="item-list__group-more-btn"
+              data-testid="group-more"
+              data-feed-more={feedId}
+              onClick={() => onFeedMore(feedId)}
+              disabled={feedMoreLoading}
+              aria-label={
+                feedMoreLoading ? `Loading more ${title} items` : `More from ${title}`
+              }
+            >
+              {feedMoreLoading ? 'Loading…' : 'More'}
+            </button>
+          </li>
+        )}
+      </Fragment>
+    );
+  };
+
+  // Sort phantoms by canonical feed rank so the interleave below emits them
+  // at their proper ordinal position in the grouped view — a swept middle
+  // feed's header stays put instead of shifting to the bottom of the list.
+  const sortedPhantoms = phantoms
+    .slice()
+    .sort(
+      (a, b) =>
+        (feedRank?.get(a.feedId) ?? Number.POSITIVE_INFINITY) -
+        (feedRank?.get(b.feedId) ?? Number.POSITIVE_INFINITY),
+    );
+  let phantomCursor = 0;
+  const phantomsBeforeRank = (rank: number): typeof sortedPhantoms => {
+    const out: typeof sortedPhantoms = [];
+    while (phantomCursor < sortedPhantoms.length) {
+      const p = sortedPhantoms[phantomCursor];
+      const r = feedRank?.get(p.feedId) ?? Number.POSITIVE_INFINITY;
+      if (r >= rank) break;
+      out.push(p);
+      phantomCursor += 1;
+    }
+    return out;
+  };
 
   return (
     <ul className="item-list__rows" ref={listRef} onAnimationEnd={onAnimationEnd}>
@@ -141,8 +255,16 @@ export function ItemRows({
           lastOfFeed &&
           (feedsWithMore?.has(fi.item.feedId) ?? false);
         const feedMoreLoading = loadingFeeds?.has(fi.item.feedId) ?? false;
+        // At each new-feed transition, drain any phantom sections whose
+        // canonical rank precedes the current visible feed's rank, so a
+        // swept middle feed shows up in its proper ordinal slot.
+        const isFirstOfFeed = idx === 0 || items[idx - 1].item.feedId !== fi.item.feedId;
+        const inlinePhantoms = isFirstOfFeed
+          ? phantomsBeforeRank(feedRank?.get(fi.item.feedId) ?? Number.POSITIVE_INFINITY)
+          : [];
         return (
           <Fragment key={fi.item.id}>
+            {inlinePhantoms.map((p) => renderPhantom(p.feedId, p.title))}
             {header !== undefined ? (
               <li
                 className={
@@ -270,6 +392,9 @@ export function ItemRows({
           </Fragment>
         );
       })}
+      {phantomsBeforeRank(Number.POSITIVE_INFINITY).map((p) =>
+        renderPhantom(p.feedId, p.title),
+      )}
     </ul>
   );
 }
