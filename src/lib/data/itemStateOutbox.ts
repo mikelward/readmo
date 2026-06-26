@@ -133,20 +133,6 @@ export class ItemStateOutbox {
     }
   }
 
-  /** Seed last-known server versions from the persisted local store at boot, so
-   * an edit made before the first live hydrate (e.g. while offline, when the
-   * NetworkOnly item_state read fails) still bases on a known version rather
-   * than a blind no-check write. Same monotonic merge as observeServerVersions
-   * but does NOT mark "hydrated": only a real server read confirms an item is
-   * absent, which is what authorizes base 0 for a brand-new edit. */
-  seedConfirmedVersions(rows: Iterable<readonly [ItemId, number]>): void {
-    for (const [id, version] of rows) {
-      if (this.queue.has(id) || this.inFlight.has(id)) continue;
-      const known = this.serverVersion.get(id);
-      if (known == null || version >= known) this.serverVersion.set(id, version);
-    }
-  }
-
   /** Merged un-synced changed-fields per item — both queued and in-flight
    * writes — so hydrate can overlay exactly the pending fields onto server
    * truth. Queued (newer) values win per field over an in-flight send. */
