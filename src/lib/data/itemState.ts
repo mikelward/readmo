@@ -284,6 +284,17 @@ export class ItemStateStore {
     return out;
   }
 
+  /** Whether the store holds any item-state rows at all (cheap — ignores
+   * retention, so an all-expired map still reads as non-empty). Lets a feed/
+   * library read tell "we have last-good state to overlay" from "brand-new
+   * device, nothing to show yet": the former returns rows immediately and lets
+   * hydration refresh in the background; only the latter waits on the first
+   * hydration. */
+  hasEntries(): boolean {
+    for (const _id in this.map) return true;
+    return false;
+  }
+
   /** All non-default, non-expired states keyed by id. */
   entries(now: number = Date.now()): Array<[ItemId, ItemState]> {
     return Object.entries(this.map).map(

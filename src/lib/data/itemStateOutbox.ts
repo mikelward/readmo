@@ -60,6 +60,17 @@ export interface SendResult {
 const RETRY_BASE_MS = 2_000;
 const RETRY_MAX_MS = 60_000;
 
+// Longest a no-base write is HELD waiting for an in-flight hydration to resolve
+// its concurrency base before falling back to an unchecked send. A hydration
+// that merely fails (offline / the 15s supabaseFetch read cap) settles on its
+// own and releases the hold via noteHydrationSettled, so this only bites the
+// pathological case the hold can't otherwise escape: a hydrate that NEVER
+// settles (e.g. a service-worker NetworkOnly read whose abort doesn't surface),
+// which would otherwise strand the write — and the optimistic UI — forever.
+// Sits past the 15s read cap so a normally-failing hydrate gets to resolve a
+// real base first; only a truly-stuck one trips this.
+const HOLD_MAX_MS = 20_000;
+
 export class ItemStateOutbox {
   // Pending merged changes per item, in insertion order (Map preserves it).
   private readonly queue = new Map<ItemId, ChangedFields>();
@@ -88,6 +99,23 @@ export class ItemStateOutbox {
   // base (no check) rather than assume 0 ("expect no row") and false-conflict an
   // edit made on an already-existing item during a cold boot.
   private hydrated = false;
+  // How many item_state hydrations are currently in flight (the data source
+  // brackets each read with noteHydrationStarted/Settled). When > 0, a write
+  // whose concurrency base can't be determined yet is HELD rather than sent with
+  // no base check: the in-flight hydrate is about to resolve the base (the row's
+  // version, or its absence → base 0), so sending unchecked now could clobber a
+  // concurrent cross-device change to a row we haven't learned about. With no
+  // hydrate in flight to wait on (e.g. an offline edit on a brand-new item), the
+  // write still goes out unchecked as before — see resolveBase.
+  private hydrationsInFlight = 0;
+  // Bounded fallback for the hold: a one-shot timer armed while a no-base write
+  // is being held, and the flag it sets. If a hydrate never settles (so
+  // noteHydrationSettled never fires and hydrationsInFlight stays positive), the
+  // timer flips `holdReleased` true so resolveBase stops holding and the write
+  // goes out unchecked rather than being stranded forever. Reset once a hydrate
+  // settles, so a later stall gets its own bounded wait.
+  private holdReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+  private holdReleased = false;
 
   constructor(
     /** Persist `changed` for one item (carrying the base version for the
@@ -122,7 +150,14 @@ export class ItemStateOutbox {
   observeServerVersions(rows: Iterable<readonly [ItemId, number]>): void {
     this.hydrated = true;
     for (const [id, version] of rows) {
-      if (this.queue.has(id) || this.inFlight.has(id)) continue;
+      // Skip an item with a LOCKED base — its base is pinned to the version the
+      // edit was made against, and a successful send (or a conflict reconcile) is
+      // the authority for advancing it. But a queued/in-flight write with NO
+      // locked base (one that was HELD because its base couldn't be determined
+      // before this hydrate) DOES want this version, so its now-unblocked send
+      // uses the right base instead of falsely assuming absence (base 0) and
+      // dropping a legitimate edit as a phantom conflict.
+      if (this.base.has(id)) continue;
       // Monotonic: the server `version` only ever increases, so a lower observed
       // value is a stale read (e.g. a select that began before an in-flight write
       // committed and returned after). Ignoring it stops a stale hydrate from
@@ -145,6 +180,73 @@ export class ItemStateOutbox {
       const known = this.serverVersion.get(id);
       if (known == null || version >= known) this.serverVersion.set(id, version);
     }
+  }
+
+  /** The data source calls this when it begins an item_state hydration, so the
+   * outbox knows a base-resolving read is coming and can HOLD an unresolvable-base
+   * write rather than send it unchecked (see hydrationsInFlight / resolveBase). */
+  noteHydrationStarted(): void {
+    this.hydrationsInFlight += 1;
+  }
+
+  /** Counterpart to noteHydrationStarted — call when the hydration settles
+   * (success OR failure). A settled hydrate has either recorded the held writes'
+   * versions (success) or removed the reason to keep waiting (failure leaves no
+   * read in flight), so re-flush to deliver anything that was held. */
+  noteHydrationSettled(): void {
+    if (this.hydrationsInFlight > 0) this.hydrationsInFlight -= 1;
+    // The hold's reason is (at least partly) gone — a settled hydrate either
+    // resolved held bases (success) or left no read in flight (failure). Once
+    // none are in flight, clear the bounded-fallback so a future stall waits
+    // afresh rather than sending unchecked off a stale release.
+    if (this.hydrationsInFlight === 0) {
+      this.holdReleased = false;
+      if (this.holdReleaseTimer != null) {
+        clearTimeout(this.holdReleaseTimer);
+        this.holdReleaseTimer = null;
+      }
+    }
+    // Re-flush so writes held for a base now go out. If a drain is in progress,
+    // mark it so the current drain re-runs at its end rather than racing it.
+    if (this.draining) this.dirtyDuringDrain = true;
+    else void this.flush();
+  }
+
+  /** Arm the one-shot bounded-hold fallback (idempotent): if a held write isn't
+   * released by a settling hydrate within HOLD_MAX_MS, send it unchecked rather
+   * than strand it on a hydrate that never settles. */
+  private armHoldRelease(): void {
+    if (this.holdReleaseTimer != null || this.holdReleased) return;
+    this.holdReleaseTimer = setTimeout(() => {
+      this.holdReleaseTimer = null;
+      this.holdReleased = true;
+      void this.flush();
+    }, HOLD_MAX_MS);
+    this.holdReleaseTimer.unref?.();
+  }
+
+  /** The optimistic-concurrency base to send a write on, or `undefined` to HOLD
+   * the write until a base can be determined:
+   *  - a base locked when the item first went pending (the version the edit was
+   *    made against), else
+   *  - the last-known server version (observed by a hydrate or a prior send), else
+   *  - 0 ("expect no row") once a live hydrate has CONFIRMED the item is absent
+   *    server-side, else
+   *  - `undefined` (HOLD) while a hydrate is in flight that's about to resolve one
+   *    of the above — sending unchecked now could clobber a concurrent change to a
+   *    row we haven't learned about, and the held write retries when it settles —
+   *    UNLESS the bounded fallback has fired (`holdReleased`), meaning the hydrate
+   *    never settled and we'd otherwise hold forever, else
+   *  - `null` (send with NO check) when there's no hydrate to wait on — an offline
+   *    edit on a brand-new item replays on reconnect, same as before. */
+  private resolveBase(id: ItemId): number | null | undefined {
+    const locked = this.base.get(id);
+    if (locked !== undefined) return locked;
+    const known = this.serverVersion.get(id);
+    if (known !== undefined) return known;
+    if (this.hydrated) return 0;
+    if (this.hydrationsInFlight > 0 && !this.holdReleased) return undefined;
+    return null;
   }
 
   /** Merged un-synced changed-fields per item — both queued and in-flight
@@ -197,6 +299,36 @@ export class ItemStateOutbox {
       for (const id of [...this.queue.keys()]) {
         const changed = this.queue.get(id);
         if (!changed) continue;
+        const baseVersion = this.resolveBase(id);
+        // HOLD a write whose concurrency base can't be determined yet (a hydrate
+        // is in flight that will resolve it). Leave it queued; noteHydrationSettled
+        // re-flushes it once the hydrate lands. This is what stops a write made
+        // on a brand-new row exposed before hydration completed from going out
+        // with no base check and clobbering a concurrent cross-device change.
+        if (baseVersion === undefined) {
+          // Bound the hold: if the hydrate never settles, release it eventually
+          // rather than strand the write (and the optimistic UI) forever.
+          this.armHoldRelease();
+          continue;
+        }
+        // Lock the resolved base for a held write (one enqueued with no base,
+        // resolved here from the hydrate's observed version or confirmed
+        // absence → 0) so it sticks to the version the user actually acted on.
+        // Without this, a transient send failure requeues the entry unlocked, and
+        // a later focus/visibility hydrate observing another device's newer
+        // version would let the retry rebase onto it (observeServerVersions skips
+        // only LOCKED bases) and overwrite that change instead of conflicting.
+        // No-op for an already-locked entry; null (no-check) can't be locked.
+        if (baseVersion !== null && !this.base.has(id)) {
+          this.base.set(id, baseVersion);
+          // Persist the resolved base NOW, before the send. The flush's `finally`
+          // persist runs only after `send()` resolves, so without this a tab that
+          // closes/crashes while the RPC is in flight would leave the entry at
+          // base:null on disk — the next boot would re-hold it for a fresh
+          // hydrate and could rebase it onto a version another device wrote after
+          // the user's action, overwriting instead of conflict/reconcile.
+          this.persist();
+        }
         // Take the entry before sending. A concurrent enqueue during the await
         // re-adds the item with the newer fields, so coalescing never loses the
         // latest action (and we never clear a field that changed mid-flight). The
@@ -204,7 +336,6 @@ export class ItemStateOutbox {
         // until the send resolves.
         this.queue.delete(id);
         this.inFlight.set(id, changed);
-        const baseVersion = this.base.get(id) ?? null;
         let result: SendResult;
         try {
           result = await this.send(id, changed, baseVersion);

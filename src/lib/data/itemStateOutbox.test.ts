@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ItemStateOutbox,
   type ChangedFields,
@@ -238,6 +238,149 @@ describe('ItemStateOutbox', () => {
       expect(h.bases).toEqual([5]);
       expect(h.outbox.pendingIds()).toEqual([]); // rolled back
       expect(h.rejected).toEqual([['a']]);
+    });
+
+    it('holds an unresolvable-base write while a hydrate is in flight, then sends base 0 once it confirms absence', async () => {
+      // The feed/library read no longer blocks on hydration, so a write can be
+      // made on a brand-new row before the hydrate lands. Sending it with no base
+      // check could clobber a concurrent cross-device change — so hold it while a
+      // hydrate is in flight to resolve the base.
+      h.outbox.noteHydrationStarted();
+      h.outbox.enqueue('a', { pinned: true });
+      await tick();
+      expect(h.sent).toEqual([]); // held — no base yet
+      expect(h.outbox.pendingIds()).toEqual(['a']);
+
+      h.outbox.observeServerVersions([]); // hydrate confirms 'a' has no server row
+      h.outbox.noteHydrationSettled();
+      await tick();
+      expect(h.sent).toEqual([['a', { pinned: true }]]);
+      expect(h.bases).toEqual([0]);
+    });
+
+    it('a held write adopts the version a hydrate observes, not base 0', async () => {
+      // If the hydrate finds the row DOES exist server-side (another device
+      // created it since the persisted snapshot), the held write must base on
+      // that version — not 0, which would false-conflict and drop the edit.
+      h.outbox.noteHydrationStarted();
+      h.outbox.enqueue('a', { pinned: true });
+      await tick();
+      expect(h.sent).toEqual([]); // held
+
+      h.outbox.observeServerVersions([['a', 9]]);
+      h.outbox.noteHydrationSettled();
+      await tick();
+      expect(h.bases).toEqual([9]);
+      expect(h.sent).toEqual([['a', { pinned: true }]]);
+    });
+
+    it('locks a held write to its first resolved base so a retry does not rebase onto a newer cross-device version', async () => {
+      // A held write resolves its base from the hydrate (the version the user
+      // acted on). If the send fails transiently and a later hydrate sees another
+      // device move the row forward, the retry must STILL base on the original
+      // version — so it conflicts/reconciles instead of clobbering that change.
+      h.outbox.noteHydrationStarted();
+      h.outbox.enqueue('a', { pinned: true });
+      await tick();
+      expect(h.sent).toEqual([]); // held
+
+      h.setResult({ ok: false }); // the first send will fail transiently
+      h.outbox.observeServerVersions([['a', 5]]); // user acted on v5
+      h.outbox.noteHydrationSettled();
+      await tick();
+      expect(h.bases).toEqual([5]); // sent base 5, transient-failed → requeued
+
+      // A later focus hydrate sees another device moved 'a' to v7.
+      h.outbox.observeServerVersions([['a', 7]]);
+      h.setResult({ ok: true });
+      await h.outbox.flush();
+      // Retry still bases on 5 (locked), not 7 — no silent clobber.
+      expect(h.bases).toEqual([5, 5]);
+    });
+
+    it('persists a held write\'s resolved base before sending, so a crash mid-send replays with the right base', async () => {
+      // The flush only persists in its `finally` (after send resolves), so a held
+      // write's resolved base must be persisted at lock time — otherwise a crash
+      // while the RPC is in flight leaves base:null on disk and the next boot
+      // re-holds + rebases it onto newer truth.
+      let releaseSend: () => void = () => {};
+      const gate = new Promise<void>((r) => (releaseSend = r));
+      const persistence = memPersistence();
+      const sentBases: Array<number | null> = [];
+      const outbox = new ItemStateOutbox(
+        async (_id, _changed, base) => {
+          sentBases.push(base);
+          await gate; // hold the send open (models a crash window mid-RPC)
+          return { ok: true };
+        },
+        persistence,
+        () => true,
+        () => {},
+      );
+
+      outbox.noteHydrationStarted();
+      outbox.enqueue('a', { pinned: true });
+      await tick();
+      expect(sentBases).toEqual([]); // held; persisted with no base
+      const heldRows = persistence.rows() as Array<{ id: string; base: number | null }>;
+      expect(heldRows.find((r) => r.id === 'a')?.base ?? null).toBe(null);
+
+      outbox.observeServerVersions([['a', 5]]); // user acted on v5
+      outbox.noteHydrationSettled();
+      await tick();
+      // Send is now in flight (gated). The resolved base must already be on disk.
+      expect(sentBases).toEqual([5]);
+      const inFlightRows = persistence.rows() as Array<{ id: string; base: number | null }>;
+      expect(inFlightRows.find((r) => r.id === 'a')?.base).toBe(5);
+
+      releaseSend();
+      await tick();
+    });
+
+    it('does not hold a no-base write forever when the hydrate never settles', async () => {
+      // The hold relies on the hydrate settling (noteHydrationSettled). If it
+      // never does — a NetworkOnly read whose abort never surfaces — the write
+      // must still go out (unchecked) after the bounded fallback, not be stranded.
+      vi.useFakeTimers();
+      try {
+        const sent: Array<[string, ChangedFields]> = [];
+        const bases: Array<number | null> = [];
+        const outbox = new ItemStateOutbox(
+          async (id, changed, base) => {
+            sent.push([id, changed]);
+            bases.push(base);
+            return { ok: true };
+          },
+          memPersistence(),
+          () => true,
+          () => {},
+        );
+        outbox.noteHydrationStarted(); // a hydrate is in flight — and never settles
+        outbox.enqueue('a', { pinned: true });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(sent).toEqual([]); // held: no base, hydrate in flight
+
+        await vi.advanceTimersByTimeAsync(20000); // past HOLD_MAX_MS
+        expect(sent).toEqual([['a', { pinned: true }]]);
+        expect(bases).toEqual([null]); // unchecked fallback rather than stranded
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('releases a held write with no check if the hydrate fails (no base to wait on)', async () => {
+      // Hydrate failed (offline / backend down): nothing observed and no read in
+      // flight anymore, so fall back to the unchecked send rather than stranding
+      // the write forever.
+      h.outbox.noteHydrationStarted();
+      h.outbox.enqueue('a', { pinned: true });
+      await tick();
+      expect(h.sent).toEqual([]); // held while in flight
+
+      h.outbox.noteHydrationSettled(); // settled without observing anything
+      await tick();
+      expect(h.sent).toEqual([['a', { pinned: true }]]);
+      expect(h.bases).toEqual([null]);
     });
   });
 
