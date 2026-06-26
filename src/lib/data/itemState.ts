@@ -428,6 +428,17 @@ export class ItemStateStore {
     };
   }
 
+  /** Notify subscribers without a local state change. Used by the durable outbox
+   * after a write commits server-side: the local store is unchanged, but
+   * subscribers that derive from *server* reads — notably the per-feed
+   * unread-count query, which refetches on feed invalidation — must re-validate
+   * now that the server reflects the just-synced write. Without this, that query
+   * would keep the count it refetched optimistically (before the write landed)
+   * cached for the stale window. */
+  notifySynced(): void {
+    this.emit();
+  }
+
   private emit(): void {
     for (const l of this.listeners) l();
   }

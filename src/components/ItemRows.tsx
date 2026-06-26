@@ -37,6 +37,10 @@ interface Props {
    * across pages. Header rows aren't navigable (keyboard nav targets
    * `.item-row__body`) and aren't swept. */
   groupHeaders?: Map<ItemId, GroupHeader>;
+  /** Per-feed unread/to-do count for the group-header badge (keyed by feed id).
+   * A feed at 0 (or absent) renders no badge. Only meaningful alongside
+   * `groupHeaders`. */
+  groupCounts?: Record<FeedId, number>;
   /** Feeds whose section is collapsed: their header still renders, but its rows
    * are hidden. Only meaningful alongside `groupHeaders`. */
   collapsedFeeds?: Set<FeedId>;
@@ -65,6 +69,7 @@ export function ItemRows({
   rightAction,
   getRowRef,
   groupHeaders,
+  groupCounts,
   collapsedFeeds,
   onToggleCollapse,
   sweepingIds,
@@ -113,7 +118,11 @@ export function ItemRows({
                     className="item-list__group-toggle"
                     data-testid="group-toggle"
                     aria-expanded={!collapsed}
-                    aria-label={`${header.title}: ${collapsed ? 'expand' : 'collapse'} feed`}
+                    aria-label={`${header.title}${
+                      groupCounts && (groupCounts[header.feedId] ?? 0) > 0
+                        ? `, ${groupCounts[header.feedId]} unread`
+                        : ''
+                    }: ${collapsed ? 'expand' : 'collapse'} feed`}
                     onClick={() => onToggleCollapse(header.feedId)}
                   >
                     <ChevronRight
@@ -122,6 +131,16 @@ export function ItemRows({
                       height={18}
                     />
                     <span className="item-list__group-title">{header.title}</span>
+                    {groupCounts && (groupCounts[header.feedId] ?? 0) > 0 ? (
+                      // Decorative: the count is announced via the button's
+                      // aria-label above (its own aria-label here would be
+                      // ignored, since the button label is the accessible name).
+                      <span className="item-list__group-count" aria-hidden="true">
+                        {groupCounts[header.feedId] > 99
+                          ? '99+'
+                          : groupCounts[header.feedId]}
+                      </span>
+                    ) : null}
                   </button>
                 ) : (
                   <span className="item-list__group-title" aria-hidden="true">

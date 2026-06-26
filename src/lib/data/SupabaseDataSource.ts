@@ -205,6 +205,15 @@ export class SupabaseDataSource implements DataSource {
         this.hydration = null;
         void this.ensureHydrated();
       },
+      () => {
+        // A queued write committed server-side. The list self-heals via the
+        // local store overlay, but the per-feed unread-count badge reads a
+        // server-only count (getFeedUnreadCounts) that was refetched
+        // optimistically before the write landed — poke subscribers so the
+        // feed-invalidation hook re-invalidates and the badge re-reads the now-
+        // correct count.
+        this.stateStore.notifySynced();
+      },
     );
     this.stateStore.setMutationSink((id, changed) => this.outbox.enqueue(id, changed));
     // Replay anything queued in a prior session now, and again when connectivity

@@ -8,6 +8,7 @@ import {
   useState,
   type AnimationEvent as ReactAnimationEvent,
 } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { useFeedItems, type FetchPage } from '../hooks/useFeedItems';
@@ -486,6 +487,19 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
     }
     return out;
   }, [groupByFeed, visibleItems]);
+
+  // Per-feed unread/to-do counts for the section-header badges (group-by-feed
+  // only). Keyed under ['feed', …] so the app-wide feed invalidation
+  // (useFeedInvalidation, fired on every item-state change) refreshes the badges
+  // when you sweep / open / mark done, alongside the list itself. The server
+  // count lags a just-applied local write by one sync cycle; it self-heals on
+  // that refetch. Disabled outside the grouped view (no headers to badge).
+  const { data: unreadCounts } = useQuery({
+    queryKey: ['feed', 'unread-counts', feedIdsInView.join(',')],
+    queryFn: () => ds.getFeedUnreadCounts(feedIdsInView),
+    enabled: groupByFeed && feedIdsInView.length > 0,
+  });
+
   const collapseControls =
     groupByFeed && feedIdsInView.length > 0
       ? {
@@ -621,6 +635,7 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
               listRef={listRef}
               getRowRef={getRowRef}
               groupHeaders={groupHeaders}
+              groupCounts={groupByFeed ? unreadCounts : undefined}
               collapsedFeeds={groupByFeed ? collapsed : undefined}
               onToggleCollapse={groupByFeed ? toggle : undefined}
               emptyLabel={emptyLabel ?? 'Nothing here yet.'}
