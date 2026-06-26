@@ -714,7 +714,15 @@ export class SupabaseDataSource implements DataSource {
 
   /** subscribe_to_feed (0004) authorizes by URL possession, find-or-creates the
    * shared feed, subscribes auth.uid(), and returns the feeds_public row. Does
-   * NOT trigger a fetch — callers that want the immediate poll do it. */
+   * NOT trigger a fetch — callers that want the immediate poll do it.
+   *
+   * TODO(feed-cap): cap the number of feeds a user may subscribe to. Enforce it
+   * server-side in the `subscribe_to_feed` RPC (count the caller's subscriptions
+   * and reject past the limit) so it can't be bypassed, and surface a clear
+   * "subscription limit reached" error here. Beyond abuse/cost, the cap bounds
+   * the grouped feed read: the group-by-feed view returns up to K items per feed
+   * in one response, so a hard feed cap keeps that under the PostgREST row cap
+   * (and the OPML import path must respect it too). */
   private async subscribeOnly(feedUrl: string, folder?: string | null): Promise<Feed> {
     const rows = this.unwrap<FeedPublicRow[]>(
       await this.sb.rpc('subscribe_to_feed', {
