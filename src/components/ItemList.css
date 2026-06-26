@@ -48,6 +48,12 @@
    rows. In feed views it's a collapse/expand toggle for the whole section; in
    non-collapsible contexts it's a static label. */
 .item-list__group-header {
+  display: flex;
+  align-items: center;
+  /* Real gap between the collapse target (flexing toggle, whose padding is part
+     of its hit box) and the Sweep/Undo actions, so adjacent tap zones don't
+     touch — guardrail #2's ≥8px between interactive controls. */
+  gap: 8px;
   background: var(--rm-bg);
   border-bottom: 1px solid var(--rm-border);
 }
@@ -86,13 +92,54 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   min-height: var(--rm-tap);
   padding: 0.25rem 1rem;
   border: none;
   background: none;
   text-align: left;
   cursor: pointer;
+}
+
+/* Right-side per-feed controls: Sweep (mark visible done) + Undo. 44px touch
+   targets, ≥8px apart; the toggle's 1rem right padding separates them from the
+   name/count. */
+.item-list__group-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding-right: 0.5rem;
+}
+
+.item-list__group-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--rm-tap);
+  height: var(--rm-tap);
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--rm-meta);
+  cursor: pointer;
+}
+
+.item-list__group-action:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .item-list__group-action:not(:disabled):hover {
+    color: var(--rm-text);
+    background: var(--rm-bg-card);
+  }
+}
+
+.item-list__group-action:not(:disabled):active {
+  background: var(--rm-bg-card);
 }
 
 .item-list__group-chevron {

@@ -789,8 +789,24 @@ loopback/link-local/private/metadata targets and redirects to them.
        drag-to-reorder in Settings); within a section the chosen sort order
        applies, and that feed's pinned items sit at the top of the section. A
        feed-name header introduces each section. No effect on a single-feed view.
-     - **Collapse / expand sections** (group-by-feed only). Each section header
-       is a **tap target** that toggles its section collapsed (rows hidden, a
+     - **Section header controls** (group-by-feed only). Each feed's header is a
+       small control strip: the **chevron + feed name + unread/to-do count
+       badge** form the collapse tap target (see below), and on the right sit two
+       **44×44px** icon buttons, ≥8px apart — **Sweep this feed** (broom) and
+       **Undo**. The **count badge** shows that feed's unread/to-do total (from
+       `getFeedUnreadCounts`; capped `99+`, hidden at 0), so a collapsed feed
+       still shows how much it holds. **Sweep this feed** marks done only that
+       feed's **fully-visible, unpinned** rows — the same shielding as the
+       toolbar Sweep (off-screen and pinned rows untouched), scoped to the one
+       feed — and disables when that feed has nothing sweepable on screen.
+       **Undo** is the **same single-level global undo** as the toolbar (restore
+       the last hide/swipe/sweep batch); it's enabled whenever there's something
+       to undo, so the inline Undo next to a header's broom reverts the sweep you
+       just did. (One swept feed's section drops out entirely once its rows are
+       gone — unlike a *collapsed* feed, which keeps its header because its items
+       still exist.)
+     - **Collapse / expand sections** (group-by-feed only). The header's name
+       area is a **tap target** that toggles its section collapsed (rows hidden, a
        chevron flips); the header stays visible. Per-device and **persisted**
        (`readmo:collapsed-feeds`, a JSON array of collapsed feed ids), so a
        section stays collapsed across reloads and between grouped views. The
