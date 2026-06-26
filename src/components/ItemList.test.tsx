@@ -1280,7 +1280,9 @@ describe('ItemList', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId('sweep-btn')).toBeDisabled();
+      // Soft-disabled via aria-disabled (not the native attribute) so the
+      // TooltipButton still surfaces its tooltip on hover/long-press.
+      expect(screen.getByTestId('sweep-btn')).toHaveAttribute('aria-disabled', 'true');
     });
   });
 

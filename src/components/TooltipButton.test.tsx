@@ -90,7 +90,10 @@ describe('TooltipButton', () => {
     const btn = screen.getByTestId('btn');
     expect(btn.tagName).toBe('BUTTON');
     expect(btn).toHaveAttribute('aria-label', 'Pin story');
-    expect(btn).toBeDisabled();
+    // `disabled` is rendered as a soft disable (aria-disabled), not the native
+    // attribute, so the control still receives events and can show its tooltip.
+    expect(btn).toHaveAttribute('aria-disabled', 'true');
+    expect(btn).not.toBeDisabled();
     expect(btn).toHaveTextContent('icon');
   });
 
@@ -546,5 +549,78 @@ describe('TooltipButton', () => {
     dispatch(btn, 'pointerup', { pointerType: 'touch' });
     expect(onPointerDown).toHaveBeenCalledTimes(1);
     expect(onPointerUp).toHaveBeenCalledTimes(1);
+  });
+
+  // A natively-`disabled` <button> fires no pointer/hover events in real
+  // browsers, so a disabled TooltipButton could never show its tooltip (the
+  // bug behind "long-press on the group Sweep shows nothing" — the broom is
+  // disabled whenever its feed has no visible unpinned items). We render the
+  // disabled state with aria-disabled so the tooltip still works.
+  describe('soft-disabled (aria-disabled) still shows its tooltip', () => {
+    it('shows the tooltip on a 500ms long-press when disabled', () => {
+      render(
+        <TooltipButton tooltip="Nothing to dismiss" data-testid="btn" disabled>
+          x
+        </TooltipButton>,
+      );
+      const btn = screen.getByTestId('btn');
+      const restore = mockRect(btn, {
+        top: 100,
+        left: 40,
+        width: 44,
+        height: 44,
+        right: 84,
+        bottom: 144,
+      });
+      dispatch(btn, 'pointerdown', { pointerType: 'touch' });
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Nothing to dismiss');
+      restore();
+    });
+
+    it('shows the tooltip on mouse hover when disabled', () => {
+      render(
+        <TooltipButton tooltip="Nothing to undo" data-testid="btn" disabled>
+          x
+        </TooltipButton>,
+      );
+      const btn = screen.getByTestId('btn');
+      const restore = mockRect(btn, {
+        top: 12,
+        left: 40,
+        width: 44,
+        height: 44,
+        right: 84,
+        bottom: 56,
+      });
+      act(() => {
+        fireEvent.pointerEnter(btn, { pointerType: 'mouse', pointerId: 1 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Nothing to undo');
+      restore();
+    });
+
+    it('stays inert: a click does not invoke onClick while disabled', () => {
+      const onClick = vi.fn();
+      render(
+        <TooltipButton tooltip="Pin" data-testid="btn" disabled onClick={onClick}>
+          x
+        </TooltipButton>,
+      );
+      const btn = screen.getByTestId('btn');
+      act(() => {
+        btn.dispatchEvent(
+          new MouseEvent('click', { bubbles: true, cancelable: true }),
+        );
+      });
+      expect(onClick).not.toHaveBeenCalled();
+      expect(btn).toHaveAttribute('aria-disabled', 'true');
+      expect(btn).not.toBeDisabled();
+    });
   });
 });

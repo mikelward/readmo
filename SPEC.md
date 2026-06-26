@@ -1329,6 +1329,10 @@ other toolbars in the app. (No Upvote — RSS has no votes.)
   hex).
 - Every icon-only button has an accessible name; the long-press tooltip is
   visual-only.
+- Disabled icon buttons (e.g. Sweep/Undo when there's nothing to act on) go
+  inert via `aria-disabled`, not the native `disabled` attribute, so they still
+  surface their tooltip on hover/long-press — a `disabled` `<button>` fires no
+  pointer events, which would silence the tooltip.
 
 ### Keyboard shortcuts (same scheme as newshacker)
 
