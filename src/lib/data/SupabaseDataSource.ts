@@ -68,6 +68,23 @@ const ID_LOOKUP_CHUNK = 200;
  * caller-bounded feed count keeps feeds × window well under this. */
 const GROUPED_WINDOW_ROW_CAP = 1000;
 
+/** Page size for the full item_state hydrate read. PostgREST caps a single
+ * response at 1000 rows (see GROUPED_WINDOW_ROW_CAP), so an account that has
+ * accumulated more than that many item_state rows (every pin / favorite / done /
+ * open writes one, and they're never auto-deleted) would have its hydrate read
+ * silently truncated to the cap. `hydrate` treats any local row ABSENT from the
+ * server response as genuinely-stale and drops it — so a truncated read would
+ * wipe the done/pinned/favorite flags of every row past the cap, resurfacing
+ * swept items and dropping pins. Paging until a short page guarantees the
+ * response is COMPLETE, so "absent = stale" holds.
+ *
+ * The paging is KEYSET (by `item_id`), not offset (`.range()`): an offset window
+ * shifts if another device inserts a row between two page reads, which would skip
+ * one already-existing server row — and `hydrate` would then drop that row's
+ * local pin/done/favorite, the very bug this guards against, during a cross-
+ * device write. Keying off the last item_id can't skip an existing row. */
+const ITEM_STATE_PAGE = 1000;
+
 /** A throwaway UUID used as a per-request cache-buster on the item_state read
  * (`item_id=not.eq.<uuid>`). Prefers `crypto.randomUUID`; the Math.random
  * fallback is RFC4122-shaped — only uniqueness matters here, not entropy, and a
@@ -362,9 +379,33 @@ export class SupabaseDataSource implements DataSource {
     // cache entry, so even that old worker goes to network or misses-and-fails —
     // live-or-fail under any worker version, so the deleted stale-snapshot guards
     // stay unneeded.
-    const rows = this.unwrap<ItemStateRow[]>(
-      await this.sb.from('item_state').select(ITEM_STATE_COLS).not('item_id', 'eq', cacheBustUuid()),
-    );
+    //
+    // Read the FULL set in KEYSET pages (by item_id): PostgREST truncates a
+    // single response at its row cap, and a truncated read would make `hydrate`
+    // mistake every row past the cap for a genuinely-absent (stale) one and drop
+    // its local pin/favorite/done — resurfacing swept items on a large account.
+    // Keyset (not offset `.range()`) so a row inserted by another device between
+    // two page reads can't shift a window and skip an already-existing row. A
+    // page shorter than ITEM_STATE_PAGE is the last one. Any page read failing
+    // throws, so a partial set is never applied (the store keeps last-good).
+    const rows: ItemStateRow[] = [];
+    let afterId: string | null = null;
+    for (;;) {
+      let q = this.sb
+        .from('item_state')
+        .select(ITEM_STATE_COLS)
+        .order('item_id', { ascending: true })
+        .limit(ITEM_STATE_PAGE)
+        .not('item_id', 'eq', cacheBustUuid());
+      // First page has no lower bound; later pages resume strictly after the last
+      // id seen (a uuid sentinel for "before all rows" would be an invalid-uuid
+      // cast, so omit the filter rather than seed one).
+      if (afterId !== null) q = q.gt('item_id', afterId);
+      const page = this.unwrap<ItemStateRow[]>(await q);
+      rows.push(...page);
+      if (page.length < ITEM_STATE_PAGE) break;
+      afterId = page[page.length - 1].item_id;
+    }
     // Record server versions (monotonic) for the outbox's optimistic-concurrency
     // base.
     this.outbox.observeServerVersions(rows.map((r) => [r.item_id, r.version]));

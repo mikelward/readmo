@@ -59,6 +59,10 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
       failSelectOnce: Set<string>;
       ignoreNotIn: boolean;
       selectCounts: Map<string, number>;
+      /** Per-table server-side row cap, modeling PostgREST's max-rows ceiling.
+       * Applied after range/limit so a `.range()`-paged read still sees each
+       * page truncated to the cap, exactly like the real server. */
+      maxRows: Map<string, number>;
     },
   ) {
     this.rows = store[table] ?? [];
@@ -100,6 +104,14 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
 
   eq(col: string, val: unknown): this {
     this.filters.push((r) => r[col] === val);
+    return this;
+  }
+
+  gt(col: string, val: unknown): this {
+    // String comparison matches how uuid/text columns order in the real DB for
+    // the canonical ids these tests use — consistent with `order(col)` below, so
+    // keyset pagination (`.gt(lastId).order(id).limit(n)`) pages correctly.
+    this.filters.push((r) => String(r[col]) > String(val));
     return this;
   }
 
@@ -209,6 +221,10 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
     } else if (this.limitN !== null) {
       out = out.slice(0, this.limitN);
     }
+    // PostgREST caps a response at its configured max-rows ceiling — applied
+    // last, so even a `.range()`-paged read gets each page truncated to the cap.
+    const cap = this.control.maxRows.get(this.table);
+    if (cap !== undefined && out.length > cap) out = out.slice(0, cap);
     if (this.single) {
       return { data: out[0] ?? null, count, error: null };
     }
@@ -444,6 +460,9 @@ export function makeFakeSupabase(tables: FakeTables): {
   /** Make `.not('…','in',…)` a no-op, simulating the server-side exclusion filter
    * being skipped (exclusion set over the cap). */
   ignoreNotInFilter: () => void;
+  /** Cap every `select` on `table` to `n` rows, modeling PostgREST's max-rows
+   * response ceiling (so a paged read must `.range()` past it to see everything). */
+  capRows: (table: string, n: number) => void;
   /** Number of `select` requests issued against `table` (proves `in (…)`
    * chunking — N batches => N requests). */
   selectCount: (table: string) => number;
@@ -459,6 +478,7 @@ export function makeFakeSupabase(tables: FakeTables): {
     failSelectOnce: new Set<string>(),
     ignoreNotIn: false,
     selectCounts: new Map<string, number>(),
+    maxRows: new Map<string, number>(),
   };
 
   return {
@@ -470,6 +490,7 @@ export function makeFakeSupabase(tables: FakeTables): {
     ignoreNotInFilter: () => {
       control.ignoreNotIn = true;
     },
+    capRows: (table: string, n: number) => control.maxRows.set(table, n),
     selectCount: (table: string) => control.selectCounts.get(table) ?? 0,
     client: {
       from: (table: string) => new FakeQuery(table, store, control),
