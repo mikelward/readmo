@@ -100,7 +100,8 @@ Everything else about the visual system mirrors newshacker.
 
 - **Accent / primary:** ink `--rm-accent: #363636` (light) / `#ececec` (dark)
   — focus rings, links, active library icons, the brand wordmark, and the
-  primary "Open original" button (a solid ink fill with paper-white text).
+  primary "Open original" button (an accent-tinted fill with an accent-colored
+  icon — emphasized without a heavy solid block).
   Links also carry an underline so they remain distinguishable without a hue.
   Verify the final values clear 4.5:1 on both light and dark.
 - **Background:** warm off-white paper `--rm-bg: #faf9f5`; white
@@ -1265,8 +1266,9 @@ every action throughout the read; the **bottom bar is a relative end-of-article
 footer** you scroll down to — matching newshacker, rather than floating over the
 last lines of text. Left→right:
 
-**Open original** (primary, accent; marks Opened, fades to neutral once opened)
-→ **Done** (✓) → **Pin/Unpin** (📌) → **More ⋮**. On wide viewports (≥960px)
+**Open original** (primary; icon-only with a soft accent-tinted fill — the
+tooltip and aria-label carry the name; marks Opened, fades to neutral once
+opened) → **Done** (✓) → **Pin/Unpin** (📌) → **More ⋮**. On wide viewports (≥960px)
 **Share** and **Favorite** (♥) surface inline between Open original and Done
 (in that order — Share sits next to Open original); below 960px they live in
 the overflow. The overflow ⋮ → Pin → Done cluster at the right matches the

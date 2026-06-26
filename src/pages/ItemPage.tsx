@@ -108,7 +108,6 @@ function ReaderToolbar({
           data-testid={`open-original${sfx}`}
         >
           <OpenInNew />
-          <span className="reader__action-label">Open original</span>
         </TooltipButton>
 
         {wide ? (
