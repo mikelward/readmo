@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { SupabaseDataSource } from './SupabaseDataSource';
+import { SupabaseDataSource, ITEM_STATE_READ_TIMEOUT_MS } from './SupabaseDataSource';
 import { _resetNetworkStatusForTests, setConnectivityProbeUrl } from '../networkStatus';
 import { makeFakeSupabase, type FakeTables } from './fakeSupabaseClient';
 
@@ -62,6 +62,17 @@ function setup(tables: FakeTables = seed()) {
   const fake = makeFakeSupabase(tables);
   const ds = new SupabaseDataSource('readmo:item-state:test', fake.client as unknown as SupabaseClient);
   return { ds, fake };
+}
+
+/** Make a hand-rolled item_state read stub satisfy the production
+ * `.not(...).abortSignal(signal)` chain (the read is now bounded by an abort
+ * timeout): wraps an awaitable so it also exposes an `.abortSignal()` no-op that
+ * hands the same awaitable back. */
+function abortable<T>(value: T): PromiseLike<Awaited<T>> & { abortSignal: () => T } {
+  return {
+    abortSignal: () => value,
+    then: (onF, onR) => Promise.resolve(value as Awaited<T>).then(onF, onR),
+  };
 }
 
 const ids = (items: Array<{ item: { id: string } }>) => items.map((fi) => fi.item.id);
@@ -256,12 +267,12 @@ describe('SupabaseDataSource reads', () => {
         });
         bootStartedResolve();
         return {
-          select: () => ({ not: () => bootRead }),
+          select: () => ({ not: () => abortable(bootRead) }),
         } as unknown as ReturnType<typeof realFrom>;
       }
       // Resync read: resolves immediately with the updated snapshot.
       return {
-        select: () => ({ not: () => Promise.resolve(settle) }),
+        select: () => ({ not: () => abortable(Promise.resolve(settle)) }),
       } as unknown as ReturnType<typeof realFrom>;
     }) as typeof fake.client.from;
 
@@ -301,7 +312,9 @@ describe('SupabaseDataSource reads', () => {
       return {
         select: () => ({
           not: () =>
-            Promise.resolve({ data: null, count: null, error: { message: 'offline' } }),
+            abortable(
+              Promise.resolve({ data: null, count: null, error: { message: 'offline' } }),
+            ),
         }),
       } as unknown as ReturnType<typeof realFrom>;
     }) as typeof env.fake.client.from;
@@ -340,7 +353,7 @@ describe('SupabaseDataSource reads', () => {
     env.fake.client.from = ((table: string) => {
       if (table !== 'item_state') return realFrom(table);
       return {
-        select: () => ({ not: () => Promise.resolve({ data: [], count: null, error: null }) }),
+        select: () => ({ not: () => abortable(Promise.resolve({ data: [], count: null, error: null })) }),
       } as unknown as ReturnType<typeof realFrom>;
     }) as typeof env.fake.client.from;
 
@@ -398,12 +411,12 @@ describe('SupabaseDataSource reads', () => {
           failFirst = () => rej(new Error('blip'));
         });
         firstReadStartedResolve();
-        return { select: () => ({ not: () => p }) } as unknown as ReturnType<typeof realFrom>;
+        return { select: () => ({ not: () => abortable(p) }) } as unknown as ReturnType<typeof realFrom>;
       }
       // The retry read: signal that a fresh resync ran, then succeed.
       retryStarted();
       return {
-        select: () => ({ not: () => Promise.resolve({ data: [], count: null, error: null }) }),
+        select: () => ({ not: () => abortable(Promise.resolve({ data: [], count: null, error: null })) }),
       } as unknown as ReturnType<typeof realFrom>;
     }) as typeof env.fake.client.from;
 
@@ -437,7 +450,9 @@ describe('SupabaseDataSource reads', () => {
       return {
         select: () => ({
           not: () =>
-            Promise.resolve({ data: null, count: null, error: { message: 'offline' } }),
+            abortable(
+              Promise.resolve({ data: null, count: null, error: { message: 'offline' } }),
+            ),
         }),
       } as unknown as ReturnType<typeof realFrom>;
     }) as typeof fake.client.from;
@@ -449,6 +464,40 @@ describe('SupabaseDataSource reads', () => {
     // the synced pin survives rather than being dropped.
     await ds.getItemsByIds([]);
     expect(ds.stateStore.get('i6').pinned).toBe(true);
+  });
+
+  it('a stalled item_state read does not hang the feed read — it aborts and serves the feed from last-good state', async () => {
+    // Regression: item_state is served NetworkOnly (no SW network-timeout/cache
+    // fallback), and feedView awaits ensureHydrated() before returning rows. A
+    // stalled backend (a read that never returns a response) would therefore hang
+    // the whole feed read forever — the home feed's "Checking for new items…"
+    // strip and each grouped section's "More" stick on a spinner that never
+    // resolves. The read must instead abort after ITEM_STATE_READ_TIMEOUT_MS and
+    // the feed read proceed on the last-good store.
+    vi.useFakeTimers();
+    try {
+      const fake = makeFakeSupabase(seed());
+      // Every item_state read stalls until its abort signal fires.
+      fake.hangSelectOn('item_state');
+      const ds = new SupabaseDataSource(
+        'readmo:item-state:test',
+        fake.client as unknown as SupabaseClient,
+      );
+
+      const pagePromise = ds.getHomeItems();
+      // Without the bounded read this never resolves. Advancing past the budget
+      // fires the abort, the hydration fails, and the feed read falls through to
+      // the feed_items RPC (which is unaffected).
+      await vi.advanceTimersByTimeAsync(ITEM_STATE_READ_TIMEOUT_MS + 10);
+      const page = await pagePromise;
+
+      // The feed still renders: feed_items filters Done/Hidden and prepends
+      // Pinned server-side, so the page is correct even though client hydration
+      // failed (i2 pinned, then i6, i3; i1 hidden / i4 done excluded; feed-c muted).
+      expect(ids(page.items)).toEqual(['i2', 'i6', 'i3']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('resyncState preserves an un-synced local pin while adopting server truth', async () => {
@@ -543,7 +592,7 @@ describe('SupabaseDataSource reads', () => {
       fake.client.from = ((table: string) => {
         if (table !== 'item_state') return realFrom(table);
         return {
-          select: () => ({ not: () => readGate.then(() => ({ data: [], count: null, error: null })) }),
+          select: () => ({ not: () => abortable(readGate.then(() => ({ data: [], count: null, error: null }))) }),
         } as unknown as ReturnType<typeof realFrom>;
       }) as typeof fake.client.from;
 

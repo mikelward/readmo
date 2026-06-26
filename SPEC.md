@@ -717,7 +717,16 @@ loopback/link-local/private/metadata targets and redirects to them.
   - **`item_state` reads are `NetworkOnly`** — a dedicated Workbox route
     (`supabaseItemStatePattern`, registered ahead of the NetworkFirst REST route
     — `vite.config.ts`) serves them with no cache fallback, so item-state
-    hydration is always *live or it fails*. The read also carries a per-request
+    hydration is always *live or it fails*. Because `NetworkOnly` has no
+    network-timeout/cache fallback of its own, the read carries a client-side
+    abort timeout (`ITEM_STATE_READ_TIMEOUT_MS`, 10s — matching the bound the
+    removed NetworkFirst route applied via `networkTimeoutSeconds`); without it a
+    stalled backend would hang the read — and every feed/library read, which
+    `await`s hydration before returning rows — forever, so the home feed's
+    "Checking for new items…" strip and each grouped section's "More" would stick
+    on a spinner that never resolves. The timeout makes "it fails" literally true:
+    a stall *fails* within the budget and the read falls back to the store. The
+    read also carries a per-request
     cache-buster (`item_id=not.eq.<uuid>`, which excludes nothing) so that during
     a service-worker rollout — when the new bundle can briefly run under the
     *previous* worker, whose NetworkFirst `/rest/v1/` route would otherwise serve
