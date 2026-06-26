@@ -11,6 +11,7 @@
 // it directly; Deno resolves it via supabase/functions/import_map.json.
 
 import sanitizeHtml from 'sanitize-html';
+import { upgradeRedditThumbnails } from './redditImages.ts';
 
 // A reading-oriented allow-list: structural and inline text tags, media, and
 // tables. Notably absent: <script>, <style>, <iframe> (except via a tight
@@ -48,7 +49,12 @@ export function sanitizeContent(
 ): string {
   if (!html) return '';
 
-  return sanitizeHtml(html, {
+  // Reddit embeds a cropped thumbnail as the body <img> with the full image
+  // only linked as "[link]"; swap in the full image before sanitizing so the
+  // reader shows the whole picture, not Reddit's crop. No-op for other feeds.
+  const upgraded = upgradeRedditThumbnails(html);
+
+  return sanitizeHtml(upgraded, {
     allowedTags: ALLOWED_TAGS,
     allowedAttributes: {
       a: ['href', 'name', 'rel', 'target', 'title'],
