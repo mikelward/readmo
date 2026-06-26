@@ -5,6 +5,24 @@ import { sanitizeContent } from './sanitize.ts';
 describe('sanitizeContent', () => {
   const base = 'https://pub.example.com/articles/42';
 
+  it('upgrades a Reddit cropped thumbnail to the full image, then proxies it', () => {
+    const out = sanitizeContent(
+      '<table><tr><td><a href="https://www.reddit.com/r/x/comments/a/t/">' +
+        '<img src="https://b.thumbs.redditmedia.com/thumb.jpg" alt="t"/></a></td>' +
+        '<td> submitted by <a href="https://www.reddit.com/user/u">/u/u</a>' +
+        '<span><a href="https://i.redd.it/full.jpeg">[link]</a></span>' +
+        '<span><a href="https://www.reddit.com/r/x/comments/a/t/">[comments]</a></span>' +
+        '</td></tr></table>',
+      'https://www.reddit.com/r/x/comments/a/t/',
+    );
+    // The cropped thumbnail is gone; the full i.redd.it image is served via the
+    // same-origin proxy like any other body image.
+    expect(out).not.toContain('b.thumbs.redditmedia.com');
+    expect(out).toContain(
+      '/api/img?url=' + encodeURIComponent('https://i.redd.it/full.jpeg'),
+    );
+  });
+
   it('strips <script> tags and their contents', () => {
     const out = sanitizeContent(
       '<p>Hello</p><script>alert(1)</script>',
