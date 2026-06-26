@@ -92,38 +92,92 @@ export function looksLikeFeed(bodyStart) {
   return false;
 }
 
-async function checkOne({ name, feedUrl }) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+function hostOf(u) {
   try {
-    const res = await fetch(feedUrl, {
-      redirect: 'follow',
-      signal: controller.signal,
-      headers: {
-        'user-agent': USER_AGENT,
-        accept:
-          'application/rss+xml, application/atom+xml, application/xml;q=0.9, application/json;q=0.8, */*;q=0.5',
-      },
-    });
-    const contentType = res.headers.get('content-type') || '';
-    const body = await res.text();
-    const isFeed = looksLikeFeed(body.slice(0, SNIFF_BYTES));
-    const ok = res.ok && isFeed;
-    const reason = ok
-      ? ''
-      : !res.ok
-        ? `HTTP ${res.status}`
-        : `not a feed (content-type: ${contentType || 'none'})`;
-    return { name, feedUrl, ok, status: res.status, finalUrl: res.url, reason };
-  } catch (err) {
-    const reason =
-      err.name === 'AbortError'
-        ? `timeout after ${TIMEOUT_MS}ms`
-        : err.cause?.code || err.message || 'fetch failed';
-    return { name, feedUrl, ok: false, status: 0, finalUrl: feedUrl, reason };
-  } finally {
-    clearTimeout(timer);
+    return new URL(u).host;
+  } catch {
+    return u;
   }
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** How long to wait before retrying a 429, from its `Retry-After` header.
+ * Honors the numeric-seconds form (what Reddit sends), capped so the checker
+ * never stalls for long; falls back to `defaultMs` for missing/HTTP-date
+ * values. */
+export function retryDelayMs(retryAfter, { defaultMs = 2_000, capMs = 15_000 } = {}) {
+  // `Number(null)` and `Number('')` are 0, so guard the empty cases explicitly.
+  if (retryAfter == null || retryAfter === '') return defaultMs;
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1_000, capMs);
+  return defaultMs;
+}
+
+// Per-host serialization: at most one in-flight request per host. A burst of
+// same-host feeds (e.g. the six reddit.com feeds) would otherwise hit the host
+// concurrently and trip its rate limiter — Reddit 429s a parallel burst even
+// though each feed is healthy and the production poller (which fetches them
+// spaced out, one per scheduled interval) never sees it. Different hosts still
+// run concurrently up to the pool size.
+const hostChains = new Map();
+function withHostLock(host, fn) {
+  const prev = hostChains.get(host) ?? Promise.resolve();
+  const result = prev.then(fn, fn);
+  hostChains.set(
+    host,
+    result.then(
+      () => {},
+      () => {},
+    ),
+  );
+  return result;
+}
+
+async function fetchAndClassify({ name, feedUrl }) {
+  // Retry once on 429 after honoring Retry-After, so a transient rate-limit
+  // (rather than a dead feed) doesn't get reported as a failure.
+  for (let attempt = 0; ; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    try {
+      const res = await fetch(feedUrl, {
+        redirect: 'follow',
+        signal: controller.signal,
+        headers: {
+          'user-agent': USER_AGENT,
+          accept:
+            'application/rss+xml, application/atom+xml, application/xml;q=0.9, application/json;q=0.8, */*;q=0.5',
+        },
+      });
+      if (res.status === 429 && attempt === 0) {
+        await sleep(retryDelayMs(res.headers.get('retry-after')));
+        continue;
+      }
+      const contentType = res.headers.get('content-type') || '';
+      const body = await res.text();
+      const isFeed = looksLikeFeed(body.slice(0, SNIFF_BYTES));
+      const ok = res.ok && isFeed;
+      const reason = ok
+        ? ''
+        : !res.ok
+          ? `HTTP ${res.status}`
+          : `not a feed (content-type: ${contentType || 'none'})`;
+      return { name, feedUrl, ok, status: res.status, finalUrl: res.url, reason };
+    } catch (err) {
+      const reason =
+        err.name === 'AbortError'
+          ? `timeout after ${TIMEOUT_MS}ms`
+          : err.cause?.code || err.message || 'fetch failed';
+      return { name, feedUrl, ok: false, status: 0, finalUrl: feedUrl, reason };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
+function checkOne(feed) {
+  return withHostLock(hostOf(feed.feedUrl), () => fetchAndClassify(feed));
 }
 
 /** Run `worker` over `items` with a fixed concurrency, preserving input order. */

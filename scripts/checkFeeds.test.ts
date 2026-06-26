@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error — plain .mjs script, no type declarations.
-import { parseFeedList, looksLikeFeed } from './checkFeeds.mjs';
+import { parseFeedList, looksLikeFeed, retryDelayMs } from './checkFeeds.mjs';
 import { POPULAR_FEEDS } from '../src/lib/popularFeeds';
 
 const source = readFileSync(
@@ -78,5 +78,19 @@ describe('looksLikeFeed', () => {
     expect(
       looksLikeFeed('<?xml version="1.0"?>\n<?xml-stylesheet href="x.xsl"?>\n<!-- generated -->\n<rss version="2.0">'),
     ).toBe(true);
+  });
+});
+
+describe('retryDelayMs', () => {
+  it('honors a numeric Retry-After (seconds), capped', () => {
+    expect(retryDelayMs('5')).toBe(5_000);
+    expect(retryDelayMs('0')).toBe(0);
+    expect(retryDelayMs('600')).toBe(15_000); // capped
+  });
+
+  it('falls back to the default for missing or non-numeric values', () => {
+    expect(retryDelayMs(null)).toBe(2_000);
+    expect(retryDelayMs(undefined)).toBe(2_000);
+    expect(retryDelayMs('Wed, 21 Oct 2026 07:28:00 GMT')).toBe(2_000);
   });
 });
