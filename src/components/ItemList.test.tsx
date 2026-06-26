@@ -437,6 +437,40 @@ describe('ItemList', () => {
     });
   });
 
+  it('per-feed header Sweep dismisses only that feed’s visible rows; header Undo restores them', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`gp-${Math.random()}`}
+        fetchPage={(cursor) =>
+          source.getHomeItems({ cursor, groupByFeed: true, limit: 100 })
+        }
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+    const totalBefore = container.querySelectorAll('[data-item-id]').length;
+
+    // Sweep the first feed (The Verge, 3 rows) from its header broom.
+    await user.click(screen.getAllByTestId('group-sweep')[0]);
+    await waitFor(() => {
+      expect(container.querySelectorAll('[data-item-id]').length).toBe(totalBefore - 3);
+    });
+    // The other feeds are untouched (Verge's now-empty section drops out — a
+    // swept feed has no items left, unlike a merely collapsed one).
+    expect(screen.getByText('NASA Breaking News')).toBeInTheDocument();
+    expect(screen.queryByText('The Verge')).toBeNull();
+
+    // A header Undo restores the swept batch (the global single-level undo).
+    await user.click(screen.getAllByTestId('group-undo')[0]);
+    await waitFor(() => {
+      expect(container.querySelectorAll('[data-item-id]').length).toBe(totalBefore);
+    });
+  });
+
   it('Sweep only hides rows fully in the viewport, leaving off-screen rows', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);

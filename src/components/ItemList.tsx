@@ -6,6 +6,7 @@ import {
   useReducer,
   useRef,
   useState,
+  useSyncExternalStore,
   type AnimationEvent as ReactAnimationEvent,
 } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -406,31 +407,72 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
     };
   }, []);
 
-  const handleSweep = useCallback(() => {
-    if (sweepIds.length === 0) return;
-    // Ignore repeat taps while a sweep is already playing out — the second
-    // batch would be identical (hiddenIds hasn't updated yet).
-    if (sweepPendingIdsRef.current !== null) return;
-    const ids = sweepIds.slice();
-    const reducedMotion =
-      typeof window !== 'undefined' &&
-      typeof window.matchMedia === 'function' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reducedMotion) {
-      ds.stateStore.hideMany(ids);
-      return;
+  // Animate + commit a hide for a given id set. Shared by the toolbar's
+  // "Sweep all visible" and each group header's per-feed Sweep — both dismiss a
+  // batch of fully-visible unpinned rows, differing only in which rows.
+  const sweepThese = useCallback(
+    (ids: ItemId[]) => {
+      if (ids.length === 0) return;
+      // Ignore taps while a sweep is already playing out — the second batch
+      // would be stale (hiddenIds hasn't updated yet).
+      if (sweepPendingIdsRef.current !== null) return;
+      const batch = ids.slice();
+      const reducedMotion =
+        typeof window !== 'undefined' &&
+        typeof window.matchMedia === 'function' &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (reducedMotion) {
+        ds.stateStore.hideMany(batch);
+        return;
+      }
+      sweepPendingIdsRef.current = batch;
+      setSweepingIds((prev) => {
+        const next = new Set(prev);
+        for (const id of batch) next.add(id);
+        return next;
+      });
+      sweepFallbackTimerRef.current = window.setTimeout(
+        commitSweep,
+        SWEEP_ANIMATION_MS * 2,
+      );
+    },
+    [ds, commitSweep],
+  );
+
+  const handleSweep = useCallback(
+    () => sweepThese(sweepIds),
+    [sweepThese, sweepIds],
+  );
+
+  // Per-feed sweepable rows (group-by-feed header Sweep): the fully-visible,
+  // unpinned rows of each feed, so a header's broom dismisses just that feed's
+  // on-screen items. Same shielding as the global Sweep (pinned rows excluded,
+  // off-screen rows untouched), just partitioned by feed.
+  const sweepableByFeed = useMemo(() => {
+    const m = new Map<FeedId, ItemId[]>();
+    for (const fi of items) {
+      if (!inViewIds.has(fi.item.id)) continue;
+      if (ds.stateStore.get(fi.item.id).pinned) continue;
+      const arr = m.get(fi.item.feedId);
+      if (arr) arr.push(fi.item.id);
+      else m.set(fi.item.feedId, [fi.item.id]);
     }
-    sweepPendingIdsRef.current = ids;
-    setSweepingIds((prev) => {
-      const next = new Set(prev);
-      for (const id of ids) next.add(id);
-      return next;
-    });
-    sweepFallbackTimerRef.current = window.setTimeout(
-      commitSweep,
-      SWEEP_ANIMATION_MS * 2,
-    );
-  }, [sweepIds, ds, commitSweep]);
+    return m;
+  }, [items, inViewIds, ds]);
+
+  const handleSweepFeed = useCallback(
+    (feedId: FeedId) => sweepThese(sweepableByFeed.get(feedId) ?? []),
+    [sweepThese, sweepableByFeed],
+  );
+
+  // Drives the header Undo buttons — the same single-level global undo the
+  // toolbar uses (restore the last hide/swipe/sweep batch).
+  const canUndo = useSyncExternalStore(
+    (cb) => ds.stateStore.subscribe(cb),
+    () => ds.stateStore.canUndo(),
+    () => ds.stateStore.canUndo(),
+  );
+  const handleUndo = useCallback(() => ds.stateStore.undoLast(), [ds]);
 
   // The first `animationend` from a swept row drives the commit — every `<li>`
   // animates with the same duration, so one signal is enough. Filter by
@@ -636,6 +678,12 @@ export function ItemList({ viewKey, fetchPage, emptyLabel, groupByFeed = false }
               getRowRef={getRowRef}
               groupHeaders={groupHeaders}
               groupCounts={groupByFeed ? unreadCounts : undefined}
+              onSweepFeed={groupByFeed ? handleSweepFeed : undefined}
+              sweepableFeeds={
+                groupByFeed ? new Set(sweepableByFeed.keys()) : undefined
+              }
+              onUndo={groupByFeed ? handleUndo : undefined}
+              canUndo={groupByFeed ? canUndo : undefined}
               collapsedFeeds={groupByFeed ? collapsed : undefined}
               onToggleCollapse={groupByFeed ? toggle : undefined}
               emptyLabel={emptyLabel ?? 'Nothing here yet.'}

@@ -2,7 +2,8 @@ import { Fragment, type AnimationEventHandler, type Ref } from 'react';
 import type { FeedId, FeedItem, ItemId } from '../lib/types';
 import { useShareItem } from '../hooks/useShareItem';
 import { ItemRow, type RightAction } from './ItemRow';
-import { ChevronRight } from './icons';
+import { ChevronRight, Sweep, Undo } from './icons';
+import { TooltipButton } from './TooltipButton';
 import './ItemList.css';
 
 /** What to render as a feed-section header before a given row. */
@@ -47,6 +48,17 @@ interface Props {
   /** Toggle a feed's collapsed state (tapping its header). When provided the
    * header renders as a button; otherwise it's a static label. */
   onToggleCollapse?: (feedId: FeedId) => void;
+  /** Sweep (mark done) a feed's fully-visible unpinned rows. When provided,
+   * each header renders a Sweep button on its right. */
+  onSweepFeed?: (feedId: FeedId) => void;
+  /** Feeds with at least one sweepable visible row right now → that feed's
+   * header Sweep button is enabled. */
+  sweepableFeeds?: Set<FeedId>;
+  /** Restore the last hide/sweep batch — the single-level global undo. When
+   * provided, each header renders an Undo button next to Sweep. */
+  onUndo?: () => void;
+  /** Whether there's anything to undo → enables the header Undo buttons. */
+  canUndo?: boolean;
   /** Ids currently playing the sweep-out animation — their `<li>` carries the
    * `--sweeping` modifier so it slides + fades together with its peers. The
    * parent commits the hide on the matching `animationend`. */
@@ -72,6 +84,10 @@ export function ItemRows({
   groupCounts,
   collapsedFeeds,
   onToggleCollapse,
+  onSweepFeed,
+  sweepableFeeds,
+  onUndo,
+  canUndo = false,
   sweepingIds,
   onAnimationEnd,
 }: Props) {
@@ -147,6 +163,45 @@ export function ItemRows({
                     {header.title}
                   </span>
                 )}
+                {onSweepFeed || onUndo ? (
+                  <div className="item-list__group-actions">
+                    {onSweepFeed ? (
+                      (() => {
+                        const canSweep = sweepableFeeds?.has(header.feedId) ?? false;
+                        return (
+                          <TooltipButton
+                            type="button"
+                            className="item-list__group-action"
+                            data-testid="group-sweep"
+                            onClick={canSweep ? () => onSweepFeed(header.feedId) : undefined}
+                            disabled={!canSweep}
+                            tooltip={canSweep ? 'Mark visible done' : 'Nothing to dismiss'}
+                            aria-label={
+                              canSweep
+                                ? `Mark visible ${header.title} items done`
+                                : `Nothing to dismiss in ${header.title}`
+                            }
+                          >
+                            <Sweep width={20} height={20} />
+                          </TooltipButton>
+                        );
+                      })()
+                    ) : null}
+                    {onUndo ? (
+                      <TooltipButton
+                        type="button"
+                        className="item-list__group-action"
+                        data-testid="group-undo"
+                        onClick={canUndo ? onUndo : undefined}
+                        disabled={!canUndo}
+                        tooltip={canUndo ? 'Undo' : 'Nothing to undo'}
+                        aria-label={canUndo ? 'Undo' : 'Nothing to undo'}
+                      >
+                        <Undo width={20} height={20} />
+                      </TooltipButton>
+                    ) : null}
+                  </div>
+                ) : null}
               </li>
             ) : null}
             {collapsed ? null : (
