@@ -80,23 +80,17 @@
   }
 }
 
+/* Primary action (Open original): the reader's main escape hatch to the
+   source. Emphasized with an accent-tinted pill rather than a solid fill so it
+   reads as primary without dominating the bar; icon-only to stay in step with
+   the other action buttons (the tooltip + aria-label carry the name). */
 .reader__action--primary {
-  color: var(--rm-accent-contrast);
-  background: var(--rm-accent);
+  color: var(--rm-accent);
+  background: color-mix(in srgb, var(--rm-accent) 14%, transparent);
 }
 
 .reader__action--active {
   color: var(--rm-accent);
-}
-
-.reader__action-label {
-  font-size: 0.9rem;
-}
-
-@media (max-width: 380px) {
-  .reader__action-label {
-    display: none;
-  }
 }
 
 .reader__more {
@@ -109,6 +103,12 @@
 @media (hover: hover) {
   .reader__action:hover {
     background: var(--rm-bg);
+  }
+
+  /* Keep the primary's accent tint on hover (deepen it) instead of flattening
+     it to the neutral hover background the rule above would apply. */
+  .reader__action--primary:hover {
+    background: color-mix(in srgb, var(--rm-accent) 22%, transparent);
   }
 }
 
