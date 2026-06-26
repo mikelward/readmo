@@ -47,7 +47,6 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
   private limitN: number | null = null;
   private single = false;
   private wantCount = false;
-  private signal: AbortSignal | null = null;
 
   // write modes
   private mode: 'select' | 'update' | 'delete' = 'select';
@@ -58,7 +57,6 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
     private readonly store: FakeTables,
     private readonly control: {
       failSelectOnce: Set<string>;
-      hangSelectOn: Set<string>;
       ignoreNotIn: boolean;
       selectCounts: Map<string, number>;
     },
@@ -135,11 +133,6 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
     return this;
   }
 
-  abortSignal(signal: AbortSignal): this {
-    this.signal = signal;
-    return this;
-  }
-
   private filtered(): Row[] {
     return this.rows.filter((r) => this.filters.every((f) => f(r)));
   }
@@ -180,24 +173,6 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
     onfulfilled?: ((v: { data: unknown; count: number | null; error: unknown }) => R1 | PromiseLike<R1>) | null,
     onrejected?: ((reason: unknown) => R2 | PromiseLike<R2>) | null,
   ): PromiseLike<R1 | R2> {
-    // Simulate a read that never returns a response (a stalled backend with no
-    // SW timeout/cache fallback). It settles only when the caller's abort signal
-    // fires — mirroring supabase-js, which resolves an aborted PostgREST request
-    // with an `error` (not a thrown rejection). Without a signal it hangs
-    // forever, reproducing the un-bounded read.
-    if (this.mode === 'select' && this.control.hangSelectOn.has(this.table)) {
-      return new Promise<{ data: unknown; count: number | null; error: unknown }>(
-        (resolve) => {
-          const sig = this.signal;
-          const abort = () =>
-            resolve({ data: null, count: null, error: { message: `aborted read on ${this.table}` } });
-          if (sig) {
-            if (sig.aborted) abort();
-            else sig.addEventListener('abort', abort, { once: true });
-          }
-        },
-      ).then(onfulfilled, onrejected);
-    }
     return Promise.resolve(this.run()).then(onfulfilled, onrejected);
   }
 
@@ -466,10 +441,6 @@ export function makeFakeSupabase(tables: FakeTables): {
   /** Make the next `select` on `table` return an error once (transient-failure
    * simulation). */
   failSelectOnce: (table: string) => void;
-  /** Make every `select` on `table` stall (never return a response) until the
-   * caller's abort signal fires — simulating a hung NetworkOnly read with no SW
-   * timeout/cache fallback. */
-  hangSelectOn: (table: string) => void;
   /** Make `.not('…','in',…)` a no-op, simulating the server-side exclusion filter
    * being skipped (exclusion set over the cap). */
   ignoreNotInFilter: () => void;
@@ -486,7 +457,6 @@ export function makeFakeSupabase(tables: FakeTables): {
   const invokeResult = { current: { data: null as unknown, error: null as unknown } };
   const control = {
     failSelectOnce: new Set<string>(),
-    hangSelectOn: new Set<string>(),
     ignoreNotIn: false,
     selectCounts: new Map<string, number>(),
   };
@@ -497,7 +467,6 @@ export function makeFakeSupabase(tables: FakeTables): {
     rpcCalls,
     invokeResult,
     failSelectOnce: (table: string) => control.failSelectOnce.add(table),
-    hangSelectOn: (table: string) => control.hangSelectOn.add(table),
     ignoreNotInFilter: () => {
       control.ignoreNotIn = true;
     },

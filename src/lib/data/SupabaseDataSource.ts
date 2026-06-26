@@ -68,21 +68,6 @@ const ID_LOOKUP_CHUNK = 200;
  * caller-bounded feed count keeps feeds × window well under this. */
 const GROUPED_WINDOW_ROW_CAP = 1000;
 
-/** Hard ceiling on the item_state hydration read, after which it's aborted and
- * treated as a failure. item_state is served NetworkOnly (vite.config —
- * `supabaseItemStatePattern`) so it has NO service-worker network-timeout/cache
- * fallback; without an explicit client-side abort a stalled backend would hang
- * the read forever — and with it every feed/library read, which `await`s
- * `ensureHydrated()` before returning rows (the home feed's "Checking for new
- * items…" strip and each grouped section's "More" then stick on a spinner that
- * never resolves). Bounding the read keeps the design's "live-or-fail" promise
- * literally true: a stall now *fails* within this budget, `ensureHydrated`
- * clears its memo, and the read proceeds on the last-good localStorage store.
- * Matches the 10s the removed NetworkFirst REST route applied to this same read
- * via `networkTimeoutSeconds`, so a merely-slow (not hung) connection that
- * worked before still works. */
-export const ITEM_STATE_READ_TIMEOUT_MS = 10_000;
-
 /** A throwaway UUID used as a per-request cache-buster on the item_state read
  * (`item_id=not.eq.<uuid>`). Prefers `crypto.randomUUID`; the Math.random
  * fallback is RFC4122-shaped — only uniqueness matters here, not entropy, and a
@@ -377,26 +362,9 @@ export class SupabaseDataSource implements DataSource {
     // cache entry, so even that old worker goes to network or misses-and-fails —
     // live-or-fail under any worker version, so the deleted stale-snapshot guards
     // stay unneeded.
-    // Bound the read: item_state is NetworkOnly (no SW network-timeout/cache
-    // fallback), so a stalled backend would otherwise hang this read — and every
-    // feed/library read awaiting it — indefinitely. Abort after the budget so a
-    // stall fails fast and reads fall back to the last-good store. Uses an
-    // AbortController + setTimeout (not AbortSignal.timeout) so fake timers can
-    // drive it in tests, mirroring confirmBackendReachable.
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), ITEM_STATE_READ_TIMEOUT_MS);
-    let rows: ItemStateRow[];
-    try {
-      rows = this.unwrap<ItemStateRow[]>(
-        await this.sb
-          .from('item_state')
-          .select(ITEM_STATE_COLS)
-          .not('item_id', 'eq', cacheBustUuid())
-          .abortSignal(controller.signal),
-      );
-    } finally {
-      clearTimeout(timer);
-    }
+    const rows = this.unwrap<ItemStateRow[]>(
+      await this.sb.from('item_state').select(ITEM_STATE_COLS).not('item_id', 'eq', cacheBustUuid()),
+    );
     // Record server versions (monotonic) for the outbox's optimistic-concurrency
     // base.
     this.outbox.observeServerVersions(rows.map((r) => [r.item_id, r.version]));
