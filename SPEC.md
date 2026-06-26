@@ -292,9 +292,23 @@ published is recent — you always see at least its latest handful. Both are kno
   `feed_items`. **Foundation only for now:** the RPC + client method ship here to
   back a planned **group-by-feed section-header unread badge** (so a collapsed
   feed will still show how much it holds unread) — the header *display* lands with
-  the grouped-view pagination work, not in this change. (Server-side count, so it
-  can briefly lag a just-applied local open/done until the outbox syncs; it
-  self-heals on the feed refetch that every triage write triggers.)
+  the grouped-view pagination work, not in this change. (Server-side count, so on
+  its own it would lag a just-applied local Sweep/Done until the outbox syncs.
+  The badge **display** corrects for this client-side: it discounts loaded rows
+  with a still-**pending** write whose current state unambiguously means the
+  server still counts them but local triage has removed them — Done/active-Hidden,
+  not pinned, not Opened — so a sweep drops the badge immediately. It reads only
+  the *current* state, never an inferred server state: the outbox coalesces
+  pending writes, so a field's pre-sync value can't be recovered by flipping the
+  pending change, and guessing would over-count. The one accepted cost is that a
+  pinned-then-read row later marked Done keeps lagging until its write syncs. The
+  adjustment self-clears as each write drains — see `adjustUnreadCounts` +
+  `DataSource.pendingItemIds`. The mock has no outbox, so its count never lags
+  and the adjustment is a no-op. A *count* can't be reconciled atomically with
+  local triage, so a sub-second blip survives at sync-completion — the pending id
+  drains a round-trip before the invalidated count refetch returns; the exact,
+  flicker-free fix is the `feed_unread_ids` ID-list RPC, deferred in
+  TODO.md §Server RPCs.)
 
 Rationale: readmo has no upstream ranker (unlike newshacker, whose HN
 `top`/`best` lists are already recency-bounded), so an explicit window + floor

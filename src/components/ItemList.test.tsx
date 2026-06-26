@@ -150,6 +150,53 @@ describe('ItemList', () => {
     ).toContain('3 unread');
   });
 
+  it('discounts pending (unsynced) Sweep/Done writes from the badge immediately', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    // Freeze the pre-sweep page + count to simulate the real backend: it keeps
+    // returning the swept rows and their unread total until the outbox syncs —
+    // the sync lag this adjustment papers over. (The mock's own store is the
+    // "server", so without this freeze it would never lag.)
+    const page = await source.getHomeItems({ groupByFeed: true, limit: 100 });
+    source.getHomeItems = async () => page;
+    source.getFeedUnreadCounts = async () => ({ 'feed-verge': 3 });
+    const vergeIds = page.items
+      .filter((fi) => fi.item.feedId === 'feed-verge')
+      .map((fi) => fi.item.id);
+    expect(vergeIds.length).toBe(3);
+    const swept = vergeIds.slice(0, 2);
+    source.pendingItemIds = () => new Set(swept);
+
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`gp-${Math.random()}`}
+        fetchPage={(cursor) =>
+          source.getHomeItems({ cursor, groupByFeed: true, limit: 100 })
+        }
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+    // Before triage the badge shows the (stale) server count.
+    expect(container.querySelector('.item-list__group-count')?.textContent).toBe(
+      '3',
+    );
+
+    // Sweep two of Verge's three rows: marked Done locally + pending (unsynced).
+    act(() => {
+      swept.forEach((id) => source.stateStore.set(id, 'done', true));
+    });
+
+    // The badge drops to 1 immediately — 3 (stale server count) − 2 pending —
+    // without waiting for the server count to catch up.
+    await waitFor(() => {
+      expect(
+        container.querySelector('.item-list__group-count')?.textContent,
+      ).toBe('1');
+    });
+  });
+
   it('renders no section headers when not grouping', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     const { container } = renderHome(source);

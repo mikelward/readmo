@@ -299,6 +299,12 @@ export class MockDataSource implements DataSource {
     return counts;
   }
 
+  /** No outbox: the mock's store is authoritative, so `getFeedUnreadCounts`
+   * never lags a local write and there's nothing pending to discount. */
+  pendingItemIds(): ReadonlySet<ItemId> {
+    return new Set();
+  }
+
   async getItem(id: ItemId): Promise<FeedItem | null> {
     const item = this.items.find((it) => it.id === id);
     return item ? this.toFeedItem(item) : null;

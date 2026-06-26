@@ -816,6 +816,13 @@ export class SupabaseDataSource implements DataSource {
     return counts;
   }
 
+  /** Item ids whose state write hasn't synced yet (see DataSource). Lets the
+   * per-feed unread badge discount a just-applied Sweep/Done that the server-side
+   * `feed_unread_counts` above can't see until the outbox drains. */
+  pendingItemIds(): ReadonlySet<ItemId> {
+    return new Set(this.outbox.pendingIds());
+  }
+
   async getItem(id: ItemId): Promise<FeedItem | null> {
     const row = this.unwrap<ItemRow | null>(
       await this.sb.from('items').select(ITEM_DETAIL_COLS).eq('id', id).maybeSingle(),
