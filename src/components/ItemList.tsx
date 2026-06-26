@@ -21,6 +21,7 @@ import { useCollapsedFeeds } from '../hooks/useCollapsedFeeds';
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
 import type { FeedId, FeedItem, ItemId } from '../lib/types';
 import { measureStickyBottomInset, measureTopChromeHeight } from '../lib/stickyInset';
+import { adjustUnreadCounts } from '../lib/unreadAdjust';
 import { loadFailureCopy, presentableDetail } from '../lib/loadErrorCopy';
 import { LoadError } from './LoadError';
 import { checkForServiceWorkerUpdate } from '../lib/swUpdate';
@@ -1265,6 +1266,31 @@ export function ItemList({
     enabled: groupByFeed && feedIdsInView.length > 0,
   });
 
+  // The badge above is a server-only count, so it lags local triage by a sync
+  // round-trip — right after a Sweep it would still read its pre-sweep value
+  // while the rows are already gone. Discount the rows the user just took out of
+  // the unread set whose write is still pending (unsynced); the adjustment
+  // self-clears as writes drain. `storeVersion` (bumped on every local mutation
+  // and on outbox drain via notifySynced) keys the recompute. No-op on the mock,
+  // which has no outbox and whose count is never stale.
+  //
+  // Known residual: a server *count* can't be reconciled atomically with local
+  // triage, so a sub-second blip survives at sync-completion — the pending id
+  // drains at write-confirm, one round-trip before the invalidated count refetch
+  // returns, so the badge briefly reads the stale count before settling. This
+  // removes the multi-second post-sweep lag, not that final blip; the exact fix
+  // is the `feed_unread_ids` ID-list RPC (TODO.md §Server RPCs).
+  const adjustedUnreadCounts = useMemo(() => {
+    if (!groupByFeed || !unreadCounts) return unreadCounts;
+    void storeVersion;
+    return adjustUnreadCounts(
+      unreadCounts,
+      mergedRaw,
+      (id) => ds.stateStore.get(id),
+      ds.pendingItemIds?.(),
+    );
+  }, [groupByFeed, unreadCounts, mergedRaw, ds, storeVersion]);
+
   const collapseControls =
     groupByFeed && feedIdsInView.length > 0
       ? {
@@ -1471,7 +1497,7 @@ export function ItemList({
               listRef={listRef}
               getRowRef={getRowRef}
               groupHeaders={groupHeaders}
-              groupCounts={groupByFeed ? unreadCounts : undefined}
+              groupCounts={groupByFeed ? adjustedUnreadCounts : undefined}
               onSweepFeed={groupByFeed ? handleSweepFeed : undefined}
               sweepableFeeds={
                 groupByFeed ? new Set(sweepableByFeed.keys()) : undefined

@@ -107,6 +107,12 @@ export interface DataSource {
    * shows how much it holds, and reusable wherever a per-feed badge is wanted.
    * Bounded by the same window/floor the list is, so it's cheap. */
   getFeedUnreadCounts(feedIds: FeedId[]): Promise<Record<FeedId, number>>;
+  /** Item ids with a still-unsynced local state write. `getFeedUnreadCounts` is
+   * a server-only read that lags local triage by a round-trip, so the per-feed
+   * badge discounts the pending Sweep/Done rows it still counts to update
+   * immediately. Sources with no outbox (the in-memory mock) omit this — their
+   * count is never stale, so there's nothing to correct. */
+  pendingItemIds?(): ReadonlySet<ItemId>;
   getItem(id: ItemId): Promise<FeedItem | null>;
   /** Resolve arbitrary ids (used by library views, which span feeds). */
   getItemsByIds(ids: ItemId[]): Promise<FeedItem[]>;
