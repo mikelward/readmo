@@ -269,6 +269,15 @@ export function ItemPage() {
     staleTime: fullTextStaleTime,
   });
 
+  // Lifted above menuItems so the overflow menu can offer "Show feed version"
+  // whenever we're sitting in the reading view and a feed body exists to swap
+  // back to. The mode bar used to carry this toggle; it's now menu-only.
+  const fetched = fullQuery.data;
+  const fullHtml = cachedFull ?? (fetched?.status === 'ok' ? fetched.contentHtml : null);
+  const defaultView: 'feed' | 'full' = cachedFull || fullReadyAtOpen ? 'full' : 'feed';
+  const view = userView ?? defaultView;
+  const showReading = view === 'full' && !!fullHtml;
+
   // Opening the reader marks the item Opened (auto), and resets the per-article
   // reading-mode view state when navigating between items.
   useEffect(() => {
@@ -327,7 +336,9 @@ export function ItemPage() {
   }, []);
   // Favorite/Share live on the bar as inline icons on wide viewports, so
   // they drop out of the menu there to avoid duplicate entry points; below
-  // 960px they stay here. Open feed is always in the menu.
+  // 960px they stay here. Open feed is always in the menu. "Show feed
+  // version" appears only when the reader is sitting in the extracted
+  // reading view AND a feed body exists to swap back to.
   const menuItems = useMemo<ItemRowMenuItem[]>(() => {
     if (!resolved) return [];
     const it = resolved.item;
@@ -344,13 +355,20 @@ export function ItemPage() {
         onSelect: () => share({ title: it.title, url: it.url }),
       });
     }
+    if (showReading && it.contentHtml) {
+      items.push({
+        key: 'show-feed-version',
+        label: 'Show feed version',
+        onSelect: () => setUserView('feed'),
+      });
+    }
     items.push({
       key: 'open-feed',
       label: 'Open feed',
       onSelect: () => navigate(`/feed/${resolved.feed.id}`),
     });
     return items;
-  }, [resolved, wide, state.favorite, toggle, share, navigate]);
+  }, [resolved, wide, state.favorite, toggle, share, navigate, showReading]);
 
   // Reader keyboard shortcuts: o open original, p pin, f favorite, d done.
   useEffect(() => {
@@ -410,15 +428,9 @@ export function ItemPage() {
   // Resolve the reading-mode body. The RSS body always shows first; the full
   // article (cached, or fetched in the background) is revealed only when the
   // user asks for it via "Keep reading" — except a body already cached full
-  // (pinned/previously read) defaults straight to the reading view.
-  const fetched = fullQuery.data;
-  const fullHtml = cachedFull ?? (fetched?.status === 'ok' ? fetched.contentHtml : null);
-  // A full body that was already on hand at open — cached on the item, or in the
-  // fulltext query from a prefetch/earlier open — opens straight into reading
-  // mode; only a fresh background fetch waits behind "Keep reading".
-  const defaultView: 'feed' | 'full' = cachedFull || fullReadyAtOpen ? 'full' : 'feed';
-  const view = userView ?? defaultView;
-  const showReading = view === 'full' && !!fullHtml;
+  // (pinned/previously read) defaults straight to the reading view. `view` /
+  // `showReading` / `fullHtml` are computed above so the overflow menu can
+  // offer "Show feed version" while reading.
   const bodyHtml = showReading ? fullHtml : item.contentHtml;
   const fetchingFull = fullQuery.isFetching && !fullHtml;
   // Full article is fetched and ready, but we're still showing the feed body —
@@ -506,15 +518,6 @@ export function ItemPage() {
             onClick={() => setUserView('full')}
           >
             {truncated ? 'Keep reading' : 'Show reading view'}
-          </button>
-        ) : showReading && item.contentHtml ? (
-          <button
-            type="button"
-            className="reader__mode-toggle"
-            data-testid="reader-view-toggle"
-            onClick={() => setUserView('feed')}
-          >
-            Show feed version
           </button>
         ) : fullFailed ? (
           <>

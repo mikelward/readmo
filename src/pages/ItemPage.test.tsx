@@ -127,30 +127,39 @@ describe('ItemPage reading mode', () => {
 
     await user.click(keepReading);
     expect(await screen.findByText(/full article text/)).toBeInTheDocument();
-    // Now in reading view, a toggle back to the feed version is offered.
-    expect(screen.getByTestId('reader-view-toggle')).toHaveTextContent(
-      'Show feed version',
-    );
+    // The mode bar no longer carries a swap-back toggle; "Show feed version"
+    // moved into the overflow menu so the happy path (stay in reading mode)
+    // isn't crowded by a control most readers never use.
+    expect(screen.queryByTestId('reader-view-toggle')).toBeNull();
+    await user.click(screen.getByTestId('reader-more'));
+    expect(
+      await screen.findByTestId('item-row-menu-show-feed-version'),
+    ).toHaveTextContent('Show feed version');
   });
 
-  it('toggles between the reading view and the feed version', async () => {
+  it('toggles between the reading view (mode bar) and the feed version (menu)', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
     renderReader(source);
     await user.click(await screen.findByTestId('reader-keep-reading'));
     await screen.findByText(/full article text/);
 
-    await user.click(screen.getByTestId('reader-view-toggle')); // → feed version
+    // Swap back via the overflow menu.
+    await user.click(screen.getByTestId('reader-more'));
+    await user.click(
+      await screen.findByTestId('item-row-menu-show-feed-version'),
+    );
     expect(screen.queryByText(/full article text/)).not.toBeInTheDocument();
     // The original feed body is still present.
     expect(screen.getByText(/visible creases/)).toBeInTheDocument();
 
-    // Back to the reading view via Keep reading.
+    // Back to the reading view via Keep reading on the mode bar.
     await user.click(screen.getByTestId('reader-keep-reading'));
     expect(await screen.findByText(/full article text/)).toBeInTheDocument();
   });
 
   it('opens straight into the reading view when the full body is already cached', async () => {
+    const user = userEvent.setup();
     // A previously-read / pinned item already carries the extracted body.
     class CachedFullSource extends MockDataSource {
       async getItem(id: string): Promise<FeedItem | null> {
@@ -166,9 +175,12 @@ describe('ItemPage reading mode', () => {
     // No Keep-reading step — the cached full body shows immediately.
     expect(await screen.findByText(/cached reading body/)).toBeInTheDocument();
     expect(screen.queryByTestId('reader-keep-reading')).not.toBeInTheDocument();
-    expect(await screen.findByTestId('reader-view-toggle')).toHaveTextContent(
-      'Show feed version',
-    );
+    // The swap-back-to-feed option lives in the overflow menu, not the mode bar.
+    expect(screen.queryByTestId('reader-view-toggle')).toBeNull();
+    await user.click(screen.getByTestId('reader-more'));
+    expect(
+      await screen.findByTestId('item-row-menu-show-feed-version'),
+    ).toHaveTextContent('Show feed version');
   });
 
   it('shows the cached RSS body when the detail read fails offline (unpinned)', async () => {
@@ -351,6 +363,7 @@ describe('ItemPage reading mode', () => {
   });
 
   it('opens to the reading view when full text is already cached in the fulltext query', async () => {
+    const user = userEvent.setup();
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
@@ -365,9 +378,12 @@ describe('ItemPage reading mode', () => {
     // Opens straight into the reading view — no Keep-reading step.
     expect(await screen.findByText(/prefetched reading body/)).toBeInTheDocument();
     expect(screen.queryByTestId('reader-keep-reading')).not.toBeInTheDocument();
-    expect(await screen.findByTestId('reader-view-toggle')).toHaveTextContent(
-      'Show feed version',
-    );
+    // Show-feed-version sits in the overflow menu.
+    expect(screen.queryByTestId('reader-view-toggle')).toBeNull();
+    await user.click(screen.getByTestId('reader-more'));
+    expect(
+      await screen.findByTestId('item-row-menu-show-feed-version'),
+    ).toHaveTextContent('Show feed version');
   });
 
   it('falls back to the feed body and explains when the article needs sign-in', async () => {
@@ -515,8 +531,8 @@ describe('ItemPage reading mode', () => {
     const source = new LongBodySource(`test-${Math.random()}`);
     renderReader(source);
     const get = await screen.findByTestId('fulltext-get');
-    // No auto-fetch happened — the toggle isn't present yet.
-    expect(screen.queryByTestId('reader-view-toggle')).not.toBeInTheDocument();
+    // No auto-fetch happened — nothing for the reader to "keep reading" yet.
+    expect(screen.queryByTestId('reader-keep-reading')).toBeNull();
 
     await user.click(get);
     expect(await screen.findByText(/full article text/)).toBeInTheDocument();

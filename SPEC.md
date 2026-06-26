@@ -1120,14 +1120,16 @@ page's discipline is unchanged.
     kept; a page that was mostly chrome now falls under the minimum article
     length and reports `empty`.
   - The feed body shows first; once the background fetch lands, **"Keep
-    reading"** reveals the full article (no auto-swap). Once both bodies exist a
-    **reading-view / feed-version toggle** lets the user flip between them. An
-    already-cached full body defaults to the reading view. Feeds whose body is
-    already complete are not auto-fetched but offer a **"Get full article"**
-    control. While the background fetch is in flight the mode bar shows a
-    **"Loading full article…"** note alongside an **"Open original"** button (in
-    the same slot as "Keep reading"), so the reader can jump to the source
-    without waiting for extraction.
+    reading"** reveals the full article (no auto-swap). Once both bodies exist
+    the swap *back* to the feed body lives in the reader's overflow (⋮) menu
+    as **"Show feed version"** — keeping the mode bar quiet on the happy path
+    (most readers stay in the extracted reading view) without losing the
+    escape hatch. An already-cached full body defaults to the reading view.
+    Feeds whose body is already complete are not auto-fetched but offer a
+    **"Get full article"** control. While the background fetch is in flight
+    the mode bar shows a **"Loading full article…"** note alongside an **"Open
+    original"** button (in the same slot as "Keep reading"), so the reader can
+    jump to the source without waiting for extraction.
   - **Outcomes** (the function returns `{ status, contentHtml }`): `ok`,
     `empty` (nothing article-like found), `auth` (publisher gated the page even
     via the Jina fallback → the reader keeps the feed body and shows "needs
