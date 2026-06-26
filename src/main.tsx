@@ -11,13 +11,29 @@ import { MockDataSource } from './lib/data/MockDataSource';
 import { SupabaseDataSource } from './lib/data/SupabaseDataSource';
 import { isSupabaseConfigured } from './lib/supabase/client';
 import {
+  applyFont,
   applyFontSize,
   applyPalette,
   applyTheme,
+  getStoredFont,
   getStoredFontSize,
   getStoredPalette,
   getStoredTheme,
 } from './lib/theme';
+// Self-hosted typefaces for the Settings "Font" picker (Fontsource). Each
+// @font-face only triggers a network fetch when text in that family is actually
+// rendered, so a normal page loads just the active font; the Settings picker,
+// which previews every option in its own face, is the only place all of them
+// load. Variable (wght axis) where available; Fira Sans ships static weights.
+import '@fontsource-variable/roboto/wght.css';
+import '@fontsource-variable/inter/wght.css';
+import '@fontsource-variable/public-sans/wght.css';
+import '@fontsource-variable/work-sans/wght.css';
+import '@fontsource/fira-sans/latin-400.css';
+import '@fontsource/fira-sans/latin-500.css';
+import '@fontsource/fira-sans/latin-600.css';
+import '@fontsource/fira-sans/latin-700.css';
+import '@fontsource/fira-sans/latin-800.css';
 import { getActiveUid } from './hooks/useAuth';
 import {
   itemStateKey,
@@ -82,6 +98,7 @@ const bootUid = getActiveUid();
 applyTheme(getStoredTheme());
 applyPalette(getStoredPalette());
 applyFontSize(getStoredFontSize());
+applyFont(getStoredFont());
 
 // Reconcile on-device caches for this user BEFORE building the persister/data
 // source or painting: migrate legacy global stores into the user's scope, and

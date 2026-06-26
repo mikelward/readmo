@@ -108,7 +108,29 @@ Everything else about the visual system mirrors newshacker.
 - **Text:** `--rm-text: #1a1a1a`; **opened/read titles** `--rm-read: #4a4a4a`
   (mid-tone below unopened, above meta); meta `--rm-meta: #6b6b6b`. The
   opened-title fade is the same read/unread treatment newshacker uses (color
-  gap + weight step), identical in light and dark.
+  gap + weight step), identical in light and dark. Unread titles render at
+  **weight 500**, read titles at **400** — the weight step only reads if the
+  active typeface actually ships a 500 (Medium) face, which is why the
+  default font is a self-hosted webfont rather than the system stack (see
+  *Typeface* below).
+- **Typeface:** the body font is a **self-hosted webfont** (Fontsource,
+  bundled into the app and served same-origin — no Google Fonts CDN, no
+  third-party request) so the app renders identically on every platform
+  instead of substituting whatever fonts the OS happens to have. This also
+  guarantees the unread/read weight step works everywhere: Linux system
+  fonts (DejaVu Sans, Liberation Sans) ship only 400/700, so a system-stack
+  500 silently collapsed to 400 and unread titles stopped looking unread.
+  The **Font** picker in Settings offers **Roboto (default)**, Inter, Public
+  Sans, Work Sans, Fira Sans, and **System** (opt back into the native
+  stack). Variable (weight-axis) files where available; Fira Sans ships
+  static weights. Stored under `readmo:font` (default `roboto` owns the bare
+  `:root` and stores nothing; others set `data-font` on `<html>`), applied
+  before first paint in `main.tsx` alongside theme/palette/text-size. Each
+  `@font-face` only fetches when its family is actually rendered, so a normal
+  page loads just the active font; the Settings picker — which previews every
+  option in its own face — is the only screen that loads all of them. Font
+  woff2 is runtime-cached by the service worker (`readmo-fonts`, cache-on-use)
+  so the active font survives offline.
 - **Mark:** ink (near-black) rounded-square tile, paper-white uppercase
   **"R"** letterform centered slightly above the midline, paper-white
   **home-indicator pill** near the bottom (the letter-mark + mobile-first

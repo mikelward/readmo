@@ -1,17 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  FONT_LABELS,
   FONT_SIZE_STORAGE_KEY,
+  FONT_STACKS,
+  FONT_STORAGE_KEY,
   PALETTE_STORAGE_KEY,
   THEME_CHANGE_EVENT,
   THEME_STORAGE_KEY,
+  applyFont,
   applyFontSize,
   applyPalette,
   applyTheme,
   applyThemeColorMeta,
+  getStoredFont,
   getStoredFontSize,
   getStoredPalette,
   getStoredTheme,
   resolveTheme,
+  setStoredFont,
   setStoredFontSize,
   setStoredPalette,
   setStoredTheme,
@@ -286,5 +292,76 @@ describe('font size', () => {
     setStoredFontSize('17');
     expect(handler).toHaveBeenCalledTimes(1);
     window.removeEventListener(THEME_CHANGE_EVENT, handler);
+  });
+});
+
+describe('font family', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    document.documentElement.removeAttribute('data-font');
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+    document.documentElement.removeAttribute('data-font');
+  });
+
+  it('defaults to "roboto" when storage is empty', () => {
+    expect(getStoredFont()).toBe('roboto');
+  });
+
+  it('reads a stored font and ignores garbage', () => {
+    window.localStorage.setItem(FONT_STORAGE_KEY, 'inter');
+    expect(getStoredFont()).toBe('inter');
+    window.localStorage.setItem(FONT_STORAGE_KEY, 'comic-sans');
+    expect(getStoredFont()).toBe('roboto');
+  });
+
+  it('setStoredFont persists a non-default font and sets the attribute', () => {
+    setStoredFont('inter');
+    expect(window.localStorage.getItem(FONT_STORAGE_KEY)).toBe('inter');
+    expect(document.documentElement.getAttribute('data-font')).toBe('inter');
+
+    setStoredFont('fira-sans');
+    expect(window.localStorage.getItem(FONT_STORAGE_KEY)).toBe('fira-sans');
+    expect(document.documentElement.getAttribute('data-font')).toBe('fira-sans');
+  });
+
+  it('setStoredFont("roboto") clears the attribute and the key (default owns bare root)', () => {
+    setStoredFont('inter');
+    setStoredFont('roboto');
+    expect(window.localStorage.getItem(FONT_STORAGE_KEY)).toBeNull();
+    expect(document.documentElement.hasAttribute('data-font')).toBe(false);
+  });
+
+  it('the "system" option is a real, selectable value (escape hatch to native fonts)', () => {
+    setStoredFont('system');
+    expect(window.localStorage.getItem(FONT_STORAGE_KEY)).toBe('system');
+    expect(document.documentElement.getAttribute('data-font')).toBe('system');
+  });
+
+  it('applyFont toggles the attribute without touching storage', () => {
+    applyFont('work-sans');
+    expect(document.documentElement.getAttribute('data-font')).toBe('work-sans');
+    expect(window.localStorage.getItem(FONT_STORAGE_KEY)).toBeNull();
+    applyFont('roboto');
+    expect(document.documentElement.hasAttribute('data-font')).toBe(false);
+  });
+
+  it('setStoredFont fires a change event', () => {
+    const handler = vi.fn();
+    window.addEventListener(THEME_CHANGE_EVENT, handler);
+    setStoredFont('inter');
+    expect(handler).toHaveBeenCalledTimes(1);
+    window.removeEventListener(THEME_CHANGE_EVENT, handler);
+  });
+
+  it('every option has a label and a font stack that ends in the system fallback', () => {
+    for (const key of Object.keys(FONT_LABELS) as (keyof typeof FONT_LABELS)[]) {
+      expect(FONT_LABELS[key]).toBeTruthy();
+      // Each non-system option lists its webfont first, then the shared native
+      // stack, so a failed font load degrades to native rendering.
+      expect(FONT_STACKS[key]).toContain('-apple-system');
+    }
   });
 });

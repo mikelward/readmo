@@ -3,6 +3,7 @@ import { act, renderHook } from '@testing-library/react';
 import { useTheme } from './useTheme';
 import {
   FONT_SIZE_STORAGE_KEY,
+  FONT_STORAGE_KEY,
   PALETTE_STORAGE_KEY,
   THEME_STORAGE_KEY,
 } from '../lib/theme';
@@ -65,6 +66,7 @@ describe('useTheme', () => {
     document.documentElement.removeAttribute('data-theme');
     document.documentElement.removeAttribute('data-palette');
     document.documentElement.removeAttribute('data-font-size');
+    document.documentElement.removeAttribute('data-font');
   });
 
   afterEach(() => {
@@ -72,6 +74,7 @@ describe('useTheme', () => {
     document.documentElement.removeAttribute('data-theme');
     document.documentElement.removeAttribute('data-palette');
     document.documentElement.removeAttribute('data-font-size');
+    document.documentElement.removeAttribute('data-font');
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.remove();
     vi.restoreAllMocks();
@@ -146,6 +149,34 @@ describe('useTheme', () => {
     act(() => a.result.current.setFontSize('17'));
     expect(b.result.current.fontSize).toBe('17');
     expect(document.documentElement.getAttribute('data-font-size')).toBe('17');
+  });
+
+  it('returns the stored font and persists changes independently', () => {
+    const { result } = renderHook(() => useTheme());
+    expect(result.current.font).toBe('roboto');
+
+    act(() => result.current.setFont('inter'));
+    expect(result.current.font).toBe('inter');
+    expect(window.localStorage.getItem(FONT_STORAGE_KEY)).toBe('inter');
+    expect(document.documentElement.getAttribute('data-font')).toBe('inter');
+    // Other appearance attributes are untouched by a font change.
+    expect(document.documentElement.hasAttribute('data-theme')).toBe(false);
+    expect(document.documentElement.hasAttribute('data-palette')).toBe(false);
+    expect(document.documentElement.hasAttribute('data-font-size')).toBe(false);
+
+    act(() => result.current.setFont('roboto'));
+    expect(result.current.font).toBe('roboto');
+    expect(window.localStorage.getItem(FONT_STORAGE_KEY)).toBeNull();
+    expect(document.documentElement.hasAttribute('data-font')).toBe(false);
+  });
+
+  it('syncs font across hook instances via the change event', () => {
+    const a = renderHook(() => useTheme());
+    const b = renderHook(() => useTheme());
+
+    act(() => a.result.current.setFont('work-sans'));
+    expect(b.result.current.font).toBe('work-sans');
+    expect(document.documentElement.getAttribute('data-font')).toBe('work-sans');
   });
 
   it('syncs across hook instances via the change event', () => {

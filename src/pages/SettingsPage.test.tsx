@@ -14,6 +14,7 @@ import { AddFeedError, type DiscoveredFeed } from '../lib/data/DataSource';
 import type { AddFeedErrorKind } from '../lib/data/DataSource';
 import { SettingsPage } from './SettingsPage';
 import { POPULAR_FEEDS } from '../lib/popularFeeds';
+import { FONT_STACKS, FONT_STORAGE_KEY } from '../lib/theme';
 
 /** A source whose subscribe() returns a feed with no siteUrl or meaningful
  * title — simulating a silent server-side refresh failure (the edge function
@@ -714,5 +715,62 @@ describe('SettingsPage — Reading & Bottom toolbar', () => {
       screen.getByRole('radio', { name: 'Bottom of screen' }),
     ).toBeChecked();
     expect(window.localStorage.getItem(BOTTOM_BAR_KEY)).toBe('screen');
+  });
+});
+
+describe('SettingsPage — Font picker', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    document.documentElement.removeAttribute('data-font');
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+    document.documentElement.removeAttribute('data-font');
+  });
+
+  it('defaults to Roboto and offers every option including System', () => {
+    renderWithProviders(<SettingsPage />);
+    const group = screen.getByRole('radiogroup', { name: 'Font' });
+    expect(within(group).getByRole('radio', { name: 'Roboto' })).toBeChecked();
+    for (const name of ['Inter', 'Public Sans', 'Work Sans', 'Fira Sans', 'System']) {
+      expect(within(group).getByRole('radio', { name })).toBeInTheDocument();
+    }
+  });
+
+  it('selecting a font persists it and sets data-font', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    const group = screen.getByRole('radiogroup', { name: 'Font' });
+
+    await user.click(within(group).getByRole('radio', { name: 'Inter' }));
+    expect(within(group).getByRole('radio', { name: 'Inter' })).toBeChecked();
+    expect(window.localStorage.getItem(FONT_STORAGE_KEY)).toBe('inter');
+    expect(document.documentElement.getAttribute('data-font')).toBe('inter');
+  });
+
+  it('reselecting Roboto (the default) clears the key and the attribute', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    const group = screen.getByRole('radiogroup', { name: 'Font' });
+
+    await user.click(within(group).getByRole('radio', { name: 'Work Sans' }));
+    expect(window.localStorage.getItem(FONT_STORAGE_KEY)).toBe('work-sans');
+
+    await user.click(within(group).getByRole('radio', { name: 'Roboto' }));
+    expect(window.localStorage.getItem(FONT_STORAGE_KEY)).toBeNull();
+    expect(document.documentElement.hasAttribute('data-font')).toBe(false);
+  });
+
+  it('previews each option in its own face', () => {
+    renderWithProviders(<SettingsPage />);
+    const group = screen.getByRole('radiogroup', { name: 'Font' });
+    // The Inter chip renders its own label in Inter; System uses the native
+    // stack (no webfont family), so the preview matches what choosing it does.
+    expect(within(group).getByRole('radio', { name: 'Inter' })).toHaveStyle({
+      fontFamily: FONT_STACKS.inter,
+    });
+    expect(within(group).getByRole('radio', { name: 'System' })).toHaveStyle({
+      fontFamily: FONT_STACKS.system,
+    });
   });
 });

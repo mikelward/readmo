@@ -17,6 +17,11 @@
     "node": "^20.19.0 || ^22.13.0 || >=24"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "^5.2.8",
+    "@fontsource-variable/public-sans": "^5.2.7",
+    "@fontsource-variable/roboto": "^5.2.10",
+    "@fontsource-variable/work-sans": "^5.2.8",
+    "@fontsource/fira-sans": "^5.2.7",
     "@mozilla/readability": "^0.6.0",
     "@supabase/supabase-js": "^2.108.2",
     "@tanstack/query-sync-storage-persister": "^5.99.1",

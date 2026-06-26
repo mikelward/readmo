@@ -24,7 +24,15 @@ import { useAuth } from '../hooks/useAuth';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useToast } from '../hooks/useToast';
 import { presentableDetail } from '../lib/loadErrorCopy';
-import { FONT_SIZE_LABELS, type FontSize, type Palette, type Theme } from '../lib/theme';
+import {
+  FONT_LABELS,
+  FONT_SIZE_LABELS,
+  FONT_STACKS,
+  type FontFamily,
+  type FontSize,
+  type Palette,
+  type Theme,
+} from '../lib/theme';
 import type { Feed, FeedId } from '../lib/types';
 import './SettingsPage.css';
 import './PageHeader.css';
@@ -59,7 +67,7 @@ function addFeedDetail(err: unknown): string | undefined {
 export function SettingsPage() {
   const ds = useDataSource();
   const queryClient = useQueryClient();
-  const { theme, palette, fontSize, setTheme, setPalette, setFontSize } =
+  const { theme, palette, fontSize, font, setTheme, setPalette, setFontSize, setFont } =
     useTheme();
   const { hideOnScroll, setHideOnScroll } = useHideOnScroll();
   const { bottomBarPosition, setBottomBarPosition } = useBottomBarPosition();
@@ -344,6 +352,16 @@ export function SettingsPage() {
     { value: 'screen', label: 'Bottom of screen' },
   ];
   const fontSizes: FontSize[] = ['15', '16', '17'];
+  // Roboto first — it's the default (SPEC.md *Visual design → Typeface*). Each
+  // chip previews in its own face below.
+  const fonts: FontFamily[] = [
+    'roboto',
+    'inter',
+    'public-sans',
+    'work-sans',
+    'fira-sans',
+    'system',
+  ];
   // Default first (SPEC.md *Feed views → Sort & grouping*): newest-first is the
   // default river order; oldest-first is the opt-in.
   const sortOrders: { value: ItemSort; label: string }[] = [
@@ -740,6 +758,31 @@ export function SettingsPage() {
               onClick={() => setFontSize(f)}
             >
               {FONT_SIZE_LABELS[f]}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="settings__section">
+        <h2 className="settings__heading">Font</h2>
+        <p className="settings__hint">
+          Self-hosted so the app reads the same on every device, instead of
+          relying on whatever fonts your OS happens to have.
+        </p>
+        <div className="settings__theme" role="radiogroup" aria-label="Font">
+          {fonts.map((f) => (
+            <button
+              key={f}
+              type="button"
+              role="radio"
+              aria-checked={font === f}
+              className={'settings__theme-btn' + (font === f ? ' is-active' : '')}
+              // Preview each option in its own face. `system` falls back to the
+              // native stack, matching what choosing it actually does.
+              style={{ fontFamily: FONT_STACKS[f] }}
+              onClick={() => setFont(f)}
+            >
+              {FONT_LABELS[f]}
             </button>
           ))}
         </div>
