@@ -85,6 +85,16 @@ const GROUPED_WINDOW_ROW_CAP = 1000;
  * device write. Keying off the last item_id can't skip an existing row. */
 const ITEM_STATE_PAGE = 1000;
 
+/** How long a feed/library read on a still-empty store will WAIT for the first
+ * item_state hydration before rendering anyway (with default per-row flags / a
+ * library that self-heals on the hydration's store emit). Bounds the cold-cache
+ * case — a fresh or cache-purged device whose first hydration is the slow/paged
+ * or stalled read this fix targets — so it can't strand that device on loading
+ * skeletons. Only the read's *wait* is capped; the hydration fetch itself runs
+ * unbounded in the background (still subject to supabaseFetch's own 15s cap), so
+ * connectivity/Down detection is unaffected. */
+const COLD_HYDRATE_WAIT_MS = 4000;
+
 /** A throwaway UUID used as a per-request cache-buster on the item_state read
  * (`item_id=not.eq.<uuid>`). Prefers `crypto.randomUUID`; the Math.random
  * fallback is RFC4122-shaped — only uniqueness matters here, not entropy, and a
@@ -201,6 +211,12 @@ export class SupabaseDataSource implements DataSource {
   private readonly sb: SupabaseClient;
   private readonly feedCache = new Map<FeedId, Feed>();
   private hydration: Promise<void> | null = null;
+  /** Set once any item_state hydration has successfully applied. Lets a read
+   * tell "the store has never been populated" (wait for the first hydration so
+   * the first paint isn't all default flags) from "we already have last-good
+   * state" (return rows now; refresh hydration in the background) — see
+   * `ensureHydratedForRead`. */
+  private hydratedOnce = false;
   private resyncing: Promise<void> | null = null;
   /** A resync was requested while one was already in flight — re-run a fresh one
    * if the in-flight attempt fails, so a recovery (e.g. an `online` event after
@@ -280,18 +296,28 @@ export class SupabaseDataSource implements DataSource {
     this.outbox.seedConfirmedVersions(
       this.stateStore.entries().map(([id, s]) => [id, s.version] as const),
     );
-    // Replay anything queued in a prior session now, and again when connectivity
-    // returns.
-    void this.outbox.flush();
-    if (typeof window !== 'undefined') {
-      window.addEventListener('online', () => void this.outbox.flush());
-    }
-
     // Kick off item_state hydration at boot so the library routes (/pinned,
     // /favorites, …), which derive their ids from the store, populate even when
     // no feed view has run yet. ensureHydrated is memoized; when the rows land
     // the store emits and those views refetch with real ids.
+    //
+    // This MUST precede the initial outbox flush below: runHydration marks a
+    // hydration in flight synchronously (noteHydrationStarted), so a persisted
+    // no-base write — a brand-new row acted on in a prior session, replayed at
+    // boot — is HELD by that flush until the hydrate resolves its base, instead
+    // of being sent unchecked before the boot read even starts (which would let a
+    // reload defeat the in-session hold and clobber a cross-device change). On a
+    // failed (offline) hydrate the hold releases unchecked on reconnect, the same
+    // documented offline behavior.
     void this.ensureHydrated().catch(() => {});
+
+    // Replay anything queued in a prior session now (entries with a known base —
+    // e.g. seeded from the persisted store — send immediately; no-base entries
+    // are held per above), and again when connectivity returns.
+    void this.outbox.flush();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', () => void this.outbox.flush());
+    }
   }
 
   // --- helpers --------------------------------------------------------------
@@ -346,6 +372,12 @@ export class SupabaseDataSource implements DataSource {
    * because a resync had already applied.
    */
   private runHydration(): Promise<void> {
+    // Tell the outbox a base-resolving read is pending (from now until it
+    // settles), so it HOLDS an unresolvable-base write instead of sending it
+    // unchecked — important now that feed/library reads no longer block on
+    // hydration, so a write can be made before this lands. Settling (success OR
+    // failure) decrements the count and re-flushes any held writes.
+    this.outbox.noteHydrationStarted();
     const run = this.hydrationChain.then(
       () => this.applyHydration(),
       // A prior hydration's failure must not poison the chain — still run ours.
@@ -356,6 +388,10 @@ export class SupabaseDataSource implements DataSource {
     this.hydrationChain = run.then(
       () => {},
       () => {},
+    );
+    void run.then(
+      () => this.outbox.noteHydrationSettled(),
+      () => this.outbox.noteHydrationSettled(),
     );
     return run;
   }
@@ -422,6 +458,10 @@ export class SupabaseDataSource implements DataSource {
       rows.map((r) => [r.item_id, mapItemState(r)] as [ItemId, ItemState]),
       pending,
     );
+    // A live read landed: from now on a feed/library read has server-confirmed
+    // last-good state to overlay, so it never needs to BLOCK on a re-pull (even
+    // one that hangs) — see ensureHydratedForRead.
+    this.hydratedOnce = true;
   }
 
   /** Memoized hydration, used by every read: once it has succeeded, reads return
@@ -442,6 +482,66 @@ export class SupabaseDataSource implements DataSource {
       this.hydration = p;
     }
     return this.hydration;
+  }
+
+  /**
+   * Hydration for a feed/library read. item_state hydration is **best-effort**:
+   * `feed_items` already filters Done/Hidden server-side, and the local store
+   * carries last-good pin/opened/done flags (loaded synchronously from
+   * localStorage at boot), so a read does NOT need a fresh hydration to render
+   * the right rows — it only refines per-row flags. Therefore a read must never
+   * **block** on hydration once there's state to overlay.
+   *
+   * Before, feedView/getItemsByIds `await`ed the FULL hydration before returning
+   * any row. That hydration reads the entire `item_state` table in serialized
+   * keyset pages, so on a large account (many pages) — or when the NetworkOnly
+   * read stalls (a connection that's established but never answers, which the
+   * service worker can't time out) — the boot read could take a very long time
+   * or never settle, holding the home feed query in its initial loading state.
+   * The symptom is the whole feed stuck on its loading skeletons, surviving
+   * reload and pull-to-refresh because every cold boot re-runs the same blocking
+   * read. (The earlier fix added a redundant read timeout and was reverted for
+   * regressing offline detection; this fixes it at the right layer instead —
+   * the read still flows through the connectivity-tracked, 15s-bounded
+   * `supabaseFetch`, so Down/Offline detection is unchanged. We just stop
+   * gating rows on it.)
+   *
+   * So: kick hydration (memoized — a no-op if one is in flight or already done),
+   * and only WAIT on it when there's nothing to overlay yet — a brand-new or
+   * cache-purged device whose store is still empty and has never hydrated — so
+   * its first paint isn't all default flags. Even then the wait is BOUNDED
+   * ({@link COLD_HYDRATE_WAIT_MS}): a cold device's read can be the very
+   * slow/paged/stalled one this fix targets, so an unbounded wait would just move
+   * the stuck-skeletons bug to first-time/purged users. Past the bound (or once
+   * there's last-good state) the read returns immediately and lets the background
+   * hydration's store emit trigger a refetch (useFeedInvalidation) / library
+   * re-read to refine flags, exactly as a focus/visibility resync already does.
+   * The hydration itself keeps running unbounded in the background — only the
+   * read's WAIT on it is capped, so connectivity/Down detection is untouched.
+   */
+  private async ensureHydratedForRead(): Promise<void> {
+    const hydration = this.ensureHydrated();
+    // Swallow rejection in all paths so a failed background re-pull isn't an
+    // unhandled rejection.
+    const settle = hydration.catch(() => {});
+    if (this.hydratedOnce || this.stateStore.hasEntries()) {
+      // Last-good state is available; don't let a fresh/in-flight (possibly slow
+      // or hung) hydration block the read.
+      void settle;
+      return;
+    }
+    // Cold store: wait briefly for the first hydration to avoid a default-flag
+    // flash, but never longer than the bound — so a stalled cold read can't
+    // strand the device on skeletons.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bound = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, COLD_HYDRATE_WAIT_MS);
+    });
+    try {
+      await Promise.race([settle, bound]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   /** Fetch item rows for an id list in bounded `in (…)` batches (keeps the
@@ -554,14 +654,15 @@ export class SupabaseDataSource implements DataSource {
     const limit = windowed ? GROUPED_WINDOW_ROW_CAP : opts?.limit ?? PAGE_SIZE;
     const offset = decodeCursor(opts?.cursor);
 
-    // Ensure item_state is loaded before returning rows: the UI reads per-row
-    // pin/opened affordances from the store, and overlayLocalState below consults
-    // it, so a page returned before hydration would briefly show default flags.
-    // Best-effort: item_state is read NetworkOnly (live or fail), so when it
-    // fails (offline / backend down) proceed with the last-good localStorage
-    // store rather than failing the whole feed here — the feed_items RPC below is
-    // what surfaces the offline/down miss-state.
-    await this.ensureHydrated().catch(() => {});
+    // Hydrate item_state so the UI's per-row pin/opened affordances and
+    // overlayLocalState reflect server truth — but DON'T block the feed on it
+    // once there's last-good state to overlay. item_state hydration is
+    // best-effort: feed_items filters Done/Hidden server-side and the store
+    // carries last-good flags from localStorage, so it only refines per-row
+    // flags. Blocking here on a slow/large (paged) or hung NetworkOnly read is
+    // what used to strand the whole feed on its loading skeletons, surviving
+    // reload and pull-to-refresh. See ensureHydratedForRead.
+    await this.ensureHydratedForRead();
     const rows = this.unwrap<Array<ItemRow>>(
       await this.sb.rpc('feed_items', {
         ...args,
@@ -750,10 +851,12 @@ export class SupabaseDataSource implements DataSource {
     // Ensure state is hydrated even on the empty-ids path so a direct cold boot
     // into a library route triggers the item_state fetch (which then repopulates
     // the store and re-derives the ids), rather than silently returning empty.
-    // Best-effort: item_state is read NetworkOnly, so offline it fails — fall
-    // back to the last-good localStorage store (the ids already came from it)
-    // rather than failing the whole library read.
-    await this.ensureHydrated().catch(() => {});
+    // As with feedView, only BLOCK on the first hydration (empty store, brand-new
+    // device); once there's last-good state to overlay, kick it in the background
+    // so a slow/large/hung item_state read can't strand the library on its
+    // skeletons either — the background hydration's store emit re-derives the ids
+    // and refetches. See ensureHydratedForRead.
+    await this.ensureHydratedForRead();
     if (ids.length === 0) return [];
     const rows = await this.fetchItemRowsByIds(ids);
     const order = new Map(ids.map((id, i) => [id, i]));

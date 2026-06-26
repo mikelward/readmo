@@ -751,6 +751,24 @@ loopback/link-local/private/metadata targets and redirects to them.
     (the `online` event fires another) — fine, since there's nothing to sync
     while the server is unreachable, and localStorage is a truer picture of the
     user's own state than a cached old server read.
+  - **A feed/library read never *blocks* on item_state hydration once there's
+    last-good state to overlay.** Hydration is best-effort — `feed_items` filters
+    Done/Hidden server-side and the store carries last-good pin/opened/done flags
+    from localStorage, so a read only needs hydration to *refine* per-row flags,
+    not to render the right rows. So a read waits on hydration **only** on a
+    brand-new / cache-purged device whose store is still empty and has never
+    hydrated (so the first paint isn't all default flags) — and even then the wait
+    is **bounded** (`COLD_HYDRATE_WAIT_MS`), so that device's own slow/paged/
+    stalled read can't strand it on skeletons either; past the bound it renders
+    with default flags and the library self-heals on the hydration's store emit.
+    Otherwise it returns rows immediately and lets the background hydration's
+    store emit trigger a refetch to refine flags (same path a focus/visibility
+    resync uses). This is what stops a slow/large (paged, >1000-row account) or
+    stalled item_state read from stranding the whole feed on its loading
+    skeletons — a blocking await there held the home feed query in its initial
+    loading state across reloads and pull-to-refresh. The read still flows through the connectivity-tracked,
+    15s-bounded `supabaseFetch`, so Down/Offline detection is unchanged; only the
+    gating of rows on it is removed.
   - **Offline write bases come from the persisted store**, not the cache. Since
     an offline boot's item-state read fails (no live `observeServerVersions`), the
     constructor seeds the outbox's optimistic-concurrency versions from the
@@ -767,6 +785,26 @@ loopback/link-local/private/metadata targets and redirects to them.
     (constructor and hydrate) preserves the row's existing version rather than
     bumping it — it rewrites a field without writing the server, so it must not
     advance the version.
+  - **A write whose concurrency base can't be determined yet is HELD while a
+    hydrate is in flight**, not sent unchecked. Because feed/library reads no
+    longer block on hydration (above), a user can act on a brand-new row — one
+    with no persisted/observed version — before the hydrate lands. The outbox
+    brackets each hydration (`noteHydrationStarted`/`noteHydrationSettled`); while
+    one is in flight it holds such a write rather than send it with no
+    `p_base_version`, then sends it once the hydrate resolves the base (the row's
+    observed version, or its absence → base 0). This keeps a write made in that
+    window from blindly overwriting a concurrent cross-device change. With **no**
+    hydrate in flight to wait on (an offline edit on a brand-new item), the write
+    still goes out unchecked on reconnect, as before — the hold only applies while
+    a base-resolving read is actually pending. This holds **across a reload** too:
+    a no-base write persisted in a prior session would otherwise be replayed
+    unchecked at boot, so the data source starts the boot hydration (marking it in
+    flight) *before* the initial outbox flush, so the persisted entry is held until
+    that hydrate resolves its base. The hold itself is **bounded**
+    (`HOLD_MAX_MS`): if a hydrate never settles (the same never-surfacing
+    NetworkOnly read the bounded *read* wait guards against), the write is released
+    unchecked rather than stranded forever — the resolved base is also persisted
+    the moment it's locked, so a crash mid-send replays with it intact.
 - Realtime (optional, post-MVP): Supabase Realtime can push `item_state`
   changes to other open sessions. MVP relies on the refetch-on-focus above + PTR.
 - **Implementation status.** `SupabaseDataSource` (`src/lib/data/`) implements

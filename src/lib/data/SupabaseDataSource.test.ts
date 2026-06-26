@@ -372,6 +372,135 @@ describe('SupabaseDataSource reads', () => {
     expect(env.ds.stateStore.get('i2').pinned).toBe(false); // rolled back
   });
 
+  it('does not strand the feed on its skeletons when item_state hydration hangs but state is already loaded', async () => {
+    // Repro of the "all cards stuck loading" bug. A feed read used to AWAIT the
+    // full (paged, serialized) item_state hydration before returning any row, so
+    // a slow/large or stalled item_state read held the home feed query in its
+    // initial loading state — and because every cold boot re-runs the same
+    // blocking read, the stuck skeletons survived reload and pull-to-refresh.
+    // item_state hydration is best-effort (feed_items filters Done/Hidden
+    // server-side; the local store carries last-good flags), so once there's
+    // state to overlay a read must NOT block on it.
+    const env = setup();
+    await env.ds.getItemsByIds([]); // boot hydration succeeds → store warm (i2 pinned)
+    expect(env.ds.stateStore.get('i2').pinned).toBe(true);
+
+    // From now on every item_state read HANGS — a connection that's established
+    // but never answers (a stalled backend, or a service-worker NetworkOnly read
+    // that never settles), the case the 15s fetch cap can't always rescue.
+    let hungReadStarted!: () => void;
+    const hungRead = new Promise<void>((r) => (hungReadStarted = r));
+    const realFrom = env.fake.client.from.bind(env.fake.client);
+    env.fake.client.from = ((table: string) => {
+      if (table !== 'item_state') return realFrom(table);
+      hungReadStarted();
+      return itemStateReadStub(() => new Promise(() => {})) as ReturnType<typeof realFrom>;
+    }) as typeof env.fake.client.from;
+
+    // Null the hydration memo so the next read would otherwise re-pull (and hang
+    // on) item_state: a permanent write rejection clears the memo and kicks a
+    // reconcile re-pull, which is now the hung read above.
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'set_item_state') {
+        return Promise.resolve({
+          data: null,
+          error: { code: '42501', message: 'lost visibility' },
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    env.ds.stateStore.set('i2', 'opened', true); // → permanent reject → memo null → hung re-pull
+    await hungRead; // the reconcile re-pull has fired and is now hanging
+
+    // The feed read must still resolve (overlaying the warm store), not hang on
+    // the in-flight item_state read. Before the fix this awaited the hung memo
+    // and never settled — the test would time out.
+    const page = await env.ds.getHomeItems();
+    expect(page.items.length).toBeGreaterThan(0);
+    expect(env.ds.stateStore.get('i2').pinned).toBe(true); // last-good state preserved
+  });
+
+  it('holds a brand-new-row write while the boot item_state hydrate is in flight (no unchecked send)', async () => {
+    // Feed/library reads no longer block on hydration, so a user can pin a
+    // brand-new row before the boot item_state read lands. That write must be
+    // HELD until the read resolves a concurrency base — sending it unchecked
+    // could clobber a row another device changed since the persisted snapshot.
+    // (The outbox unit tests cover the resolve-and-send half; this proves the
+    // data source actually holds the write while its hydrate is in flight.)
+    const fake = makeFakeSupabase(seed());
+    const realFrom = fake.client.from.bind(fake.client);
+    let bootStartedResolve!: () => void;
+    const bootStarted = new Promise<void>((r) => (bootStartedResolve = r));
+    let reads = 0;
+    fake.client.from = ((table: string) => {
+      if (table !== 'item_state') return realFrom(table);
+      reads += 1;
+      if (reads === 1) {
+        // Boot read: parked open so the hydrate stays in flight.
+        const held = new Promise(() => {});
+        bootStartedResolve();
+        return itemStateReadStub(() => held) as ReturnType<typeof realFrom>;
+      }
+      return itemStateReadStub(() => ({
+        data: (fake.store.item_state ?? []).map((r) => ({ ...r })),
+        count: null,
+        error: null,
+      })) as ReturnType<typeof realFrom>;
+    }) as typeof fake.client.from;
+
+    let setCalls = 0;
+    const realRpc = fake.client.rpc.bind(fake.client);
+    fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'set_item_state') setCalls += 1;
+      return realRpc(name, params);
+    }) as typeof fake.client.rpc;
+
+    const ds = new SupabaseDataSource(
+      'readmo:item-state:test',
+      fake.client as unknown as SupabaseClient,
+    );
+    await bootStarted; // boot read parked → a hydrate is in flight
+
+    // i6 has no item_state row in the seed — a brand-new row. Pinning it enqueues
+    // a write whose base can't be determined while the hydrate is in flight.
+    ds.stateStore.set('i6', 'pinned', true);
+    await new Promise((r) => setTimeout(r));
+    // Held: had it sent unchecked (the old behavior), set_item_state would have
+    // fired within this tick.
+    expect(setCalls).toBe(0);
+    expect(ds.stateStore.get('i6').pinned).toBe(true); // optimistic UI still applied
+  });
+
+  it('does not block a cold (empty-store) feed read indefinitely when the item_state hydrate stalls', async () => {
+    // On a fresh / cache-purged device the store is empty, so a feed read waits
+    // for the first hydration — but that wait is BOUNDED, so a slow/stalled cold
+    // read can't strand a first-time user on skeletons (the bug, but cold-cache).
+    vi.useFakeTimers();
+    try {
+      const fake = makeFakeSupabase(seed());
+      const realFrom = fake.client.from.bind(fake.client);
+      fake.client.from = ((table: string) => {
+        if (table !== 'item_state') return realFrom(table);
+        // Hung item_state read: hydration never settles.
+        return itemStateReadStub(() => new Promise(() => {})) as ReturnType<typeof realFrom>;
+      }) as typeof fake.client.from;
+
+      const ds = new SupabaseDataSource(
+        'readmo:item-state:test',
+        fake.client as unknown as SupabaseClient,
+      );
+      // Empty store + a hydrate that never settles. The read must still resolve
+      // once the cold-wait bound elapses, serving the server-filtered feed.
+      const pagePromise = ds.getHomeItems();
+      await vi.advanceTimersByTimeAsync(4000); // past COLD_HYDRATE_WAIT_MS
+      const page = await pagePromise;
+      expect(page.items.length).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('resyncState coalesces concurrent calls into a single re-pull', async () => {
     await env.ds.getItemsByIds([]); // settle the eager boot hydration
     const before = env.fake.selectCount('item_state');
