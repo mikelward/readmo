@@ -209,6 +209,369 @@ describe('SupabaseDataSource reads', () => {
     expect(entries['i1']?.hidden).toBe(false);
   });
 
+  it('resyncState re-pulls item_state and adopts another device’s pin', async () => {
+    // Boot hydration ran once (eager in the constructor) — i6 is not pinned yet.
+    await env.ds.getItemsByIds([]);
+    expect(Object.fromEntries(env.ds.stateStore.entries())['i6']?.pinned).toBeFalsy();
+    const before = env.fake.selectCount('item_state');
+
+    // Another device pins i6: the server item_state row appears.
+    env.fake.store.item_state.push(mkState('i6', { pinned: true, pinned_at: recent }));
+
+    // A focus/visibility/online tick calls resyncState, which re-pulls.
+    await env.ds.resyncState();
+
+    expect(env.fake.selectCount('item_state')).toBe(before + 1);
+    expect(Object.fromEntries(env.ds.stateStore.entries())['i6']?.pinned).toBe(true);
+  });
+
+  it('serializes a resync started during an in-flight boot read so the fresher snapshot wins', async () => {
+    // The boot item_state read is slow and still in flight when a focus tick
+    // fires resyncState. Hydrations are SERIALIZED: the resync read runs only
+    // after the boot read finishes, so it applies last and its post-pin snapshot
+    // wins. The older boot snapshot can't clobber the adopted pin — and freshness
+    // never depends on which request the *server* happened to execute first.
+    const fake = makeFakeSupabase(seed());
+    const realFrom = fake.client.from.bind(fake.client);
+    let releaseBoot: () => void = () => {};
+    // Signals exactly when the boot read is issued, so the test can push the pin
+    // only after the boot snapshot is captured — explicit ordering, no timers.
+    let bootStartedResolve!: () => void;
+    const bootStarted = new Promise<void>((r) => (bootStartedResolve = r));
+    let itemStateReads = 0;
+    fake.client.from = ((table: string) => {
+      if (table !== 'item_state') return realFrom(table);
+      itemStateReads++;
+      // Snapshot the rows at request time (server semantics): the boot read
+      // captures the pre-pin state, the resync read the post-pin state.
+      const settle = {
+        data: (fake.store.item_state ?? []).map((r) => ({ ...r })),
+        count: null,
+        error: null,
+      };
+      if (itemStateReads === 1) {
+        // Boot read: held open until the test releases it.
+        const bootRead = new Promise<typeof settle>((res) => {
+          releaseBoot = () => res(settle);
+        });
+        bootStartedResolve();
+        return {
+          select: () => ({ not: () => bootRead }),
+        } as unknown as ReturnType<typeof realFrom>;
+      }
+      // Resync read: resolves immediately with the updated snapshot.
+      return {
+        select: () => ({ not: () => Promise.resolve(settle) }),
+      } as unknown as ReturnType<typeof realFrom>;
+    }) as typeof fake.client.from;
+
+    const ds = new SupabaseDataSource(
+      'readmo:item-state:test',
+      fake.client as unknown as SupabaseClient,
+    );
+    await bootStarted; // the boot read has captured its (pre-pin) snapshot and parked
+    expect(itemStateReads).toBe(1);
+    // Another device pins i6 — only the later resync read will see it.
+    fake.store.item_state.push(mkState('i6', { pinned: true, pinned_at: recent }));
+    // A focus tick resyncs. Serialized behind the parked boot read, so its read
+    // has NOT fired yet (this is the proof of serialization — a concurrent model
+    // would have issued read 2 already).
+    const resync = ds.resyncState();
+    expect(itemStateReads).toBe(1);
+    // Release the boot read: it applies its pre-pin snapshot first, THEN the
+    // resync read runs and applies the post-pin snapshot last.
+    releaseBoot();
+    await resync;
+    expect(itemStateReads).toBe(2);
+    expect(Object.fromEntries(ds.stateStore.entries())['i6']?.pinned).toBe(true);
+  });
+
+  it('resyncState keeps the last good hydration when the re-pull fails', async () => {
+    // After a successful boot hydration, a focus/visibility resync that fails
+    // (offline / transient / cache miss) must NOT null the memo — otherwise the
+    // next feed/library read re-fetches item_state and fails on it instead of
+    // using last-good state.
+    await env.ds.getItemsByIds([]); // boot hydration succeeds; i2 pinned
+    expect(Object.fromEntries(env.ds.stateStore.entries())['i2']?.pinned).toBe(true);
+
+    // From now on every item_state read errors (e.g. the device went offline).
+    const realFrom = env.fake.client.from.bind(env.fake.client);
+    env.fake.client.from = ((table: string) => {
+      if (table !== 'item_state') return realFrom(table);
+      return {
+        select: () => ({
+          not: () =>
+            Promise.resolve({ data: null, count: null, error: { message: 'offline' } }),
+        }),
+      } as unknown as ReturnType<typeof realFrom>;
+    }) as typeof env.fake.client.from;
+
+    // The resync attempt fails and is swallowed (as the hook does).
+    await env.ds.resyncState().catch(() => {});
+    // Last-good state is intact...
+    expect(Object.fromEntries(env.ds.stateStore.entries())['i2']?.pinned).toBe(true);
+    // ...and a feed read still resolves: ensureHydrated returns the preserved
+    // memo instead of re-reading the now-failing item_state.
+    const page = await env.ds.getHomeItems();
+    expect(ids(page.items)).toContain('i2');
+  });
+
+  it('rolls back an optimistic row when a permanent reject reconcile omits it', async () => {
+    // A write that permanently rejects (lost visibility / cascade-delete) clears
+    // the hydration memo and re-pulls to roll back the optimistic state. The
+    // authoritative reconcile must DROP the now-omitted, no-longer-pending row.
+    const env = setup();
+    await env.ds.getItemsByIds([]); // boot: i2 pinned, version confirmed
+    expect(env.ds.stateStore.get('i2').pinned).toBe(true);
+
+    // The set_item_state write is permanently rejected (42501 lost visibility),
+    // and i2 is no longer returned by item_state reads (it's gone server-side).
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'set_item_state') {
+        return Promise.resolve({
+          data: null,
+          error: { code: '42501', message: 'lost visibility' },
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    const realFrom = env.fake.client.from.bind(env.fake.client);
+    env.fake.client.from = ((table: string) => {
+      if (table !== 'item_state') return realFrom(table);
+      return {
+        select: () => ({ not: () => Promise.resolve({ data: [], count: null, error: null }) }),
+      } as unknown as ReturnType<typeof realFrom>;
+    }) as typeof env.fake.client.from;
+
+    // A write on i2 → permanent reject → onPermanentReject → reconcile re-pull.
+    // Resolve when the store emits the rolled-back (no-longer-pinned) i2, so the
+    // assertion waits on the actual reconcile, not a timer.
+    const rolledBack = new Promise<void>((resolve) => {
+      const unsub = env.ds.stateStore.subscribe(() => {
+        if (!env.ds.stateStore.get('i2').pinned) {
+          unsub();
+          resolve();
+        }
+      });
+    });
+    env.ds.stateStore.set('i2', 'opened', true);
+    await rolledBack;
+
+    expect(env.ds.stateStore.get('i2').pinned).toBe(false); // rolled back
+  });
+
+  it('resyncState coalesces concurrent calls into a single re-pull', async () => {
+    await env.ds.getItemsByIds([]); // settle the eager boot hydration
+    const before = env.fake.selectCount('item_state');
+    // A single tab return can fire focus AND visibilitychange; both must resolve
+    // to one item_state read, not two.
+    await Promise.all([env.ds.resyncState(), env.ds.resyncState()]);
+    expect(env.fake.selectCount('item_state')).toBe(before + 1);
+  });
+
+  it('runs a fresh resync if one was requested while a failing one was in flight', async () => {
+    // A resync started during a connectivity blip is doomed; an `online` event
+    // that arrives before it settles coalesces into it. When that attempt fails,
+    // a fresh live read must run so the recovery isn't lost.
+    const env = setup();
+    await env.ds.getItemsByIds([]); // boot hydration (real fake)
+
+    let resyncReads = 0;
+    let failFirst: () => void = () => {};
+    let retryStarted: () => void = () => {};
+    const retried = new Promise<void>((res) => {
+      retryStarted = res;
+    });
+    // Signals when read #1 has actually fired (hydrations are serialized, so the
+    // read starts a microtask after resyncState() returns — wait for it before
+    // failing it, rather than assuming it ran synchronously).
+    let firstReadStartedResolve!: () => void;
+    const firstReadStarted = new Promise<void>((r) => (firstReadStartedResolve = r));
+    const realFrom = env.fake.client.from.bind(env.fake.client);
+    env.fake.client.from = ((table: string) => {
+      if (table !== 'item_state') return realFrom(table);
+      resyncReads++;
+      if (resyncReads === 1) {
+        // The in-flight (doomed) resync read: held open, then rejects.
+        const p = new Promise((_res, rej) => {
+          failFirst = () => rej(new Error('blip'));
+        });
+        firstReadStartedResolve();
+        return { select: () => ({ not: () => p }) } as unknown as ReturnType<typeof realFrom>;
+      }
+      // The retry read: signal that a fresh resync ran, then succeed.
+      retryStarted();
+      return {
+        select: () => ({ not: () => Promise.resolve({ data: [], count: null, error: null }) }),
+      } as unknown as ReturnType<typeof realFrom>;
+    }) as typeof env.fake.client.from;
+
+    const a = env.ds.resyncState().catch(() => {}); // in flight (read #1)
+    const b = env.ds.resyncState().catch(() => {}); // coalesces → sets pending
+    await firstReadStarted; // read #1 has fired and failFirst is wired
+    failFirst(); // read #1 rejects
+    await Promise.all([a, b]);
+    await retried; // a fresh resync (read #2) ran after the failure
+    expect(resyncReads).toBe(2);
+  });
+
+  it('an offline item_state read keeps the persisted store, not drops it', async () => {
+    // item_state is read NetworkOnly (no cache fallback), so offline the read
+    // fails rather than serving a stale cached snapshot. The store must keep its
+    // last-good localStorage state (e.g. a pin synced from another device last
+    // session) — never reconcile it away against a read that couldn't run.
+    const fake = makeFakeSupabase(seed());
+    fake.store.item_state.push(mkState('i6', { pinned: true, pinned_at: recent }));
+    const ds = new SupabaseDataSource(
+      'readmo:item-state:test',
+      fake.client as unknown as SupabaseClient,
+    );
+    await ds.getItemsByIds([]); // boot hydrate (real fake): i6 pinned, non-pending
+    expect(ds.stateStore.get('i6').pinned).toBe(true);
+
+    // Device goes offline: every item_state read now fails.
+    const realFrom = fake.client.from.bind(fake.client);
+    fake.client.from = ((table: string) => {
+      if (table !== 'item_state') return realFrom(table);
+      return {
+        select: () => ({
+          not: () =>
+            Promise.resolve({ data: null, count: null, error: { message: 'offline' } }),
+        }),
+      } as unknown as ReturnType<typeof realFrom>;
+    }) as typeof fake.client.from;
+
+    // A failed resync leaves the store untouched...
+    await ds.resyncState().catch(() => {});
+    expect(ds.stateStore.get('i6').pinned).toBe(true);
+    // ...and an offline library read falls back to the store (best-effort), so
+    // the synced pin survives rather than being dropped.
+    await ds.getItemsByIds([]);
+    expect(ds.stateStore.get('i6').pinned).toBe(true);
+  });
+
+  it('resyncState preserves an un-synced local pin while adopting server truth', async () => {
+    await env.ds.getItemsByIds([]); // settle the eager boot hydration
+    // Pin i3 locally (optimistic + queued in the outbox).
+    env.ds.stateStore.set('i3', 'pinned', true);
+    // Another device favorites i6 directly on the server.
+    env.fake.store.item_state.push(mkState('i6', { favorite: true, favorite_at: recent }));
+
+    await env.ds.resyncState();
+
+    const entries = Object.fromEntries(env.ds.stateStore.entries());
+    // The local pin survives the re-pull (preserved by the pending overlay, or
+    // already flushed to the server — either way it must not be wiped)...
+    expect(entries['i3']?.pinned).toBe(true);
+    // ...and the other device's favorite is adopted.
+    expect(entries['i6']?.favorite).toBe(true);
+  });
+
+  it('tags each item_state read with a unique cache-buster (live-or-fail under any service worker)', async () => {
+    // The read appends an always-unique `item_id=not.eq.<uuid>` filter so the URL
+    // differs per read. That busts any URL-keyed cache — including a *previous*
+    // service worker's NetworkFirst `/rest/v1/` route during a rollout — so a
+    // stale cached 200 can never be served as authoritative. The filter excludes
+    // nothing (no row has that id), so hydration still adopts every row.
+    const fake = makeFakeSupabase(seed());
+    const tokens: string[] = [];
+    const realFrom = fake.client.from.bind(fake.client);
+    fake.client.from = ((table: string) => {
+      const q = realFrom(table) as ReturnType<typeof realFrom> & {
+        not: (col: string, op: string, value: string) => unknown;
+      };
+      if (table === 'item_state') {
+        const realNot = q.not.bind(q);
+        q.not = (col: string, op: string, value: string) => {
+          if (col === 'item_id' && op === 'eq') tokens.push(value);
+          return realNot(col, op, value);
+        };
+      }
+      return q;
+    }) as typeof fake.client.from;
+
+    const ds = new SupabaseDataSource(
+      'readmo:item-state:test',
+      fake.client as unknown as SupabaseClient,
+    );
+    await ds.getItemsByIds([]); // eager boot read → token #1
+    expect(Object.fromEntries(ds.stateStore.entries())['i2']?.pinned).toBe(true); // rows still adopted
+    await ds.resyncState(); // resync read → token #2
+
+    expect(tokens.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(tokens).size).toBe(tokens.length); // every read's token is distinct
+    for (const t of tokens) expect(t).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  });
+
+  it('normalizes the optimistic store version to the server version after a coalesced write', async () => {
+    // Drift scenario: two local edits made offline COALESCE into a single server
+    // write. The store's optimistic version bumps once per edit (twice here), but
+    // the single server write increments the row once. Left unreconciled, a later
+    // cold-boot `seedConfirmedVersions` would base an offline edit on the inflated
+    // version and the RPC would 40001-reject it, dropping a change no other device
+    // touched. A successful write must normalize the store to the server version.
+    const fake = makeFakeSupabase(seed());
+    const navDesc = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    let online = false; // gate the OUTBOX (reads ignore navigator)
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {
+        get onLine() {
+          return online;
+        },
+      },
+      configurable: true,
+    });
+    try {
+      const ds = new SupabaseDataSource(
+        'readmo:item-state:test',
+        fake.client as unknown as SupabaseClient,
+      );
+      await ds.getItemsByIds([]); // boot hydrate (reads work; outbox is offline)
+
+      // Two coalesced offline edits → optimistic version 2, one queued write.
+      ds.stateStore.set('i3', 'pinned', true);
+      ds.stateStore.set('i3', 'pinned', false);
+      expect(ds.stateStore.get('i3').version).toBe(2);
+
+      // Hold the resync's item_state READ open so only the WRITE's
+      // confirmServerVersion — not a follow-up hydrate (which would also rewrite
+      // the version to server truth and mask the fix) — can touch the version.
+      const realFrom = fake.client.from.bind(fake.client);
+      let releaseRead!: () => void;
+      const readGate = new Promise<void>((r) => (releaseRead = r));
+      fake.client.from = ((table: string) => {
+        if (table !== 'item_state') return realFrom(table);
+        return {
+          select: () => ({ not: () => readGate.then(() => ({ data: [], count: null, error: null })) }),
+        } as unknown as ReturnType<typeof realFrom>;
+      }) as typeof fake.client.from;
+
+      // Back online; the coalesced write flushes. Await the post-commit emit
+      // (onDrained → notifySynced) so the assertion waits on the real write, not a
+      // timer. confirmServerVersion runs inside the send, before that emit.
+      const committed = new Promise<void>((resolve) => {
+        const unsub = ds.stateStore.subscribe(() => {
+          unsub();
+          resolve();
+        });
+      });
+      online = true;
+      void ds.resyncState(); // kicks outbox.flush(); the hydration read stays gated
+      await committed;
+
+      // Server applied ONE write → version 1. The store is normalized to it, not
+      // left at the inflated optimistic 2.
+      expect(ds.stateStore.get('i3').version).toBe(1);
+      expect(ds.stateStore.get('i3').pinned).toBe(false);
+
+      releaseRead();
+    } finally {
+      if (navDesc) Object.defineProperty(globalThis, 'navigator', navDesc);
+      else delete (globalThis as { navigator?: unknown }).navigator;
+    }
+  });
+
   it('search matches item title and feed title, deduped + newest-first', async () => {
     const results = await env.ds.search('alpha');
     expect(ids(results)).toEqual(['i6', 'i2', 'i1']);
