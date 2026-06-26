@@ -10,6 +10,17 @@
   color: var(--rm-meta);
 }
 
+.reader__state-tip {
+  margin-top: 12px;
+  font-size: 0.85rem;
+}
+
+.reader__state-tip-icon {
+  width: 1.1em;
+  height: 1.1em;
+  vertical-align: -0.2em;
+}
+
 .reader__topbar,
 .reader__bottombar {
   display: flex;

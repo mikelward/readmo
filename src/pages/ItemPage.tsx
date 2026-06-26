@@ -400,7 +400,15 @@ export function ItemPage() {
   }, [openOriginal, toggle, markDone]);
 
   if (isLoading || isRestoring) {
-    return <div className="reader__state">Loading…</div>;
+    return (
+      <div className="reader__state">
+        <p>Loading…</p>
+        <p className="reader__state-tip">
+          Tip: <PushPinOutline className="reader__state-tip-icon" /> pin an
+          article to make it load faster
+        </p>
+      </div>
+    );
   }
   if (!resolved) {
     // Same accurate-copy approach as the feed list: name the action and show a

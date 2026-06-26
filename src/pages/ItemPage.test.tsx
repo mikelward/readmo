@@ -45,6 +45,20 @@ describe('ItemPage (reader)', () => {
     });
   });
 
+  it('shows the pin-to-load-faster tip while the article is loading', async () => {
+    // Hold getItem open so the reader stays in the loading state.
+    class HangingSource extends MockDataSource {
+      getItem(): Promise<FeedItem | null> {
+        return new Promise(() => {});
+      }
+    }
+    renderReader(new HangingSource(`test-${Math.random()}`));
+    expect(await screen.findByText('Loading…')).toBeInTheDocument();
+    expect(
+      screen.getByText(/pin an article to make it load faster/),
+    ).toBeInTheDocument();
+  });
+
   it('pins from the reader action bar', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
