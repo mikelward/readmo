@@ -1372,7 +1372,16 @@ content. Closest mirror of newshacker.
   guard keyed on `readmo:sw:installed` suppresses the spurious toast on the
   initial SW activation but still surfaces it after hard-reloads /
   session-restore / iOS PWA relaunches (transient null controller despite a
-  prior install); it fails open when storage is unavailable.
+  prior install); it fails open when storage is unavailable. A **periodic**
+  `registration.update()` ping (every 30 min, only while the tab is *visible* —
+  the interval is torn down while hidden) bounds how long a tab that's left open
+  and in view but never navigated/PTR'd (an installed PWA, or a parked desktop
+  tab) can sit on a stale build; any update found surfaces through the same
+  `controllerchange` toast. Negligible bandwidth — one conditional GET against
+  the tiny `/sw.js` per interval, paused entirely when backgrounded.
+- A lazy route chunk that 404s after a deploy (stale client referencing a gone
+  hash) auto-reloads once via `LazyRouteBoundary` (`src/components/`), guarded by
+  a one-shot `readmo:chunk-reload` session flag against a reload loop.
 - Disabled in `npm run dev`.
 
 ### Caching strategy
