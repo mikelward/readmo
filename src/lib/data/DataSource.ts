@@ -136,6 +136,16 @@ export interface DataSource {
   refresh(feedId?: FeedId): Promise<void>;
   retryParkedFeed(feedId: FeedId): Promise<void>;
 
+  // --- Sync -----------------------------------------------------------------
+  /** Re-pull server `item_state` so pins/favorites/done changed on *another
+   * device* show up here, without waiting for the next cold boot. Callers fire
+   * this when the tab regains focus/visibility or the device comes back online
+   * (see `useStateSync`); the store emits on any change, which the feed-
+   * invalidation hook turns into a refetch and the library pages read directly.
+   * Implementations coalesce overlapping calls. The mock no-ops it (its store is
+   * the local source of truth — there's no server to reconcile against). */
+  resyncState(): Promise<void>;
+
   // --- OPML -----------------------------------------------------------------
   importOpml(xml: string): Promise<{ added: number; skipped: number }>;
   exportOpml(): Promise<string>;
