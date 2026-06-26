@@ -111,32 +111,18 @@ function ReaderToolbar({
           <span className="reader__action-label">Open original</span>
         </TooltipButton>
 
-        <TooltipButton
-          type="button"
-          className={'reader__action' + (state.pinned ? ' reader__action--active' : '')}
-          tooltip={state.pinned ? 'Unpin' : 'Pin'}
-          aria-label={state.pinned ? 'Unpin' : 'Pin'}
-          aria-pressed={state.pinned}
-          onClick={() => toggle('pinned')}
-          data-testid={`reader-pin${sfx}`}
-        >
-          {state.pinned ? <PushPinFilled /> : <PushPinOutline />}
-        </TooltipButton>
-
-        <TooltipButton
-          type="button"
-          className={'reader__action' + (state.done ? ' reader__action--active' : '')}
-          tooltip={state.done ? 'Unmark done' : 'Done'}
-          aria-label={state.done ? 'Unmark done' : 'Done'}
-          aria-pressed={state.done}
-          onClick={() => (state.done ? set('done', false) : markDone())}
-          data-testid={`reader-done${sfx}`}
-        >
-          <Check />
-        </TooltipButton>
-
         {wide ? (
           <>
+            <TooltipButton
+              type="button"
+              className="reader__action"
+              tooltip="Share"
+              aria-label="Share"
+              onClick={() => share({ title: item.title, url: item.url })}
+              data-testid={`reader-share${sfx}`}
+            >
+              <ShareIcon />
+            </TooltipButton>
             <TooltipButton
               type="button"
               className={
@@ -150,18 +136,32 @@ function ReaderToolbar({
             >
               {state.favorite ? <FavoriteFilled /> : <FavoriteOutline />}
             </TooltipButton>
-            <TooltipButton
-              type="button"
-              className="reader__action"
-              tooltip="Share"
-              aria-label="Share"
-              onClick={() => share({ title: item.title, url: item.url })}
-              data-testid={`reader-share${sfx}`}
-            >
-              <ShareIcon />
-            </TooltipButton>
           </>
         ) : null}
+
+        <TooltipButton
+          type="button"
+          className={'reader__action' + (state.done ? ' reader__action--active' : '')}
+          tooltip={state.done ? 'Unmark done' : 'Done'}
+          aria-label={state.done ? 'Unmark done' : 'Done'}
+          aria-pressed={state.done}
+          onClick={() => (state.done ? set('done', false) : markDone())}
+          data-testid={`reader-done${sfx}`}
+        >
+          <Check />
+        </TooltipButton>
+
+        <TooltipButton
+          type="button"
+          className={'reader__action' + (state.pinned ? ' reader__action--active' : '')}
+          tooltip={state.pinned ? 'Unpin' : 'Pin'}
+          aria-label={state.pinned ? 'Unpin' : 'Pin'}
+          aria-pressed={state.pinned}
+          onClick={() => toggle('pinned')}
+          data-testid={`reader-pin${sfx}`}
+        >
+          {state.pinned ? <PushPinFilled /> : <PushPinOutline />}
+        </TooltipButton>
 
         <div className="reader__more">
           <TooltipButton
