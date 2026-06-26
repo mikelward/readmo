@@ -66,15 +66,17 @@ guardrails — read them before opening a PR.
     commit per logical surviving change; PRs ready for review. See *Branching*
     below for the full rules.
 
-11. **Ship a backwards-compatible client; flag manual deploys.** The frontend
-    auto-deploys on merge, but the Supabase backend (Edge Functions +
-    migrations) only goes live when a human runs `make deploy`/`make migrate` —
-    so client and server roll out on different clocks. Never merge a client
-    that *requires* an unshipped server change; tolerate the older backend it
-    may actually hit, keep server changes additive so service-worker-cached old
-    clients keep working, and call out any required manual backend deploy in the
-    PR description and your end-of-turn summary. See *Deploying & client/server
-    compatibility* below.
+11. **Ship a backwards-compatible client; keep server changes additive.** Both
+    halves now auto-deploy on merge to `main` — the frontend via Vercel, the
+    Supabase backend (Edge Functions + migrations) via the `deploy-backend`
+    workflow — but they're still **independent, unordered** rollouts, and a
+    service-worker-cached PWA client can lag arbitrarily. So a new client can
+    still briefly meet an old backend (and vice versa): never merge a client
+    that *hard-requires* a not-yet-live server change (feature-detect / fall
+    back), and keep backend changes additive so a stale cached client keeps
+    working. **Migrations now auto-apply to production** — they're the one
+    irreversible step, so review them as carefully as a hand-run `make migrate`.
+    See *Deploying & client/server compatibility* below.
 
 ## Project layout
 
@@ -123,15 +125,20 @@ Readmo ships as two halves that deploy on **different clocks**:
   exception: after changing a Vercel env var you must redeploy — existing
   deployments keep their original env snapshot.)
 - **Backend** — Supabase **Edge Functions** (`supabase/functions/**`, incl.
-  `_shared/`) and **Postgres migrations** (`supabase/migrations/*.sql`). **CI
-  never deploys these** — it only type-checks/tests them. They go live only when
-  a human runs `make deploy` (= `make migrate`, then deploy every function) or
-  `make migrate` / `make deploy-<fn>`. See SETUP.md §6.
+  `_shared/`) and **Postgres migrations** (`supabase/migrations/*.sql`).
+  **Auto-deploys** on every push/merge to `main` that touches `supabase/**`, via
+  the `.github/workflows/deploy-backend.yml` workflow (it runs `supabase db
+  push` then deploys every function with the import map — mirroring `make
+  deploy`). The workflow needs three repo secrets — `SUPABASE_ACCESS_TOKEN`,
+  `SUPABASE_PROJECT_ID`, `SUPABASE_DB_PASSWORD`; without them it fails fast at
+  the link step (no partial deploy). The `make deploy` / `make migrate` targets
+  remain for local or out-of-band deploys. See SETUP.md §6.
 
-Because the two roll out independently, a merge can put a **new client in front
-of an old, not-yet-deployed backend**, and — once you do deploy — a **new
-backend in front of an old, service-worker-cached client** (PWA clients can lag
-arbitrarily). Both directions have to keep working.
+Both halves auto-deploy on merge, but they're **separate, unordered** pipelines
+(Vercel and the Action race), and a service-worker-cached client can lag
+arbitrarily — so a merge can still put a **new client in front of an
+old/not-yet-finished backend deploy**, and a **new backend in front of an old
+cached client**. Both directions have to keep working.
 
 **Keep the client backwards compatible.**
 - Never merge a client that *requires* a server change that isn't deployed yet.
@@ -154,21 +161,25 @@ arbitrarily). Both directions have to keep working.
   deliberate escape hatch to *shed* old clients when one is actively harming the
   backend — not a license to break compatibility casually.
 
-**When a manual deploy is required.** Merging alone does **not** make these
-live — note the required command in the PR description and your end-of-turn
-summary:
+**What goes live on merge, and what still needs a human.** Code (frontend and
+backend) auto-deploys; *configuration* does not. Call out anything in the
+manual column in the PR description and your end-of-turn summary:
 
 | You changed… | Goes live via | Manual? |
 |---|---|---|
 | `src/`, `index.html`, frontend build/routing config | push/merge to `main` (Vercel) | No — auto |
-| `supabase/migrations/*.sql` | `make migrate` (`supabase db push`) | **Yes** |
-| `supabase/functions/**` (incl. `_shared/`) | `make deploy` (migrates first) or `supabase functions deploy <fn> --import-map …` | **Yes** |
+| `supabase/migrations/*.sql` | `deploy-backend` workflow on merge (`supabase db push`) | No — auto |
+| `supabase/functions/**` (incl. `_shared/`) | `deploy-backend` workflow on merge (deploys every function) | No — auto |
 | Supabase secret/config (`MIN_CLIENT_BUILD`, `JINA_API_KEY`, `SMTP_*`, …) | set via Supabase dashboard/CLI; arming the version gate is an operator action | **Yes** |
 | Vercel env var | redeploy the frontend (env snapshot is per-deploy) | **Yes** |
+| `SUPABASE_ACCESS_TOKEN` / `SUPABASE_PROJECT_ID` / `SUPABASE_DB_PASSWORD` (CI secrets for the deploy workflow) | set in repo Settings → Secrets → Actions | **Yes** (one-time) |
 
-When a PR touches both `src/` and `supabase/`, **deploy the backend before the
-client reaches users** (or make the client tolerate the old backend), and call
-out the required `make deploy` / `make migrate` in the PR.
+A backend deploy still isn't *atomic* with the frontend (the two pipelines
+race), so when a PR touches both `src/` and `supabase/`, keep the client able to
+tolerate the older backend for the seconds-to-minutes the backend Action takes —
+don't hard-require the new server behavior. If the `deploy-backend` Action
+fails, the functions/migrations stay on the previous version; re-run it or fall
+back to a local `make deploy`.
 
 ## Dev commands
 
