@@ -238,6 +238,7 @@ build/routing/deploy.
 - Creating new `<agent>/<short-topic>` branches and creating PRs via `mcp__github__create_pull_request` (once the user has asked for one in the thread) are safe — don't re-ask.
 - Sandbox git proxy can't delete branches (HTTP 403). Flag it and move on; auto-delete-on-merge handles GitHub's side.
 - **After every push and after every merge, report the resulting HEAD SHA** so the operator can verify which build is deployed. Format: `pushed <short-sha>` after a push; `merged at <short-sha>` after a merge webhook. 7-char prefix is fine. Mention it once per push.
+- **Unshallow before answering anything that depends on git history depth.** The sandbox clones shallow, so `git rev-list --count`, `git log` past the shallow boundary, blame, and any "how many commits / what's the build number" question return wrong answers without warning. If `git rev-parse --is-shallow-repository` says `true`, run `git fetch --unshallow` first — same rule `vite.config.ts` already follows for the `build` field shown in `/debug`. Don't quote a count off a shallow clone.
 - End every reply with the open-PR link (or `.../compare/main...<branch>` until a PR exists). Never link to a closed or merged PR.
 
 ## Copilot reviews
