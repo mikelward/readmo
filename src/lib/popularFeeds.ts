@@ -30,6 +30,25 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   { name: 'The Age', feedUrl: 'https://www.theage.com.au/rss/feed.xml', category: 'News' },
   { name: 'Sydney Morning Herald', feedUrl: 'https://www.smh.com.au/rss/feed.xml', category: 'News' },
   { name: 'The Australian', feedUrl: 'https://www.theaustralian.com.au/feed', category: 'News' },
+  // Australia — ABC (public broadcaster), the News Corp metro mastheads, and
+  // the Nine/ACM papers. ABC publishes per-section feeds at
+  // abc.net.au/news/feed/<id>/rss.xml; "Top Stories" and "Just In" are the two
+  // general ones. Sky News Australia exposes no usable native RSS, so it rides
+  // a Google News query feed (one reliable host; links resolve via a Google
+  // redirect rather than direct to skynews.com.au).
+  { name: 'ABC News (Australia)', feedUrl: 'https://www.abc.net.au/news/feed/45910/rss.xml', category: 'News' },
+  { name: 'ABC News Just In', feedUrl: 'https://www.abc.net.au/news/feed/51120/rss.xml', category: 'News' },
+  { name: 'Herald Sun', feedUrl: 'https://www.heraldsun.com.au/news/breaking-news/rss', category: 'News' },
+  { name: 'The Daily Telegraph (Sydney)', feedUrl: 'https://www.dailytelegraph.com.au/news/breaking-news/rss', category: 'News' },
+  { name: 'The Courier-Mail', feedUrl: 'https://www.couriermail.com.au/rss', category: 'News' },
+  { name: 'The Advertiser (Adelaide)', feedUrl: 'https://www.adelaidenow.com.au/news/breaking-news/rss', category: 'News' },
+  { name: 'PerthNow', feedUrl: 'https://www.perthnow.com.au/news/feed', category: 'News' },
+  { name: 'Brisbane Times', feedUrl: 'https://www.brisbanetimes.com.au/rss/feed.xml', category: 'News' },
+  { name: 'WAtoday', feedUrl: 'https://www.watoday.com.au/rss/feed.xml', category: 'News' },
+  { name: 'The Canberra Times', feedUrl: 'https://www.canberratimes.com.au/rss.xml', category: 'News' },
+  { name: 'SBS News', feedUrl: 'https://www.sbs.com.au/news/feed', category: 'News' },
+  { name: 'The Conversation (Australia)', feedUrl: 'https://theconversation.com/au/articles.atom', category: 'News' },
+  { name: 'Sky News Australia', feedUrl: 'https://news.google.com/rss/search?q=site:skynews.com.au+when:7d&hl=en-AU&gl=AU&ceid=AU:en', category: 'News' },
   { name: 'The Globe and Mail', feedUrl: 'https://www.theglobeandmail.com/arc/outboundfeeds/rss/', category: 'News' },
   { name: 'USA Today', feedUrl: 'https://rssfeeds.usatoday.com/usatoday-NewsTopStories', category: 'News' },
   { name: 'HuffPost', feedUrl: 'https://www.huffpost.com/section/front-page/feed', category: 'News' },
