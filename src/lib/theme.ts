@@ -1,6 +1,7 @@
 export const THEME_STORAGE_KEY = 'readmo:theme';
 export const PALETTE_STORAGE_KEY = 'readmo:palette';
 export const FONT_SIZE_STORAGE_KEY = 'readmo:fontSize';
+export const FONT_STORAGE_KEY = 'readmo:font';
 export const THEME_CHANGE_EVENT = 'readmo:themeChanged';
 
 // "Mode" (light/dark/system) and "palette" (color family) are orthogonal: each
@@ -16,13 +17,69 @@ export type Palette = 'ink' | 'grape';
 // matching the theme/palette default pattern.
 export type FontSize = '15' | '16' | '17';
 
+// Body typeface. Each non-system option is a self-hosted webfont (Fontsource)
+// chosen so the app renders identically on every platform — the previous
+// system-stack approach silently substituted whatever the OS had, so the look
+// (and the unread/read weight step) was untestable and inconsistent across
+// machines. Every shipped font carries a real 500 (Medium) face, which the
+// unread-title weight depends on. `system` opts back into the native stack.
+export type FontFamily =
+  | 'roboto'
+  | 'inter'
+  | 'public-sans'
+  | 'work-sans'
+  | 'fira-sans'
+  | 'system';
+
 const THEMES: readonly Theme[] = ['light', 'dark', 'system'];
 const PALETTES: readonly Palette[] = ['ink', 'grape'];
 const FONT_SIZES: readonly FontSize[] = ['15', '16', '17'];
+const FONTS: readonly FontFamily[] = [
+  'roboto',
+  'inter',
+  'public-sans',
+  'work-sans',
+  'fira-sans',
+  'system',
+];
 
 // 16px (Medium) is the default, so it owns the bare `:root` block and needs no
 // `data-font-size` attribute.
 const DEFAULT_FONT_SIZE: FontSize = '16';
+
+// Roboto is the default typeface, so it owns the bare `:root` font token and
+// needs no `data-font` attribute (same default-owns-root pattern as palette and
+// text size).
+const DEFAULT_FONT: FontFamily = 'roboto';
+
+// Display names for the font picker.
+export const FONT_LABELS: Record<FontFamily, string> = {
+  roboto: 'Roboto',
+  inter: 'Inter',
+  'public-sans': 'Public Sans',
+  'work-sans': 'Work Sans',
+  'fira-sans': 'Fira Sans',
+  system: 'System',
+};
+
+// The native fallback stack, appended after every webfont so a font that fails
+// to load (or `system`) renders with the OS's own UI font. Kept in sync with
+// `--rm-font-fallback` in global.css.
+const SYSTEM_STACK =
+  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, " +
+  "sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'";
+
+// The full CSS font-family stack for each option. Mirrors the `[data-font]`
+// blocks in global.css; exported so the Settings picker can render each chip's
+// label in its own face (live preview) without duplicating the family names.
+export const FONT_STACKS: Record<FontFamily, string> = {
+  roboto: `'Roboto Variable', ${SYSTEM_STACK}`,
+  inter: `'Inter Variable', ${SYSTEM_STACK}`,
+  'public-sans': `'Public Sans Variable', ${SYSTEM_STACK}`,
+  'work-sans': `'Work Sans Variable', ${SYSTEM_STACK}`,
+  'fira-sans': `'Fira Sans', ${SYSTEM_STACK}`,
+  system: SYSTEM_STACK,
+};
 
 // Display labels for the size pickers (Settings text buttons + the drawer's
 // A-glyph row). A relative Small/Medium/Large scale rather than raw px.
@@ -76,6 +133,12 @@ function isFontSize(value: unknown): value is FontSize {
   );
 }
 
+function isFont(value: unknown): value is FontFamily {
+  return (
+    typeof value === 'string' && (FONTS as readonly string[]).includes(value)
+  );
+}
+
 export function getStoredTheme(): Theme {
   if (!hasWindow()) return 'system';
   try {
@@ -103,6 +166,16 @@ export function getStoredFontSize(): FontSize {
     return isFontSize(raw) ? raw : DEFAULT_FONT_SIZE;
   } catch {
     return DEFAULT_FONT_SIZE;
+  }
+}
+
+export function getStoredFont(): FontFamily {
+  if (!hasWindow()) return DEFAULT_FONT;
+  try {
+    const raw = window.localStorage.getItem(FONT_STORAGE_KEY);
+    return isFont(raw) ? raw : DEFAULT_FONT;
+  } catch {
+    return DEFAULT_FONT;
   }
 }
 
@@ -163,6 +236,16 @@ export function applyFontSize(fontSize: FontSize): void {
   }
 }
 
+export function applyFont(font: FontFamily): void {
+  if (typeof document === 'undefined') return;
+  const root = document.documentElement;
+  if (font === DEFAULT_FONT) {
+    root.removeAttribute('data-font');
+  } else {
+    root.setAttribute('data-font', font);
+  }
+}
+
 export function setStoredTheme(theme: Theme): void {
   if (!hasWindow()) return;
   try {
@@ -216,6 +299,24 @@ export function setStoredFontSize(fontSize: FontSize): void {
   applyFontSize(fontSize);
   window.dispatchEvent(
     new CustomEvent(THEME_CHANGE_EVENT, { detail: { fontSize } }),
+  );
+}
+
+export function setStoredFont(font: FontFamily): void {
+  if (hasWindow()) {
+    try {
+      if (font === DEFAULT_FONT) {
+        window.localStorage.removeItem(FONT_STORAGE_KEY);
+      } else {
+        window.localStorage.setItem(FONT_STORAGE_KEY, font);
+      }
+    } catch {
+      // quota or privacy-mode failures are non-fatal
+    }
+  }
+  applyFont(font);
+  window.dispatchEvent(
+    new CustomEvent(THEME_CHANGE_EVENT, { detail: { font } }),
   );
 }
 

@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   THEME_CHANGE_EVENT,
+  type FontFamily,
   type FontSize,
   type Palette,
   type Theme,
+  applyFont,
   applyFontSize,
   applyPalette,
   applyTheme,
   applyThemeColorMeta,
+  getStoredFont,
   getStoredFontSize,
   getStoredPalette,
   getStoredTheme,
   resolveTheme,
+  setStoredFont,
   setStoredFontSize,
   setStoredPalette,
   setStoredTheme,
@@ -23,6 +27,7 @@ export function useTheme() {
   const [fontSize, setFontSizeState] = useState<FontSize>(() =>
     getStoredFontSize(),
   );
+  const [font, setFontState] = useState<FontFamily>(() => getStoredFont());
   const [resolved, setResolved] = useState<'light' | 'dark'>(() =>
     resolveTheme(getStoredTheme()),
   );
@@ -32,9 +37,11 @@ export function useTheme() {
       const next = getStoredTheme();
       const nextPalette = getStoredPalette();
       const nextFontSize = getStoredFontSize();
+      const nextFont = getStoredFont();
       setThemeState(next);
       setPaletteState(nextPalette);
       setFontSizeState(nextFontSize);
+      setFontState(nextFont);
       setResolved(resolveTheme(next));
       // Repaint, not just re-render: the page is styled off the
       // `data-theme`/`data-palette` attributes on <html>, which only the tab
@@ -45,6 +52,7 @@ export function useTheme() {
       applyTheme(next);
       applyPalette(nextPalette);
       applyFontSize(nextFontSize);
+      applyFont(nextFont);
     };
     window.addEventListener(THEME_CHANGE_EVENT, sync);
     window.addEventListener('storage', sync);
@@ -73,14 +81,17 @@ export function useTheme() {
   const setTheme = useCallback((t: Theme) => setStoredTheme(t), []);
   const setPalette = useCallback((p: Palette) => setStoredPalette(p), []);
   const setFontSize = useCallback((f: FontSize) => setStoredFontSize(f), []);
+  const setFont = useCallback((f: FontFamily) => setStoredFont(f), []);
 
   return {
     theme,
     palette,
     fontSize,
+    font,
     resolved,
     setTheme,
     setPalette,
     setFontSize,
+    setFont,
   };
 }

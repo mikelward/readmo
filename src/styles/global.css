@@ -65,6 +65,17 @@
      `data-font-size` attribute on <html>; 16px is the default (no attribute). */
   --rm-font-size: 16px;
 
+  /* Body typeface. The settings "Font" picker overrides this via the
+     `data-font` attribute on <html>; Roboto is the default (no attribute).
+     Every option lists the self-hosted (Fontsource) family ahead of the native
+     system stack, so a failed webfont load degrades to native rendering. The
+     shipped fonts all carry a real 500 (Medium) face, so the unread (500) /
+     read (400) title weight step holds on every platform — including Linux
+     system fonts (DejaVu/Liberation) that ship only 400/700. */
+  --rm-font-fallback: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+  --rm-font: 'Roboto Variable', var(--rm-font-fallback);
+
   color-scheme: light;
 }
 
@@ -76,6 +87,30 @@
 
 :root[data-font-size='17'] {
   --rm-font-size: 17px;
+}
+
+/* Typeface (settings "Font" picker). Orthogonal to mode/palette/size, so it
+   lives in its own attribute and only overrides the font token. Roboto is the
+   default and owns the bare :root above (no attribute); "System" drops the
+   webfont and uses the native stack. */
+:root[data-font='inter'] {
+  --rm-font: 'Inter Variable', var(--rm-font-fallback);
+}
+
+:root[data-font='public-sans'] {
+  --rm-font: 'Public Sans Variable', var(--rm-font-fallback);
+}
+
+:root[data-font='work-sans'] {
+  --rm-font: 'Work Sans Variable', var(--rm-font-fallback);
+}
+
+:root[data-font='fira-sans'] {
+  --rm-font: 'Fira Sans', var(--rm-font-fallback);
+}
+
+:root[data-font='system'] {
+  --rm-font: var(--rm-font-fallback);
 }
 
 :root[data-theme='dark'] {
@@ -283,9 +318,7 @@ html {
 body {
   background: var(--rm-bg);
   color: var(--rm-text);
-  font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
-    sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+  font-family: var(--rm-font);
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   -webkit-text-size-adjust: 100%;

@@ -224,6 +224,25 @@ export default defineConfig({
           cleanupOutdatedCaches: true,
           runtimeCaching: [
             {
+              // Self-hosted typeface woff2 (Fontsource, hashed into /assets).
+              // The default precache glob omits woff2, so without this the
+              // active font would 404 offline and fall back to the system stack
+              // — exactly the cross-platform inconsistency the self-hosted fonts
+              // exist to remove. CacheFirst, cache-on-use: only the fonts
+              // actually fetched (the active one, plus all of them once the
+              // Settings picker is opened) get stored, not all six up front.
+              urlPattern: /\/assets\/.*\.woff2$/,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'readmo-fonts',
+                expiration: {
+                  maxEntries: 30,
+                  maxAgeSeconds: 365 * 24 * 60 * 60,
+                },
+                cacheableResponse: { statuses: [0, 200] },
+              },
+            },
+            {
               // Data reads from Supabase REST/RPC — NetworkFirst so a healthy
               // network always wins, with a cache fallback offline (see
               // SPEC.md *PWA & Offline → Caching strategy*). Pattern is derived
