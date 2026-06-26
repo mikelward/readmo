@@ -451,6 +451,16 @@ folders       (user_id FK, name, sort)
 
 ### Feed discovery
 
+- **The Settings route is code-split.** It carries the curated popular-feeds
+  catalog (`src/lib/popularFeeds.ts`, the app's largest static data blob) and is
+  visited rarely, so `/settings` is lazy-loaded as its own chunk on navigation
+  rather than baked into the initial bundle; the service worker precaches the
+  chunk, so it stays available offline after the first load. If that chunk fails
+  to load — a stale content-hashed asset after a deploy, or a network failure
+  before precache — `LazyRouteBoundary` reloads the page once to recover, and if
+  that still fails it shows a centered recovery state: the message "This page
+  couldn't be loaded." above a **Reload** button (≥44px touch target) that
+  re-attempts a full reload.
 - The Settings **Add a feed** input shows a filtered autocomplete dropdown as
   the user types. Suggestions come from a curated list of popular feeds
   (`src/lib/popularFeeds.ts`); each entry carries a display name, direct feed
@@ -1367,6 +1377,12 @@ keys differ; the strategies map one-to-one:
     pure-UI per-device prefs (`readmo:item-sort`, `readmo:group-by-feed`,
     `readmo:hide-on-scroll`, `readmo:bottom-bar`, `readmo:fontSize`, theme) carry
     no user data and stay global.
+  - `readmo:chunk-reload` — the **one** `sessionStorage` (not `localStorage`)
+    surface: a transient, per-tab one-shot flag set by `LazyRouteBoundary` when
+    it auto-reloads to recover a stale/failed lazy route chunk, so a genuinely
+    missing chunk can't reload-loop. Carries no user data, is not user-scoped,
+    and clears itself when the tab session ends — so it's neither migrated nor
+    in the `clearUserCaches` purge list.
 
   On any auth transition the departing **user's** scoped keys are purged and the
   app reloads (re-keying the singletons); the anonymous scope is preserved so an
