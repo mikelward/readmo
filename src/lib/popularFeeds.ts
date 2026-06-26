@@ -55,6 +55,55 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   { name: 'Fox News', feedUrl: 'https://moxie.foxnews.com/google-publisher/latest.xml', category: 'News' },
   { name: 'The Boston Globe', feedUrl: 'https://www.bostonglobe.com/rss/bdc/breaking', category: 'News' },
 
+  // International — English-speaking countries + globally significant outlets'
+  // English editions. Batch 1 of the planned expansion. These URLs are sourced
+  // from published feed lists and each publisher's standard feed conventions
+  // but were NOT live-verified at authoring time (the dev sandbox blocks egress
+  // to news domains); run `npm run feeds:check` from an unrestricted network to
+  // confirm/prune them.
+  // United Kingdom
+  { name: 'The Telegraph', feedUrl: 'https://www.telegraph.co.uk/news/rss.xml', category: 'News' },
+  { name: 'The Independent', feedUrl: 'https://www.independent.co.uk/news/uk/rss', category: 'News' },
+  { name: 'Sky News', feedUrl: 'https://feeds.skynews.com/feeds/rss/home.xml', category: 'News' },
+  { name: 'Daily Mail', feedUrl: 'https://www.dailymail.co.uk/news/index.rss', category: 'News' },
+  { name: 'Daily Mirror', feedUrl: 'https://www.mirror.co.uk/news/?service=rss', category: 'News' },
+  { name: 'Metro', feedUrl: 'https://metro.co.uk/feed/', category: 'News' },
+  { name: 'Evening Standard', feedUrl: 'https://www.standard.co.uk/news/rss', category: 'News' },
+  { name: 'The Spectator', feedUrl: 'https://www.spectator.co.uk/feed', category: 'News' },
+  { name: 'New Statesman', feedUrl: 'https://www.newstatesman.com/feed', category: 'News' },
+  { name: 'The Conversation (UK)', feedUrl: 'https://theconversation.com/uk/articles.atom', category: 'News' },
+  // Ireland
+  { name: 'RTÉ News', feedUrl: 'https://www.rte.ie/feeds/rss/?index=/news/', category: 'News' },
+  { name: 'The Irish Times', feedUrl: 'https://www.irishtimes.com/arc/outboundfeeds/rss/?outputType=xml', category: 'News' },
+  { name: 'Irish Independent', feedUrl: 'https://www.independent.ie/rss', category: 'News' },
+  { name: 'TheJournal.ie', feedUrl: 'https://www.thejournal.ie/feed/', category: 'News' },
+  { name: 'Irish Examiner', feedUrl: 'https://www.irishexaminer.com/feed/35-top_news.xml', category: 'News' },
+  // New Zealand
+  { name: 'RNZ', feedUrl: 'https://www.rnz.co.nz/rss/national.xml', category: 'News' },
+  { name: 'NZ Herald', feedUrl: 'https://www.nzherald.co.nz/arc/outboundfeeds/rss/', category: 'News' },
+  { name: 'Stuff', feedUrl: 'https://www.stuff.co.nz/rss', category: 'News' },
+  { name: 'The Spinoff', feedUrl: 'https://thespinoff.co.nz/feed', category: 'News' },
+  { name: 'Newsroom', feedUrl: 'https://www.newsroom.co.nz/feed', category: 'News' },
+  // India
+  { name: 'The Hindu', feedUrl: 'https://www.thehindu.com/news/national/feeder/default.rss', category: 'News' },
+  { name: 'Times of India', feedUrl: 'https://timesofindia.indiatimes.com/rssfeedstopstories.cms', category: 'News' },
+  { name: 'The Indian Express', feedUrl: 'https://indianexpress.com/feed/', category: 'News' },
+  { name: 'Hindustan Times', feedUrl: 'https://www.hindustantimes.com/feeds/rss/india-news/rssfeed.xml', category: 'News' },
+  { name: 'NDTV', feedUrl: 'https://feeds.feedburner.com/ndtvnews-top-stories', category: 'News' },
+  { name: 'Scroll.in', feedUrl: 'https://scroll.in/feed', category: 'News' },
+  { name: 'The Wire', feedUrl: 'https://thewire.in/feed', category: 'News' },
+  { name: 'Livemint', feedUrl: 'https://www.livemint.com/rss/newsRSS', category: 'News' },
+  // Global English editions
+  { name: 'France 24', feedUrl: 'https://www.france24.com/en/rss', category: 'News' },
+  { name: 'The Japan Times', feedUrl: 'https://www.japantimes.co.jp/feed/', category: 'News' },
+  { name: 'South China Morning Post', feedUrl: 'https://www.scmp.com/rss/91/feed', category: 'News' },
+  { name: 'The Straits Times', feedUrl: 'https://www.straitstimes.com/news/singapore/rss.xml', category: 'News' },
+  { name: 'The Times of Israel', feedUrl: 'https://www.timesofisrael.com/feed/', category: 'News' },
+  { name: 'The Kyiv Independent', feedUrl: 'https://kyivindependent.com/feed/', category: 'News' },
+  { name: 'The Moscow Times', feedUrl: 'https://www.themoscowtimes.com/rss/news', category: 'News' },
+  { name: 'The National (UAE)', feedUrl: 'https://www.thenationalnews.com/arc/outboundfeeds/rss/', category: 'News' },
+  { name: 'Daily Maverick', feedUrl: 'https://www.dailymaverick.co.za/dmrss/', category: 'News' },
+
   // Opinion & Analysis
   { name: 'The Atlantic', feedUrl: 'https://www.theatlantic.com/feed/all/', category: 'Opinion & Analysis' },
   { name: 'The Economist', feedUrl: 'https://www.economist.com/latest/rss.xml', category: 'Opinion & Analysis' },
