@@ -852,6 +852,23 @@ loopback/link-local/private/metadata targets and redirects to them.
        window that the local store hasn't learned (e.g. a cross-device Done) —
        base rows self-heal on the next refetch, but a cached extra row can
        linger until that feed's window changes or the view remounts.
+       - **Sticky displayed window per section.** Each section's displayed set
+         is anchored from its first read (the opening `PER_FEED_WINDOW` rows)
+         and extended only by tapping "More". Refetches that bring fresh
+         server-newer rows into the top of `items` — post-Sweep refills,
+         cross-device drift, RSS items polled in — leave those rows in the
+         cache but **do not paint them**: the section stays anchored on what
+         the reader is already viewing. Concretely this means **Sweep does not
+         auto-refill** (sweeping unpinned rows clears the section to its
+         pinned rows; tap "More" to pull the next full page); and **pinning
+         an "extra" row does not shrink the section** (the pinned id is in
+         the sticky set so promoting it into the base window is a no-op for
+         the displayed list). When a swept section has no pins to anchor it,
+         the section header + "More" still render as a **phantom row** so the
+         reader can pull the next page without remounting; the empty state
+         only appears once every section is genuinely exhausted. Pull-to-
+         refresh resets the sticky set, so the reader can always opt in to
+         the newest top items.
    - **Done and Hidden filtered out**; **Opened** items render with the faded
      title.
    - **Initial paint one page (30 items)** in the flat river; the grouped view
