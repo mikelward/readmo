@@ -440,3 +440,76 @@ zero-config, but **one project env var is required**:
 
 Also set `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` (see §5) — without
 them the client falls back to the in-memory mock data source.
+
+## 12. Claude Code on the web — cloud environment setup script
+
+This repo provisions web sessions two ways, and the split matters for
+reliability:
+
+- **`.claude/hooks/session-start.sh` (committed, in this repo)** — a
+  **SessionStart hook**. It runs on *every* session (startup **and** resume),
+  *after* Claude Code launches, and its filesystem output is **not**
+  snapshotted. So it must stay fast: it only runs `npm install` (reconciling
+  `node_modules` against the snapshot), wires Deno onto `PATH`, and verifies the
+  result.
+- **The environment *setup script* (configured in the web UI, *not* in the
+  repo)** — runs **once**, *before* Claude launches; afterward Anthropic
+  snapshots the filesystem and reuses it (rebuilt only when the script/allowed
+  hosts change, or after ~7 days). This is where the heavy, cacheable work
+  belongs so it doesn't repeat — or risk being truncated by per-session startup
+  latency — on every session.
+
+**Why this split:** the heavy bits (the ~40 MB Deno download, warming Deno's
+module cache with the Edge Functions' npm deps, and the bulk `npm install`)
+were previously done *in the hook*, i.e. on every session with no snapshot to
+fall back on. That's what intermittently left a session missing the self-hosted
+fonts (breaking `npm run build`) or `@mozilla/readability` (breaking the
+fulltext / edge checks). Moving them to the snapshotted setup script makes them
+present from session start; the hook then just reconciles.
+
+Paste this into the environment's **Setup script** field (Edit environment →
+Setup script). It assumes the repo root is the working directory.
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+# Heavy, cacheable provisioning for readmo cloud sessions. Runs once; the
+# resulting filesystem is snapshotted, so later sessions start with all of this
+# already on disk. The SessionStart hook (.claude/hooks/session-start.sh) only
+# reconciles on top of it.
+
+# Node deps — snapshot node_modules (incl. the self-hosted fonts and the edge
+# npm deps the fulltext unit test imports). The hook's later `npm install` is
+# then a fast "up to date".
+npm install --no-audit --no-fund
+
+# Deno runtime — installed from GitHub releases (dl.deno.land is blocked by the
+# sandbox network policy; GitHub release assets are allowed).
+DENO_VERSION="v2.8.3"
+DENO_INSTALL="$HOME/.deno"
+case "$(uname -m)" in
+  x86_64)        DENO_TARGET="x86_64-unknown-linux-gnu" ;;
+  aarch64|arm64) DENO_TARGET="aarch64-unknown-linux-gnu" ;;
+  *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+mkdir -p "$DENO_INSTALL/bin"
+curl -fsSL --retry 3 -o /tmp/deno.zip \
+  "https://github.com/denoland/deno/releases/download/${DENO_VERSION}/deno-${DENO_TARGET}.zip"
+unzip -o -q /tmp/deno.zip -d "$DENO_INSTALL/bin"
+chmod +x "$DENO_INSTALL/bin/deno"
+
+# Warm Deno's module cache with the Edge Functions' npm deps so
+# `deno test` / `deno check` over supabase/functions/* resolve offline.
+"$DENO_INSTALL/bin/deno" cache --no-lock \
+  --import-map supabase/functions/import_map.json \
+  supabase/functions/_shared/fulltext.ts \
+  supabase/functions/_shared/parser.ts \
+  supabase/functions/_shared/sanitize.ts \
+  supabase/functions/_shared/discover.ts
+```
+
+Keep the script's total runtime under ~5 minutes so the snapshot can build.
+Until it's added, the SessionStart hook still falls back to installing Deno
+itself (just slower for that one session, and it logs a pointer to this
+section).
