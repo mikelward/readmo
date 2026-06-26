@@ -192,6 +192,19 @@ export function ItemRows({
                 )}
                 {onSweepFeed || onUndo ? (
                   <div className="item-list__group-actions">
+                    {onUndo ? (
+                      <TooltipButton
+                        type="button"
+                        className="item-list__group-action"
+                        data-testid="group-undo"
+                        onClick={canUndo ? onUndo : undefined}
+                        disabled={!canUndo}
+                        tooltip={canUndo ? 'Undo' : 'Nothing to undo'}
+                        aria-label={canUndo ? 'Undo' : 'Nothing to undo'}
+                      >
+                        <Undo width={20} height={20} />
+                      </TooltipButton>
+                    ) : null}
                     {onSweepFeed ? (
                       (() => {
                         const canSweep = sweepableFeeds?.has(header.feedId) ?? false;
@@ -213,19 +226,6 @@ export function ItemRows({
                           </TooltipButton>
                         );
                       })()
-                    ) : null}
-                    {onUndo ? (
-                      <TooltipButton
-                        type="button"
-                        className="item-list__group-action"
-                        data-testid="group-undo"
-                        onClick={canUndo ? onUndo : undefined}
-                        disabled={!canUndo}
-                        tooltip={canUndo ? 'Undo' : 'Nothing to undo'}
-                        aria-label={canUndo ? 'Undo' : 'Nothing to undo'}
-                      >
-                        <Undo width={20} height={20} />
-                      </TooltipButton>
                     ) : null}
                   </div>
                 ) : null}
