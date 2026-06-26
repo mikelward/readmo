@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { BrandMark, Menu, Search, Settings } from './icons';
 import { AppDrawer } from './AppDrawer';
 import { HeaderAccountMenu } from './HeaderAccountMenu';
+import { TooltipButton } from './TooltipButton';
 import './AppHeader.css';
 
 /** App header: drawer toggle pinned to the viewport's left edge, brand
@@ -16,18 +17,20 @@ import './AppHeader.css';
 export function AppHeader() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const status = useConnectivityStatus();
+  const navigate = useNavigate();
 
   return (
     <>
       <header className="app-header">
-        <button
+        <TooltipButton
           type="button"
           className="app-header__icon-btn app-header__edge app-header__edge--left"
+          tooltip="Menu"
           aria-label="Open menu"
           onClick={() => setDrawerOpen(true)}
         >
           <Menu />
-        </button>
+        </TooltipButton>
 
         <div className="app-header__inner">
           <Link to="/" className="app-header__brand" aria-label="readmo home">
@@ -55,21 +58,25 @@ export function AppHeader() {
             </Link>
           ) : null}
 
-          <Link
-            to="/search"
+          <TooltipButton
+            type="button"
             className="app-header__icon-btn"
+            tooltip="Search"
             aria-label="Search"
+            onClick={() => navigate('/search')}
           >
             <Search />
-          </Link>
+          </TooltipButton>
 
-          <Link
-            to="/settings"
+          <TooltipButton
+            type="button"
             className="app-header__icon-btn"
+            tooltip="Settings"
             aria-label="Settings"
+            onClick={() => navigate('/settings')}
           >
             <Settings />
-          </Link>
+          </TooltipButton>
         </div>
 
         <div className="app-header__edge app-header__edge--right">

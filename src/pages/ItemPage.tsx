@@ -78,24 +78,26 @@ function ReaderToolbar({
   return (
     <div className={`reader__${placement}bar`}>
       {placement === 'bottom' ? (
-        <button
+        <TooltipButton
           type="button"
           className="reader__back"
+          tooltip="Back to top"
           aria-label="Back to top"
           data-testid="reader-back-to-top"
           onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
         >
           <VerticalAlignTop />
-        </button>
+        </TooltipButton>
       ) : (
-        <button
+        <TooltipButton
           type="button"
           className="reader__back"
+          tooltip="Back"
           aria-label="Back"
           onClick={onBack}
         >
           <ArrowBack />
-        </button>
+        </TooltipButton>
       )}
 
       <div className="reader__actions" role="toolbar" aria-label="Article actions">
