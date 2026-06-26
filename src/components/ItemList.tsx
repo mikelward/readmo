@@ -559,7 +559,20 @@ export function ItemList({
           }
           if (existing) {
             for (const fi of existing.items) {
-              if (allowed.has(fi.item.id)) inView.add(fi.item.id);
+              if (!allowed.has(fi.item.id)) continue;
+              // Skip a cached extra the server has since dropped from this
+              // feed's sequence — Done/Hidden on another device, learned via
+              // the item_state resync. It's no longer at any server offset, so
+              // counting it would push the cursor past the row that now follows
+              // and skip it. (`items[]` rows are already server-filtered, so the
+              // gap is only in the client-cached extras.) Absence from `items[]`
+              // can't tell "filtered" from "beyond the opening window", so local
+              // Done/Hidden is the usable signal; excluding can only SHRINK the
+              // offset, making the worst case a harmless deduped re-fetch overlap
+              // rather than a skip.
+              const st = ds.stateStore.get(fi.item.id);
+              if (st.done || st.hidden) continue;
+              inView.add(fi.item.id);
             }
           }
           let recomputed = inView.size;
@@ -683,7 +696,7 @@ export function ItemList({
         });
       }
     },
-    [fetchFeedPage, perFeedLimit, feedExtras, items, displayedByFeed],
+    [fetchFeedPage, perFeedLimit, feedExtras, items, displayedByFeed, ds],
   );
 
   // Per-id cache of FeedItem objects so a sticky row stays renderable even

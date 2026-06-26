@@ -1928,6 +1928,66 @@ describe('ItemList', () => {
       expect(fetchFeedPage).toHaveBeenCalledWith('A', '5');
     });
 
+    it("shrinks a section's next-More cursor when an extra-loaded row is Done on another device", async () => {
+      // Regression: the section's next-More cursor counts how many already-seen
+      // rows the server still carries (the offset for the next batch). A cached
+      // extra that another device marked Done — learned locally via the
+      // item_state resync — is no longer in the server's filtered sequence, so
+      // counting it pushes the cursor one past the row that now follows and
+      // skips it. The cursor must shrink to exclude the dropped extra.
+      const user = userEvent.setup();
+      const { source, mk } = await makeRows();
+      const K = 3;
+      // Feed A: window A0-A2 + overfetch probe A3 → A offers More. B is short.
+      const base = [
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+        mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
+      ];
+      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
+      const aMore: Record<string, { items: FeedItem[]; nextCursor: string | null }> = {
+        // More #1: append the probe A3 + A4; server says the next batch is at 5.
+        '3': { items: [mk('A', 'Feed A', 3), mk('A', 'Feed A', 4)], nextCursor: '5' },
+        // After A4 is Done server-side, the next unseen row (A5) sits at offset 4.
+        '4': { items: [mk('A', 'Feed A', 5)], nextCursor: null },
+        // The buggy offset (5) would skip A5 and land on A6.
+        '5': { items: [mk('A', 'Feed A', 6)], nextCursor: null },
+      };
+      const fetchFeedPage = vi.fn((feedId: string, cursor: string | null) =>
+        Promise.resolve(
+          feedId === 'A' ? aMore[cursor ?? ''] ?? { items: [], nextCursor: null } : { items: [], nextCursor: null },
+        ),
+      );
+      renderWithProviders(
+        <ItemList
+          viewKey={`psm-doneextra-${viewKeySeq++}`}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+          groupByFeed
+          fetchFeedPage={fetchFeedPage}
+          perFeedLimit={K}
+        />,
+        { source },
+      );
+      await screen.findAllByTestId('item-row');
+
+      // More #1 loads extras A3, A4.
+      await user.click(screen.getByTestId('group-more'));
+      await screen.findByText('Feed A 4');
+      expect(fetchFeedPage).toHaveBeenCalledWith('A', '3');
+
+      // Another device marks A4 (an extra) Done; the resync surfaces it locally.
+      act(() => {
+        source.stateStore.set('A-4', 'done', true);
+      });
+
+      // More #2 must page from offset 4 (A4 no longer counts), fetching A5 —
+      // not offset 5, which would skip A5 and land on A6.
+      await user.click(screen.getByTestId('group-more'));
+      await screen.findByText('Feed A 5');
+      expect(fetchFeedPage).toHaveBeenCalledWith('A', '4');
+      expect(fetchFeedPage).not.toHaveBeenCalledWith('A', '5');
+    });
+
     it('shows no per-section More in the flat (non-grouped) view', async () => {
       const { source, mk } = await makeRows();
       const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2)];
