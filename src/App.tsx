@@ -1,5 +1,5 @@
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import type { ReactNode } from 'react';
+import { lazy, Suspense, type ReactNode } from 'react';
 import { AppHeader } from './components/AppHeader';
 import { AppUpdateWatcher } from './components/AppUpdateWatcher';
 import { ScrollToTop } from './components/ScrollToTop';
@@ -18,11 +18,19 @@ import {
 } from './pages/LibraryPages';
 import { ItemPage } from './pages/ItemPage';
 import { SearchPage } from './pages/SearchPage';
-import { SettingsPage } from './pages/SettingsPage';
 import { OfflinePage } from './pages/OfflinePage';
 import { SignInPage } from './pages/SignInPage';
 import { DebugPage } from './pages/DebugPage';
 import { NotFoundPage } from './pages/NotFoundPage';
+import { LazyRouteBoundary } from './components/LazyRouteBoundary';
+
+/** Settings carries the curated popular-feeds catalog (the app's largest static
+ * data blob) and is visited rarely, so it's split into its own chunk loaded on
+ * navigation rather than baked into the initial bundle. The service worker
+ * precaches the chunk, so it stays available offline after the first load. */
+const SettingsPage = lazy(() =>
+  import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })),
+);
 
 /** Signed-in gate. First launch with no session routes to /signin; deep links
  * round-trip through sign-in and then land on the target (SPEC.md *Auth*). */
@@ -56,32 +64,41 @@ export default function App() {
       <ScrollToTop />
       <AppHeader />
       <main className="app-main">
-        <Routes>
-          <Route path="/signin" element={<SignInPage />} />
-          {/* Open to everyone (no auth gate) — diagnostics only, no secrets. */}
-          <Route path="/debug" element={<DebugPage />} />
-          <Route
-            path="/*"
-            element={
-              <RequireAuth>
-                <Routes>
-                  <Route path="/" element={<HomePage />} />
-                  <Route path="/folder/:name" element={<FolderPage />} />
-                  <Route path="/feed/:feedId" element={<FeedPage />} />
-                  <Route path="/pinned" element={<PinnedPage />} />
-                  <Route path="/favorites" element={<FavoritesPage />} />
-                  <Route path="/done" element={<DonePage />} />
-                  <Route path="/opened" element={<OpenedPage />} />
-                  <Route path="/offline" element={<OfflinePage />} />
-                  <Route path="/item/:id" element={<ItemPage />} />
-                  <Route path="/search" element={<SearchPage />} />
-                  <Route path="/settings" element={<SettingsPage />} />
-                  <Route path="*" element={<NotFoundPage />} />
-                </Routes>
-              </RequireAuth>
-            }
-          />
-        </Routes>
+        <Suspense fallback={null}>
+          <Routes>
+            <Route path="/signin" element={<SignInPage />} />
+            {/* Open to everyone (no auth gate) — diagnostics only, no secrets. */}
+            <Route path="/debug" element={<DebugPage />} />
+            <Route
+              path="/*"
+              element={
+                <RequireAuth>
+                  <Routes>
+                    <Route path="/" element={<HomePage />} />
+                    <Route path="/folder/:name" element={<FolderPage />} />
+                    <Route path="/feed/:feedId" element={<FeedPage />} />
+                    <Route path="/pinned" element={<PinnedPage />} />
+                    <Route path="/favorites" element={<FavoritesPage />} />
+                    <Route path="/done" element={<DonePage />} />
+                    <Route path="/opened" element={<OpenedPage />} />
+                    <Route path="/offline" element={<OfflinePage />} />
+                    <Route path="/item/:id" element={<ItemPage />} />
+                    <Route path="/search" element={<SearchPage />} />
+                    <Route
+                      path="/settings"
+                      element={
+                        <LazyRouteBoundary>
+                          <SettingsPage />
+                        </LazyRouteBoundary>
+                      }
+                    />
+                    <Route path="*" element={<NotFoundPage />} />
+                  </Routes>
+                </RequireAuth>
+              }
+            />
+          </Routes>
+        </Suspense>
       </main>
       <KeyboardShortcutsOverlay />
     </FeedBarProvider>
