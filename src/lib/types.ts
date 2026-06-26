@@ -129,3 +129,11 @@ export const HOME_WINDOW_MS = 3 * DAY_MS;
  * floor are unioned: an item shows if it's pinned, OR younger than the window,
  * OR among its feed's newest `FEED_FLOOR`. Mirrored by the `feed_items` RPC. */
 export const FEED_FLOOR = 10;
+
+/** Per-feed window for the group-by-feed view: each feed section opens showing
+ * at most this many of its listable items, with a per-section "More" button to
+ * reveal the next `PER_FEED_WINDOW` (and so on) without paging the whole river.
+ * Only applies when grouping by feed; the flat river pages globally instead.
+ * Threaded into the `feed_items` RPC as `p_per_feed_limit` and mirrored by the
+ * client merge in {@link ItemList}. */
+export const PER_FEED_WINDOW = 10;

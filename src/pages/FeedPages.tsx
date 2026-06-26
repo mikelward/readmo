@@ -6,6 +6,7 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useItemSort, useGroupByFeed } from '../hooks/useReadingPrefs';
 import { ItemList } from '../components/ItemList';
 import { HomeEmptyCoach } from '../components/HomeEmptyCoach';
+import { PER_FEED_WINDOW } from '../lib/types';
 import './PageHeader.css';
 
 /** `/` — the aggregate river across all non-muted subscriptions, or a chosen
@@ -55,9 +56,22 @@ export function HomePage() {
     return <HomeEmptyCoach />;
   }
   // Fold the sort/group prefs into both the query key (so a change refetches
-  // from page 1 with the new ordering) and the fetch options.
-  const opts = { sort: itemSort, groupByFeed };
+  // from page 1 with the new ordering) and the fetch options. Grouping windows
+  // each feed section to PER_FEED_WINDOW rows up front; the per-section "More"
+  // pages deeper into one feed via getFeedItems. The read overfetches ONE extra
+  // row per feed (PER_FEED_WINDOW + 1) as a has-more probe — the client renders
+  // only the window and uses the surviving extra to decide whether to show a
+  // section "More", so an exactly-full feed shows none instead of a dead button.
+  const opts = {
+    sort: itemSort,
+    groupByFeed,
+    ...(groupByFeed ? { perFeedLimit: PER_FEED_WINDOW + 1 } : {}),
+  };
   const prefKey = `${itemSort}:${groupByFeed ? 'grouped' : 'flat'}`;
+  const fetchFeedPage = groupByFeed
+    ? (feedId: string, cursor: string | null) =>
+        ds.getFeedItems(feedId, { cursor, sort: itemSort, limit: PER_FEED_WINDOW })
+    : undefined;
   if (homeFeed.kind === 'folder') {
     const name = homeFeed.name;
     return (
@@ -66,6 +80,8 @@ export function HomePage() {
         fetchPage={(cursor) => ds.getFolderItems(name, { cursor, ...opts })}
         emptyLabel={`No items in ${name}.`}
         groupByFeed={groupByFeed}
+        fetchFeedPage={fetchFeedPage}
+        perFeedLimit={groupByFeed ? PER_FEED_WINDOW : undefined}
       />
     );
   }
@@ -75,6 +91,8 @@ export function HomePage() {
       fetchPage={(cursor) => ds.getHomeItems({ cursor, ...opts })}
       emptyLabel="You’re all caught up."
       groupByFeed={groupByFeed}
+      fetchFeedPage={fetchFeedPage}
+      perFeedLimit={groupByFeed ? PER_FEED_WINDOW : undefined}
     />
   );
 }
@@ -95,10 +113,27 @@ export function FolderPage() {
       <ItemList
         viewKey={`folder:${name}:${prefKey}`}
         fetchPage={(cursor) =>
-          ds.getFolderItems(name, { cursor, sort: itemSort, groupByFeed })
+          ds.getFolderItems(name, {
+            cursor,
+            sort: itemSort,
+            groupByFeed,
+            // +1 = overfetch one row per feed as a has-more probe (see HomePage).
+            ...(groupByFeed ? { perFeedLimit: PER_FEED_WINDOW + 1 } : {}),
+          })
         }
         emptyLabel={`No items in ${name}.`}
         groupByFeed={groupByFeed}
+        fetchFeedPage={
+          groupByFeed
+            ? (feedId, cursor) =>
+                ds.getFeedItems(feedId, {
+                  cursor,
+                  sort: itemSort,
+                  limit: PER_FEED_WINDOW,
+                })
+            : undefined
+        }
+        perFeedLimit={groupByFeed ? PER_FEED_WINDOW : undefined}
       />
     </>
   );

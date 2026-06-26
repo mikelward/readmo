@@ -63,6 +63,52 @@ describe('MockDataSource feed reads', () => {
   it('defaults to a 30-item page', () => {
     expect(PAGE_SIZE).toBe(30);
   });
+
+  describe('group-by-feed per-feed window (perFeedLimit)', () => {
+    it('caps each feed section to perFeedLimit and returns one page', async () => {
+      // The Verge seed has 3 items; cap each section to 2.
+      const page = await ds.getHomeItems({ groupByFeed: true, perFeedLimit: 2 });
+      // One page only — the per-section "More" pages deeper, not a global cursor.
+      expect(page.nextCursor).toBeNull();
+      const perFeed = new Map<string, number>();
+      for (const fi of page.items) {
+        perFeed.set(fi.item.feedId, (perFeed.get(fi.item.feedId) ?? 0) + 1);
+      }
+      // No feed exceeds the cap, and at least one feed was actually clipped.
+      expect([...perFeed.values()].every((n) => n <= 2)).toBe(true);
+      expect(perFeed.get('feed-verge')).toBe(2); // clipped from 3
+    });
+
+    it('getFeedItems pages deeper into one feed past the window (the More cursor)', async () => {
+      const windowed = await ds.getHomeItems({ groupByFeed: true, perFeedLimit: 2 });
+      const vergeShown = windowed.items
+        .filter((fi) => fi.item.feedId === 'feed-verge')
+        .map((fi) => fi.item.id);
+      expect(vergeShown).toHaveLength(2);
+      // The per-section "More" continues from the window edge (offset = 2).
+      const next = await ds.getFeedItems('feed-verge', { cursor: '2', limit: 2 });
+      // The 3rd Verge item, not already shown, and the feed is then exhausted.
+      expect(next.items.length).toBeGreaterThan(0);
+      for (const fi of next.items) {
+        expect(fi.item.feedId).toBe('feed-verge');
+        expect(vergeShown).not.toContain(fi.item.id);
+      }
+      expect(next.nextCursor).toBeNull();
+    });
+
+    it('does not cap when grouping without perFeedLimit (unchanged behavior)', async () => {
+      const page = await ds.getHomeItems({ groupByFeed: true, limit: 100 });
+      const verge = page.items.filter((fi) => fi.item.feedId === 'feed-verge');
+      expect(verge.length).toBe(3); // full section, no window
+    });
+
+    it('ignores perFeedLimit on a single-feed read (no grouping)', async () => {
+      // getFeedItems never groups, so perFeedLimit is inert there — it stays the
+      // full-feed pager the per-section "More" relies on.
+      const feed = await ds.getFeedItems('feed-verge', { perFeedLimit: 1 });
+      expect(feed.items.length).toBe(3);
+    });
+  });
 });
 
 describe('MockDataSource freshness window + per-feed floor', () => {

@@ -59,6 +59,16 @@ interface Props {
   onUndo?: () => void;
   /** Whether there's anything to undo → enables the header Undo buttons. */
   canUndo?: boolean;
+  /** Group-by-feed per-section "More": feeds that have more rows to reveal past
+   * their opening window → a "More" button renders at the foot of that section
+   * (after its last visible row). Only meaningful alongside `onFeedMore`. */
+  feedsWithMore?: Set<FeedId>;
+  /** Feeds whose per-section "More" is mid-fetch → its button shows a loading
+   * state and is disabled. */
+  loadingFeeds?: Set<FeedId>;
+  /** Append that feed's next page inline (tapping a section's foot "More"). When
+   * provided, sections in `feedsWithMore` render the button. */
+  onFeedMore?: (feedId: FeedId) => void;
   /** Ids currently playing the sweep-out animation — their `<li>` carries the
    * `--sweeping` modifier so it slides + fades together with its peers. The
    * parent commits the hide on the matching `animationend`. */
@@ -88,6 +98,9 @@ export function ItemRows({
   sweepableFeeds,
   onUndo,
   canUndo = false,
+  feedsWithMore,
+  loadingFeeds,
+  onFeedMore,
   sweepingIds,
   onAnimationEnd,
 }: Props) {
@@ -113,9 +126,21 @@ export function ItemRows({
 
   return (
     <ul className="item-list__rows" ref={listRef} onAnimationEnd={onAnimationEnd}>
-      {items.map((fi) => {
+      {items.map((fi, idx) => {
         const header = groupHeaders?.get(fi.item.id);
         const collapsed = collapsedFeeds?.has(fi.item.feedId) ?? false;
+        // Last (visible) row of a feed section: the next row is a different feed
+        // or the list ends. The per-section "More" sits here, after the section's
+        // rows but before the next header — and never under a collapsed section.
+        const lastOfFeed =
+          idx === items.length - 1 ||
+          items[idx + 1].item.feedId !== fi.item.feedId;
+        const showFeedMore =
+          !!onFeedMore &&
+          !collapsed &&
+          lastOfFeed &&
+          (feedsWithMore?.has(fi.item.feedId) ?? false);
+        const feedMoreLoading = loadingFeeds?.has(fi.item.feedId) ?? false;
         return (
           <Fragment key={fi.item.id}>
             {header !== undefined ? (
@@ -221,6 +246,25 @@ export function ItemRows({
                 />
               </li>
             )}
+            {showFeedMore ? (
+              <li className="item-list__group-more">
+                <button
+                  type="button"
+                  className="item-list__group-more-btn"
+                  data-testid="group-more"
+                  data-feed-more={fi.item.feedId}
+                  onClick={() => onFeedMore?.(fi.item.feedId)}
+                  disabled={feedMoreLoading}
+                  aria-label={
+                    feedMoreLoading
+                      ? `Loading more ${fi.feed.title} items`
+                      : `More from ${fi.feed.title}`
+                  }
+                >
+                  {feedMoreLoading ? 'Loading…' : 'More'}
+                </button>
+              </li>
+            ) : null}
           </Fragment>
         );
       })}
