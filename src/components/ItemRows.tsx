@@ -146,17 +146,19 @@ export function ItemRows({
                       width={18}
                       height={18}
                     />
-                    <span className="item-list__group-title">{header.title}</span>
-                    {groupCounts && (groupCounts[header.feedId] ?? 0) > 0 ? (
-                      // Decorative: the count is announced via the button's
-                      // aria-label above (its own aria-label here would be
-                      // ignored, since the button label is the accessible name).
-                      <span className="item-list__group-count" aria-hidden="true">
-                        {groupCounts[header.feedId] > 99
-                          ? '99+'
-                          : groupCounts[header.feedId]}
-                      </span>
-                    ) : null}
+                    <span className="item-list__group-label">
+                      <span className="item-list__group-title">{header.title}</span>
+                      {groupCounts && (groupCounts[header.feedId] ?? 0) > 0 ? (
+                        // Decorative: the count is announced via the button's
+                        // aria-label above (its own aria-label here would be
+                        // ignored, since the button label is the accessible name).
+                        <span className="item-list__group-count" aria-hidden="true">
+                          {groupCounts[header.feedId] > 99
+                            ? '99+'
+                            : groupCounts[header.feedId]}
+                        </span>
+                      ) : null}
+                    </span>
                   </button>
                 ) : (
                   <span className="item-list__group-title" aria-hidden="true">
