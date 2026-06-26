@@ -1168,6 +1168,13 @@ page's discipline is unchanged.
 
 - **Header:** source feed (favicon + name, links to `/feed/:feedId`), title
   (links to the original, `target="_blank"`, marks Opened), author, date.
+- **Loading state:** while the item is still being fetched (or the offline
+  cache is restoring) the view shows a centered **"Loading…"** with the tip
+  **"Tip: 📌 pin an article to make it load faster"** — using the same
+  inline `PushPinOutline` glyph as the row pin button (decorative,
+  `aria-hidden`) — on a separate
+  line below it — nudging readers toward pinning, which serves the body from
+  cache on later opens.
 - **Body:** the sanitized `content_html`; images lazy-load (proxied — see
   *Privacy*); relative URLs already absolutized. Enclosures render
   appropriately (`<audio>` for podcasts, image/figure, else a download link).
