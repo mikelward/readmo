@@ -102,6 +102,16 @@
   cursor: pointer;
 }
 
+/* Wraps the title and (optional) count so they baseline-align with each
+   other — without dragging the rest of the 44px toggle (chevron, padding,
+   min-height-driven slack) off-center. */
+.item-list__group-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
 /* Right-side per-feed controls: Sweep (mark visible done) + Undo. 44px touch
    targets, ≥8px apart; the toggle's 1rem right padding separates them from the
    name/count. */
