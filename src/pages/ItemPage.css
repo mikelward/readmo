@@ -198,21 +198,23 @@
    (edge-to-edge on mobile, up to the reading column width on desktop —
    720px, 860px at ≥960px).
 
-   `width: auto` (not a forced `width`) caps each image at its *intrinsic*
-   resolution: a source narrower than the column renders at its natural pixel
-   size instead of being upscaled to full-bleed and going blurry. `max-width`
-   still bounds large images to the full feed area.
+   Mobile-first these force a full-bleed `width` so a standalone image *fills*
+   the column even when its source is narrower (e.g. a Reddit preview thumbnail
+   served small): on a phone the column IS the viewport, so a tiny inline-size
+   image reads as broken — full-bleed is what you want. The intrinsic-size cap
+   (`width: auto`, no upscaling) is reapplied only on the desktop wide layout
+   below, where the column is framed by whitespace and stretching a sub-column
+   source to full-bleed looks worst.
 
    The breakout itself stays an explicit negative margin (NOT `margin: auto`):
    the containing block here is the padded `.reader__body` content box, so a
    column-or-wider image is *wider* than its containing block — and per CSS
    2.1 §10.3.3 auto margins are then treated as 0, which would drop the left
    breakout and overflow the image to the right. The fixed `-16px` left margin
-   reaches the feed edge for a wide image; a narrower one simply left-aligns at
-   that edge (never upscaled). */
+   reaches the feed edge. */
 .reader__body > img {
   display: block;
-  width: auto;
+  width: calc(100% + 32px);
   height: auto;
   max-width: calc(100% + 32px);
   margin-left: -16px;
@@ -226,13 +228,13 @@
 }
 
 /* `<figure>`/`<picture>` already carry the -16px breakout, so the image's
-   containing block IS the full feed band: `max-width: 100%` equals it, so a
-   wide image hits `width == containing block` (auto margins resolve to 0 →
-   full-bleed) and a narrower one centers — auto margins are safe here. */
+   containing block IS the full feed band: `width: 100%` fills it full-bleed on
+   mobile. The desktop block below swaps this to `width: auto` (intrinsic cap),
+   where `max-width: 100%` plus auto side margins centers a sub-band image. */
 .reader__body > figure img,
 .reader__body > picture img {
   display: block;
-  width: auto;
+  width: 100%;
   height: auto;
   max-width: 100%;
   margin-left: auto;
@@ -260,11 +262,27 @@
 
 .reader__body > table img {
   display: block;
-  width: auto;
+  width: calc(100% + 32px);
   max-width: calc(100% + 32px);
   margin-left: -16px;
   height: auto;
   border-radius: 0;
+}
+
+/* Desktop wide layout (≥960px, matching `.app-main`'s widen / `useWideViewport`):
+   the reading column is centered with whitespace on either side, so upscaling a
+   sub-column source to full-bleed reads as blurry here in a way it doesn't on a
+   phone. Cap each standalone image at its *intrinsic* resolution — a small image
+   renders at natural size (direct/table images left-aligned at the feed edge via
+   the inherited -16px margin; figure/picture images centered via auto margins),
+   while a column-or-wider one still resolves to full-bleed. */
+@media (min-width: 960px) {
+  .reader__body > img,
+  .reader__body > figure img,
+  .reader__body > picture img,
+  .reader__body > table img {
+    width: auto;
+  }
 }
 
 .reader__body pre {
