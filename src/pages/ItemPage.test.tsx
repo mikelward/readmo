@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useState, type ReactNode } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import { act, screen, waitFor } from '@testing-library/react';
@@ -10,6 +10,25 @@ import { _resetNetworkStatusForTests, reportFetchFailure } from '../lib/networkS
 import type { FeedItem } from '../lib/types';
 import type { FullTextResult } from '../lib/fullText';
 import { ItemPage } from './ItemPage';
+
+// The HN-discussion lookup hits the network (HN's Algolia index). Stub the
+// resolver so the reader is hermetic: no discussion by default, overridden
+// per-test below to exercise the comments icon.
+vi.mock('../lib/hnDiscussion', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/hnDiscussion')>();
+  return { ...actual, findHnDiscussion: vi.fn(async () => null) };
+});
+import { findHnDiscussion, newshackerThreadUrl } from '../lib/hnDiscussion';
+const mockFindDiscussion = vi.mocked(findHnDiscussion);
+
+beforeEach(() => {
+  // Clear call history between tests (the mock is module-level), then default
+  // the lookup to never settle — reader tests that don't care about comments
+  // see no icon and get no late state update (no act() warning). Tests that
+  // exercise the icon override with mockResolvedValue below.
+  mockFindDiscussion.mockReset();
+  mockFindDiscussion.mockReturnValue(new Promise(() => {}));
+});
 
 function renderReader(
   source: MockDataSource,
@@ -103,6 +122,62 @@ describe('ItemPage (reader)', () => {
     expect(screen.getByTestId('reader-back-to-top')).toBeInTheDocument();
     await user.click(pin);
     expect(source.stateStore.get('item-1').pinned).toBe(true);
+  });
+
+  it('enables the comments icon (top and bottom) linking to the newshacker discussion when one exists', async () => {
+    const user = userEvent.setup();
+    mockFindDiscussion.mockResolvedValue({ id: '4242', numComments: 12 });
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReader(source);
+
+    // The icon is always present; it becomes enabled once the lookup lands.
+    // TooltipButton marks its disabled state with aria-disabled, so "enabled"
+    // is the absence of that attribute.
+    const comments = await screen.findByTestId('reader-comments');
+    await waitFor(() => expect(comments).not.toHaveAttribute('aria-disabled'));
+    expect(screen.getByTestId('reader-comments-bottom')).not.toHaveAttribute(
+      'aria-disabled',
+    );
+    await user.click(comments);
+    expect(openSpy).toHaveBeenCalledWith(
+      newshackerThreadUrl('4242'),
+      '_blank',
+      'noopener,noreferrer',
+    );
+    openSpy.mockRestore();
+  });
+
+  it('keeps the comments icon present but disabled when there is no discussion', async () => {
+    // Stable slot: the icon always occupies its position so the row never
+    // reflows; with no discussion it's rendered inert rather than removed.
+    mockFindDiscussion.mockResolvedValue(null);
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReader(source);
+    await screen.findByTestId('open-original');
+    await waitFor(() => expect(mockFindDiscussion).toHaveBeenCalled());
+    const comments = screen.getByTestId('reader-comments');
+    expect(comments).toBeInTheDocument();
+    expect(comments).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('never looks up a discussion for a private (secret_url-backed) feed', async () => {
+    // Fail closed: a private feed's article URL must not reach the third-party
+    // index even if a discussion would have matched. The icon stays disabled
+    // and findHnDiscussion is never called.
+    class PrivateFeedSource extends MockDataSource {
+      async getItem(id: string): Promise<FeedItem | null> {
+        const fi = await super.getItem(id);
+        return fi ? { ...fi, feed: { ...fi.feed, private: true } } : null;
+      }
+    }
+    mockFindDiscussion.mockResolvedValue({ id: '4242', numComments: 12 });
+    renderReader(new PrivateFeedSource(`test-${Math.random()}`));
+    const comments = await screen.findByTestId('reader-comments');
+    // Give any (incorrectly-fired) lookup a chance to run before asserting none.
+    await waitFor(() => expect(screen.getByTestId('reader-pin')).toBeInTheDocument());
+    expect(comments).toHaveAttribute('aria-disabled', 'true');
+    expect(mockFindDiscussion).not.toHaveBeenCalled();
   });
 
   it('Done marks the item done and clears pinned (exclusivity)', async () => {

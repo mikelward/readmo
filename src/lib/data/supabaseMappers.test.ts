@@ -91,6 +91,15 @@ describe('mapFeed', () => {
     expect(mapFeed({ ...base, title: null }).title).toBe('https://example.com');
     expect(mapFeed({ ...base, title: null, site_url: null }).title).toBe('Untitled feed');
   });
+
+  it('maps the derived `private` flag, failing closed when absent', () => {
+    expect(mapFeed({ ...base, private: false }).private).toBe(false);
+    expect(mapFeed({ ...base, private: true }).private).toBe(true);
+    // Older backend (no 0028 column): null/absent → undefined, which the
+    // reader's comments gate treats as "not known public" (fail closed).
+    expect(mapFeed({ ...base, private: null }).private).toBeUndefined();
+    expect(mapFeed(base).private).toBeUndefined();
+  });
 });
 
 describe('mapItem', () => {

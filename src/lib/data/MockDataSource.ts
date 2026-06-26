@@ -457,6 +457,9 @@ export class MockDataSource implements DataSource {
       errorCount: 0,
       lastError: null,
       parked: false,
+      // Subscribed-by-URL feeds in the mock are public (no secret_url), so the
+      // reader's HN-comments lookup is allowed for their items.
+      private: false,
     };
     this.feeds.set(feed.id, feed);
     this.subs.set(feed.id, {

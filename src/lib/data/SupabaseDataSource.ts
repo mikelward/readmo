@@ -46,7 +46,14 @@ import {
 
 /** The display-safe columns of `feeds_public` (and of `feeds` for clients —
  * never the fetch URLs). */
+// `private` (0028) is selected optionally: a new client can reach a backend not
+// yet migrated with the derived column, so feeds_public reads fall back to
+// FEED_COLS_LEGACY on an undefined-column error (guardrail #11). Absent the
+// column the reader's HN-comments gate fails closed (treats the feed as
+// private) — see useHnDiscussion.
 const FEED_COLS =
+  'id, site_url, title, last_fetched_at, next_fetch_at, fetch_interval_s, error_count, last_error, created_at, private';
+const FEED_COLS_LEGACY =
   'id, site_url, title, last_fetched_at, next_fetch_at, fetch_interval_s, error_count, last_error, created_at';
 const ITEM_COLS =
   'id, feed_id, guid, url, title, author, published_at, content_html, summary, enclosures, content_hash, created_at';
@@ -249,6 +256,12 @@ export class SupabaseDataSource implements DataSource {
   // control until the column ships, so the new client never offers a write the
   // old backend would reject (guardrail #11).
   private openOriginalColumn = true;
+  // Capability flag for the `feeds_public.private` column (0028). Optimistic;
+  // flips false the first time a feeds_public read has to fall back to the
+  // legacy column set — i.e. the backend predates the migration. While false,
+  // mapped feeds carry `private: undefined`, so the reader's comments gate fails
+  // closed (no lookup) until the column ships (guardrail #11).
+  private feedPrivateColumn = true;
   // Set by the write path when an LWW write lost (the server returned a row that
   // didn't take our value). Consumed by onDrained — *after* the drain clears the
   // entry — to re-pull server truth, so the re-hydrate's pending overlay no longer
@@ -375,6 +388,30 @@ export class SupabaseDataSource implements DataSource {
   }
 
   // --- helpers --------------------------------------------------------------
+
+  /** Run a `feeds_public` select with the optional `private` column (0028),
+   * transparently retrying without it against a backend that predates the
+   * migration (guardrail #11). `build(cols)` returns the awaited PostgREST
+   * response for the given column list. */
+  private async selectFeedsPublic<T>(
+    build: (cols: string) => PromiseLike<{ data: unknown; error: unknown; status?: number }>,
+  ): Promise<T> {
+    // The PostgREST builder types `data` as a generic error array under a
+    // dynamic `select(cols)` string; cast to the unwrap shape (the cols we pass
+    // do project FeedPublicRow columns).
+    const run = async (cols: string) =>
+      (await build(cols)) as { data: T | null; error: unknown; status?: number };
+    if (this.feedPrivateColumn) {
+      const res = await run(FEED_COLS);
+      if (!res.error) return this.unwrap<T>(res);
+      // Only an undefined-column error means "backend predates 0028"; any other
+      // error is real and must surface. On the capability miss, flip the flag so
+      // later reads skip straight to the legacy set, then retry this one.
+      if (!isMissingColumnError(res.error)) return this.unwrap<T>(res);
+      this.feedPrivateColumn = false;
+    }
+    return this.unwrap<T>(await run(FEED_COLS_LEGACY));
+  }
 
   private unwrap<T>(res: { data: T | null; error: unknown; status?: number }): T {
     if (res.error) {
@@ -604,8 +641,8 @@ export class SupabaseDataSource implements DataSource {
     const [feedBatches, subBatches] = await Promise.all([
       Promise.all(
         chunk(missing, ID_LOOKUP_CHUNK).map(async (c) =>
-          this.unwrap<FeedPublicRow[]>(
-            await this.sb.from('feeds_public').select(FEED_COLS).in('id', c),
+          this.selectFeedsPublic<FeedPublicRow[]>((cols) =>
+            this.sb.from('feeds_public').select(cols).in('id', c),
           ),
         ),
       ),
@@ -1021,8 +1058,8 @@ export class SupabaseDataSource implements DataSource {
     if (cached) {
       feed = cached;
     } else {
-      const row = this.unwrap<FeedPublicRow | null>(
-        await this.sb.from('feeds_public').select(FEED_COLS).eq('id', feedId).maybeSingle(),
+      const row = await this.selectFeedsPublic<FeedPublicRow | null>((cols) =>
+        this.sb.from('feeds_public').select(cols).eq('id', feedId).maybeSingle(),
       );
       if (!row) return null;
       feed = mapFeed(row);

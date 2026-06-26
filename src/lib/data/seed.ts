@@ -16,6 +16,7 @@ export const SEED_FEEDS: Feed[] = [
     errorCount: 0,
     lastError: null,
     parked: false,
+    private: false,
   },
   {
     id: 'feed-nasa',
@@ -26,6 +27,7 @@ export const SEED_FEEDS: Feed[] = [
     errorCount: 0,
     lastError: null,
     parked: false,
+    private: false,
   },
   {
     id: 'feed-css',
@@ -36,6 +38,7 @@ export const SEED_FEEDS: Feed[] = [
     errorCount: 0,
     lastError: null,
     parked: false,
+    private: false,
   },
   {
     id: 'feed-reddit-prog',
@@ -46,6 +49,7 @@ export const SEED_FEEDS: Feed[] = [
     errorCount: 0,
     lastError: null,
     parked: false,
+    private: false,
   },
   {
     id: 'feed-park',
@@ -56,6 +60,7 @@ export const SEED_FEEDS: Feed[] = [
     errorCount: 7,
     lastError: 'HTTP 503 after 7 attempts',
     parked: true,
+    private: false,
   },
 ];
 

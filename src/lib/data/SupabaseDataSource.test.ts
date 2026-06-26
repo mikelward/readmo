@@ -1085,6 +1085,25 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(env.ds.supportsOpenOriginal()).toBe(true);
   });
 
+  it('requests the derived private flag on a feeds_public read (0028)', async () => {
+    const env = setup();
+    await env.ds.getFeed('feed-b');
+    expect(env.fake.lastSelectCols('feeds_public')).toContain('private');
+  });
+
+  it('getFeed falls back to legacy feed columns when private is missing (pre-0028 backend)', async () => {
+    const env = setup();
+    // Model an un-migrated backend: the first select naming `private` errors
+    // with undefined_column (42703); the read retries without it and still
+    // returns the feed (guardrail #11) — the comments gate just fails closed.
+    env.fake.failSelectOnce('feeds_public', { code: '42703' });
+    const feed = await env.ds.getFeed('feed-b');
+    expect(feed).not.toBeNull();
+    expect(feed?.private).toBeUndefined();
+    // The retry dropped the unknown column.
+    expect(env.fake.lastSelectCols('feeds_public')).not.toContain('private');
+  });
+
   it('setOpenOriginal no-ops (no throw) and marks support false when the column is missing', async () => {
     const env = setup();
     // A PATCH body naming a column absent from the schema cache returns

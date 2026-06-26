@@ -29,6 +29,13 @@ export interface Feed {
   lastError: string | null;
   /** Circuit-breaker tripped — the poller has parked this feed. */
   parked: boolean;
+  /** True when the feed is private (server-side `secret_url` is set — its fetch
+   * URL may embed a per-user token). Exposed as a derived boolean only; the
+   * secret itself never reaches the client (SPEC.md *RLS*, guardrail #7).
+   * `undefined` when the backend predates the flag — callers that gate on
+   * privacy must **fail closed** (treat anything but an explicit `false` as
+   * private). */
+  private?: boolean;
 }
 
 /** A normalized feed item. `contentHtml` is already sanitized server-side. */

@@ -8,6 +8,8 @@ import { useItemState } from '../hooks/useItemState';
 import { useWideViewport } from '../hooks/useWideViewport';
 import { useShareItem } from '../hooks/useShareItem';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
+import { useHnDiscussion } from '../hooks/useHnDiscussion';
+import { newshackerThreadUrl } from '../lib/hnDiscussion';
 import {
   articleSourceDomain,
   formatAge,
@@ -24,6 +26,7 @@ import { loadFailureCopy } from '../lib/loadErrorCopy';
 import {
   ArrowBack,
   Check,
+  Comment,
   FavoriteFilled,
   FavoriteOutline,
   MoreVert,
@@ -49,8 +52,12 @@ interface ReaderToolbarProps {
   item: Item;
   state: ItemState;
   wide: boolean;
+  /** Newshacker thread URL for this article's HN discussion, or null when no
+   * discussion was found. When set, a comments icon links out to it. */
+  commentsUrl: string | null;
   onBack: () => void;
   openOriginal: () => void;
+  openComments: () => void;
   toggle: (field: ItemStateField) => void;
   set: (field: ItemStateField, value: boolean) => void;
   markDone: () => void;
@@ -69,8 +76,10 @@ function ReaderToolbar({
   item,
   state,
   wide,
+  commentsUrl,
   onBack,
   openOriginal,
+  openComments,
   toggle,
   set,
   markDone,
@@ -116,6 +125,24 @@ function ReaderToolbar({
           data-testid={`open-original${sfx}`}
         >
           <OpenInNew />
+        </TooltipButton>
+
+        {/* Always rendered so its slot is stable — the row never reflows when
+            the async discussion lookup lands. Inert until a discussion exists. */}
+        <TooltipButton
+          type="button"
+          className="reader__action"
+          tooltip="Comments"
+          aria-label={
+            commentsUrl
+              ? 'View comments on Hacker News'
+              : 'No Hacker News discussion found'
+          }
+          disabled={!commentsUrl}
+          onClick={openComments}
+          data-testid={`reader-comments${sfx}`}
+        >
+          <Comment />
         </TooltipButton>
 
         {wide ? (
@@ -314,12 +341,29 @@ export function ItemPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolved?.item.id]);
 
+  // The HN discussion for this article (any feed, not just the HN feed), looked
+  // up by URL via HN's Algolia index. Gated to online AND a feed the server
+  // marks public: we fail closed on private/secret_url-backed feeds so a
+  // members-only article URL is never forwarded to the third-party index
+  // (guardrail #6/#7). `private === false` is required, so an older backend that
+  // doesn't expose the flag (private === undefined) keeps the lookup off. The
+  // icon links into newshacker (a reader for HN).
+  const feedIsPublic = resolved?.feed.private === false;
+  const discussion = useHnDiscussion(resolved?.item.url, online && feedIsPublic);
+  const commentsUrl = discussion ? newshackerThreadUrl(discussion.id) : null;
+
   const openOriginal = useCallback(() => {
     if (resolved && isSafeHttpUrl(resolved.item.url)) {
       set('opened', true);
       window.open(resolved.item.url, '_blank', 'noopener,noreferrer');
     }
   }, [resolved, set]);
+
+  const openComments = useCallback(() => {
+    if (commentsUrl) {
+      window.open(commentsUrl, '_blank', 'noopener,noreferrer');
+    }
+  }, [commentsUrl]);
 
   const markDone = useCallback(() => {
     set('done', true); // also clears pinned via the mutation shield
@@ -490,8 +534,10 @@ export function ItemPage() {
     item,
     state,
     wide,
+    commentsUrl,
     onBack: goBack,
     openOriginal,
+    openComments,
     toggle,
     set,
     markDone,

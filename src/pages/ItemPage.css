@@ -104,6 +104,16 @@
   color: var(--rm-accent);
 }
 
+/* Comments has no discussion to open (none found, or the lookup is still in
+   flight): keep the slot but make it plainly inert — dimmed, no pointer.
+   TooltipButton renders its disabled state as `aria-disabled` (so the tooltip
+   still fires), not the native attribute, so target that. */
+.reader__action[aria-disabled='true'] {
+  color: var(--rm-meta);
+  opacity: 0.4;
+  cursor: default;
+}
+
 .reader__more {
   position: relative;
 }
@@ -112,7 +122,7 @@
    portaled to <body>); its styling lives in ItemRowMenu.css. */
 
 @media (hover: hover) {
-  .reader__action:hover {
+  .reader__action:not([aria-disabled='true']):hover {
     background: var(--rm-bg);
   }
 

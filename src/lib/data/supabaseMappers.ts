@@ -85,6 +85,10 @@ export interface FeedPublicRow {
   error_count: number | null;
   last_error: string | null;
   created_at: string | null;
+  /** Derived privacy flag (`secret_url is not null`); see migration 0028.
+   * Absent against a backend predating the flag — mapped straight through so
+   * callers can fail closed on `undefined`. */
+  private?: boolean | null;
 }
 
 export interface ItemRow {
@@ -146,6 +150,9 @@ export function mapFeed(row: FeedPublicRow): Feed {
     errorCount: row.error_count ?? 0,
     lastError: row.last_error ?? null,
     parked: (row.error_count ?? 0) >= PARKED_ERROR_THRESHOLD,
+    // Straight through: `null`/absent (older backend) stays falsy-but-not-false
+    // so privacy-gated callers fail closed. Normalize `null` → undefined.
+    private: row.private ?? undefined,
   };
 }
 
