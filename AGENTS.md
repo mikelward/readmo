@@ -66,6 +66,16 @@ guardrails — read them before opening a PR.
     commit per logical surviving change; PRs ready for review. See *Branching*
     below for the full rules.
 
+11. **Ship a backwards-compatible client; flag manual deploys.** The frontend
+    auto-deploys on merge, but the Supabase backend (Edge Functions +
+    migrations) only goes live when a human runs `make deploy`/`make migrate` —
+    so client and server roll out on different clocks. Never merge a client
+    that *requires* an unshipped server change; tolerate the older backend it
+    may actually hit, keep server changes additive so service-worker-cached old
+    clients keep working, and call out any required manual backend deploy in the
+    PR description and your end-of-turn summary. See *Deploying & client/server
+    compatibility* below.
+
 ## Project layout
 
 ```
@@ -103,6 +113,62 @@ third-party call the app makes.
 |---|---|---|---|---|---|
 | **Jina Reader** (`r.jina.ai`) | Fallback HTML fetch for bot-blocked discovery (403 responses). Configured via `JINA_API_KEY` Supabase secret; skipped silently if absent. | Free tier: 1 M tokens/month (~500–1000 page fetches). Paid from ~$0.02/1 M tokens. A single discovery fetch is typically 10–100 K tokens. | Free tier: ~200 req/min. | +1–5 s added to a 403-path discovery (on top of the failed direct fetch). The Jina call is not on the happy path so normal discovery is unaffected. | On timeout, non-2xx, or body-size-cap hit, `fetchViaJina` returns `null` and the original `auth` error is surfaced to the user — no change in behavior from today. |
 | **SMTP relay** (provider-agnostic, e.g. Fastmail / Gmail / SES) | Sends the operator a "new user signed up" email from the `notify-signup` Edge Function, triggered by the `auth.users` insert trigger. Configured via `SMTP_*` Supabase secrets; trigger no-ops if unset. | **Negligible** — one email per new account; every mainstream relay's free tier covers signup volume many times over. | Provider-dependent (e.g. Gmail ~500/day); far above signup rate. | Off the critical path: `pg_net` posts fire-and-forget *after* the signup commits, so SMTP latency never delays or blocks account creation. | Relay down/rejecting → function returns 502; secrets unset → no-op/500. Only the *alert* is lost; the account is still created. |
+
+## Deploying & client/server compatibility
+
+Readmo ships as two halves that deploy on **different clocks**:
+
+- **Frontend (the client)** — React/Vite on Vercel. **Auto-deploys** on every
+  push/merge to `main` via Vercel's GitHub integration; no manual step. (Lone
+  exception: after changing a Vercel env var you must redeploy — existing
+  deployments keep their original env snapshot.)
+- **Backend** — Supabase **Edge Functions** (`supabase/functions/**`, incl.
+  `_shared/`) and **Postgres migrations** (`supabase/migrations/*.sql`). **CI
+  never deploys these** — it only type-checks/tests them. They go live only when
+  a human runs `make deploy` (= `make migrate`, then deploy every function) or
+  `make migrate` / `make deploy-<fn>`. See SETUP.md §6.
+
+Because the two roll out independently, a merge can put a **new client in front
+of an old, not-yet-deployed backend**, and — once you do deploy — a **new
+backend in front of an old, service-worker-cached client** (PWA clients can lag
+arbitrarily). Both directions have to keep working.
+
+**Keep the client backwards compatible.**
+- Never merge a client that *requires* a server change that isn't deployed yet.
+  If a change spans both halves, either deploy the backend first, or gate the
+  new client behavior behind a capability/feature check so it no-ops against the
+  old backend.
+- Treat new server capabilities as **optional** until their deploy lands:
+  feature-detect, fall back, and don't hard-crash on a missing Edge
+  Function/RPC/column (404, `PGRST` "not found", or an unexpected response
+  shape). The newest client must still work against the currently-deployed
+  backend.
+
+**Keep server changes backwards compatible too.**
+- Make backend changes **additive** (new columns/RPCs/params; new function
+  versions that still accept the old request shape). Don't remove or rename an
+  RPC/column/param a shipped client still calls — an old cached client will keep
+  hitting it after you deploy.
+- The `x-readmo-build` + `MIN_CLIENT_BUILD` version gate
+  (`supabase/functions/_shared/clientVersion.ts`; 426 Upgrade Required) is the
+  deliberate escape hatch to *shed* old clients when one is actively harming the
+  backend — not a license to break compatibility casually.
+
+**When a manual deploy is required.** Merging alone does **not** make these
+live — note the required command in the PR description and your end-of-turn
+summary:
+
+| You changed… | Goes live via | Manual? |
+|---|---|---|
+| `src/`, `index.html`, frontend build/routing config | push/merge to `main` (Vercel) | No — auto |
+| `supabase/migrations/*.sql` | `make migrate` (`supabase db push`) | **Yes** |
+| `supabase/functions/**` (incl. `_shared/`) | `make deploy` (migrates first) or `supabase functions deploy <fn> --import-map …` | **Yes** |
+| Supabase secret/config (`MIN_CLIENT_BUILD`, `JINA_API_KEY`, `SMTP_*`, …) | set via Supabase dashboard/CLI; arming the version gate is an operator action | **Yes** |
+| Vercel env var | redeploy the frontend (env snapshot is per-deploy) | **Yes** |
+
+When a PR touches both `src/` and `supabase/`, **deploy the backend before the
+client reaches users** (or make the client tolerate the old backend), and call
+out the required `make deploy` / `make migrate` in the PR.
 
 ## Dev commands
 
