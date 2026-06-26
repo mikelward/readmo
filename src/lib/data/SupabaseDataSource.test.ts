@@ -66,6 +66,22 @@ function setup(tables: FakeTables = seed()) {
 
 const ids = (items: Array<{ item: { id: string } }>) => items.map((fi) => fi.item.id);
 
+/** Build an item_state read stub that mirrors the data source's keyset hydrate
+ * chain (select → order → limit → [gt] → not, then awaited). `resolve` supplies
+ * the awaited `{ data, count, error }` result. The real read pages by item_id;
+ * these stubs return their whole (well-under-cap) snapshot on the first page, so
+ * a single page is read (short page → no `.gt()` follow-up) and the loop ends. */
+function itemStateReadStub(resolve: () => unknown): unknown {
+  const chain = {
+    select: () => chain,
+    order: () => chain,
+    limit: () => chain,
+    gt: () => chain,
+    not: () => Promise.resolve(resolve()),
+  };
+  return chain;
+}
+
 describe('SupabaseDataSource reads', () => {
   let env: ReturnType<typeof setup>;
   beforeEach(() => {
@@ -255,14 +271,10 @@ describe('SupabaseDataSource reads', () => {
           releaseBoot = () => res(settle);
         });
         bootStartedResolve();
-        return {
-          select: () => ({ not: () => bootRead }),
-        } as unknown as ReturnType<typeof realFrom>;
+        return itemStateReadStub(() => bootRead) as ReturnType<typeof realFrom>;
       }
       // Resync read: resolves immediately with the updated snapshot.
-      return {
-        select: () => ({ not: () => Promise.resolve(settle) }),
-      } as unknown as ReturnType<typeof realFrom>;
+      return itemStateReadStub(() => settle) as ReturnType<typeof realFrom>;
     }) as typeof fake.client.from;
 
     const ds = new SupabaseDataSource(
@@ -298,12 +310,11 @@ describe('SupabaseDataSource reads', () => {
     const realFrom = env.fake.client.from.bind(env.fake.client);
     env.fake.client.from = ((table: string) => {
       if (table !== 'item_state') return realFrom(table);
-      return {
-        select: () => ({
-          not: () =>
-            Promise.resolve({ data: null, count: null, error: { message: 'offline' } }),
-        }),
-      } as unknown as ReturnType<typeof realFrom>;
+      return itemStateReadStub(() => ({
+        data: null,
+        count: null,
+        error: { message: 'offline' },
+      })) as ReturnType<typeof realFrom>;
     }) as typeof env.fake.client.from;
 
     // The resync attempt fails and is swallowed (as the hook does).
@@ -339,9 +350,9 @@ describe('SupabaseDataSource reads', () => {
     const realFrom = env.fake.client.from.bind(env.fake.client);
     env.fake.client.from = ((table: string) => {
       if (table !== 'item_state') return realFrom(table);
-      return {
-        select: () => ({ not: () => Promise.resolve({ data: [], count: null, error: null }) }),
-      } as unknown as ReturnType<typeof realFrom>;
+      return itemStateReadStub(() => ({ data: [], count: null, error: null })) as ReturnType<
+        typeof realFrom
+      >;
     }) as typeof env.fake.client.from;
 
     // A write on i2 → permanent reject → onPermanentReject → reconcile re-pull.
@@ -398,13 +409,13 @@ describe('SupabaseDataSource reads', () => {
           failFirst = () => rej(new Error('blip'));
         });
         firstReadStartedResolve();
-        return { select: () => ({ not: () => p }) } as unknown as ReturnType<typeof realFrom>;
+        return itemStateReadStub(() => p) as ReturnType<typeof realFrom>;
       }
       // The retry read: signal that a fresh resync ran, then succeed.
       retryStarted();
-      return {
-        select: () => ({ not: () => Promise.resolve({ data: [], count: null, error: null }) }),
-      } as unknown as ReturnType<typeof realFrom>;
+      return itemStateReadStub(() => ({ data: [], count: null, error: null })) as ReturnType<
+        typeof realFrom
+      >;
     }) as typeof env.fake.client.from;
 
     const a = env.ds.resyncState().catch(() => {}); // in flight (read #1)
@@ -434,12 +445,11 @@ describe('SupabaseDataSource reads', () => {
     const realFrom = fake.client.from.bind(fake.client);
     fake.client.from = ((table: string) => {
       if (table !== 'item_state') return realFrom(table);
-      return {
-        select: () => ({
-          not: () =>
-            Promise.resolve({ data: null, count: null, error: { message: 'offline' } }),
-        }),
-      } as unknown as ReturnType<typeof realFrom>;
+      return itemStateReadStub(() => ({
+        data: null,
+        count: null,
+        error: { message: 'offline' },
+      })) as ReturnType<typeof realFrom>;
     }) as typeof fake.client.from;
 
     // A failed resync leaves the store untouched...
@@ -466,6 +476,48 @@ describe('SupabaseDataSource reads', () => {
     expect(entries['i3']?.pinned).toBe(true);
     // ...and the other device's favorite is adopted.
     expect(entries['i6']?.favorite).toBe(true);
+  });
+
+  it('reads ALL item_state in pages so a >1000-row account does not lose swept/pinned state', async () => {
+    // PostgREST caps a single response at 1000 rows. An active account writes one
+    // item_state row per pin/favorite/done/open and they are never auto-deleted,
+    // so the set outgrows the cap. An unpaged hydrate read would then be silently
+    // truncated, and `hydrate` would treat every row past the cap as genuinely
+    // absent (stale) and DROP its local flag — resurfacing swept items and
+    // dropping pins. The read must page past the cap so its view is complete.
+    const tables = seed();
+    // Build a large item_state set: a swept (done) row and a pinned row that BOTH
+    // sort after the 1000-row cap by item_id, so an unpaged read can't see them.
+    const sweptId = 'zzz-swept'; // sorts last by item_id → past the cap
+    const pinnedId = 'zzz-pinned';
+    tables.items = [
+      ...tables.items,
+      mkItem(sweptId, 'feed-a', 6, 'Swept past the cap'),
+      mkItem(pinnedId, 'feed-a', 6, 'Pinned past the cap'),
+    ];
+    tables.item_state = [
+      // 1000 filler rows (id000…id999) that occupy the whole first response page.
+      ...Array.from({ length: 1000 }, (_v, i) =>
+        mkState(`id${String(i).padStart(3, '0')}`, { opened: true, opened_at: recent }),
+      ),
+      mkState(sweptId, { done: true, done_at: recent }),
+      mkState(pinnedId, { pinned: true, pinned_at: recent }),
+    ];
+    const fake = makeFakeSupabase(tables);
+    fake.capRows('item_state', 1000); // model PostgREST's max-rows ceiling
+    const ds = new SupabaseDataSource(
+      'readmo:item-state:test',
+      fake.client as unknown as SupabaseClient,
+    );
+
+    await ds.resyncState(); // full re-pull (paged)
+
+    // The swept item keeps its Done flag and the pin survives — both live past the
+    // first 1000-row page and would be wiped by a single truncated read.
+    expect(ds.stateStore.get(sweptId).done).toBe(true);
+    expect(ds.stateStore.get(pinnedId).pinned).toBe(true);
+    // And a normal in-cap row is still hydrated.
+    expect(ds.stateStore.get('id000').opened).toBe(true);
   });
 
   it('tags each item_state read with a unique cache-buster (live-or-fail under any service worker)', async () => {
@@ -542,9 +594,11 @@ describe('SupabaseDataSource reads', () => {
       const readGate = new Promise<void>((r) => (releaseRead = r));
       fake.client.from = ((table: string) => {
         if (table !== 'item_state') return realFrom(table);
-        return {
-          select: () => ({ not: () => readGate.then(() => ({ data: [], count: null, error: null })) }),
-        } as unknown as ReturnType<typeof realFrom>;
+        // Gated read: `.not()` resolves only after releaseRead(), so the hydrate
+        // stays parked and can't rewrite the version before the assertion.
+        return itemStateReadStub(() =>
+          readGate.then(() => ({ data: [], count: null, error: null })),
+        ) as ReturnType<typeof realFrom>;
       }) as typeof fake.client.from;
 
       // Back online; the coalesced write flushes. Await the post-commit emit

@@ -729,7 +729,15 @@ loopback/link-local/private/metadata targets and redirects to them.
     AND keeps an offline cold boot from dropping a resync-adopted row against a
     stale cached boot snapshot. A live read is authoritative, so `hydrate`
     reconciles fully (server wins, pending writes preserved, genuinely-absent
-    rows dropped). A failed read (offline / backend down) is a no-op — the store
+    rows dropped). Because "absent ⇒ drop the local flag" only holds when the
+    read sees *every* server row, the read is **paged** (keyset by `item_id`,
+    1000-row pages until a short page): PostgREST caps a response at 1000 rows, and
+    an account that has acted on more than that many items (every pin / favorite /
+    done / open writes a row, never auto-deleted) would otherwise have its read
+    truncated, dropping the local pin/done/favorite of every row past the cap —
+    resurfacing swept items. Keyset (not offset) paging so a row another device
+    inserts between two page reads can't shift a window and skip an existing row.
+    A failed read (offline / backend down) is a no-op — the store
     keeps its last-good localStorage state; feed/library reads fall back to it,
     and a resync's memo is swapped only on success. Hydrations are **serialized**
     (one read at a time; a resync started during an in-flight boot read runs after
