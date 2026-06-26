@@ -103,6 +103,11 @@ export class ItemStateOutbox {
     /** Invoked with the ids whose writes were permanently rejected, so the
      * caller can re-pull server truth to correct the optimistic local state. */
     private readonly onPermanentReject: (ids: ItemId[]) => void,
+    /** Invoked after a drain in which at least one write committed server-side,
+     * so the caller can re-validate server-derived reads (e.g. the per-feed
+     * unread-count query) that were optimistically refetched before the write
+     * landed. Optional — the mock source has no outbox. */
+    private readonly onDrained?: () => void,
   ) {
     for (const e of this.persistence.load()) {
       this.queue.set(e.id, e.changed);
@@ -173,6 +178,7 @@ export class ItemStateOutbox {
     this.dirtyDuringDrain = false;
     const rejected: ItemId[] = [];
     let transient = false;
+    let delivered = false;
     try {
       for (const id of [...this.queue.keys()]) {
         const changed = this.queue.get(id);
@@ -209,6 +215,7 @@ export class ItemStateOutbox {
         } else {
           // Success. Advance the known server version; base the item's next
           // queued edit (if any arrived during the send) on it, else clear it.
+          delivered = true;
           if (result.version != null) this.serverVersion.set(id, result.version);
           if (this.queue.has(id) && result.version != null) {
             this.base.set(id, result.version);
@@ -223,6 +230,9 @@ export class ItemStateOutbox {
       this.persist();
     }
     if (rejected.length > 0) this.onPermanentReject(rejected);
+    // A write committed → let server-derived reads (the unread-count query)
+    // re-validate now that the server reflects it.
+    if (delivered) this.onDrained?.();
 
     if (!this.isOnline()) return; // reconnect ('online' event) will re-flush
     if (this.dirtyDuringDrain) {

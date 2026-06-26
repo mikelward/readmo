@@ -23,6 +23,7 @@ interface Harness {
   sent: Array<[string, ChangedFields]>;
   bases: Array<number | null>;
   rejected: string[][];
+  drained: () => number;
   setOnline: (v: boolean) => void;
   setResult: (r: SendResult) => void;
   persistence: ReturnType<typeof memPersistence>;
@@ -32,6 +33,7 @@ function makeHarness(persistence = memPersistence()): Harness {
   const sent: Array<[string, ChangedFields]> = [];
   const bases: Array<number | null> = [];
   const rejected: string[][] = [];
+  let drained = 0;
   let online = true;
   let result: SendResult = { ok: true };
   const outbox = new ItemStateOutbox(
@@ -43,12 +45,14 @@ function makeHarness(persistence = memPersistence()): Harness {
     persistence,
     () => online,
     (ids) => rejected.push(ids),
+    () => (drained += 1),
   );
   return {
     outbox,
     sent,
     bases,
     rejected,
+    drained: () => drained,
     persistence,
     setOnline: (v) => (online = v),
     setResult: (r) => (result = r),
@@ -68,6 +72,18 @@ describe('ItemStateOutbox', () => {
     await tick();
     expect(h.sent).toEqual([['a', { pinned: true }]]);
     expect(h.outbox.pendingIds()).toEqual([]);
+  });
+
+  it('calls onDrained after a write commits, but not when nothing was delivered', async () => {
+    h.outbox.enqueue('a', { done: true });
+    await tick();
+    expect(h.drained()).toBe(1); // committed → server-derived reads can re-validate
+
+    // A transient-only drain delivers nothing → no onDrained.
+    h.setResult({ ok: false });
+    h.outbox.enqueue('b', { done: true });
+    await tick();
+    expect(h.drained()).toBe(1);
   });
 
   it('coalesces writes made offline and sends one merged write on reconnect', async () => {

@@ -108,14 +108,45 @@ describe('ItemList', () => {
       { source },
     );
     await screen.findAllByTestId('item-row');
-    const headers = [...container.querySelectorAll('.item-list__group-header')];
+    // Read the title element (the header also carries the unread-count badge).
+    const titles = [
+      ...container.querySelectorAll('.item-list__group-title'),
+    ].map((t) => t.textContent);
     // Seed has four non-muted feeds with items (verge, nasa, css, reddit-prog).
-    expect(headers.map((h) => h.textContent)).toEqual([
+    expect(titles).toEqual([
       'The Verge',
       'NASA Breaking News',
       'CSS-Tricks',
       'r/programming',
     ]);
+  });
+
+  it('shows a per-feed unread count badge in each group header', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`gp-${Math.random()}`}
+        fetchPage={(cursor) =>
+          source.getHomeItems({ cursor, groupByFeed: true, limit: 100 })
+        }
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+    // All seed items are unread by default: verge 3, nasa 2, css 3, reddit 2.
+    await waitFor(() => {
+      expect(container.querySelectorAll('.item-list__group-count')).toHaveLength(4);
+    });
+    expect(
+      [...container.querySelectorAll('.item-list__group-count')].map((c) => c.textContent),
+    ).toEqual(['3', '2', '3', '2']);
+    // The count rides the collapse button's accessible name (the badge span is
+    // aria-hidden), so screen readers announce it.
+    expect(
+      screen.getAllByTestId('group-toggle')[0].getAttribute('aria-label'),
+    ).toContain('3 unread');
   });
 
   it('renders no section headers when not grouping', async () => {

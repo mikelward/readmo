@@ -60,6 +60,20 @@
   color: var(--rm-meta);
 }
 
+/* Per-feed unread/to-do count next to the feed name. Tabular figures + its own
+   casing (the title is uppercase) so the number reads as a count, not a word. */
+.item-list__group-count {
+  flex: 0 0 auto;
+  margin-left: 2px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--rm-accent);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Static (non-interactive) header label keeps the original padding. */
 .item-list__group-header > .item-list__group-title {
   display: block;
