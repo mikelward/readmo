@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "lint": "eslint .",
     "typecheck": "tsc -b --noEmit",
-    "icons:generate": "node scripts/generate-icons.mjs"
+    "icons:generate": "node scripts/generate-icons.mjs",
+    "feeds:check": "node scripts/checkFeeds.mjs"
   },
   "engines": {
     "node": "^20.19.0 || ^22.13.0 || >=24"

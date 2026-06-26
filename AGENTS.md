@@ -189,6 +189,7 @@ out the required `make deploy` / `make migrate` in the PR.
 | `npm run lint` | ESLint over the repo |
 | `npm run typecheck` | `tsc -b --noEmit` |
 | `npm run icons:generate` | Regenerate `public/` icons (`node scripts/generate-icons.mjs`) |
+| `npm run feeds:check` | Fetch every `popularFeeds.ts` URL and report dead/non-feed entries (`--json` for machine output). Manual/CI only — makes one request per feed; egress-blocked sandboxes show all as failing. |
 
 Run `lint`, `typecheck`, and `test` before every PR; add `build` when you touch
 build/routing/deploy.
