@@ -93,10 +93,24 @@
   font-size: 0.9rem;
 }
 
-@media (max-width: 380px) {
+/* The Comments action is always present (a stable slot, so the row never
+   reflows when its discussion lookup lands), which keeps five touch targets on
+   the row at all times. With the primary "Open original" label still shown that
+   overflows the single-row invariant on common phones (~390–430px), so reclaim
+   the label's width below 480px — the accent fill + icon still mark the primary
+   action. */
+@media (max-width: 480px) {
   .reader__action-label {
     display: none;
   }
+}
+
+/* Comments has no discussion to open (none found, or the lookup is still in
+   flight): keep the slot but make it plainly inert — dimmed, no pointer. */
+.reader__action:disabled {
+  color: var(--rm-meta);
+  opacity: 0.4;
+  cursor: default;
 }
 
 .reader__more {
@@ -107,7 +121,7 @@
    portaled to <body>); its styling lives in ItemRowMenu.css. */
 
 @media (hover: hover) {
-  .reader__action:hover {
+  .reader__action:not(:disabled):hover {
     background: var(--rm-bg);
   }
 }

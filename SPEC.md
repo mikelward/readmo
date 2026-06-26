@@ -79,7 +79,12 @@ copy it:
    no comment-summary card, no "N new comments" badge, no Upvote/Downvote in
    the action bar. The "thread page" becomes the **reader view** (the article
    itself). Everything else on that page (Open original, Pin, Done, Favorite,
-   Share, More) is unchanged.
+   Share, More) is unchanged. Readmo doesn't *host* comments, but most articles
+   people read still get discussed on Hacker News — so the reader links *out*
+   to that discussion when one exists: it resolves the article URL to an HN
+   story via HN's public Algolia index (for **any** feed, not just the HN feed)
+   and shows a **comments icon** in the action bar that opens the thread on
+   *newshacker* (Readmo's sibling, a reader for HN). See *Reader action bar*.
 4. **AI summaries off** (see Overview).
 
 Everything not in this list should match newshacker.
@@ -1266,11 +1271,29 @@ footer** you scroll down to — matching newshacker, rather than floating over t
 last lines of text. Left→right:
 
 **Open original** (primary, accent; marks Opened, fades to neutral once opened)
-→ **Done** (✓) → **Pin/Unpin** (📌) → **More ⋮**. On wide viewports (≥960px)
-**Share** and **Favorite** (♥) surface inline between Open original and Done
-(in that order — Share sits next to Open original); below 960px they live in
+→ **Comments** (💬) → **Done** (✓) → **Pin/Unpin** (📌) → **More ⋮**. On wide
+viewports (≥960px) **Share** and **Favorite** (♥) surface inline between
+Comments and Done (Share next to the primary cluster); below 960px they live in
 the overflow. The overflow ⋮ → Pin → Done cluster at the right matches the
 other toolbars in the app. (No Upvote — RSS has no votes.)
+
+- **Comments** (💬) is **always present** (a stable slot — the row never
+  reflows when its async lookup lands) but **active only when this article has a
+  Hacker News discussion**; with none found (or while the lookup is in flight)
+  it renders **disabled** (dimmed, no pointer). The discussion is resolved by
+  URL through HN's public Algolia index (`src/lib/hnDiscussion.ts` +
+  `useHnDiscussion`), looked up for every article regardless of feed, while
+  online. When found it opens that thread on **newshacker**
+  (`${VITE_NEWSHACKER_ORIGIN || https://newshacker.app}/item/:id`) in a new
+  tab; the lookup degrades silently to a disabled icon on any failure. The icon
+  carries no comment count — it's a plain link out, not an on-site thread.
+  Because the icon is always shown, the row carries five touch targets, so the
+  primary "Open original" label is reclaimed below 480px to hold the single-row
+  invariant from 320px up. **Cost & reliability (guardrail #5):** the Algolia
+  call is free, keyless, and well within signup-scale limits (the same index
+  newshacker searches) — **negligible**; a fixed trusted host queried with a
+  string, so no SSRF surface. **Privacy:** possibly-tokenized article URLs are
+  screened (`looksTokenized`) and never sent to Algolia (guardrail #6/#7).
 
 - **Done** also unpins and **navigates back** (the "I'm finished, move on"
   gesture); **Unmark done** does not navigate. Same as newshacker.

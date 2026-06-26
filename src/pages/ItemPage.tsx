@@ -7,6 +7,8 @@ import { useItemState } from '../hooks/useItemState';
 import { useWideViewport } from '../hooks/useWideViewport';
 import { useShareItem } from '../hooks/useShareItem';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
+import { useHnDiscussion } from '../hooks/useHnDiscussion';
+import { newshackerThreadUrl } from '../lib/hnDiscussion';
 import { formatAge, formatDisplayDomain, isSafeHttpUrl } from '../lib/itemMeta';
 import { fullTextStaleTime, looksTruncated } from '../lib/fullText';
 import type { FullTextResult } from '../lib/fullText';
@@ -18,6 +20,7 @@ import { loadFailureCopy } from '../lib/loadErrorCopy';
 import {
   ArrowBack,
   Check,
+  Comment,
   FavoriteFilled,
   FavoriteOutline,
   MoreVert,
@@ -43,8 +46,12 @@ interface ReaderToolbarProps {
   item: Item;
   state: ItemState;
   wide: boolean;
+  /** Newshacker thread URL for this article's HN discussion, or null when no
+   * discussion was found. When set, a comments icon links out to it. */
+  commentsUrl: string | null;
   onBack: () => void;
   openOriginal: () => void;
+  openComments: () => void;
   toggle: (field: ItemStateField) => void;
   set: (field: ItemStateField, value: boolean) => void;
   markDone: () => void;
@@ -63,8 +70,10 @@ function ReaderToolbar({
   item,
   state,
   wide,
+  commentsUrl,
   onBack,
   openOriginal,
+  openComments,
   toggle,
   set,
   markDone,
@@ -109,6 +118,24 @@ function ReaderToolbar({
         >
           <OpenInNew />
           <span className="reader__action-label">Open original</span>
+        </TooltipButton>
+
+        {/* Always rendered so its slot is stable — the row never reflows when
+            the async discussion lookup lands. Inert until a discussion exists. */}
+        <TooltipButton
+          type="button"
+          className="reader__action"
+          tooltip="Comments"
+          aria-label={
+            commentsUrl
+              ? 'View comments on Hacker News'
+              : 'No Hacker News discussion found'
+          }
+          disabled={!commentsUrl}
+          onClick={openComments}
+          data-testid={`reader-comments${sfx}`}
+        >
+          <Comment />
         </TooltipButton>
 
         {wide ? (
@@ -294,12 +321,25 @@ export function ItemPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolved?.item.id]);
 
+  // The HN discussion for this article (any feed, not just the HN feed), looked
+  // up by URL via HN's Algolia index. Only attempted while online; resolves to
+  // null when there's no match, so the comments icon is shown only when there's
+  // a real thread to open. The icon links into newshacker (a reader for HN).
+  const discussion = useHnDiscussion(resolved?.item.url, online);
+  const commentsUrl = discussion ? newshackerThreadUrl(discussion.id) : null;
+
   const openOriginal = useCallback(() => {
     if (resolved && isSafeHttpUrl(resolved.item.url)) {
       set('opened', true);
       window.open(resolved.item.url, '_blank', 'noopener,noreferrer');
     }
   }, [resolved, set]);
+
+  const openComments = useCallback(() => {
+    if (commentsUrl) {
+      window.open(commentsUrl, '_blank', 'noopener,noreferrer');
+    }
+  }, [commentsUrl]);
 
   const markDone = useCallback(() => {
     set('done', true); // also clears pinned via the mutation shield
@@ -445,8 +485,10 @@ export function ItemPage() {
     item,
     state,
     wide,
+    commentsUrl,
     onBack: goBack,
     openOriginal,
+    openComments,
     toggle,
     set,
     markDone,

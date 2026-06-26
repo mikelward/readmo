@@ -86,6 +86,17 @@ describe('reader toolbar positioning contract', () => {
   });
 });
 
+describe('reader action bar width budget', () => {
+  // SPEC.md "Reader action bar": single-row invariant from 320px up. The
+  // always-present Comments icon keeps a fifth touch target on the row, which
+  // with the primary "Open original" label shown overflows common phones
+  // (~390–430px). The label is reclaimed below 480px so the row still fits.
+  it('hides the primary label by 480px so five actions fit on one row', () => {
+    const decl = declarationsAt('max-width: 480px', '.reader__action-label');
+    expect(decl.display).toBe('none');
+  });
+});
+
 describe('reader body typography contract', () => {
   // SPEC.md "Reader view → Body": long-form article copy is set one step
   // larger and denser than newshacker's 15px comment text. Sized in `rem`

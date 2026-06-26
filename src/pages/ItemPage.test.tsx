@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useState, type ReactNode } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import { act, screen, waitFor } from '@testing-library/react';
@@ -10,6 +10,23 @@ import { _resetNetworkStatusForTests, reportFetchFailure } from '../lib/networkS
 import type { FeedItem } from '../lib/types';
 import type { FullTextResult } from '../lib/fullText';
 import { ItemPage } from './ItemPage';
+
+// The HN-discussion lookup hits the network (HN's Algolia index). Stub the
+// resolver so the reader is hermetic: no discussion by default, overridden
+// per-test below to exercise the comments icon.
+vi.mock('../lib/hnDiscussion', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/hnDiscussion')>();
+  return { ...actual, findHnDiscussion: vi.fn(async () => null) };
+});
+import { findHnDiscussion, newshackerThreadUrl } from '../lib/hnDiscussion';
+const mockFindDiscussion = vi.mocked(findHnDiscussion);
+
+beforeEach(() => {
+  // Default: the lookup never settles, so reader tests that don't care about
+  // comments see no icon and get no late state update (no act() warning).
+  // Tests that exercise the icon override with mockResolvedValue below.
+  mockFindDiscussion.mockReturnValue(new Promise(() => {}));
+});
 
 function renderReader(
   source: MockDataSource,
@@ -73,6 +90,39 @@ describe('ItemPage (reader)', () => {
     expect(screen.getByTestId('reader-back-to-top')).toBeInTheDocument();
     await user.click(pin);
     expect(source.stateStore.get('item-1').pinned).toBe(true);
+  });
+
+  it('enables the comments icon (top and bottom) linking to the newshacker discussion when one exists', async () => {
+    const user = userEvent.setup();
+    mockFindDiscussion.mockResolvedValue({ id: '4242', numComments: 12 });
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReader(source);
+
+    // The icon is always present; it becomes enabled once the lookup lands.
+    const comments = await screen.findByTestId('reader-comments');
+    await waitFor(() => expect(comments).toBeEnabled());
+    expect(screen.getByTestId('reader-comments-bottom')).toBeEnabled();
+    await user.click(comments);
+    expect(openSpy).toHaveBeenCalledWith(
+      newshackerThreadUrl('4242'),
+      '_blank',
+      'noopener,noreferrer',
+    );
+    openSpy.mockRestore();
+  });
+
+  it('keeps the comments icon present but disabled when there is no discussion', async () => {
+    // Stable slot: the icon always occupies its position so the row never
+    // reflows; with no discussion it's rendered inert rather than removed.
+    mockFindDiscussion.mockResolvedValue(null);
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReader(source);
+    await screen.findByTestId('open-original');
+    await waitFor(() => expect(mockFindDiscussion).toHaveBeenCalled());
+    const comments = screen.getByTestId('reader-comments');
+    expect(comments).toBeInTheDocument();
+    expect(comments).toBeDisabled();
   });
 
   it('Done marks the item done and clears pinned (exclusivity)', async () => {
