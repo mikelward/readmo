@@ -70,10 +70,16 @@ groups:
           description: "Available memory on the database host is under 10%."
 
       # --- Disk pressure ---------------------------------------------------
+      # Watch the Postgres DATA volume (`/data`), not the OS root (`/`). On
+      # hosted Supabase the data volume mounts at `/data`; `/` is a packed root
+      # image that idles near-full, so alerting on `/` pages constantly while
+      # the volume that actually fills as the DB grows goes unwatched. Verified
+      # against this project's live metrics (README §0): `/data` and `/` are
+      # distinct `mountpoint`s on `node_filesystem_*`.
       - alert: ReadmoDBDiskHigh
         expr: >-
-          (1 - node_filesystem_avail_bytes{service_type="db",mountpoint="/"}
-             / node_filesystem_size_bytes{service_type="db",mountpoint="/"}) * 100 > 85
+          (1 - node_filesystem_avail_bytes{service_type="db",mountpoint="/data"}
+             / node_filesystem_size_bytes{service_type="db",mountpoint="/data"}) * 100 > 85
         for: 15m
         labels:
           severity: warning
@@ -81,8 +87,8 @@ groups:
         annotations:
           summary: "DB disk >85% full"
           description: >-
-            Root filesystem on the database host is over 85% full. Verify the
-            `mountpoint` label matches your project (README.md).
+            The Postgres data volume (`/data`) on the database host is over 85%
+            full. Verify the `mountpoint` label matches your project (README.md).
 
       # --- Connection-pool starvation: clients WAITING for a connection ----
       # Rising pool-checkout time = the pooler can't hand out connections fast
