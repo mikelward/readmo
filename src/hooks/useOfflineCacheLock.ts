@@ -18,6 +18,21 @@ function prefetchImages(html: string): void {
   }
 }
 
+/** Max concurrent background warms — keeps the saved-item read burst from
+ * exhausting the Supabase connection pool alongside the feed's own reads. */
+const WARM_CONCURRENCY = 3;
+
+/** Run `cb` when the browser is idle (after the feed paints), so background
+ * warming never competes with the critical boot reads. Falls back to a macrotask
+ * where `requestIdleCallback` is unavailable (Safari <17 historically, jsdom). */
+function whenIdle(cb: () => void): void {
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(() => cb(), { timeout: 2_000 });
+  } else {
+    setTimeout(cb, 0);
+  }
+}
+
 /**
  * Durable offline cache for the offline buckets — **pinned or favorited** items
  * (SPEC.md *Prefetch on Pin/Favorite*; these are exactly the items `/offline`
@@ -57,6 +72,10 @@ export function useOfflineCacheLock(): void {
   // Shared across the lock effect and the reconnect effect.
   const locks = useRef(new Map<string, () => void>()).current; // id -> release
   const warmed = useRef(new Set<string>()).current; // ids whose data is cached
+  // Idle-deferred, concurrency-capped warm queue (see enqueueWarm below).
+  const warmQueue = useRef(new Set<string>()).current; // ids waiting to warm
+  const warmInFlight = useRef(0); // warms currently running
+  const warmDrainScheduled = useRef(false); // an idle drain is already queued
 
   // Populate an item's reader queries (idempotent). No-op when offline or
   // already warmed. An id is only marked warmed once it's FULLY cached — detail
@@ -64,66 +83,97 @@ export function useOfflineCacheLock(): void {
   // auth). A detail miss or a transient `unreachable` full-text leaves it
   // unwarmed so a later sync / reconnect retries it.
   const warm = useCallback(
-    (id: string) => {
+    async (id: string): Promise<void> => {
       if (restoringRef.current || !onlineRef.current || warmed.has(id)) return;
       // Was the detail already cached before this warm? If not, a successful
       // fetch newly makes the item renderable, so the /offline list (which can
       // assemble from per-item caches) should refresh.
       const hadDetail = queryClient.getQueryData(['item', id]) != null;
-      void queryClient
-        .prefetchQuery({
-          queryKey: ['item', id],
-          queryFn: () => ds.getItem(id),
-          gcTime: Number.POSITIVE_INFINITY,
-          // Offline-retention prefetch: only fetch when there's NO cached copy.
-          // Treat an existing (hydrated) detail as fresh so re-locking the saved
-          // set on boot/reconnect doesn't refetch getItem for every saved id —
-          // the reader refreshes with its own default-staleTime query on open.
-          staleTime: Number.POSITIVE_INFINITY,
-        })
-        .then(async () => {
-          const fi = queryClient.getQueryData<FeedItem | null>(['item', id]);
-          if (!fi) {
-            // getItem returned null (offline, or RLS not yet exposing a
-            // just-pinned item before its item_state row flushes). Don't let
-            // staleTime:Infinity pin that miss as fresh — drop it so a later
-            // sync/reconnect warm actually retries getItem.
-            queryClient.removeQueries({ queryKey: ['item', id], exact: true });
-            return;
-          }
-          // Newly cached → refresh any saved-list view (/offline, /pinned,
-          // /favorites) showing a stale partial set. Skipped when the detail was
-          // already cached, so boot doesn't churn.
-          if (!hadDetail) {
-            void queryClient.invalidateQueries({ queryKey: ['offline'] });
-            void queryClient.invalidateQueries({ queryKey: ['library'] });
-          }
-          // Prefetch images from feed body so the SW caches them for offline.
-          prefetchImages(fi.item.contentHtml);
-          // fullContentHtml may already be populated (e.g. fetched on a prior
-          // open or by another device); scan it now before the truncation check
-          // so its images are cached even when looksTruncated returns false.
-          if (fi.item.fullContentHtml) prefetchImages(fi.item.fullContentHtml);
+      await queryClient.prefetchQuery({
+        queryKey: ['item', id],
+        queryFn: () => ds.getItem(id),
+        gcTime: Number.POSITIVE_INFINITY,
+        // Offline-retention prefetch: only fetch when there's NO cached copy.
+        // Treat an existing (hydrated) detail as fresh so re-locking the saved
+        // set on boot/reconnect doesn't refetch getItem for every saved id —
+        // the reader refreshes with its own default-staleTime query on open.
+        staleTime: Number.POSITIVE_INFINITY,
+      });
+      const fi = queryClient.getQueryData<FeedItem | null>(['item', id]);
+      if (!fi) {
+        // getItem returned null (offline, or RLS not yet exposing a
+        // just-pinned item before its item_state row flushes). Don't let
+        // staleTime:Infinity pin that miss as fresh — drop it so a later
+        // sync/reconnect warm actually retries getItem.
+        queryClient.removeQueries({ queryKey: ['item', id], exact: true });
+        return;
+      }
+      // Newly cached → refresh any saved-list view (/offline, /pinned,
+      // /favorites) showing a stale partial set. Skipped when the detail was
+      // already cached, so boot doesn't churn.
+      if (!hadDetail) {
+        void queryClient.invalidateQueries({ queryKey: ['offline'] });
+        void queryClient.invalidateQueries({ queryKey: ['library'] });
+      }
+      // Prefetch images from feed body so the SW caches them for offline.
+      prefetchImages(fi.item.contentHtml);
+      // fullContentHtml may already be populated (e.g. fetched on a prior
+      // open or by another device); scan it now before the truncation check
+      // so its images are cached even when looksTruncated returns false.
+      if (fi.item.fullContentHtml) prefetchImages(fi.item.fullContentHtml);
 
-          if (!looksTruncated(fi.item)) {
-            warmed.add(id); // nothing more to fetch
-            return;
-          }
-          // Truncated feed: also need the extracted reading body. Only mark
-          // warmed on a terminal result — a transient `unreachable` stays
-          // retryable so we don't get stuck on the feed stub.
-          await queryClient.prefetchQuery({
-            queryKey: ['fulltext', id],
-            queryFn: () => ds.fetchFullText(id),
-            staleTime: fullTextStaleTime,
-            gcTime: Number.POSITIVE_INFINITY,
-          });
-          const ft = queryClient.getQueryData<FullTextResult>(['fulltext', id]);
-          if (ft?.contentHtml) prefetchImages(ft.contentHtml);
-          if (ft && ft.status !== 'unreachable') warmed.add(id);
-        });
+      if (!looksTruncated(fi.item)) {
+        warmed.add(id); // nothing more to fetch
+        return;
+      }
+      // Truncated feed: also need the extracted reading body. Only mark
+      // warmed on a terminal result — a transient `unreachable` stays
+      // retryable so we don't get stuck on the feed stub.
+      await queryClient.prefetchQuery({
+        queryKey: ['fulltext', id],
+        queryFn: () => ds.fetchFullText(id),
+        staleTime: fullTextStaleTime,
+        gcTime: Number.POSITIVE_INFINITY,
+      });
+      const ft = queryClient.getQueryData<FullTextResult>(['fulltext', id]);
+      if (ft?.contentHtml) prefetchImages(ft.contentHtml);
+      if (ft && ft.status !== 'unreachable') warmed.add(id);
     },
     [ds, queryClient, warmed],
+  );
+
+  // Drain the warm queue on an idle callback, at most WARM_CONCURRENCY in
+  // flight; each finished warm schedules the next idle drain until the queue
+  // empties. Idempotent — a second kick while a drain is pending is a no-op.
+  const kickWarmDrain = useCallback(() => {
+    if (warmDrainScheduled.current) return;
+    warmDrainScheduled.current = true;
+    whenIdle(() => {
+      warmDrainScheduled.current = false;
+      while (warmInFlight.current < WARM_CONCURRENCY && warmQueue.size > 0) {
+        const id = warmQueue.values().next().value as string;
+        warmQueue.delete(id);
+        warmInFlight.current += 1;
+        void warm(id).finally(() => {
+          warmInFlight.current -= 1;
+          if (warmQueue.size > 0) kickWarmDrain();
+        });
+      }
+    });
+  }, [warm, warmQueue, warmInFlight, warmDrainScheduled]);
+
+  // Warming reads getItem (+ full-text) per saved item. Firing them all at once
+  // on boot/reconnect floods the Supabase connection pool alongside the feed's
+  // own reads — the burst that starves `feed_items`/`folders`/`subscriptions`
+  // into the 8s read timeout. Enqueue instead; the drain above runs them idle
+  // and capped, so they fill in the background off the critical boot path.
+  const enqueueWarm = useCallback(
+    (id: string) => {
+      if (warmed.has(id) || warmQueue.has(id)) return;
+      warmQueue.add(id);
+      kickWarmDrain();
+    },
+    [warmed, warmQueue, kickWarmDrain],
   );
 
   // Lock/unlock cache entries as items enter/leave the offline buckets.
@@ -149,7 +199,7 @@ export function useOfflineCacheLock(): void {
         const unsubscribers = observers.map((obs) => obs.subscribe(() => {}));
         locks.set(id, () => unsubscribers.forEach((un) => un()));
       }
-      warm(id);
+      enqueueWarm(id);
     };
 
     const unlock = (id: string) => {
@@ -158,6 +208,7 @@ export function useOfflineCacheLock(): void {
       release();
       locks.delete(id);
       warmed.delete(id);
+      warmQueue.delete(id); // drop a not-yet-run warm for an unbucketed item
       queryClient.removeQueries({ queryKey: ['fulltext', id], exact: true });
       queryClient.removeQueries({ queryKey: ['item', id], exact: true });
     };
@@ -182,8 +233,9 @@ export function useOfflineCacheLock(): void {
       for (const release of locks.values()) release();
       locks.clear();
       warmed.clear();
+      warmQueue.clear();
     };
-  }, [ds, queryClient, warm, locks, warmed]);
+  }, [ds, queryClient, enqueueWarm, locks, warmed, warmQueue]);
 
   // Warm locked items once it's both safe and useful: after the persisted cache
   // has been restored (so hydrated copies are seen, not refetched) and while
@@ -191,6 +243,6 @@ export function useOfflineCacheLock(): void {
   // locked but unwarmed, and fills in when connectivity returns.
   useEffect(() => {
     if (isRestoring || !online) return;
-    for (const id of locks.keys()) warm(id);
-  }, [online, isRestoring, warm, locks]);
+    for (const id of locks.keys()) enqueueWarm(id);
+  }, [online, isRestoring, enqueueWarm, locks]);
 }

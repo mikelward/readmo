@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { onlineManager } from '@tanstack/react-query';
 import {
   _resetNetworkStatusForTests,
   confirmBackendReachable,
@@ -751,6 +752,44 @@ describe('networkStatus tracker', () => {
       expect(getConnectivityStatus()).toBe('backend-unreachable');
       reportFetchSuccess();
       expect(getConnectivityStatus()).toBe('online');
+    });
+  });
+
+  describe('React Query onlineManager sync', () => {
+    it('does NOT toggle onlineManager on a backend-unreachable blip', () => {
+      // The regression this guards: a self-imposed read timeout flips us to
+      // 'backend-unreachable'; if that toggled onlineManager off then on, the
+      // recovery edge would fire refetch-on-reconnect and re-issue the whole
+      // boot read burst, re-saturating the DB connection pool in a ~10s loop.
+      const setOnline = vi.spyOn(onlineManager, 'setOnline');
+
+      reportFetchFailure(new TypeError('Failed to fetch'));
+      expect(getConnectivityStatus()).toBe('backend-unreachable');
+      expect(getOnline()).toBe(false); // pill shows "Down"…
+      expect(onlineManager.isOnline()).toBe(true); // …but RQ stays online
+
+      reportFetchSuccess();
+      expect(getConnectivityStatus()).toBe('online');
+      // Never toggled across the down→up cycle → no refetch-on-reconnect storm.
+      expect(setOnline).not.toHaveBeenCalled();
+      setOnline.mockRestore();
+    });
+
+    it('drives onlineManager offline only on genuine device offline', () => {
+      const setOnline = vi.spyOn(onlineManager, 'setOnline');
+
+      setNavigatorOnline(false);
+      window.dispatchEvent(new Event('offline'));
+      expect(getConnectivityStatus()).toBe('offline');
+      expect(onlineManager.isOnline()).toBe(false);
+      expect(setOnline).toHaveBeenCalledWith(false);
+
+      setNavigatorOnline(true);
+      window.dispatchEvent(new Event('online'));
+      expect(getConnectivityStatus()).toBe('online');
+      expect(onlineManager.isOnline()).toBe(true);
+      expect(setOnline).toHaveBeenLastCalledWith(true);
+      setOnline.mockRestore();
     });
   });
 });

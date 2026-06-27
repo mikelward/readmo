@@ -1646,7 +1646,13 @@ keys differ; the strategies map one-to-one:
   `QueryObserver` per query blocks GC while bucketed and re-locks from hydrated
   state on mount (so a reload doesn't drop them); an entry is evicted only once
   the item is in NO bucket (so unpinning an item that's still favorited keeps its
-  cache). It reacts to every pin/favorite path centrally. `/offline` assembles
+  cache). It reacts to every pin/favorite path centrally. **Warming is
+  idle-deferred and concurrency-capped** (`requestIdleCallback`, ≤3 reads in
+  flight): firing a `getItem` per saved item all at once on boot/reconnect
+  would flood the Supabase connection pool alongside the feed's own reads and
+  starve `feed_items`/`folders`/`subscriptions` into the 8 s read timeout, so
+  the saved set fills in the background off the critical boot path. `/offline`
+  assembles
   its list **purely from the persisted query cache — it never issues a fetch**,
   so it doesn't depend on connectivity detection having flipped us offline yet
   (a hung or mislabeled read would otherwise leave the saved set looking empty):
@@ -1682,8 +1688,16 @@ keys differ; the strategies map one-to-one:
   A three-way status derives from them: `online` (both up), `offline`
   (`!browserOnline` — the device signal wins), else `backend-unreachable`. The
   legacy boolean `online === (status === 'online')` is kept for callers that
-  only gate on connected-or-not, and React Query's `onlineManager` is held in
-  sync with it. `useOnlineStatus` returns the boolean; `useConnectivityStatus`
+  only gate on connected-or-not. React Query's `onlineManager`, however, tracks
+  **device reachability only** (`status !== 'offline'`, so `backend-unreachable`
+  still counts as online) — **not** the boolean. A self-imposed read timeout
+  flips us to `backend-unreachable`; if that toggled `onlineManager` off then on,
+  the recovery edge would fire `refetchOnReconnect` and re-issue the whole boot
+  read burst, re-saturating the connection pool in a ~10 s loop (the home-feed
+  stall). `networkMode: 'offlineFirst'` already keeps queries running through a
+  `backend-unreachable` blip, so leaving `onlineManager` online there strands
+  nothing — only a genuine device offline→online transition drives a refetch.
+  `useOnlineStatus` returns the boolean; `useConnectivityStatus`
   returns the three-way status. `navigator.onLine` lags on mobile, so a *single*
   failed fetch with the OS still claiming online reads as "Down" — we don't
   mislabel a one-off server blip as the user being offline. But we don't wait out
