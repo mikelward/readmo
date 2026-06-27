@@ -38,6 +38,25 @@ function renderHome(source: MockDataSource) {
 
 let viewKeySeq = 0;
 
+/** Record every write to `el.style.overflowAnchor`, returning the history array.
+ * The sweep's anchor opt-out is applied and then dropped a frame later (a
+ * post-paint effect), so its `none` value isn't observable on the element by the
+ * time `act()` has flushed effects — capturing the write history is how a test
+ * proves the opt-out was applied at all, and that it ends cleared. */
+function recordOverflowAnchorWrites(el: HTMLElement): string[] {
+  const writes: string[] = [];
+  let value = el.style.overflowAnchor;
+  Object.defineProperty(el.style, 'overflowAnchor', {
+    configurable: true,
+    get: () => value,
+    set: (next: string) => {
+      value = next;
+      writes.push(next);
+    },
+  });
+  return writes;
+}
+
 // Render a feed paged into fixed-size chunks so the More button's enabled →
 // "No more items" transition is exercisable (the seed feed fits in one page).
 function renderPaged(source: MockDataSource, items: FeedItem[], pageSize: number) {
@@ -1038,6 +1057,7 @@ describe('ItemList', () => {
     });
     const fullRows = container.querySelectorAll('[data-item-id]').length;
     const fullHeight = fullRows * 100;
+    const anchorWrites = recordOverflowAnchorWrites(body);
 
     // Sweep the first feed's whole section from its header broom; the commit
     // fires off the sweep animation's fallback timer.
@@ -1047,15 +1067,96 @@ describe('ItemList', () => {
     // The lock froze the document at its PRE-sweep height, not the shorter
     // post-sweep height — so window scrollY can't be clamped toward the top.
     expect(body.style.minHeight).toBe(`${fullHeight}px`);
+    // The body was opted out of scroll anchoring while the swept rows left the
+    // DOM, so the section's collapse couldn't rewind window.scrollY to the top
+    // either (a separate clamp the height freeze alone can't stop)...
+    expect(anchorWrites).toContain('none');
+    // ...but the opt-out is dropped a frame later, NOT held for the whole
+    // refetch like the height lock — anchoring must be back on (so a mid-refresh
+    // auto-hide still works) even though min-height stays frozen.
+    expect(body.style.overflowAnchor).toBe('');
     // Sanity: the section really did shrink the rendered list, so a too-late
     // measurement would have produced a smaller lock.
     expect(container.querySelectorAll('[data-item-id]').length).toBeLessThan(
       fullRows,
     );
 
-    // Releasing the held refetch settles isRefreshing and frees the lock.
+    // Releasing the held refetch settles isRefreshing and frees the height lock.
     act(() => release?.());
     await waitFor(() => expect(body.style.minHeight).toBe(''));
+  });
+
+  it('opts out of scroll anchoring even when a background refresh already holds the height lock', async () => {
+    // Regression (Codex review on #226): if a pin/dismiss/auto-hide refresh is
+    // already in flight when the reader sweeps, the general layout-effect path
+    // has taken the min-height lock WITHOUT disabling anchoring (correct — it
+    // doesn't remove in-viewport rows). lockBodyHeight() used to bail on
+    // `heightLockedRef.current` before opting anchoring out, so the swept rows
+    // left with anchoring live and the top-snap could recur. The anchor opt-out
+    // is now applied even when reusing an existing lock.
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ groupByFeed: true, limit: 100 });
+
+    let release: (() => void) | null = null;
+    let callCount = 0;
+    const fetchPage = vi.fn(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({ items: seed.items, nextCursor: null });
+      }
+      // Hold every later refetch open so the background refresh stays in flight
+      // (isRefreshing true, lock held) across the sweep.
+      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>(
+        (resolve) => {
+          release = () => resolve({ items: seed.items, nextCursor: null });
+        },
+      );
+    });
+
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`gp-midrefresh-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+    const fullRows = container.querySelectorAll('[data-item-id]').length;
+
+    const body = screen.getByTestId('item-list-body');
+    Object.defineProperty(body, 'offsetHeight', { value: 1000, configurable: true });
+
+    // Pin a row in a LATER feed to kick off a background refresh without
+    // touching the first section we're about to sweep. The general path takes
+    // the min-height lock — but leaves anchoring ON (the auto-hide guarantee).
+    act(() => {
+      source.stateStore.set(seed.items[seed.items.length - 1].item.id, 'pinned', true);
+    });
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+    expect(body.style.minHeight).toBe('1000px');
+    expect(body.style.overflowAnchor).not.toBe('none');
+
+    // Now sweep the first feed's section WHILE that refresh is still held. The
+    // height lock is already taken, so this exercises the reuse path — anchoring
+    // must still be opted out (transiently) so the section's collapse can't snap
+    // to the top, even though lockBodyHeight's height branch is skipped.
+    const anchorWrites = recordOverflowAnchorWrites(body);
+    await user.click(screen.getAllByTestId('group-sweep')[0]);
+    await waitFor(() =>
+      expect(container.querySelectorAll('[data-item-id]').length).toBeLessThan(
+        fullRows,
+      ),
+    );
+    // The opt-out was applied for the removal frame and then dropped — the
+    // height lock (taken by the prior refresh) stays put the whole time.
+    expect(anchorWrites).toContain('none');
+    expect(body.style.overflowAnchor).toBe('');
+    expect(body.style.minHeight).toBe('1000px');
+
+    act(() => release?.());
   });
 
   it('clears the height lock when the body unmounts (miss-state), so a later refresh re-locks the remounted body', async () => {
@@ -1598,6 +1699,38 @@ describe('ItemList', () => {
           .map((n) => n.textContent);
         expect(titles).not.toContain(titleText);
       });
+    });
+
+    it('keeps scroll anchoring on when a row auto-hides off the top', async () => {
+      // The sweep fix opts the body out of scroll anchoring, but ONLY for the
+      // sweep — which dismisses rows inside the viewport. Auto-hide-on-scroll
+      // removes rows ABOVE the viewport top and depends on native anchoring to
+      // keep the first still-visible row fixed; disabling it there would jolt
+      // the content upward by each removed row's height. So an auto-hide must
+      // never set the sweep's `overflow-anchor: none` opt-out on the body.
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      const source = new MockDataSource(`test-${Math.random()}`);
+      renderHome(source);
+
+      const firstRow = (await screen.findAllByTestId('item-row'))[0];
+      const titleText = within(firstRow).getByTestId('item-title').textContent;
+
+      act(() => {
+        setVisibilityForTest(firstRow.closest('li')!, 0);
+      });
+      await waitFor(() => {
+        const titles = screen
+          .queryAllByTestId('item-title')
+          .map((n) => n.textContent);
+        expect(titles).not.toContain(titleText);
+      });
+
+      // The row was removed and the invalidation refresh is in flight — the
+      // general height lock may apply, but anchoring must stay ON.
+      expect(
+        screen.getByTestId('item-list-body').style.overflowAnchor,
+      ).not.toBe('none');
     });
 
     it('shields a pinned row from auto-hide', async () => {
