@@ -1,0 +1,86 @@
+/* Shared styles for Readmo's public legal pages (GitHub Pages).
+   Mirrors the app's --rm-* design tokens so the pages feel on-brand. */
+:root {
+  --rm-bg: #faf9f5;
+  --rm-bg-card: #ffffff;
+  --rm-border: #e6e4dd;
+  --rm-text: #1a1a1a;
+  --rm-meta: #6b6b6b;
+  --rm-accent: #363636;
+  --rm-radius: 10px;
+  --rm-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica,
+    Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --rm-bg: #14161c;
+    --rm-bg-card: #1e2027;
+    --rm-border: #2c2f38;
+    --rm-text: #ececec;
+    --rm-meta: #9b9b9b;
+    --rm-accent: #c7d0ff;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--rm-bg);
+  color: var(--rm-text);
+  font-family: var(--rm-font);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-text-size-adjust: 100%;
+}
+
+main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 20px 80px;
+}
+
+header.site {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+header.site a.brand {
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--rm-text);
+  text-decoration: none;
+}
+
+header.site nav {
+  margin-left: auto;
+  font-size: 15px;
+}
+
+header.site nav a {
+  color: var(--rm-meta);
+  text-decoration: none;
+}
+
+header.site nav a:hover { text-decoration: underline; }
+
+h1 { font-size: 28px; line-height: 1.25; margin: 24px 0 4px; }
+h2 { font-size: 20px; margin: 32px 0 8px; }
+
+p.effective { color: var(--rm-meta); font-size: 14px; margin: 0 0 24px; }
+
+a { color: var(--rm-accent); }
+
+ul { padding-left: 22px; }
+li { margin: 4px 0; }
+
+footer {
+  margin-top: 48px;
+  padding-top: 20px;
+  border-top: 1px solid var(--rm-border);
+  color: var(--rm-meta);
+  font-size: 14px;
+}
