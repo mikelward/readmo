@@ -8,6 +8,7 @@ import {
   useState,
   useSyncExternalStore,
   type AnimationEvent as ReactAnimationEvent,
+  type CSSProperties,
 } from 'react';
 import { flushSync } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -18,6 +19,7 @@ import type { ItemSort, Page } from '../lib/data/DataSource';
 import { useInViewIds } from '../hooks/useInViewIds';
 import { useHideOnScroll, useBottomBarPosition } from '../hooks/useReadingPrefs';
 import { useCollapsedFeeds } from '../hooks/useCollapsedFeeds';
+import { useTopChromeHeight } from '../hooks/useTopChromeHeight';
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
 import type { FeedId, FeedItem, ItemId } from '../lib/types';
 import { placeStayInBodyPins } from '../lib/feedOrder';
@@ -169,6 +171,10 @@ export function ItemList({
   const perGroupMore =
     groupByFeed && !!fetchFeedPage && perFeedLimit != null && perFeedLimit > 0;
   const status = useConnectivityStatus();
+  // Offset for the sticky group-by-feed section headers: the combined height of
+  // the app header + top toolbar, so a pinned header sits flush under them.
+  // Only meaningful (and only applied below) when grouping, where headers exist.
+  const topChromeHeight = useTopChromeHeight();
   const {
     items,
     isLoading,
@@ -1541,7 +1547,17 @@ export function ItemList({
   }, [isRefreshing, visibleItems.length]);
 
   return (
-    <div className="item-list">
+    <div
+      className="item-list"
+      // Pin group-by-feed section headers below the measured top chrome. Set
+      // only while grouping (the headers exist) and once measured (>0), so other
+      // views and first paint fall back to the CSS default in ItemList.css.
+      style={
+        groupByFeed && topChromeHeight > 0
+          ? ({ '--rm-group-sticky-top': `${topChromeHeight}px` } as CSSProperties)
+          : undefined
+      }
+    >
       <ListToolbar
         collapse={collapseControls}
         group={groupControl}

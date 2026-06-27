@@ -71,11 +71,15 @@ describe('ItemRows', () => {
     // No toggle handler → a static, decorative label (no button).
     expect(container.querySelector('[data-testid="group-toggle"]')).toBeNull();
 
-    // Each header sits immediately before its keyed row in document order.
+    // Each header precedes its keyed row in document order (the header and the
+    // row now live in the same section container, header first).
     const firstRow = container.querySelector(
       `[data-item-id="${items[0].item.id}"]`,
-    );
-    expect(headerEls[0].nextElementSibling).toBe(firstRow);
+    )!;
+    expect(
+      headerEls[0].compareDocumentPosition(firstRow) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(headerEls).toHaveLength(2);
   });
 

@@ -4,10 +4,21 @@
 }
 
 .item-list__rows,
+.item-list__section-rows,
 .item-list__skeletons {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+/* Group-by-feed wraps each feed's header + rows in its own section <li>. That
+   container is the sticky header's containing block, so the header is bounded
+   to its own section: only the current feed's header is ever pinned, and the
+   section's end pushes it out as the next one arrives (rather than every earlier
+   header staying stuck behind the visible one). A plain block — no overflow or
+   transform, which would break the descendant sticky. */
+.item-list__section {
+  list-style: none;
 }
 
 .item-list__row {
@@ -46,8 +57,22 @@
 
 /* Group-by-feed section header: a quiet label introducing each feed's run of
    rows. In feed views it's a collapse/expand toggle for the whole section; in
-   non-collapsible contexts it's a static label. */
+   non-collapsible contexts it's a static label.
+
+   Pinned (position: sticky) just below the top chrome so a feed's header stays
+   on screen while scrolling through a section taller than the viewport, instead
+   of scrolling off with its first rows. The offset is the combined height of
+   the app header + top toolbar, measured into `--rm-group-sticky-top` by
+   ItemList because the toolbar can wrap to two rows on ultra-narrow phones; the
+   fallback (single-row toolbar: header + one 44px tap row) covers first paint
+   and any non-grouped view. z-index sits below the toolbar (10) and app header
+   (20) so a pinned header tucks under them, but above the item rows (auto) it
+   scrolls over. The header's opaque `--rm-bg` background hides those rows as
+   they pass behind it. */
 .item-list__group-header {
+  position: sticky;
+  top: var(--rm-group-sticky-top, calc(var(--rm-header-h) + var(--rm-tap)));
+  z-index: 5;
   display: flex;
   align-items: center;
   /* Real gap between the collapse target (flexing toggle, whose padding is part
@@ -64,6 +89,14 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--rm-meta);
+  /* Keep the name to a single line (truncate, don't wrap) so a pinned header
+     stays compact — a wrapped two-line feed name would make the sticky band
+     jump in height as you scrolled between sections. The full name stays in the
+     toggle's aria-label and on the feed's rows. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 /* Per-feed unread/to-do count next to the feed name. Tabular figures + its own
@@ -109,6 +142,9 @@
   display: inline-flex;
   align-items: baseline;
   gap: 6px;
+  /* Fill the toggle's free width and allow shrinking so the title above can
+     ellipsize within the available space rather than overflowing the row. */
+  flex: 1;
   min-width: 0;
 }
 

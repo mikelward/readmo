@@ -32,6 +32,15 @@ export function measureStickyInset(): number {
     const rect = el.getBoundingClientRect();
     if (rect.bottom > bottom) bottom = rect.bottom;
   }
+  // NB: a pinned group-by-feed section header (`position: sticky`, bounded to
+  // its own section — see ItemList.css) also sits in this band and occludes up
+  // to its own height of that feed's topmost row. We deliberately do NOT
+  // subtract it. Only one header is ever pinned, the occluded row belongs to the
+  // *same* feed (so a stray Sweep dismisses that feed's own row, not an
+  // unrelated one), and finding the pinned header would mean a
+  // getBoundingClientRect scan over every loaded section on each scroll frame —
+  // O(sections) layout reads that jank scrolling on large accounts. The bounded,
+  // same-feed occlusion is an accepted trade-off for keeping this O(1).
   return Math.max(0, Math.floor(bottom));
 }
 

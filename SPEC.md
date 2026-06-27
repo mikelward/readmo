@@ -953,7 +953,19 @@ negligible and off every critical path. See the External services table in
        user's **manual feed order** (the `subscriptions.sort` field, set by
        drag-to-reorder in Settings); within a section the chosen sort order
        applies, and that feed's pinned items sit at the top of the section. A
-       feed-name header introduces each section. No effect on a single-feed view.
+       feed-name header introduces each section, and **stays pinned** (sticky)
+       just below the top chrome (app header + top toolbar) while the reader
+       scrolls through a section taller than the viewport, so the feed a row
+       belongs to — and its header controls — stay on screen instead of
+       scrolling off with the section's first rows. Each header is **bounded to
+       its own feed section** (each section is its own container), so only the
+       current feed's header is ever pinned — the section's end pushes it back
+       out as the next header arrives, rather than earlier headers piling up
+       stuck behind the visible one. The pin offset tracks the live chrome height
+       (the toolbar wraps to two rows on ultra-narrow phones). The header is a
+       **single line** — a long feed name truncates with an ellipsis rather than
+       wrapping — so the pinned band stays a constant height. No effect on a
+       single-feed view.
        Toggleable from Settings **and** from the multi-feed list **top toolbar**
        (the **Group by feed** toggle, whose flat-list / tree icon mirrors the
        current layout — see *List toolbar*), which writes the same per-device
