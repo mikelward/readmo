@@ -12,8 +12,10 @@
 #     the values below. This file is then just the documented source of truth.
 #  B) Mimir Alertmanager: load it directly —
 #       mimirtool alertmanager load grafana/alertmanager.yaml \
-#         --address "$GRAFANA_CLOUD_AM_URL" --id "$GRAFANA_CLOUD_TENANT" --key "$GRAFANA_CLOUD_TOKEN"
-#     (Mimir AM emails via SMTP, so fill the smarthost/auth below.)
+#         --address "$GRAFANA_CLOUD_AM_URL" --id "$GRAFANA_CLOUD_AM_ID" --key "$GRAFANA_CLOUD_TOKEN"
+#     (--id is the Alertmanager tenant from the Alerts/hosted-alerts page —
+#      usually a DIFFERENT number than the Prometheus tenant used for rules.
+#      Mimir AM emails via SMTP, so fill the smarthost/auth below.)
 #
 # Secrets are placeholders — never commit a real SMTP password. Use your secret
 # store / env substitution.
