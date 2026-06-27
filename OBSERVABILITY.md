@@ -42,8 +42,8 @@ runs on a healthy or an overwhelmed DB unprompted.
 Supabase exposes a Prometheus endpoint with ~200 Postgres/host health series.
 
 - **Endpoint:** `https://<project-ref>.supabase.co/customer/v1/privileged/metrics`
-- **Auth:** HTTP Basic — username `service_role`, password = the **service-role
-  JWT**. Treat the scrape credential as the secret it is.
+- **Auth:** HTTP Basic — username `service_role` (a fixed literal), password =
+  the **Secret key**. Treat the scrape credential as the secret it is.
 - **Format / cadence:** Prometheus text; the set refreshes ~once a minute, so
   scrape once a minute.
 - **Availability:** all hosted Supabase projects (incl. free tier). It is
@@ -143,7 +143,7 @@ shows its query head, so the alert tells you *which* query is problematic.
   view. Active query text can carry literals (e.g. a tokenized feed `secret_url`),
   so in the **logged `summary`** any embedded URL is collapsed to `scheme://host`
   (the rest of the query is kept — the table/columns/WHERE shape is what makes it
-  recognizable); the full text is still returned in the service-role-gated
+  recognizable); the full text is still returned in the Secret-key-gated
   `active` array for live debugging.
 - `top` comes from `pg_stat_statements` — **normalized** query groups (literals
   collapsed to `$1`, so no user data leaks) ranked by accumulated time. This is
@@ -159,9 +159,9 @@ Severity is computed from env-tunable thresholds (`classifyDiagnostics` in
 | `DB_PERF_SLOW_MEAN_MS` | `1000` | query-group mean exec time that's a chronic offender |
 | `DB_PERF_LIMIT` | `10` | how many active queries / groups to return |
 
-The endpoint is **read-only** and **service-role only** (the RPC is RLS-exempt
+The endpoint is **read-only** and **Secret-key only** (the RPC is RLS-exempt
 and surfaces all sessions' activity; it's revoked from `anon`/`authenticated`).
-Deploy with `--no-verify-jwt` — it verifies the service-role bearer itself, like
+Deploy with `--no-verify-jwt` — it verifies the Secret-key bearer itself, like
 `poll`.
 
 ### Runbook stub: a layer-1 alert fired

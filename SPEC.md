@@ -666,7 +666,7 @@ purpose — full rationale + setup in [`OBSERVABILITY.md`](./OBSERVABILITY.md):
   us. Rules ship as code in [`grafana/`](./grafana/).
 - **Attribution is read-only and on-demand.** The Metrics API is aggregate
   ("the DB is starving"), not per-query. To find *which* query, the `db-perf`
-  Edge Function (service-role only, `--no-verify-jwt`) calls the read-only
+  Edge Function (Secret-key only, `--no-verify-jwt`) calls the read-only
   `db_perf_diagnostics` RPC (migration `0022`): `pg_stat_activity` long-runners
   + worst `pg_stat_statements` groups (normalized — no user literals leak). It
   writes nothing and is bounded by a 3s `statement_timeout`; a Grafana alert's
@@ -1841,8 +1841,8 @@ keys differ; the strategies map one-to-one:
 
 - Frontend on Vercel (`main` → prod, branches → preview).
 - Supabase project (Postgres + Auth + scheduled functions); migrations in-repo
-  (Supabase CLI). Secrets: Supabase URL/anon key client-side; service role +
-  OAuth client secrets server-side only — never ship the service role key to
+  (Supabase CLI). Secrets: Supabase URL/Publishable key client-side; Secret key
+  + OAuth client secrets server-side only — never ship the Secret key to
   the client.
 - **Image proxy (offline + reliability — *not* privacy).** Article images load
   through a same-origin `/api/img?url=…` endpoint rather than directly from the
@@ -1979,7 +1979,7 @@ The load-bearing rules from newshacker's AGENTS.md, applied unchanged:
    fetch through the SSRF-hardened helper.** Feed content and user-supplied
    URLs are Readmo's untrusted input.
 7. **RLS is the per-user boundary** — every per-user table gated on
-   `auth.uid()`; client never gets the service-role key; fail closed.
+   `auth.uid()`; client never gets the Secret key; fail closed.
    `feeds`/`items` are shared but **not** world-readable (subscription- or
    permanent-state-scoped); keep secret/tokenized feed URLs server-only.
 8. **Scope client caches by `auth.uid()` and purge on account change** — never

@@ -40,9 +40,9 @@ fronted by **Supavisor** names its pooler series `supavisor_*` instead, and
 **Easiest — Grafana Cloud hosted scrape:** Grafana Cloud → **Connections → Add
 new connection → Metrics endpoint** (hosted Prometheus scrape). Point it at
 `https://<project-ref>.supabase.co/customer/v1/privileged/metrics`, scheme HTTPS,
-**Basic auth** username `service_role`, password = your service-role JWT, scrape
-interval `60s`, and set the **job label to `supabase-metrics`** (the rules match
-that). Store the JWT as a secret, not inline.
+**Basic auth** username `service_role` (a fixed literal), password = your Secret
+key, scrape interval `60s`, and set the **job label to `supabase-metrics`** (the
+rules match that). Store the Secret key as a secret, not inline.
 
 **Or run your own collector:** `alloy run grafana/agent.alloy` with the env vars
 named in that file. (Same job label.)
