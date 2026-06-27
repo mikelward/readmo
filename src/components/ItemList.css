@@ -68,10 +68,29 @@
    and any non-grouped view. z-index sits below the toolbar (10) and app header
    (20) so a pinned header tucks under them, but above the item rows (auto) it
    scrolls over. The header's opaque `--rm-bg` background hides those rows as
-   they pass behind it. */
+   they pass behind it.
+
+   The `- 1px` pulls the pin up a pixel so it overlaps the chrome's bottom edge
+   instead of butting against it. `--rm-group-sticky-top` is summed from the
+   chrome strips' `offsetHeight`s (each rounded to a whole pixel), so on
+   fractional-DPI viewports the offset can land up to ~1px *below* the toolbar's
+   true rendered bottom — exposing a 1px sliver of white rows between the pinned
+   header and the static toolbar as you scroll. The overlap closes that gap and
+   is invisible: the header tucks under the higher-z chrome, which simply paints
+   over the overlapped pixel.
+
+   The matching `padding-top: 1px` keeps that overlapped pixel non-interactive:
+   without it, the `- 1px` would drag the toggle and action buttons (only
+   `--rm-tap` = 44px tall) a pixel under the toolbar that paints and hit-tests
+   above them, shaving their touchable area to 43px and breaking guardrail #2's
+   44px floor. The padding absorbs the overlap, so the controls themselves start
+   below the toolbar's edge and still expose the full 44px. */
 .item-list__group-header {
   position: sticky;
-  top: var(--rm-group-sticky-top, calc(var(--rm-header-h) + var(--rm-tap)));
+  top: calc(
+    var(--rm-group-sticky-top, calc(var(--rm-header-h) + var(--rm-tap))) - 1px
+  );
+  padding-top: 1px;
   z-index: 5;
   display: flex;
   align-items: center;
