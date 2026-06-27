@@ -4,8 +4,8 @@ import { useBottomBarPosition } from '../hooks/useReadingPrefs';
 import { useFeedBar } from './FeedBarContext';
 import { TooltipButton } from './TooltipButton';
 import {
-  ArrowDownward,
-  ArrowUpward,
+  HourglassTop,
+  HourglassBottom,
   ListFlat,
   ListTree,
   Sweep,
@@ -201,9 +201,9 @@ export function ListToolbar({
               sort.itemSort === 'newest' ? 'Newest first' : 'Oldest first'
             }
           >
-            {/* Arrow shows the current order: down = newest-first (descending),
-                up = oldest-first (ascending). */}
-            {sort.itemSort === 'newest' ? <ArrowDownward /> : <ArrowUpward />}
+            {/* Hourglass shows the current order: sand on top = newest-first,
+                sand on the bottom = oldest-first. */}
+            {sort.itemSort === 'newest' ? <HourglassTop /> : <HourglassBottom />}
           </TooltipButton>
         ) : null}
         {more ? (

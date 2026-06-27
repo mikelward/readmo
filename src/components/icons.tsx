@@ -262,17 +262,20 @@ export function ListTree(props: IconProps) {
   );
 }
 
-// ---- Sort order: a single arrow showing the current direction -------------
+// ---- Sort order: an hourglass showing the current direction ----------------
 
 // The top toolbar's sort toggle reflects the *current* order, not both
-// directions (SPEC.md *List toolbar*): `ArrowDownward` = newest-first
-// (descending), `ArrowUpward` = oldest-first (ascending) — the universal
-// table-sort convention. Custom 24×24 glyphs so the direction reads cleanly;
-// the tooltip / accessible name ("Newest first" / "Oldest first") stays
-// authoritative.
-// Stroked (not a solid triangle) and weighted to ~2.2px so it sits at the same
-// visual weight as the list / tree glyphs instead of reading heaviest.
-export function ArrowDownward(props: IconProps) {
+// directions (SPEC.md *List toolbar*): `HourglassTop` (sand in the top bulb) =
+// newest-first, `HourglassBottom` (sand in the bottom bulb) = oldest-first —
+// the same convention Material's `hourglass_top`/`hourglass_bottom` use. Custom
+// 24×24 glyphs so the direction reads cleanly; the tooltip / accessible name
+// ("Newest first" / "Oldest first") stays authoritative.
+// The bowtie frame is stroked (weighted to ~2.2px so it sits at the same visual
+// weight as the list / tree glyphs); the filled bulb shows which way the sand —
+// and therefore the sort — runs.
+const HOURGLASS_FRAME = 'M6 4H18L12 12L18 20H6L12 12Z';
+
+export function HourglassTop(props: IconProps) {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -287,12 +290,13 @@ export function ArrowDownward(props: IconProps) {
       focusable="false"
       {...props}
     >
-      <path d="M12 4.5V19M6.5 13L12 19L17.5 13" />
+      <path d={HOURGLASS_FRAME} />
+      <path d="M8.5 6.5H15.5L12 11Z" fill="currentColor" stroke="none" />
     </svg>
   );
 }
 
-export function ArrowUpward(props: IconProps) {
+export function HourglassBottom(props: IconProps) {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -307,7 +311,8 @@ export function ArrowUpward(props: IconProps) {
       focusable="false"
       {...props}
     >
-      <path d="M12 19.5V5M6.5 11L12 5L17.5 11" />
+      <path d={HOURGLASS_FRAME} />
+      <path d="M8.5 17.5H15.5L12 13Z" fill="currentColor" stroke="none" />
     </svg>
   );
 }
