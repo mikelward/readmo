@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '../test/renderWithProviders';
@@ -2621,6 +2621,57 @@ describe('ItemList', () => {
       expect(fetchFeedPage).toHaveBeenNthCalledWith(2, 'A', '3');
     });
 
+    it('ignores a rapid double tap on a section More (no duplicate page fetch)', async () => {
+      // Two taps fired in the same tick — before React commits the first tap's
+      // `loading: true` (and the resulting `disabled`) — must not issue two
+      // `fetchFeedPage` requests. The synchronous in-flight ref rejects the
+      // second; `fireEvent` (no act flush between clicks) reproduces the race
+      // that a `disabled` attribute alone can't catch.
+      const { source, mk } = await makeRows();
+      const K = 3;
+      const base = [
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+      ];
+      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
+      // Hold the section fetch open so both taps land while the first is in
+      // flight.
+      let releaseFeedPage: ((items: FeedItem[]) => void) | null = null;
+      const fetchFeedPage = vi.fn(
+        () =>
+          new Promise<{ items: FeedItem[]; nextCursor: string | null }>((resolve) => {
+            releaseFeedPage = (items) => resolve({ items, nextCursor: null });
+          }),
+      );
+      renderWithProviders(
+        <ItemList
+          viewKey={`psm-double-tap-${viewKeySeq++}`}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+          groupByFeed
+          fetchFeedPage={fetchFeedPage}
+          perFeedLimit={K}
+        />,
+        { source },
+      );
+      await screen.findAllByTestId('item-row');
+
+      const moreBtn = screen.getByTestId('group-more');
+      await act(async () => {
+        fireEvent.click(moreBtn);
+        fireEvent.click(moreBtn);
+        await Promise.resolve();
+      });
+      expect(fetchFeedPage).toHaveBeenCalledTimes(1);
+
+      // The single in-flight fetch settles and appends exactly one page.
+      await act(async () => {
+        releaseFeedPage!([mk('A', 'Feed A', 3), mk('A', 'Feed A', 4), mk('A', 'Feed A', 5)]);
+        await Promise.resolve();
+      });
+      await screen.findByText('Feed A 5');
+      expect(fetchFeedPage).toHaveBeenCalledTimes(1);
+    });
+
     it('pinning an extra keeps the section expanded (sticky display set covers the pinned id)', async () => {
       // Regression for the bug where pinning an item that was loaded via
       // "More" silently collapsed the section back to its first `perFeedLimit`
@@ -3637,14 +3688,17 @@ describe('ItemList', () => {
       expect(bHeaderIdx).toBeLessThan(firstCRowIdx);
     });
 
-    it('disables the per-section More on a live (pin-anchored) section while the post-Sweep refetch is in flight', async () => {
+    it('defers a live (pin-anchored) section More tapped during the post-Sweep refetch instead of flickering it to Loading', async () => {
       // Sister case to the phantom-More test: when Sweep leaves a pinned row
       // behind, the section stays in `visibleItems` so it's NOT in
-      // `emptyMoreSections` — but the same stale-`items[]` problem still
-      // applies. handleFeedMore would count the just-Done rows as seen and
-      // emit `cursor = perFeedLimit`, skipping the freshest page once the
-      // refetch surfaces it. loadingFeeds gates EVERY feedsWithMore feed on
-      // `isFetching`, not just phantoms.
+      // `emptyMoreSections` — but the same stale-`items[]` problem applies. If
+      // handleFeedMore ran its cursor calc against the pre-Sweep window it
+      // would count the just-Done rows as seen and emit `cursor = perFeedLimit`,
+      // skipping the freshest page. Rather than disable the button during the
+      // refetch (which flickered every section's More to "Loading…" on any
+      // background refresh), it stays a tappable "More" and a tap is deferred
+      // until the refetch settles, then fetches against fresh `items[]`.
+      const user = userEvent.setup();
       const { source, mk } = await makeRows();
       const K = 3;
       source.stateStore.set('A-0', 'pinned', true);
@@ -3655,7 +3709,16 @@ describe('ItemList', () => {
             releaseFetchPage = (items) => resolve({ items, nextCursor: null });
           }),
       );
-      const fetchFeedPage = vi.fn(() => Promise.resolve({ items: [], nextCursor: null }));
+      // Keyed on cursor so we can assert the deferred tap fetched the correct
+      // fresh-window offset ('1' here — A-0 pinned at pos 0, then the first
+      // unseen row). The stale-`items[]` bug would have sent '3' and skipped.
+      const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) =>
+        Promise.resolve(
+          cursor === '1'
+            ? { items: [mk('A', 'Feed A', 6)], nextCursor: null }
+            : { items: [], nextCursor: null },
+        ),
+      );
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -3679,44 +3742,219 @@ describe('ItemList', () => {
       });
       await screen.findAllByTestId('item-row');
 
-      // Sweep the unpinned rows. The pinned A-0 stays visible; A is NOT in
-      // emptyMoreSections, but its section More must still be disabled.
+      // Sweep the unpinned rows. The pinned A-0 stays visible; the base query
+      // refetch is held open by the gate, so isFetching stays true.
       await act(async () => {
         source.stateStore.hideMany(['A-1', 'A-2'], Date.now());
       });
       await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
-      await waitFor(() => {
-        const aMore = screen
-          .getAllByTestId('group-more')
-          .find((b) => b.getAttribute('data-feed-more') === 'A');
-        expect(aMore).toBeDisabled();
-      });
 
-      // Once the refetch settles, the cursor calc runs against fresh items[]
-      // and the More re-enables.
+      const aMore = () =>
+        screen
+          .getAllByTestId('group-more')
+          .find((b) => b.getAttribute('data-feed-more') === 'A')!;
+      // No flicker: the button stays enabled and labeled "More" through the
+      // background refetch — it is NOT relabeled to "Loading…".
+      expect(aMore()).toBeEnabled();
+      expect(aMore()).toHaveTextContent('More');
+      expect(aMore()).not.toHaveTextContent('Loading');
+
+      // Tapping during the refetch is deferred, not run against stale items[].
+      await user.click(aMore());
+      expect(fetchFeedPage).not.toHaveBeenCalled();
+
+      // Release the refetch with the fresh top page. The deferred tap drains and
+      // fetches against fresh items[] — cursor '1', not the stale-skip '3'.
       await act(async () => {
         releaseFetchPage!([
           mk('A', 'Feed A', 0), mk('A', 'Feed A', 3), mk('A', 'Feed A', 4), mk('A', 'Feed A', 5),
         ]);
         await Promise.resolve();
       });
-      await waitFor(() => {
-        const aMore = screen
-          .getAllByTestId('group-more')
-          .find((b) => b.getAttribute('data-feed-more') === 'A');
-        expect(aMore).toBeEnabled();
-      });
+      await waitFor(() => expect(fetchFeedPage).toHaveBeenCalledTimes(1));
+      expect(fetchFeedPage).toHaveBeenCalledWith('A', '1');
+      // The fresh page the deferred tap pulled in renders (no skip).
+      expect(await screen.findByText('Feed A 6')).toBeInTheDocument();
     });
 
-    it('keeps a phantom More disabled while the post-Sweep refetch is in flight (cursor would skip past the fresh page)', async () => {
-      // Regression: with the phantom-section path, an empty post-Sweep section
-      // renders the header + a "More" button immediately. While the base
-      // refetch is still in flight, `items[]` is the pre-Sweep window — so
-      // handleFeedMore's first-page cursor would land at `perFeedLimit` (all
-      // sticky ids in the stale window count as "seen") and `getFeedItems`
-      // would skip past the freshest non-Done page the refetch is about to
-      // expose. Holding the phantom More disabled until isFetching settles
-      // sidesteps the stale-cursor read.
+    it('drops a deferred More instead of draining it when the triggering refetch FAILS (items[] still stale)', async () => {
+      // A tap deferred during a refetch must not drain when that refetch fails:
+      // `items[]` is still the stale pre-refetch window, so running the cursor
+      // calc now would compute the old offset and skip the fresh page. Drop the
+      // queued tap (button reverts to "More") rather than fetch against stale
+      // data; the reader retries once a refresh succeeds.
+      const user = userEvent.setup();
+      const { source, mk } = await makeRows();
+      const K = 3;
+      // First base read resolves immediately; the invalidation-triggered refetch
+      // is held, then REJECTED to simulate a failed background refresh. The
+      // section's rows are untouched, so it stays rendered (this isolates the
+      // drain-on-failure behavior from the miss-state path a Sweep would hit).
+      let callCount = 0;
+      let rejectRefetch: (() => void) | null = null;
+      const fetchPage = vi.fn(() => {
+        callCount += 1;
+        if (callCount === 1) {
+          return Promise.resolve({
+            items: [
+              mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+            ],
+            nextCursor: null,
+          });
+        }
+        return new Promise<{ items: FeedItem[]; nextCursor: string | null }>((_resolve, reject) => {
+          rejectRefetch = () => reject(new Error('refresh failed'));
+        });
+      });
+      const fetchFeedPage = vi.fn(() => Promise.resolve({ items: [], nextCursor: null }));
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      });
+      renderWithProviders(
+        <ItemList
+          viewKey={`psm-fail-drain-${viewKeySeq++}`}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+          groupByFeed
+          fetchFeedPage={fetchFeedPage}
+          perFeedLimit={K}
+        />,
+        { source, queryClient },
+      );
+      await screen.findAllByTestId('item-row');
+
+      // Pin a row → useFeedInvalidation invalidates ['feed'] → refetch (held
+      // open). The pinned row stays visible, so the section (and its More) is
+      // untouched.
+      await act(async () => {
+        source.stateStore.set('A-0', 'pinned', true);
+      });
+      await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+
+      const aMore = () =>
+        screen
+          .getAllByTestId('group-more')
+          .find((b) => b.getAttribute('data-feed-more') === 'A')!;
+      // Tap during the in-flight refetch → deferred (no fetch yet).
+      await user.click(aMore());
+      expect(fetchFeedPage).not.toHaveBeenCalled();
+
+      // The refetch FAILS. The drain effect runs (isFetching went false) but
+      // must NOT fetch, because `items[]` is still the stale pre-refetch window
+      // — draining now would compute a stale offset and skip the fresh page.
+      // The "Couldn't refresh" strip (role=alert) marks the failure settling.
+      await act(async () => {
+        rejectRefetch!();
+        await Promise.resolve();
+      });
+      await screen.findByText(/Couldn.t refresh/i);
+      // Old behavior (drain on any isFetching=false) would have called
+      // fetchFeedPage('A', <stale offset>) here; the fix drops the queued tap.
+      expect(fetchFeedPage).not.toHaveBeenCalled();
+    });
+
+    it('drops a deferred section More when the global pager fetches mid-refetch (fetchNextPage settles with stale page 1, no error)', async () => {
+      // Row-cap-overflow grouped views still expose the bottom/global "More"
+      // (hasMore), and it's tappable during a background refetch (gated only on
+      // isFetchingMore). Tapping it runs fetchNextPage, which can cancel the
+      // in-flight refetch and settle with page 1 still stale and `error` clear —
+      // so the success-only drain guard wouldn't catch it. handleMore therefore
+      // drops any queued section tap, so the drain never runs it against the
+      // stale window.
+      const user = userEvent.setup();
+      const { source, mk } = await makeRows();
+      const K = 3;
+      let call1Done = false;
+      let releaseRefetch: (() => void) | null = null;
+      const fetchPage = vi.fn((cursor: string | null) => {
+        if (cursor === '1') {
+          // Next page via the global pager (fetchNextPage).
+          return Promise.resolve({ items: [mk('A', 'Feed A', 4)], nextCursor: null });
+        }
+        if (!call1Done) {
+          call1Done = true;
+          // First page: window (3) + probe (A-3), and nextCursor so hasMore is
+          // true → the global "More" renders alongside feed A's section "More".
+          return Promise.resolve({
+            items: [
+              mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+            ],
+            nextCursor: '1',
+          });
+        }
+        // The invalidation-triggered base refetch — held open so isFetching
+        // stays true while we tap.
+        return new Promise<{ items: FeedItem[]; nextCursor: string | null }>((resolve) => {
+          releaseRefetch = () => resolve({
+            items: [
+              mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+            ],
+            nextCursor: '1',
+          });
+        });
+      });
+      const fetchFeedPage = vi.fn(() => Promise.resolve({ items: [], nextCursor: null }));
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      });
+      renderWithProviders(
+        <ItemList
+          viewKey={`psm-global-cancel-${viewKeySeq++}`}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+          groupByFeed
+          fetchFeedPage={fetchFeedPage}
+          perFeedLimit={K}
+        />,
+        { source, queryClient },
+      );
+      await screen.findAllByTestId('item-row');
+      // Both pagers are present: feed A's section "More" and the global "More".
+      expect(screen.getByTestId('group-more')).toBeInTheDocument();
+      expect(screen.getByTestId('more-btn')).toBeInTheDocument();
+
+      // Pin a row → invalidate → base refetch (held) → isFetching true.
+      await act(async () => {
+        source.stateStore.set('A-0', 'pinned', true);
+      });
+      await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+
+      // Queue a section tap during the refetch, then tap the global pager.
+      await user.click(screen.getByTestId('group-more'));
+      expect(fetchFeedPage).not.toHaveBeenCalled();
+      await user.click(screen.getByTestId('more-btn'));
+      // The global pager ran fetchNextPage (page 2, cursor '1').
+      await waitFor(() => expect(fetchPage).toHaveBeenCalledWith('1'));
+
+      // Let the held base refetch settle so isFetching goes false — this is the
+      // edge the drain effect listens on. With page 1 still stale and no error,
+      // the success-only guard alone wouldn't stop it; handleMore having dropped
+      // the queued tap is what does.
+      await act(async () => {
+        releaseRefetch?.();
+        await Promise.resolve();
+      });
+      await waitFor(() => {
+        const a = screen
+          .getAllByTestId('group-more')
+          .find((b) => b.getAttribute('data-feed-more') === 'A')!;
+        expect(a).toHaveTextContent('More');
+      });
+      // The deferred tap was dropped, so the drain never ran it against stale
+      // page 1. (Without the fix it would have called fetchFeedPage here.)
+      expect(fetchFeedPage).not.toHaveBeenCalled();
+    });
+
+    it('defers a phantom More tapped during the post-Sweep refetch (no flicker, no stale-cursor skip)', async () => {
+      // With the phantom-section path, an empty post-Sweep section renders the
+      // header + a "More" button immediately. While the base refetch is still
+      // in flight, `items[]` is the pre-Sweep window — so a cursor calc run now
+      // would land at `perFeedLimit` (all sticky ids in the stale window count
+      // as "seen") and `getFeedItems` would skip past the freshest non-Done
+      // page. Instead of disabling the button (which flickered it to
+      // "Loading…"), it stays a tappable "More" and a tap is deferred until the
+      // refetch settles, then fetches against fresh `items[]`.
+      const user = userEvent.setup();
       const { source, mk } = await makeRows();
       const K = 3;
       // Hold the base fetch open via a gate we release from the test.
@@ -3727,7 +3965,16 @@ describe('ItemList', () => {
             releaseFetchPage = (items) => resolve({ items, nextCursor: null });
           }),
       );
-      const fetchFeedPage = vi.fn(() => Promise.resolve({ items: [], nextCursor: null }));
+      // Keyed on cursor: the deferred tap must compute against fresh items[]
+      // (cursor '0' — the first row is unseen) and surface the fresh page. The
+      // stale-`items[]` bug would have sent '3' and returned nothing.
+      const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) =>
+        Promise.resolve(
+          cursor === '0'
+            ? { items: [mk('A', 'Feed A', 3), mk('A', 'Feed A', 4), mk('A', 'Feed A', 5)], nextCursor: null }
+            : { items: [], nextCursor: null },
+        ),
+      );
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -3761,35 +4008,33 @@ describe('ItemList', () => {
       });
       await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
 
-      // The phantom More renders (the section header keeps the reader
-      // anchored), but it must be DISABLED — tapping it now would skip the
-      // freshest page. Wait for the isFetching-driven loading state to
-      // commit before asserting.
-      await waitFor(() => {
-        const aMore = screen
+      const aMore = () =>
+        screen
           .getAllByTestId('group-more')
-          .find((b) => b.getAttribute('data-feed-more') === 'A');
-        expect(aMore).toBeDisabled();
-      });
-      const phantomMore = screen
-        .getAllByTestId('group-more')
-        .find((b) => b.getAttribute('data-feed-more') === 'A');
-      expect(phantomMore).toHaveTextContent('Loading');
+          .find((b) => b.getAttribute('data-feed-more') === 'A')!;
+      // The phantom More renders and stays a tappable "More" through the
+      // refetch — no flicker to "Loading…", no disabled state.
+      await waitFor(() => expect(aMore()).toBeInTheDocument());
+      expect(aMore()).toBeEnabled();
+      expect(aMore()).toHaveTextContent('More');
+      expect(aMore()).not.toHaveTextContent('Loading');
 
-      // Release the refetch with the fresh top non-Done page. Now `items[]`
-      // is current and the More becomes tappable.
+      // Tapping during the refetch defers rather than reading stale items[].
+      await user.click(aMore());
+      expect(fetchFeedPage).not.toHaveBeenCalled();
+
+      // Release the refetch with the fresh top non-Done page. The deferred tap
+      // drains against fresh items[] (cursor '0', not the stale-skip '3') and
+      // the fresh rows surface.
       await act(async () => {
         releaseFetchPage!([
           mk('A', 'Feed A', 3), mk('A', 'Feed A', 4), mk('A', 'Feed A', 5), mk('A', 'Feed A', 6),
         ]);
         await Promise.resolve();
       });
-      await waitFor(() => {
-        const aMore = screen
-          .getAllByTestId('group-more')
-          .find((b) => b.getAttribute('data-feed-more') === 'A');
-        expect(aMore).toBeEnabled();
-      });
+      await waitFor(() => expect(fetchFeedPage).toHaveBeenCalledTimes(1));
+      expect(fetchFeedPage).toHaveBeenCalledWith('A', '0');
+      expect(await screen.findByText('Feed A 3')).toBeInTheDocument();
     });
 
     it('keeps the per-section More reachable after Sweeping an all-unpinned section (phantom header)', async () => {
