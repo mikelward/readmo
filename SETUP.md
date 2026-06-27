@@ -13,7 +13,7 @@ variables, function deployment, and the scheduled poller. The frontend
 >   (`supabase/functions/_shared/sanitize.ts`). Raw publisher HTML is never
 >   stored or served.
 > - **RLS is the per-user boundary.** `feeds`/`items` are shared but **not**
->   world-readable; `secret_url` is server-only. The service-role key never
+>   world-readable; `secret_url` is server-only. The Secret key never
 >   reaches the client.
 
 ---
@@ -37,9 +37,14 @@ variables, function deployment, and the scheduled poller. The frontend
    users and the publishers you poll.
 2. Note these values from **Project Settings → API**:
    - **Project URL** → `SUPABASE_URL` (e.g. `https://abcd1234.supabase.co`).
-   - **anon public key** → `SUPABASE_ANON_KEY` (safe to ship to the client).
-   - **service_role key** → `SUPABASE_SERVICE_ROLE_KEY`
+   - **Publishable key** → `SUPABASE_ANON_KEY` (safe to ship to the client).
+   - **Secret key** → `SUPABASE_SERVICE_ROLE_KEY`
      (**server-only — never ship this to the browser**).
+
+   > The dashboard labels are the current ones (**Publishable** / **Secret**, the
+   > `sb_publishable_…` / `sb_secret_…` keys); the env-var names keep their
+   > original spelling, so paste the new keys into the existing
+   > `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` names.
 3. Link the CLI to the project:
    ```sh
    supabase login
@@ -137,7 +142,7 @@ origins and `http://localhost:5173/**` for local dev).
 `.env.local` and fill these in. The Supabase client (`src/lib/supabase/client.ts`)
 and `SupabaseDataSource` read exactly these two vars; when they are absent the
 app falls back to the mock auth + `MockDataSource` so it still runs with no
-backend. The service-role key and OAuth secrets must **never** be referenced in
+backend. The Secret key and OAuth secrets must **never** be referenced in
 any `VITE_*`/client variable.
 
 **Edge Functions** read `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and
@@ -155,7 +160,7 @@ Env name cannot start with SUPABASE_, skipping: SUPABASE_SERVICE_ROLE_KEY
 That warning is expected — there is nothing to set for deployment. Use
 `supabase secrets set` only for *custom* (non-`SUPABASE_`) names — the
 `SMTP_*` / `SIGNUP_NOTIFY_TO` values for `notify-signup` (§9) are the only ones.
-The service-role key is needed by hand in only two places: the **cron poller**
+The Secret key is needed by hand in only two places: the **cron poller**
 (§7, passed as a bearer token) and **local** `supabase functions serve`
 (off-platform, so put the three vars in a local, untracked `.env`; see
 `supabase/functions/.env.example`).
@@ -197,7 +202,7 @@ supabase functions deploy notify-signup --import-map supabase/functions/import_m
 > `image/*` through the SSRF-hardened `safeFetch` (no auth-bearing logic, no DB
 > writes). The others keep JWT verification **on** — `discover`/`refresh`/
 > `fulltext` run as the calling user (RLS-scoped), and `poll` checks the
-> service-role bearer itself.
+> Secret-key bearer itself.
 
 > If you prefer a project-level config, add the same `imports` map to a
 > `supabase/functions/deno.json` and reference it via `--config`; the
@@ -212,7 +217,7 @@ The functions:
 | `refresh` | `POST /functions/v1/refresh` | On-demand fetch for the caller's subscribed feed(s); debounced. |
 | `fulltext` | `POST /functions/v1/fulltext` | Reading mode: fetch + extract (Readability) + sanitize the full article for a truncated item, cache it on the shared row. RLS-scoped to the caller. |
 | `img` | `GET /functions/v1/img?url=…` | SSRF-hardened image proxy (offline images + hotlink/reliability; privacy is incidental — see SPEC *Image proxy*). |
-| `notify-signup` | `POST /functions/v1/notify-signup` | Emails the operator over SMTP when a new user signs up. Called server-to-server by the `auth.users` insert trigger (§9); verifies the service-role bearer itself, so deploy with `--no-verify-jwt`. |
+| `notify-signup` | `POST /functions/v1/notify-signup` | Emails the operator over SMTP when a new user signs up. Called server-to-server by the `auth.users` insert trigger (§9); verifies the Secret-key bearer itself, so deploy with `--no-verify-jwt`. |
 
 > **Same-origin `/api/img` shim (Vercel).** Sanitized `content_html` points
 > every `<img src>` at the same-origin path `/api/img?url=…` (not the Supabase
@@ -276,20 +281,20 @@ The functions:
 
 ## 7. Schedule the poller (pg_cron, ~5 min)
 
-### 7a. Store the service-role key in Vault
+### 7a. Store the Secret key in Vault
 
-The cron job reads the service-role key from Supabase Vault at runtime.
-Store it once via the SQL editor (find the key in Project Settings → API):
+The cron job reads the Secret key from Supabase Vault at runtime.
+Store it once via the SQL editor (find the key in Project Settings → API Keys):
 
 ```sql
 select vault.create_secret(
-  '<your-service-role-key>',  -- the long JWT from Project Settings → API
+  '<your-secret-key>',        -- the Secret key from Project Settings → API Keys
   'service_role_key'          -- must match the name used in the cron below
 );
 ```
 
 > **Dashboard alternative:** Project Settings → Vault → New secret →
-> name `service_role_key`, value = service role JWT.
+> name `service_role_key`, value = the Secret key.
 
 > **Note:** `ALTER DATABASE SET app.*` is not available on managed Supabase
 > instances, so `current_setting()` cannot carry the key — the Vault subquery
@@ -390,7 +395,7 @@ See `supabase/functions/.env.example` for the local-serve equivalent.
 
 ### 9b. Vault config for the trigger
 
-The trigger reads the function base URL + the service-role bearer from Vault
+The trigger reads the function base URL + the Secret-key bearer from Vault
 (same mechanism as the poller in §7a — `service_role_key` is already stored
 there). Add the base URL once (replace `<ref>`):
 
@@ -462,8 +467,8 @@ Supabase publishes a Prometheus endpoint of ~200 Postgres/host health series.
 Point a collector at it; nothing runs in your database.
 
 - **Endpoint:** `https://<project-ref>.supabase.co/customer/v1/privileged/metrics`
-- **Auth:** HTTP Basic — username `service_role`, password = the service-role
-  JWT (Project Settings → API). Scrape once a minute.
+- **Auth:** HTTP Basic — username `service_role` (a fixed literal), password =
+  the Secret key (Project Settings → API Keys). Scrape once a minute.
 
 Managed path (recommended): in **Grafana Cloud → Connections → add a
 Prometheus/Hosted endpoint scrape job** for that URL with the basic-auth
@@ -504,7 +509,7 @@ curl -s -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
 ```
 
 Put that URL in the Grafana alert's runbook/annotation so a fired alert links
-straight to the culprit. The endpoint is read-only and service-role only.
+straight to the culprit. The endpoint is read-only and Secret-key only.
 
 ### 12c. Cost & reliability (rule-11)
 

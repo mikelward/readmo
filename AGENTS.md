@@ -46,7 +46,7 @@ guardrails — read them before opening a PR.
 
 7. **RLS is the per-user boundary.** Every per-user table
    (`subscriptions`, `item_state`, `folders`) is gated on `auth.uid()`; fail
-   closed. The **client never receives the service-role key** (poller only).
+   closed. The **client never receives the Secret key** (poller only).
    `feeds`/`items` are physically shared but **not world-readable** — a row is
    exposed only when the caller has a matching `subscriptions` row *or* a
    permanent (`pinned`/`favorite`/`done`) `item_state` row pointing at it.

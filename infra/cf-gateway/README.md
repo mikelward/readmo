@@ -32,7 +32,7 @@ step 4), which is enough to shed a loop.
    `APP_ORIGINS`, and `MIN_CLIENT_BUILD` as plaintext **Variables** in the
    dashboard (Worker → Settings → Variables) — or uncomment the `[vars]` block in
    a *local* `wrangler.toml` and don't commit the real values. (No real secrets
-   go here; the Worker doesn't use the service_role key or JWT secret.)
+   go here; the Worker doesn't use the Secret key or JWT secret.)
 2. **Deploy the Worker:** from this directory, `npx wrangler deploy`
    (after `wrangler login`).
 3. **Bind the hostname:** add `api.readmo.app` as a Worker **Custom Domain**
@@ -106,7 +106,7 @@ app talks to Supabase directly again, gateway bypassed. Or set the WAF rule to
 - **No Realtime:** the app uses only REST/RPC + auth + edge functions, so this
   Worker does plain HTTP proxying. If Supabase Realtime is ever added, the
   Worker needs explicit WebSocket-upgrade handling.
-- The anon key is public, so the Worker holds no secret — it's a dumb forwarder.
+- The Publishable key is public, so the Worker holds no secret — it's a dumb forwarder.
 
 `worker.test.js` covers the pure logic (CORS origin selection, version gate);
 the proxy/CORS wiring is verified by the preview/curl checks above.

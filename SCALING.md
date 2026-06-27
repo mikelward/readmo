@@ -147,7 +147,7 @@ is exactly the path a refetch loop pounds. That half needs a gateway.
 >   switch for browser REST traffic, so the levers are: (a) the in-code `refresh`
 >   gate still applies on the direct origin — but not the read RPC; (b) identify
 >   and kill the offending session (see Trigger); (c) the nuclear option —
->   rotate the anon key / JWT secret, which invalidates *every* old client's
+>   rotate the Publishable key / JWT secret, which invalidates *every* old client's
 >   requests and forces a re-auth + update (disruptive, last resort).
 > - Mitigating tailwind: the PWA uses `registerType: 'autoUpdate'`, so most
 >   clients pick up the fixed build on their next navigation and the bad-build
