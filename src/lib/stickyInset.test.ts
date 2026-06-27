@@ -119,6 +119,17 @@ describe('measureStickyInset', () => {
     makeStickyEl('app-header', -10);
     expect(measureStickyInset()).toBe(0);
   });
+
+  // The pinned group-by-feed section header is deliberately NOT added to the
+  // inset (it's bounded to its own section, occludes only its own feed's top
+  // row, and scanning every section per scroll frame would jank). So a present
+  // header must leave the chrome-only inset unchanged.
+  it('ignores group-by-feed section headers (chrome-only by design)', () => {
+    makeStickyEl('app-header', 56);
+    makeStickyEl('list-toolbar', 104);
+    makeStickyEl('item-list__group-header', 152);
+    expect(measureStickyInset()).toBe(104);
+  });
 });
 
 // Codex P2 on PR #44: readmo's bottom toolbar is `position: sticky; bottom: 0`,

@@ -3605,19 +3605,22 @@ describe('ItemList', () => {
       });
 
       // The phantom header for B (data-header-for="empty-more:B") must sit
-      // between the last A row and the first C row in DOM order.
-      const liElements: Element[] = [
-        ...container.querySelectorAll('.item-list__rows > li'),
+      // between the last A row and the first C row in DOM order. Headers and
+      // rows now live inside per-section containers, so compare positions across
+      // all tagged elements in document order (querySelectorAll is doc-ordered)
+      // rather than by direct-child index.
+      const tagged: Element[] = [
+        ...container.querySelectorAll('[data-header-for], [data-item-id]'),
       ];
       const indexOf = (predicate: (el: Element) => boolean): number => {
-        for (let i = 0; i < liElements.length; i++) {
-          if (predicate(liElements[i])) return i;
+        for (let i = 0; i < tagged.length; i++) {
+          if (predicate(tagged[i])) return i;
         }
         return -1;
       };
       const lastIndexOf = (predicate: (el: Element) => boolean): number => {
-        for (let i = liElements.length - 1; i >= 0; i--) {
-          if (predicate(liElements[i])) return i;
+        for (let i = tagged.length - 1; i >= 0; i--) {
+          if (predicate(tagged[i])) return i;
         }
         return -1;
       };

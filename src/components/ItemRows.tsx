@@ -1,4 +1,4 @@
-import { Fragment, type AnimationEventHandler, type Ref } from 'react';
+import type { AnimationEventHandler, ReactNode, Ref } from 'react';
 import type { FeedId, FeedItem, ItemId } from '../lib/types';
 import { useShareItem } from '../hooks/useShareItem';
 import { ItemRow, type RightAction } from './ItemRow';
@@ -91,6 +91,19 @@ interface Props {
   onAnimationEnd?: AnimationEventHandler<HTMLUListElement>;
 }
 
+/** A run of contiguous rows under one section header: the (optional) header,
+ * the id of the row it's anchored to (for the fetch-and-scroll target), and the
+ * feed it belongs to. Built by walking `items` and starting a new section at
+ * every `groupHeaders` boundary, so it matches the server-side feed sectioning
+ * without assuming a header for the very first rows. */
+interface Section {
+  header?: GroupHeader;
+  /** The row id the header is anchored to (`data-header-for`). */
+  headerForId?: ItemId;
+  feedId: FeedId;
+  rows: FeedItem[];
+}
+
 /** The shared body of a list view: loading skeletons, the empty state, or the
  * item rows. The surrounding shell (page header, toolbars, feed-only refresh
  * strip and More button) lives in {@link ListPage} or {@link ItemList}. */
@@ -143,43 +156,97 @@ export function ItemRows({
     );
   }
 
-  const renderPhantom = (feedId: FeedId, title: string) => {
-    const collapsed = collapsedFeeds?.has(feedId) ?? false;
-    const feedMoreLoading = loadingFeeds?.has(feedId) ?? false;
+  const renderRow = (fi: FeedItem) => (
+    <li
+      key={fi.item.id}
+      className={
+        'item-list__row' +
+        (sweepingIds?.has(fi.item.id) ? ' item-list__row--sweeping' : '')
+      }
+      data-item-id={fi.item.id}
+      ref={getRowRef?.(fi.item.id)}
+    >
+      <ItemRow
+        feedItem={fi}
+        enableSwipe={enableSwipe}
+        onShare={() => share({ title: fi.item.title, url: fi.item.url })}
+        rightAction={rightAction?.(fi)}
+      />
+    </li>
+  );
+
+  // Non-grouped views (flat river, single feed, library/search/offline) have no
+  // section headers, so they stay a plain flat list of rows — unchanged.
+  if (!groupHeaders) {
     return (
-      <Fragment key={`empty-more:${feedId}`}>
-        <li
-          className={
-            'item-list__group-header' +
-            (collapsed ? ' item-list__group-header--collapsed' : '')
-          }
-          data-header-for={`empty-more:${feedId}`}
-        >
-          {onToggleCollapse ? (
-            <button
-              type="button"
-              className="item-list__group-toggle"
-              data-testid="group-toggle"
-              aria-expanded={!collapsed}
-              aria-label={`${title}: ${collapsed ? 'expand' : 'collapse'} feed`}
-              onClick={() => onToggleCollapse(feedId)}
-            >
-              <ChevronRight
-                className="item-list__group-chevron"
-                width={18}
-                height={18}
-              />
-              <span className="item-list__group-label">
-                <span className="item-list__group-title">{title}</span>
-              </span>
-            </button>
-          ) : (
-            <span className="item-list__group-title" aria-hidden="true">
-              {title}
+      <ul className="item-list__rows" ref={listRef} onAnimationEnd={onAnimationEnd}>
+        {items.map((fi) => renderRow(fi))}
+      </ul>
+    );
+  }
+
+  // Grouped view. Each section is its own container <li>, which is what bounds
+  // the `position: sticky` header to its OWN feed run: only the current
+  // section's header is ever pinned, and it's pushed back out by the section's
+  // end as the next header arrives — earlier headers don't pile up stuck (and
+  // keep stale, off-section controls in the tab order) behind the visible one.
+  const renderHeader = (
+    feedId: FeedId,
+    title: string,
+    headerForId: string,
+    phantom: boolean,
+  ): ReactNode => {
+    const collapsed = collapsedFeeds?.has(feedId) ?? false;
+    const count =
+      !phantom && groupCounts ? (groupCounts[feedId] ?? 0) : 0;
+    const showCount = count > 0;
+    const ariaLabel = `${title}${showCount ? `, ${count} unread` : ''}: ${
+      collapsed ? 'expand' : 'collapse'
+    } feed`;
+    return (
+      <div
+        className={
+          'item-list__group-header' +
+          (collapsed ? ' item-list__group-header--collapsed' : '')
+        }
+        // Tag with the row it precedes so the fetch-and-scroll anchor can target
+        // a section header (a collapsed feed has no visible row).
+        data-header-for={headerForId}
+      >
+        {onToggleCollapse ? (
+          <button
+            type="button"
+            className="item-list__group-toggle"
+            data-testid="group-toggle"
+            aria-expanded={!collapsed}
+            aria-label={ariaLabel}
+            onClick={() => onToggleCollapse(feedId)}
+          >
+            <ChevronRight
+              className="item-list__group-chevron"
+              width={18}
+              height={18}
+            />
+            <span className="item-list__group-label">
+              <span className="item-list__group-title">{title}</span>
+              {showCount ? (
+                // Decorative: the count is announced via the button's aria-label
+                // above (its own aria-label here would be ignored, since the
+                // button label is the accessible name).
+                <span className="item-list__group-count" aria-hidden="true">
+                  {count > 99 ? '99+' : count}
+                </span>
+              ) : null}
             </span>
-          )}
-          {onUndo ? (
-            <div className="item-list__group-actions">
+          </button>
+        ) : (
+          <span className="item-list__group-title" aria-hidden="true">
+            {title}
+          </span>
+        )}
+        {onUndo || (!phantom && onSweepFeed) ? (
+          <div className="item-list__group-actions">
+            {onUndo ? (
               <TooltipButton
                 type="button"
                 className="item-list__group-action"
@@ -191,33 +258,107 @@ export function ItemRows({
               >
                 <Undo width={20} height={20} />
               </TooltipButton>
-            </div>
-          ) : null}
-        </li>
-        {collapsed || !onFeedMore ? null : (
-          <li className="item-list__group-more">
-            <button
-              type="button"
-              className="item-list__group-more-btn"
-              data-testid="group-more"
-              data-feed-more={feedId}
-              onClick={() => onFeedMore(feedId)}
-              disabled={feedMoreLoading}
-              aria-label={
-                feedMoreLoading ? `Loading more ${title} items` : `More from ${title}`
-              }
-            >
-              {feedMoreLoading ? 'Loading…' : 'More'}
-            </button>
-          </li>
-        )}
-      </Fragment>
+            ) : null}
+            {!phantom && onSweepFeed
+              ? (() => {
+                  const canSweep = sweepableFeeds?.has(feedId) ?? false;
+                  return (
+                    <TooltipButton
+                      type="button"
+                      className="item-list__group-action"
+                      data-testid="group-sweep"
+                      onClick={canSweep ? () => onSweepFeed(feedId) : undefined}
+                      disabled={!canSweep}
+                      tooltip={canSweep ? 'Mark visible done' : 'Nothing to dismiss'}
+                      aria-label={
+                        canSweep
+                          ? `Mark visible ${title} items done`
+                          : `Nothing to dismiss in ${title}`
+                      }
+                    >
+                      <Sweep width={20} height={20} />
+                    </TooltipButton>
+                  );
+                })()
+              : null}
+          </div>
+        ) : null}
+      </div>
     );
   };
 
-  // Sort phantoms by canonical feed rank so the interleave below emits them
-  // at their proper ordinal position in the grouped view — a swept middle
-  // feed's header stays put instead of shifting to the bottom of the list.
+  const renderMore = (feedId: FeedId, title: string): ReactNode => {
+    const loading = loadingFeeds?.has(feedId) ?? false;
+    return (
+      <div className="item-list__group-more">
+        <button
+          type="button"
+          className="item-list__group-more-btn"
+          data-testid="group-more"
+          data-feed-more={feedId}
+          onClick={() => onFeedMore?.(feedId)}
+          disabled={loading}
+          aria-label={loading ? `Loading more ${title} items` : `More from ${title}`}
+        >
+          {loading ? 'Loading…' : 'More'}
+        </button>
+      </div>
+    );
+  };
+
+  // Split `items` into sections at every `groupHeaders` boundary (not raw feed
+  // id), matching the previous flat layout: a header renders before any item
+  // the data layer flagged, and the section runs until the next flagged item.
+  // Items before the first header (only happens in non-canonical inputs) form a
+  // leading headerless section.
+  const sections: Section[] = [];
+  for (const fi of items) {
+    const header = groupHeaders.get(fi.item.id);
+    if (header || sections.length === 0) {
+      sections.push({
+        header,
+        headerForId: header ? fi.item.id : undefined,
+        feedId: fi.item.feedId,
+        rows: [fi],
+      });
+    } else {
+      sections[sections.length - 1].rows.push(fi);
+    }
+  }
+
+  const renderFeedSection = (section: Section): ReactNode => {
+    const { feedId } = section;
+    const collapsed = collapsedFeeds?.has(feedId) ?? false;
+    const showFeedMore =
+      !!onFeedMore && !collapsed && (feedsWithMore?.has(feedId) ?? false);
+    return (
+      <li className="item-list__section" key={`feed:${feedId}`}>
+        {section.header
+          ? renderHeader(feedId, section.header.title, section.headerForId!, false)
+          : null}
+        {collapsed ? null : (
+          <ul className="item-list__section-rows">
+            {section.rows.map((fi) => renderRow(fi))}
+          </ul>
+        )}
+        {showFeedMore ? renderMore(feedId, section.rows[0].feed.title) : null}
+      </li>
+    );
+  };
+
+  const renderPhantomSection = (p: { feedId: FeedId; title: string }): ReactNode => {
+    const collapsed = collapsedFeeds?.has(p.feedId) ?? false;
+    return (
+      <li className="item-list__section" key={`empty-more:${p.feedId}`}>
+        {renderHeader(p.feedId, p.title, `empty-more:${p.feedId}`, true)}
+        {collapsed || !onFeedMore ? null : renderMore(p.feedId, p.title)}
+      </li>
+    );
+  };
+
+  // Interleave phantom sections at their canonical ordinal position so a swept
+  // middle feed's header stays put instead of shifting to the bottom of the
+  // list (mirrors the previous `phantomsBeforeRank` interleave).
   const sortedPhantoms = phantoms
     .slice()
     .sort(
@@ -226,175 +367,25 @@ export function ItemRows({
         (feedRank?.get(b.feedId) ?? Number.POSITIVE_INFINITY),
     );
   let phantomCursor = 0;
-  const phantomsBeforeRank = (rank: number): typeof sortedPhantoms => {
-    const out: typeof sortedPhantoms = [];
+  const out: ReactNode[] = [];
+  for (const section of sections) {
+    const rank = feedRank?.get(section.feedId) ?? Number.POSITIVE_INFINITY;
     while (phantomCursor < sortedPhantoms.length) {
       const p = sortedPhantoms[phantomCursor];
-      const r = feedRank?.get(p.feedId) ?? Number.POSITIVE_INFINITY;
-      if (r >= rank) break;
-      out.push(p);
+      if ((feedRank?.get(p.feedId) ?? Number.POSITIVE_INFINITY) >= rank) break;
+      out.push(renderPhantomSection(p));
       phantomCursor += 1;
     }
-    return out;
-  };
+    out.push(renderFeedSection(section));
+  }
+  while (phantomCursor < sortedPhantoms.length) {
+    out.push(renderPhantomSection(sortedPhantoms[phantomCursor]));
+    phantomCursor += 1;
+  }
 
   return (
     <ul className="item-list__rows" ref={listRef} onAnimationEnd={onAnimationEnd}>
-      {items.map((fi, idx) => {
-        const header = groupHeaders?.get(fi.item.id);
-        const collapsed = collapsedFeeds?.has(fi.item.feedId) ?? false;
-        // Last (visible) row of a feed section: the next row is a different feed
-        // or the list ends. The per-section "More" sits here, after the section's
-        // rows but before the next header — and never under a collapsed section.
-        const lastOfFeed =
-          idx === items.length - 1 ||
-          items[idx + 1].item.feedId !== fi.item.feedId;
-        const showFeedMore =
-          !!onFeedMore &&
-          !collapsed &&
-          lastOfFeed &&
-          (feedsWithMore?.has(fi.item.feedId) ?? false);
-        const feedMoreLoading = loadingFeeds?.has(fi.item.feedId) ?? false;
-        // At each new-feed transition, drain any phantom sections whose
-        // canonical rank precedes the current visible feed's rank, so a
-        // swept middle feed shows up in its proper ordinal slot.
-        const isFirstOfFeed = idx === 0 || items[idx - 1].item.feedId !== fi.item.feedId;
-        const inlinePhantoms = isFirstOfFeed
-          ? phantomsBeforeRank(feedRank?.get(fi.item.feedId) ?? Number.POSITIVE_INFINITY)
-          : [];
-        return (
-          <Fragment key={fi.item.id}>
-            {inlinePhantoms.map((p) => renderPhantom(p.feedId, p.title))}
-            {header !== undefined ? (
-              <li
-                className={
-                  'item-list__group-header' +
-                  (collapsed ? ' item-list__group-header--collapsed' : '')
-                }
-                // Tag with the row it precedes so the fetch-and-scroll anchor can
-                // target a section header (a collapsed feed has no visible row).
-                data-header-for={fi.item.id}
-              >
-                {onToggleCollapse ? (
-                  <button
-                    type="button"
-                    className="item-list__group-toggle"
-                    data-testid="group-toggle"
-                    aria-expanded={!collapsed}
-                    aria-label={`${header.title}${
-                      groupCounts && (groupCounts[header.feedId] ?? 0) > 0
-                        ? `, ${groupCounts[header.feedId]} unread`
-                        : ''
-                    }: ${collapsed ? 'expand' : 'collapse'} feed`}
-                    onClick={() => onToggleCollapse(header.feedId)}
-                  >
-                    <ChevronRight
-                      className="item-list__group-chevron"
-                      width={18}
-                      height={18}
-                    />
-                    <span className="item-list__group-label">
-                      <span className="item-list__group-title">{header.title}</span>
-                      {groupCounts && (groupCounts[header.feedId] ?? 0) > 0 ? (
-                        // Decorative: the count is announced via the button's
-                        // aria-label above (its own aria-label here would be
-                        // ignored, since the button label is the accessible name).
-                        <span className="item-list__group-count" aria-hidden="true">
-                          {groupCounts[header.feedId] > 99
-                            ? '99+'
-                            : groupCounts[header.feedId]}
-                        </span>
-                      ) : null}
-                    </span>
-                  </button>
-                ) : (
-                  <span className="item-list__group-title" aria-hidden="true">
-                    {header.title}
-                  </span>
-                )}
-                {onSweepFeed || onUndo ? (
-                  <div className="item-list__group-actions">
-                    {onUndo ? (
-                      <TooltipButton
-                        type="button"
-                        className="item-list__group-action"
-                        data-testid="group-undo"
-                        onClick={canUndo ? onUndo : undefined}
-                        disabled={!canUndo}
-                        tooltip={canUndo ? 'Undo' : 'Nothing to undo'}
-                        aria-label={canUndo ? 'Undo' : 'Nothing to undo'}
-                      >
-                        <Undo width={20} height={20} />
-                      </TooltipButton>
-                    ) : null}
-                    {onSweepFeed ? (
-                      (() => {
-                        const canSweep = sweepableFeeds?.has(header.feedId) ?? false;
-                        return (
-                          <TooltipButton
-                            type="button"
-                            className="item-list__group-action"
-                            data-testid="group-sweep"
-                            onClick={canSweep ? () => onSweepFeed(header.feedId) : undefined}
-                            disabled={!canSweep}
-                            tooltip={canSweep ? 'Mark visible done' : 'Nothing to dismiss'}
-                            aria-label={
-                              canSweep
-                                ? `Mark visible ${header.title} items done`
-                                : `Nothing to dismiss in ${header.title}`
-                            }
-                          >
-                            <Sweep width={20} height={20} />
-                          </TooltipButton>
-                        );
-                      })()
-                    ) : null}
-                  </div>
-                ) : null}
-              </li>
-            ) : null}
-            {collapsed ? null : (
-              <li
-                className={
-                  'item-list__row' +
-                  (sweepingIds?.has(fi.item.id) ? ' item-list__row--sweeping' : '')
-                }
-                data-item-id={fi.item.id}
-                ref={getRowRef?.(fi.item.id)}
-              >
-                <ItemRow
-                  feedItem={fi}
-                  enableSwipe={enableSwipe}
-                  onShare={() => share({ title: fi.item.title, url: fi.item.url })}
-                  rightAction={rightAction?.(fi)}
-                />
-              </li>
-            )}
-            {showFeedMore ? (
-              <li className="item-list__group-more">
-                <button
-                  type="button"
-                  className="item-list__group-more-btn"
-                  data-testid="group-more"
-                  data-feed-more={fi.item.feedId}
-                  onClick={() => onFeedMore?.(fi.item.feedId)}
-                  disabled={feedMoreLoading}
-                  aria-label={
-                    feedMoreLoading
-                      ? `Loading more ${fi.feed.title} items`
-                      : `More from ${fi.feed.title}`
-                  }
-                >
-                  {feedMoreLoading ? 'Loading…' : 'More'}
-                </button>
-              </li>
-            ) : null}
-          </Fragment>
-        );
-      })}
-      {phantomsBeforeRank(Number.POSITIVE_INFINITY).map((p) =>
-        renderPhantom(p.feedId, p.title),
-      )}
+      {out}
     </ul>
   );
 }
