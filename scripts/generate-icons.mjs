@@ -101,6 +101,11 @@ const SVG_FILES = [
 
 const PNG_TARGETS = [
   { name: 'favicon-32.png', size: 32, svg: FAVICON_SVG },
+  // Google OAuth consent-screen logo: required 120x120 square. Rasterized
+  // from the non-maskable rounded-square mark (the consent screen shows the
+  // image as-is, so the rounded tile reads correctly; the maskable full-bleed
+  // variant would look like an unclipped black square there).
+  { name: 'icon-120.png', size: 120, svg: FAVICON_SVG },
   { name: 'apple-touch-icon.png', size: 180, svg: FAVICON_SVG },
   { name: 'icon-192.png', size: 192, svg: FAVICON_SVG },
   { name: 'icon-512.png', size: 512, svg: FAVICON_SVG },
