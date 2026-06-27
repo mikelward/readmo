@@ -931,10 +931,13 @@ negligible and off every critical path. See the External services table in
      has subscriptions, so it gets the normal caught-up state, not the coach.
    - **`/folder/:name`** — a folder's merge. **`/feed/:feedId`** — one feed.
    - **Pinned prepended to the top** of every feed view, rendered once,
-     oldest-pinned first; **pinning a body row keeps its position** (Sweep
-     consolidates) — newshacker's exact *Story feeds* rule. (When grouping by
-     feed — below — pinned items lead **their own feed's section** rather than a
-     global top section.)
+     oldest-pinned first; **pinning a body row keeps its position** — the click
+     marks it pinned but doesn't yank it into the top block under the reader's
+     eye, so they don't lose their place. Consolidation re-groups in-body pins
+     into the top block: **Sweep**, a **pull-to-refresh**, or a fresh load. This
+     is newshacker's exact *Story feeds* rule. (When grouping by feed — below —
+     pinned items lead **their own feed's section** rather than a global top
+     section.)
    - **Sort & grouping** (per-device — see *Settings → Sort order* and *Group by
      feed*; applied server-side so they hold across pages, not a client re-sort
      of loaded pages):

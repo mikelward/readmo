@@ -147,10 +147,17 @@ export class MockDataSource implements DataSource {
       if (fi) rows.push({ fi, pinned: !!st.pinned, pinAt: st.pinnedAt ?? 0 });
     }
 
-    const byDate = (a: FeedItem, b: FeedItem) =>
-      sortAsc
+    const byDate = (a: FeedItem, b: FeedItem) => {
+      const d = sortAsc
         ? a.item.publishedAt - b.item.publishedAt
         : b.item.publishedAt - a.item.publishedAt;
+      if (d !== 0) return d;
+      // Break ties by id descending, mirroring feed_items' `ORDER BY … (i).id
+      // desc` (supabase migration 0021), so equal-`publishedAt` rows have a
+      // stable, server-matching order rather than falling back to seed/insert
+      // order.
+      return a.item.id < b.item.id ? 1 : a.item.id > b.item.id ? -1 : 0;
+    };
     const feedOrder = (feedId: FeedId) =>
       this.subs.get(feedId)?.sort ?? Number.POSITIVE_INFINITY;
 

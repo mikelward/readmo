@@ -125,6 +125,25 @@ describe('ItemStateStore', () => {
     expect(store.get('nope')).toEqual(DEFAULT_ITEM_STATE);
   });
 
+  it('subscribeMutations fires the changed-field diff on user mutations only', () => {
+    const store = new ItemStateStore(memoryPersistence());
+    const events: Array<[string, Record<string, boolean>]> = [];
+    store.subscribeMutations((id, changed) => events.push([id, changed]));
+
+    store.set('a', 'pinned', true, NOW);
+    expect(events).toEqual([['a', { pinned: true }]]);
+
+    // Unpinning emits pinned:false.
+    store.set('a', 'pinned', false, NOW);
+    expect(events[1]).toEqual(['a', { pinned: false }]);
+
+    // Hydration (cold/slow path, cross-device sync) reconciles server rows but
+    // must NOT look like a user mutation — otherwise a background server pin
+    // would be mistaken for one the reader just made.
+    store.hydrate([['b', state({ pinned: true, pinnedAt: NOW, version: 1 })]], new Map(), NOW);
+    expect(events).toHaveLength(2); // unchanged — no mutation event for hydrate
+  });
+
   it('confirmServerVersion normalizes a settled row to the server version, persisted and silent', () => {
     const p = memoryPersistence();
     const store = new ItemStateStore(p);
