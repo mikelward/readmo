@@ -69,6 +69,37 @@ describe('icons', () => {
     }
   });
 
+  it('renders the sort-order glyphs as stacked digits + a direction arrow', () => {
+    // SortNewestFirst reads 9→0 (top→bottom) with a down arrow; SortOldestFirst
+    // is its vertical mirror, 0→9 with an up arrow. Guards the digit order and
+    // arrow direction that make the toggle states legible.
+    for (const [name, topDigit, bottomDigit] of [
+      ['SortNewestFirst', '9', '0'],
+      ['SortOldestFirst', '0', '9'],
+    ] as const) {
+      const Icon = (icons as Record<string, IconComponent>)[name];
+      const { container, unmount } = render(<Icon />);
+      const svg = container.querySelector('svg')!;
+      expect(svg.getAttribute('viewBox'), name).toBe('0 0 24 24');
+      expect(svg.getAttribute('width'), name).toBe('24');
+      expect(svg.getAttribute('aria-hidden'), name).toBe('true');
+
+      const texts = Array.from(svg.querySelectorAll('text'));
+      expect(texts.length, name).toBe(2);
+      const sorted = texts.sort(
+        (a, b) =>
+          Number(a.getAttribute('y')) - Number(b.getAttribute('y')),
+      );
+      expect(sorted[0].textContent, name).toBe(topDigit);
+      expect(sorted[1].textContent, name).toBe(bottomDigit);
+
+      // The arrow is a stroked path drawn in currentColor.
+      const path = svg.querySelector('path')!;
+      expect(path.getAttribute('stroke'), name).toBe('currentColor');
+      unmount();
+    }
+  });
+
   it('forwards props (className, size override)', () => {
     const { container } = render(
       <icons.Search className="hdr-icon" width={20} height={20} />,
