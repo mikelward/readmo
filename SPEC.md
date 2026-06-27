@@ -1548,8 +1548,8 @@ keys differ; the strategies map one-to-one:
   skeletons. The Supabase client therefore wraps `global.fetch` in `supabaseFetch`,
   which caps **reads** at 8s (just past the SW's ~6s cache-fallback window): GET
   requests on `/rest/v1/` (what the SW mediates, since Workbox runtime caching is
-  GET-only) *plus* the `feed_items` read RPC (a POST, but the primary
-  home/folder/feed read, so it must be bounded too). A hung read aborts → the read
+  GET-only) *plus* the read RPCs (`feed_items` and `feed_unread_counts` — POSTs,
+  but the primary home/folder/feed reads, so they must be bounded too). A hung read aborts → the read
   rejects → React Query shows the offline/retry UI and resumes on reconnect, and
   the memoized hydration clears so the next read retries. The cap is scoped to
   reads only; deliberately left uncapped: **write RPCs/table writes** (POST
@@ -1817,8 +1817,28 @@ keys differ; the strategies map one-to-one:
   bounded, with capped exponential backoff + jitter (`src/lib/queryRetry.ts`);
   mutations don't auto-retry (the item-state outbox owns write durability). This
   is the in-build complement to the server-side `x-readmo-build` shed (SCALING.md
-  → *Shedding a runaway client*). A client-side request circuit breaker is a
-  separate, additive layer (its own PR).
+  → *Shedding a runaway client*).
+- **Runaway-client flood guard (circuit breaker).** The additive backstop behind
+  the retry discipline: a **client-side request circuit breaker** in
+  `supabaseFetch` (`src/lib/data/requestCircuitBreaker.ts`) sheds the
+  **network-authoritative reads** — the read RPCs (`feed_items`,
+  `feed_unread_counts`) and the NetworkOnly `item_state` hydration GET that
+  precedes every feed read — after a burst of consecutive failures, so a *failing*
+  loop fails fast instead of pinning the DB, then a single half-open probe recovers
+  it. (Any non-2xx from those reads counts as a failure: a stale-backend
+  PostgREST `404`/`400`/`422` is a real failed read, not a benign response.) It's
+  failure-based, not rate-based — a legitimate bulk burst (e.g. an offline warmup)
+  never trips it; volume shedding belongs at the edge. The scope is exactly the
+  reads the service worker **never serves from cache**: the read RPCs are POSTs
+  (its `NetworkFirst` cache is GET-only) and `item_state` is NetworkOnly, so the
+  half-open probe's result always reflects real backend health. **Every other GET
+  `/rest/v1/` read keeps the 8s read *timeout* but bypasses the breaker** — those
+  are `NetworkFirst`-cached, so a cache fallback could answer a probe with a stale
+  `200` the backend never saw and falsely close the circuit mid-outage (and a
+  failing cacheable-GET loop is already bounded by the retry discipline + the cache
+  fallback). **Writes** (outbox-owned), **auth** (`/auth/v1/`) and Edge Functions
+  bypass it too — writes mustn't surface a spurious local failure, and auth must
+  stay reachable to recover an expired token / sign out.
 
 ## Testing (inherited expectations)
 
