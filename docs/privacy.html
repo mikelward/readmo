@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy Policy — Readmo</title>
+    <meta name="robots" content="index, follow" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main>
+      <header class="site">
+        <a class="brand" href="https://readmo.app">Readmo</a>
+        <nav><a href="./privacy.html">Privacy</a> · <a href="./terms.html">Terms</a></nav>
+      </header>
+
+      <h1>Privacy Policy</h1>
+      <p class="effective">Last updated: June 27, 2026</p>
+
+      <p>
+        Readmo is a mobile-first reader for the RSS, Atom, and JSON feeds you
+        subscribe to. This policy explains what information Readmo collects, why,
+        and how it is handled. Readmo is operated by Mikel Ward
+        (<a href="https://mikelward.com">mikelward.com</a>).
+      </p>
+
+      <h2>Information we collect</h2>
+      <ul>
+        <li>
+          <strong>Account information.</strong> When you sign in, Readmo uses a
+          third-party identity provider (for example, Google) through Supabase
+          Auth. We receive a basic profile from that provider — typically your
+          email address and a user identifier. We do not receive your password.
+        </li>
+        <li>
+          <strong>Your reading data.</strong> The feeds you subscribe to, the
+          folders you create, and per-item state (read, opened, pinned,
+          favorited, done, hidden) are stored so they can sync across your
+          devices.
+        </li>
+        <li>
+          <strong>Feed content.</strong> Readmo fetches and stores the articles
+          published by the feeds you add — including private or tokenized feeds
+          (for example, personal newsletter or secret feed URLs) when you choose
+          to add them — so they can be shown to you and read offline. Secret feed
+          URLs are kept server-side and are not exposed to other users.
+        </li>
+        <li>
+          <strong>Technical data.</strong> Standard request data (such as IP
+          address and timestamps) is processed by our hosting providers to
+          deliver and secure the service.
+        </li>
+      </ul>
+
+      <h2>How we use information</h2>
+      <ul>
+        <li>To authenticate you and keep your account secure.</li>
+        <li>To provide the reader and sync your subscriptions and reading state across your devices.</li>
+        <li>To fetch, store, and display the feeds you subscribe to.</li>
+        <li>To notify the operator when a new account is created, so the service can be maintained.</li>
+      </ul>
+      <p>
+        Readmo does not sell your personal information, and does not use your
+        data for advertising.
+      </p>
+
+      <h2>Where your data is stored</h2>
+      <p>
+        Readmo relies on third-party infrastructure to operate:
+      </p>
+      <ul>
+        <li><strong>Supabase</strong> — database, authentication, and server-side feed polling.</li>
+        <li><strong>Vercel</strong> — hosting and delivery of the web app.</li>
+        <li><strong>Your identity provider</strong> (e.g. Google) — for sign-in. Their handling of your data is governed by their own privacy policy.</li>
+        <li><strong>Jina Reader</strong> (optional) — when a site blocks Readmo's normal request, a feed or page URL you add may be retrieved through the Jina Reader service as a fallback. This is used only when configured, and only for that fetch fallback.</li>
+      </ul>
+      <p>
+        Your reading data is isolated per user. Other signed-in users cannot
+        read your subscriptions, folders, or item state.
+      </p>
+
+      <h2>Feed publishers</h2>
+      <p>
+        When Readmo fetches a feed, the request goes to that publisher's
+        servers. Content shown in Readmo belongs to its original publishers, and
+        Readmo always links back to the source. Publishers may log Readmo's
+        requests as they would any other reader.
+      </p>
+
+      <h2>Cookies and local storage</h2>
+      <p>
+        Readmo uses cookies and on-device storage only to keep you signed in and
+        to cache content for offline reading and performance. It does not use
+        third-party advertising or tracking cookies. On a shared device, cached
+        content is cleared when you sign out or switch accounts.
+      </p>
+
+      <h2>Data retention and deletion</h2>
+      <p>
+        Your account and reading data are kept while your account is active. You
+        can request deletion of your account and associated data at any time by
+        contacting us at the address below; we will remove your personal data
+        within a reasonable period.
+      </p>
+
+      <h2>Children</h2>
+      <p>
+        Readmo is not directed to children under 13, and we do not knowingly
+        collect personal information from them.
+      </p>
+
+      <h2>Changes to this policy</h2>
+      <p>
+        We may update this policy from time to time. Material changes will be
+        reflected by updating the date at the top of this page.
+      </p>
+
+      <h2>Contact</h2>
+      <p>
+        Questions about this policy or your data? Email
+        <a href="mailto:mikel@mikelward.com">mikel@mikelward.com</a>.
+      </p>
+
+      <footer>
+        Readmo · <a href="./terms.html">Terms of Service</a> ·
+        <a href="https://readmo.app">readmo.app</a>
+      </footer>
+    </main>
+  </body>
+</html>
