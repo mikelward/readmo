@@ -1225,13 +1225,19 @@ page's discipline is unchanged.
 
 - **Header:** source feed (favicon + name, links to `/feed/:feedId`), title
   (links to the original, `target="_blank"`, marks Opened), author, date.
-- **Loading state:** while the item is still being fetched (or the offline
-  cache is restoring) the view shows a centered **"Loading…"** with the tip
+- **Loading state:** the blank centered **"Loading…"** (with the tip
   **"Tip: 📌 pin an article to make it load faster"** — using the same
   inline `PushPinOutline` glyph as the row pin button (decorative,
-  `aria-hidden`) — on a separate
-  line below it — nudging readers toward pinning, which serves the body from
-  cache on later opens.
+  `aria-hidden`) — on a separate line below it) appears **only when there's
+  nothing cached to paint yet**: a cold first open, or while the offline cache
+  is still restoring. In the usual case — you tapped the item from a list you'd
+  already loaded — its **feed body paints immediately** from the list cache
+  (`lib/offlineItem.ts:findCachedFeedItem`) while the per-item `getItem`
+  refetches in the background, so there's no blank gap; a **pinned** article
+  whose extracted body is cached opens straight into the **reading view** (see
+  *Full-text reading mode*). The blank "Loading…" is the cold-cache exception,
+  not the norm — and the tip still nudges readers toward pinning, which keeps
+  both bodies cached for an instant open on later visits.
 - **Body:** the sanitized `content_html`; images lazy-load (proxied — see
   *Privacy*); relative URLs already absolutized. Enclosures render
   appropriately (`<audio>` for podcasts, image/figure, else a download link).
@@ -1663,13 +1669,22 @@ keys differ; the strategies map one-to-one:
   adjudicate the status but don't count, so a single instant can't trip "Offline".
   **Cost:** negligible — one in-process GoTrue GET (no Postgres) every 30s, only
   while liveness is in doubt.
-- **Offline reader fallback:** an **unpinned** article whose detail read can't
-  reach the network still opens to its **RSS body**, recovered from a list page
-  already on the device — list payloads carry `content_html` (only
-  `full_content_html` is stripped; see migration 0011), so the feed's own body
-  is shown via `lib/offlineItem.ts:findCachedFeedItem`. The full-article fetch is
-  skipped offline. Only an article that was **never loaded into any list** falls
-  through to the miss state, whose copy is a function of BOTH the connectivity
+- **Reader body from the list cache (instant open + offline fallback):** the
+  reader paints this item's body from a list page already on the device the
+  moment it opens — list payloads carry `content_html` (only `full_content_html`
+  is stripped; see migration 0011), recovered via
+  `lib/offlineItem.ts:findCachedFeedItem`. One path serves two cases: the
+  **normal online open**, where the feed body shows immediately while the
+  per-item `getItem` refetches in the background (no "Loading…" gap), and an
+  **unpinned** article whose detail read can't reach the network (offline),
+  which stays readable on its **RSS body**. A **pinned** article additionally
+  layers its cached extracted body on top (the `['fulltext', id]` query, warmed
+  at pin time), opening straight into the reading view. A settled `null` from
+  `getItem` — the item isn't visible (e.g. after unsubscribing, RLS hides it) —
+  stays authoritative and overrides the cached body, even offline. The
+  full-article fetch is skipped offline. Only an article that was **never loaded
+  into any list** falls through to the miss state, whose copy is a function of
+  BOTH the connectivity
   status AND the actual read error (not status alone): *offline* → "This article
   isn't saved offline. Pin it while online to keep a copy." (no retry button);
   *backend-unreachable* → "Readmo's server isn't responding right now — it may be
