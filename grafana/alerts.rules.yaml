@@ -1,0 +1,173 @@
+# Readmo — database performance alert rules (Supabase Metrics API → Grafana Cloud).
+#
+# Source of truth for the alert PromQL. These are layer 1 (out-of-band detection)
+# from OBSERVABILITY.md: Grafana scrapes the Metrics API and pages on saturation /
+# DB-down; when one fires, hit the `db-perf` endpoint for the offending query.
+#
+# Apply (Grafana Cloud / Mimir):
+#   mimirtool rules load grafana/alerts.rules.yaml \
+#     --address "$GRAFANA_CLOUD_PROM_URL" --id "$GRAFANA_CLOUD_TENANT" --key "$GRAFANA_CLOUD_TOKEN"
+# Or recreate these expressions as Grafana-managed alert rules in the UI.
+# See grafana/README.md.
+#
+# ⚠️ VERIFY BEFORE TRUSTING. The Metrics API is beta; metric names, label values
+# (e.g. `service_type`, `mountpoint`), and histogram bucket UNITS can differ on
+# your project. README.md has a one-line curl to dump your live names. Metric
+# names here are taken from supabase/supabase-grafana docs/metrics.md.
+#
+# The `job` label assumes the scrape job in README.md (job="supabase-metrics");
+# adjust the matchers if you name it differently.
+
+groups:
+  - name: readmo-db-perf
+    rules:
+      # --- DB unreachable (the one an in-DB monitor can't send) -------------
+      - alert: ReadmoDBUnreachable
+        expr: up{job="supabase-metrics"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: readmo-db
+        annotations:
+          summary: "Supabase metrics scrape failing — DB may be down/unreachable"
+          description: >-
+            The Metrics API scrape for {{ $labels.instance }} has failed for >2m.
+            If this isn't a scrape/credential issue, the database is unreachable.
+          runbook: >-
+            Try the db-perf endpoint (OBSERVABILITY.md §Layer 2). If it also
+            errors/times out, treat as DB-down and check the Supabase dashboard.
+
+      # --- CPU pinned: something is starving the host CPU ------------------
+      - alert: ReadmoDBCpuHigh
+        expr: >-
+          100 * (1 - avg by (supabase_project_ref) (
+            rate(node_cpu_seconds_total{mode="idle",service_type="db"}[5m])
+          )) > 85
+        for: 10m
+        labels:
+          severity: warning
+          service: readmo-db
+        annotations:
+          summary: "DB CPU >85% for 10m"
+          description: >-
+            Database host CPU is ~{{ $value | printf "%.0f" }}% busy (5m avg).
+            A query or query group is likely starving CPU.
+          runbook: >-
+            Hit db-perf to see which queryid dominates; index/rewrite it or bump
+            the compute tier (SCALING.md → Database compute tier).
+
+      # --- Memory pressure -------------------------------------------------
+      - alert: ReadmoDBMemoryHigh
+        expr: >-
+          (1 - node_memory_MemAvailable_bytes{service_type="db"}
+             / node_memory_MemTotal_bytes{service_type="db"}) * 100 > 90
+        for: 10m
+        labels:
+          severity: warning
+          service: readmo-db
+        annotations:
+          summary: "DB memory >90% used for 10m"
+          description: "Available memory on the database host is under 10%."
+
+      # --- Disk pressure ---------------------------------------------------
+      - alert: ReadmoDBDiskHigh
+        expr: >-
+          (1 - node_filesystem_avail_bytes{service_type="db",mountpoint="/"}
+             / node_filesystem_size_bytes{service_type="db",mountpoint="/"}) * 100 > 85
+        for: 15m
+        labels:
+          severity: warning
+          service: readmo-db
+        annotations:
+          summary: "DB disk >85% full"
+          description: >-
+            Root filesystem on the database host is over 85% full. Verify the
+            `mountpoint` label matches your project (README.md).
+
+      # --- Connection-pool starvation: clients WAITING for a connection ----
+      # Rising pool-checkout time = the pooler can't hand out connections fast
+      # enough = queries are starving each other. This is the clearest "starving
+      # right now" signal the Metrics API exposes. Threshold unit depends on the
+      # histogram's `le` units — VERIFY and tune (README.md).
+      - alert: ReadmoDBConnectionPoolStarved
+        expr: >-
+          histogram_quantile(0.95,
+            sum by (le) (rate(supavisor_pool_checkout_duration_local_bucket[5m]))
+          ) > 1000
+        for: 5m
+        labels:
+          severity: critical
+          service: readmo-db
+        annotations:
+          summary: "Connection-pool checkout p95 high — DB starving connections"
+          description: >-
+            p95 time to check a connection out of the pooler is elevated for 5m:
+            clients are queuing for connections.
+          runbook: "Hit db-perf for the long-running pids holding connections."
+
+      # --- Slow queries: queries running longer than they should -----------
+      # p95 client query duration through the pooler. CAVEAT: covers Supavisor
+      # (pooled) traffic; PostgREST/direct traffic is best seen via db-perf.
+      - alert: ReadmoDBSlowQueries
+        expr: >-
+          histogram_quantile(0.95,
+            sum by (le) (rate(supavisor_client_query_duration_bucket[5m]))
+          ) > 1000
+        for: 5m
+        labels:
+          severity: warning
+          service: readmo-db
+        annotations:
+          summary: "p95 query duration high — queries slower than they should be"
+          description: >-
+            p95 query duration through the pooler is elevated for 5m. Covers
+            pooled traffic only; use db-perf for the full per-query picture.
+          runbook: "Hit db-perf for the offending pid (active) / queryid (group)."
+
+      # --- Query storm: way more requests/queries than expected ------------
+      # Total API request rate spiking vs. its own recent baseline. Fires only
+      # when BOTH absolutely high (>50/s) AND >3x the last hour, so it stays
+      # quiet at low/normal volume. Absolute floor needs tuning to your traffic.
+      # http_status_codes_total counts ALL API responses (incl. 4xx), so a flood
+      # of rate-limited 429s still trips it.
+      - alert: ReadmoApiRequestStorm
+        expr: >-
+          sum(rate(http_status_codes_total[5m])) > 50
+          and
+          sum(rate(http_status_codes_total[5m]))
+            > 3 * sum(rate(http_status_codes_total[1h]))
+        for: 5m
+        labels:
+          severity: warning
+          service: readmo-db
+        annotations:
+          summary: "API request storm — request rate >3x the last hour (and >50/s)"
+          description: >-
+            Inbound API request rate is well above its recent baseline. Could be
+            a refetch loop / runaway client (SCALING.md → Shedding an abusive or
+            runaway client) or a genuine traffic spike.
+          runbook: >-
+            Per-CLIENT attribution (which IP/token) is NOT in this metric — check
+            the Cloudflare gateway analytics / Supabase API logs. Per-FUNCTION
+            attribution (which queryid is being hammered) comes from db-perf.
+
+      # --- Pooler query storm, broken out by db user -----------------------
+      # Same shape but per Supavisor `user`, so a single pooled DB user flooding
+      # queries surfaces on its own. CAVEAT: pooled traffic only, and readmo's
+      # PostgREST traffic shares one role — this catches a rogue pooled user, not
+      # an individual end-client. Verify whether `host` is a usable per-client
+      # label on your project (README §0) and add `by (user, host)` if so.
+      - alert: ReadmoDBQueryStormByUser
+        expr: >-
+          sum by (user) (rate(supavisor_client_queries_count[5m])) > 50
+          and
+          sum by (user) (rate(supavisor_client_queries_count[5m]))
+            > 3 * sum by (user) (rate(supavisor_client_queries_count[1h]))
+        for: 5m
+        labels:
+          severity: warning
+          service: readmo-db
+        annotations:
+          summary: "Query storm from pooled user {{ $labels.user }} (>3x last hour, >50/s)"
+          description: "A single pooled DB user is issuing far more queries than usual."
+          runbook: "Hit db-perf; pg_stat_statements `calls` shows which queryid is hot."

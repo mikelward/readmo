@@ -1,0 +1,51 @@
+// Readmo — Grafana Alloy config to scrape the Supabase Metrics API and
+// remote_write to Grafana Cloud. Use this if you run your own collector; if you
+// use Grafana Cloud's hosted "Metrics endpoint" scrape job instead, you don't
+// need this file (configure it in the UI — see grafana/README.md).
+//
+// All secrets come from env: SUPABASE_SERVICE_ROLE_KEY, SUPABASE_PROJECT_REF,
+// GRAFANA_CLOUD_PROM_PUSH_URL, GRAFANA_CLOUD_PROM_USER, GRAFANA_CLOUD_PROM_TOKEN.
+// NOTE: GRAFANA_CLOUD_PROM_PUSH_URL is the remote-write *push* endpoint
+// (ends in /api/prom/push) — distinct from the Mimir API base URL that
+// `mimirtool --address` wants for loading rules (see README.md).
+// Run: alloy run grafana/agent.alloy
+
+prometheus.scrape "supabase_metrics" {
+  // The component path also becomes the `job` label. The alert rules match
+  // job="supabase-metrics" — keep them in sync (here the job is
+  // "supabase_metrics"; relabel below normalizes it to "supabase-metrics").
+  targets = [{
+    __address__      = sys.env("SUPABASE_PROJECT_REF") + ".supabase.co:443",
+    __scheme__       = "https",
+    __metrics_path__ = "/customer/v1/privileged/metrics",
+  }]
+
+  scrape_interval = "60s"  // the Metrics API refreshes ~1x/min
+
+  basic_auth {
+    username = "service_role"
+    password = sys.env("SUPABASE_SERVICE_ROLE_KEY")
+  }
+
+  // Normalize the job label so it matches the alert rules' matchers.
+  honor_labels = false
+  forward_to   = [prometheus.relabel.supabase_job.receiver]
+}
+
+prometheus.relabel "supabase_job" {
+  rule {
+    target_label = "job"
+    replacement  = "supabase-metrics"
+  }
+  forward_to = [prometheus.remote_write.grafanacloud.receiver]
+}
+
+prometheus.remote_write "grafanacloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_PROM_PUSH_URL")  // the /api/prom/push endpoint
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_PROM_USER")
+      password = sys.env("GRAFANA_CLOUD_PROM_TOKEN")
+    }
+  }
+}

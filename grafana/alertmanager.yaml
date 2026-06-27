@@ -1,0 +1,51 @@
+# Readmo — Alertmanager routing for the DB-performance alerts (email, v1).
+#
+# This is the "turn a continuing problem into ONE incident and stop emailing me
+# every minute" layer. Grouping + repeat_interval do the suppression; a firing
+# alert pages once, stays quiet while it persists, re-notifies only every few
+# hours, and sends a single resolved note when it clears.
+#
+# Two ways to use it:
+#  A) Grafana-managed alerting (easiest for email — Grafana Cloud sends the mail,
+#     no SMTP to run): create an Email contact point in the UI, then a
+#     Notification policy whose group-by / wait / interval / repeat fields mirror
+#     the values below. This file is then just the documented source of truth.
+#  B) Mimir Alertmanager: load it directly —
+#       mimirtool alertmanager load grafana/alertmanager.yaml \
+#         --address "$GRAFANA_CLOUD_AM_URL" --id "$GRAFANA_CLOUD_TENANT" --key "$GRAFANA_CLOUD_TOKEN"
+#     (Mimir AM emails via SMTP, so fill the smarthost/auth below.)
+#
+# Secrets are placeholders — never commit a real SMTP password. Use your secret
+# store / env substitution.
+
+route:
+  receiver: readmo-email
+  # One incident per (alert, db): all firings of the same alert collapse into a
+  # single notification thread.
+  group_by: ['alertname', 'service']
+  group_wait: 30s        # brief debounce so a burst opens one incident, not many
+  group_interval: 5m     # how often a still-grouping incident may send an update
+  repeat_interval: 6h    # a STILL-firing incident re-notifies only every 6h
+  routes:
+    # Page critical faster on repeat, but still deduped into one incident.
+    - matchers:
+        - severity = "critical"
+      receiver: readmo-email
+      repeat_interval: 1h
+
+receivers:
+  - name: readmo-email
+    email_configs:
+      - to: 'mikel@mikelward.com'          # matches notify-signup's default operator inbox
+        from: 'alerts@readmo.app'
+        smarthost: 'smtp.example.com:587'  # Mimir-AM path only; fill in / use Grafana-managed email
+        auth_username: 'REPLACE_ME'
+        auth_password: 'REPLACE_ME'         # placeholder — inject from a secret, do not commit
+        send_resolved: true                 # send the "all clear" when it recovers
+
+# Optional: an inhibition so a DB-down page mutes the noisier saturation alerts
+# it would obviously cause (one root-cause notification instead of five).
+inhibit_rules:
+  - source_matchers: [ 'alertname = "ReadmoDBUnreachable"' ]
+    target_matchers: [ 'service = "readmo-db"' ]
+    equal: ['service']

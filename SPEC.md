@@ -653,10 +653,17 @@ purpose — full rationale + setup in [`OBSERVABILITY.md`](./OBSERVABILITY.md):
 - **Detection + paging is out-of-band.** Grafana Cloud (or any Prometheus
   collector) scrapes Supabase's **Metrics API**
   (`/customer/v1/privileged/metrics`, basic-auth as `service_role`) once a
-  minute and alerts on saturation (connections, CPU, in-flight query age) and on
-  DB-unreachable (a failed scrape). Nothing runs inside Postgres, so the monitor
-  doesn't share fate with the database and adds zero load; dedup / `for:`
-  hysteresis / re-notify / silences are handled by the alert manager, not us.
+  minute and alerts on host saturation (`node_*` CPU / memory / disk),
+  connection-pool starvation and slow/storming query rate
+  (`supavisor_*` pooled-traffic metrics, `http_status_codes_total`), and
+  DB-unreachable (a failed scrape). The Metrics API exposes **no `pg_stat_*`
+  per-query series**, and the `supavisor_*` query/connection metrics cover
+  **pooled traffic only** (not PostgREST/direct) — so these alerts say *the DB
+  is starving / flooded*, and the per-query/per-`queryid` truth across all
+  backends comes from the attribution layer below. Nothing runs inside Postgres,
+  so the monitor doesn't share fate with the database and adds zero load; dedup /
+  `for:` hysteresis / re-notify / silences are handled by the alert manager, not
+  us. Rules ship as code in [`grafana/`](./grafana/).
 - **Attribution is read-only and on-demand.** The Metrics API is aggregate
   ("the DB is starving"), not per-query. To find *which* query, the `db-perf`
   Edge Function (service-role only, `--no-verify-jwt`) calls the read-only

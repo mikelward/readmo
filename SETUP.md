@@ -467,9 +467,11 @@ Point a collector at it; nothing runs in your database.
 
 Managed path (recommended): in **Grafana Cloud → Connections → add a
 Prometheus/Hosted endpoint scrape job** for that URL with the basic-auth
-credentials, then create the alert rules in
-[`OBSERVABILITY.md` → Alert rules](./OBSERVABILITY.md). Self-hosted Prometheus +
-Grafana works too (`supabase/supabase-grafana`).
+credentials (job label `supabase-metrics`), then load the alert rules + email
+routing. Both ship as code in [`grafana/`](./grafana/) — `alerts.rules.yaml`,
+`alertmanager.yaml`, `agent.alloy`, and a step-by-step `README.md` (incl. a
+`curl` to verify the beta metric names against your project). Self-hosted
+Prometheus + Grafana works too (`supabase/supabase-grafana`).
 
 > The Metrics API is **beta** and **hosted-Supabase only**. Self-hosted
 > backends use `postgres_exporter` instead — see *Self-hosted fallback* in
