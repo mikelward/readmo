@@ -7,12 +7,33 @@ import {
   mapItem,
   mapItemState,
   mapSubscription,
+  toRequestError,
   tsToMs,
   type FeedPublicRow,
   type ItemRow,
   type ItemStateRow,
   type SubscriptionRow,
 } from './supabaseMappers';
+
+describe('toRequestError', () => {
+  it('preserves the HTTP status and PostgREST code on the thrown error', () => {
+    const err = toRequestError({
+      error: { message: 'JWT expired', code: 'PGRST301' },
+      status: 401,
+    });
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe('JWT expired');
+    expect(err.status).toBe(401);
+    expect(err.code).toBe('PGRST301');
+  });
+
+  it('omits status/code when absent (a network-shaped error)', () => {
+    const err = toRequestError({ error: new Error('Failed to fetch') });
+    expect(err.message).toBe('Failed to fetch');
+    expect(err.status).toBeUndefined();
+    expect(err.code).toBeUndefined();
+  });
+});
 
 describe('isPermanentWriteError', () => {
   it('treats version conflict and lost visibility as permanent', () => {

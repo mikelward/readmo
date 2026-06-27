@@ -1795,6 +1795,14 @@ keys differ; the strategies map one-to-one:
 - Parked feed: feed-health badge + "retry now", never a silent stall.
 - Missing/blank content: "No content — open the original".
 - Offline write failures roll back + toast.
+- **Runaway-client flood guard (retry discipline).** Retries are disciplined so
+  a failing request can't become a flood: the React Query policy never retries a
+  4xx/5xx/timeout/abort/server-coded error — only statusless network blips,
+  bounded, with capped exponential backoff + jitter (`src/lib/queryRetry.ts`);
+  mutations don't auto-retry (the item-state outbox owns write durability). This
+  is the in-build complement to the server-side `x-readmo-build` shed (SCALING.md
+  → *Shedding a runaway client*). A client-side request circuit breaker is a
+  separate, additive layer (its own PR).
 
 ## Testing (inherited expectations)
 

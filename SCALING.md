@@ -97,8 +97,18 @@ wanted:
 |---|---|
 | staleTime reduced or removed | Restore `staleTime: 5 * 60 * 1000` in `main.tsx` |
 | New `useQuery` without staleTime | Ensure all queries inherit or override with a reasonable staleTime |
+| Refetch/retry loop in the live build (e.g. an expired-token request retried with no backoff) | **Guarded in-code:** the retry policy (`src/lib/queryRetry.ts`) never retries a 4xx/5xx/timeout/abort/server-coded error and uses capped exponential backoff, so a failing request can't amplify into a flood. (A client-side request circuit breaker is an additive layer in a separate PR.) If a loop still gets through, arm `MIN_CLIENT_BUILD` and rate-limit at the gateway (below). |
 | Supabase Realtime subscriptions | Each subscription keeps a WebSocket open but also makes REST calls; audit with the dashboard |
 | Poller burst on cold start | Stagger `next_fetch_at` across feeds so they don't all come due at once after a restart |
+
+> **Diagnosing live (no monitoring shipped):** in the SQL editor,
+> `select query from pg_stat_activity where query like 'select set_config%'` and
+> a two-sample delta of `pg_stat_statements.calls` for the `set_config` row give
+> the request rate; if only `set_config`/`COMMIT` climb (no data RPC), it's a
+> loop of failing requests — break it by reloading/re-authing the client(s),
+> then rely on the in-code guards above. The DB-perf alerting (`grafana/`) pages
+> on the request-rate spike (`http_status_codes_total`) so you hear about it in
+> minutes.
 
 ---
 

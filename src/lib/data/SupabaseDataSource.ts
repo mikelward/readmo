@@ -39,6 +39,7 @@ import {
   mapItemState,
   mapSubscription,
   isPermanentWriteError,
+  toRequestError,
 } from './supabaseMappers';
 
 /** The display-safe columns of `feeds_public` (and of `feeds` for clients —
@@ -322,17 +323,12 @@ export class SupabaseDataSource implements DataSource {
 
   // --- helpers --------------------------------------------------------------
 
-  private unwrap<T>(res: { data: T | null; error: unknown }): T {
+  private unwrap<T>(res: { data: T | null; error: unknown; status?: number }): T {
     if (res.error) {
-      const msg =
-        res.error instanceof Error
-          ? res.error.message
-          : typeof res.error === 'object' &&
-              res.error &&
-              'message' in res.error
-            ? String((res.error as { message: unknown }).message)
-            : String(res.error);
-      throw new Error(msg);
+      // Preserve the HTTP status + PostgREST code on the thrown error so the
+      // retry policy can stop a 4xx/5xx (e.g. an expired-token 401) instead of
+      // treating it as a transient, retriable network blip. See toRequestError.
+      throw toRequestError(res);
     }
     // Preserve null: maybeSingle() returns { data: null } for a missing/
     // unauthorized row, and getItem/getFeed rely on that null to short-circuit.

@@ -39,6 +39,32 @@ export function isPermanentWriteError(error: unknown): boolean {
   return typeof code === 'string' && PERMANENT_WRITE_CODES.has(code);
 }
 
+/** An Error carrying the HTTP `status` + PostgREST `code` of a failed request. */
+export type RequestError = Error & { status?: number; code?: string };
+
+/**
+ * Build a thrown error from a PostgREST/Supabase `{ error, status }` response,
+ * PRESERVING the HTTP status and SQLSTATE/PGRST code. The retry policy
+ * (src/lib/queryRetry.ts) needs them to tell a 4xx/5xx server error (don't
+ * retry) from a transient network blip (retry) — a flat `Error(message)` looks
+ * statusless and would be retried, re-introducing the retry amplification a
+ * runaway client causes.
+ */
+export function toRequestError(res: { error: unknown; status?: number }): RequestError {
+  const e = res.error;
+  const msg =
+    e instanceof Error
+      ? e.message
+      : typeof e === 'object' && e && 'message' in e
+        ? String((e as { message: unknown }).message)
+        : String(e);
+  const err = new Error(msg) as RequestError;
+  if (typeof res.status === 'number') err.status = res.status;
+  const code = (e as { code?: unknown } | null)?.code;
+  if (typeof code === 'string') err.code = code;
+  return err;
+}
+
 /** ISO timestamptz (or null) → epoch ms (or null). */
 export function tsToMs(ts: string | null | undefined): number | null {
   if (!ts) return null;
