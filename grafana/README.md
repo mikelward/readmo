@@ -14,20 +14,26 @@ endpoint (layer 2) for the offending query.
 
 ## 0. ⚠️ Verify the metric names first (Metrics API is beta)
 
-Metric names, label values (`service_type`, `mountpoint`), and histogram bucket
-**units** can differ per project and change under beta. Dump your live names and
-sanity-check the rules before trusting them:
+Metric names, label values (`service_type`, `mountpoint`), and units can differ
+per project and change under beta. Dump your live names and sanity-check the
+rules before trusting them — confirm each metric the rules use actually exists:
 
 ```sh
 curl -s -u "service_role:$SUPABASE_SERVICE_ROLE_KEY" \
   "https://$SUPABASE_PROJECT_REF.supabase.co/customer/v1/privileged/metrics" \
-  | grep -E '^(node_cpu_seconds_total|node_memory_MemAvailable_bytes|node_filesystem_avail_bytes|supavisor_pool_checkout_duration_local_bucket|supavisor_client_query_duration_bucket)' \
-  | head
+  | grep -E '^(node_cpu_seconds_total|node_memory_MemAvailable_bytes|node_filesystem_avail_bytes|pgrst_db_pool_timeouts_total|pg_stat_statements_total_queries|pg_stat_statements_total_time_seconds|http_status_codes_total)' \
+  | sort -u
 ```
 
-If a name/label differs, fix it in `alerts.rules.yaml`. For the two histogram
-alerts, look at the `le=` bucket values to learn the unit (ms vs s) and set the
-thresholds accordingly — they're placeholders (`> 1000`).
+If a metric is **missing entirely** (empty result for a line), the project
+doesn't emit that family — find the equivalent in the full catalog
+(`… | grep -vE '^#' | sed -E 's/[ {].*//' | sort -u`) and fix the rule, or drop
+it. Query rate/time alerts use `pg_stat_statements_*` so they cover **all
+backends** (PostgREST keeps its own pool straight to Postgres and bypasses the
+pooler — a `pgbouncer_stats_*` signal would miss the main workload); the
+connection-pool rule uses **PostgREST** pool metrics (`pgrst_*`). A project
+fronted by **Supavisor** names its pooler series `supavisor_*` instead, and
+`disk` assumes the data volume is `mountpoint="/data"` — verify both here.
 
 ## 1. Scrape the Metrics API
 

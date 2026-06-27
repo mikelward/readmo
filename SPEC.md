@@ -654,12 +654,12 @@ purpose — full rationale + setup in [`OBSERVABILITY.md`](./OBSERVABILITY.md):
   collector) scrapes Supabase's **Metrics API**
   (`/customer/v1/privileged/metrics`, basic-auth as `service_role`) once a
   minute and alerts on host saturation (`node_*` CPU / memory / disk),
-  connection-pool starvation and slow/storming query rate
-  (`supavisor_*` pooled-traffic metrics, `http_status_codes_total`), and
-  DB-unreachable (a failed scrape). The Metrics API exposes **no `pg_stat_*`
-  per-query series**, and the `supavisor_*` query/connection metrics cover
-  **pooled traffic only** (not PostgREST/direct) — so these alerts say *the DB
-  is starving / flooded*, and the per-query/per-`queryid` truth across all
+  connection-pool starvation (PostgREST pool timeouts) and slow/storming query
+  rate (`pg_stat_statements_*`, covering all backends incl. PostgREST, plus
+  `http_status_codes_total` for the gateway view), and DB-unreachable (a failed
+  scrape). The Metrics API exposes **no per-`queryid` series** (only aggregate
+  `pg_stat_statements_total_*`) and no query-duration histogram — so these
+  alerts say *the DB is starving / flooded*, and the per-query/per-`queryid` truth across all
   backends comes from the attribution layer below. Nothing runs inside Postgres,
   so the monitor doesn't share fate with the database and adds zero load; dedup /
   `for:` hysteresis / re-notify / silences are handled by the alert manager, not
