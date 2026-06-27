@@ -1,0 +1,62 @@
+# Auto-deploys the Supabase backend (Postgres migrations + Edge Functions) on
+# every merge to main that touches supabase/**. Mirrors `make deploy`: migrate
+# first, then deploy every function with the import map (poll/img/notify-signup
+# with --no-verify-jwt, per SETUP.md §6 and the Makefile).
+#
+# Requires three repo secrets (Settings → Secrets and variables → Actions):
+#   SUPABASE_ACCESS_TOKEN  — a Supabase personal access token with deploy rights
+#   SUPABASE_PROJECT_ID    — the project ref (the <ref> in supabase link)
+#   SUPABASE_DB_PASSWORD   — the database password, for `supabase db push`
+# Until all three are set, the job will fail fast at the link step (no partial
+# deploy) — it is inert, not dangerous, on a repo without the secrets.
+#
+# Cost/reliability (guardrail #5): negligible — ~1–2 min of GitHub Actions time
+# per backend change (within the free tier), and Supabase deploys are free. The
+# real trade-off is that migrations now apply to production automatically; keep
+# backend changes additive (guardrail #11) since deploy ordering vs. the Vercel
+# frontend is no longer hand-sequenced.
+
+name: Deploy backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+      - 'supabase/functions/**'
+
+# Never let two backend deploys run at once; queue them so migrations apply in
+# merge order. Don't cancel an in-flight deploy mid-migration.
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      IMPORT_MAP: supabase/functions/import_map.json
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link project
+        run: supabase link --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}"
+
+      - name: Apply migrations
+        run: supabase db push
+
+      - name: Deploy Edge Functions
+        run: |
+          supabase functions deploy discover     --import-map "$IMPORT_MAP"
+          supabase functions deploy refresh       --import-map "$IMPORT_MAP"
+          supabase functions deploy fulltext      --import-map "$IMPORT_MAP"
+          supabase functions deploy poll          --import-map "$IMPORT_MAP" --no-verify-jwt
+          supabase functions deploy img           --import-map "$IMPORT_MAP" --no-verify-jwt
+          supabase functions deploy notify-signup --import-map "$IMPORT_MAP" --no-verify-jwt

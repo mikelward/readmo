@@ -203,6 +203,29 @@ supabase functions deploy notify-signup --import-map supabase/functions/import_m
 > `supabase/functions/deno.json` and reference it via `--config`; the
 > entrypoints import the bare specifiers either way.
 
+### 6a. Automatic deploys on merge (CI)
+
+The `make deploy` commands above are for local / out-of-band deploys. In CI, the
+backend **auto-deploys on every merge to `main` that touches `supabase/**`** via
+`.github/workflows/deploy-backend.yml` — it runs `supabase db push` then deploys
+every function with the import map (the same sequence as `make deploy`).
+
+For it to work, add three repo secrets under **Settings → Secrets and variables
+→ Actions**:
+
+| Secret | Value |
+|---|---|
+| `SUPABASE_ACCESS_TOKEN` | A Supabase personal access token (Account → Access Tokens) with deploy rights. |
+| `SUPABASE_PROJECT_ID` | The project ref — the `<ref>` you pass to `supabase link --project-ref`. |
+| `SUPABASE_DB_PASSWORD` | The database password, used by `supabase db push`. |
+
+Until all three are set the workflow fails fast at the link step, so it's inert
+(never a partial deploy) on a repo without the secrets. **Migrations apply to
+production automatically** on merge — the one irreversible step, so review
+migration files as carefully as a hand-run `make migrate`. If a deploy fails,
+the backend stays on the previous version; re-run the Action or fall back to a
+local `make deploy`.
+
 The functions:
 
 | Function | Route | Role |
