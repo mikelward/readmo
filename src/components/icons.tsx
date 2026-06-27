@@ -207,6 +207,111 @@ export function UnfoldMore(props: IconProps) {
   );
 }
 
+// ---- Group by feed toggle: flat list vs. tree -----------------------------
+
+// The two faces of the top toolbar's group-by-feed toggle (SPEC.md *List
+// toolbar*). Custom 24×24 glyphs (not Material paths) so the list↔tree contrast
+// is unmistakable: `ListFlat` is the merged river (equal full-width rows);
+// `ListTree` is the grouped view (a feed header with a spine and indented
+// items). The toolbar renders whichever matches the current state.
+
+// Flat river: a bulleted list (square bullet + line per row), no frame. The
+// leading bullets keep it distinct from the hamburger `Menu` glyph (three plain
+// full-width bars), which it would otherwise be mistaken for.
+export function ListFlat(props: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      width={24}
+      height={24}
+      aria-hidden="true"
+      focusable="false"
+      {...props}
+    >
+      <rect x="3.9" y="5.5" width="2.8" height="2.8" rx="0.6" />
+      <rect x="9" y="5.85" width="11" height="2.3" rx="1.15" />
+      <rect x="3.9" y="10.6" width="2.8" height="2.8" rx="0.6" />
+      <rect x="9" y="10.85" width="11" height="2.3" rx="1.15" />
+      <rect x="3.9" y="15.7" width="2.8" height="2.8" rx="0.6" />
+      <rect x="9" y="15.85" width="11" height="2.3" rx="1.15" />
+    </svg>
+  );
+}
+
+// Grouped: a feed header up top, a vertical spine, and two indented child rows
+// branching off it — a one-level tree.
+export function ListTree(props: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      width={24}
+      height={24}
+      aria-hidden="true"
+      focusable="false"
+      {...props}
+    >
+      <rect x="3.5" y="4.1" width="9" height="2.2" rx="1.1" />
+      <rect x="5" y="6.3" width="1.4" height="11.4" rx="0.7" />
+      <rect x="6.4" y="10.4" width="3" height="1.4" rx="0.7" />
+      <rect x="10" y="9.7" width="10.5" height="2.2" rx="1.1" />
+      <rect x="6.4" y="15.9" width="3" height="1.4" rx="0.7" />
+      <rect x="10" y="15.2" width="10.5" height="2.2" rx="1.1" />
+    </svg>
+  );
+}
+
+// ---- Sort order: a single arrow showing the current direction -------------
+
+// The top toolbar's sort toggle reflects the *current* order, not both
+// directions (SPEC.md *List toolbar*): `ArrowDownward` = newest-first
+// (descending), `ArrowUpward` = oldest-first (ascending) — the universal
+// table-sort convention. Custom 24×24 glyphs so the direction reads cleanly;
+// the tooltip / accessible name ("Newest first" / "Oldest first") stays
+// authoritative.
+// Stroked (not a solid triangle) and weighted to ~2.2px so it sits at the same
+// visual weight as the list / tree glyphs instead of reading heaviest.
+export function ArrowDownward(props: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      width={24}
+      height={24}
+      aria-hidden="true"
+      focusable="false"
+      {...props}
+    >
+      <path d="M12 4.5V19M6.5 13L12 19L17.5 13" />
+    </svg>
+  );
+}
+
+export function ArrowUpward(props: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      width={24}
+      height={24}
+      aria-hidden="true"
+      focusable="false"
+      {...props}
+    >
+      <path d="M12 19.5V5M6.5 11L12 5L17.5 11" />
+    </svg>
+  );
+}
+
 // ---- Drag handle (drag_indicator) -----------------------------------------
 
 export function DragHandle(props: IconProps) {

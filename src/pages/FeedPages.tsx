@@ -14,8 +14,10 @@ import './PageHeader.css';
 export function HomePage() {
   const ds = useDataSource();
   const { homeFeed } = useHomeFeed();
-  const { itemSort } = useItemSort();
-  const { groupByFeed } = useGroupByFeed();
+  const { itemSort, setItemSort } = useItemSort();
+  const { groupByFeed, setGroupByFeed } = useGroupByFeed();
+  const toggleGroupByFeed = () => setGroupByFeed(!groupByFeed);
+  const toggleSort = () => setItemSort(itemSort === 'newest' ? 'oldest' : 'newest');
   useDocumentTitle('readmo');
 
   // The drawer's ['subscriptions'] query, but forced to re-read on mount
@@ -82,6 +84,9 @@ export function HomePage() {
         groupByFeed={groupByFeed}
         fetchFeedPage={fetchFeedPage}
         perFeedLimit={groupByFeed ? PER_FEED_WINDOW : undefined}
+        onToggleGroupByFeed={toggleGroupByFeed}
+        itemSort={itemSort}
+        onToggleSort={toggleSort}
       />
     );
   }
@@ -93,6 +98,9 @@ export function HomePage() {
       groupByFeed={groupByFeed}
       fetchFeedPage={fetchFeedPage}
       perFeedLimit={groupByFeed ? PER_FEED_WINDOW : undefined}
+      onToggleGroupByFeed={toggleGroupByFeed}
+      itemSort={itemSort}
+      onToggleSort={toggleSort}
     />
   );
 }
@@ -101,8 +109,8 @@ export function HomePage() {
 export function FolderPage() {
   const { name = '' } = useParams();
   const ds = useDataSource();
-  const { itemSort } = useItemSort();
-  const { groupByFeed } = useGroupByFeed();
+  const { itemSort, setItemSort } = useItemSort();
+  const { groupByFeed, setGroupByFeed } = useGroupByFeed();
   useDocumentTitle(`${name} · readmo`);
   const prefKey = `${itemSort}:${groupByFeed ? 'grouped' : 'flat'}`;
   return (
@@ -134,6 +142,11 @@ export function FolderPage() {
             : undefined
         }
         perFeedLimit={groupByFeed ? PER_FEED_WINDOW : undefined}
+        onToggleGroupByFeed={() => setGroupByFeed(!groupByFeed)}
+        itemSort={itemSort}
+        onToggleSort={() =>
+          setItemSort(itemSort === 'newest' ? 'oldest' : 'newest')
+        }
       />
     </>
   );
@@ -143,7 +156,7 @@ export function FolderPage() {
 export function FeedPage() {
   const { feedId = '' } = useParams();
   const ds = useDataSource();
-  const { itemSort } = useItemSort();
+  const { itemSort, setItemSort } = useItemSort();
   const queryClient = useQueryClient();
   const { data: feed } = useQuery({
     queryKey: ['feed-meta', feedId],
@@ -187,6 +200,10 @@ export function FeedPage() {
         viewKey={`feed:${feedId}:${itemSort}`}
         fetchPage={(cursor) => ds.getFeedItems(feedId, { cursor, sort: itemSort })}
         emptyLabel="No items in this feed yet."
+        itemSort={itemSort}
+        onToggleSort={() =>
+          setItemSort(itemSort === 'newest' ? 'oldest' : 'newest')
+        }
       />
     </>
   );

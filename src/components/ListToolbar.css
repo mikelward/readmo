@@ -36,6 +36,11 @@
   gap: 8px;
   padding: 4px 12px;
   min-height: 44px;
+  /* Grouped views can stack six icon buttons here (Group, Collapse, Expand,
+     Sort, Undo, Sweep). On ultra-narrow phones (~320px) that's wider than the
+     row, so allow a second line rather than letting the buttons flex-shrink
+     below the 44px touch floor — see .list-toolbar__button { flex-shrink: 0 }. */
+  flex-wrap: wrap;
 }
 
 .list-toolbar__right {
@@ -60,6 +65,9 @@
   justify-content: center;
   width: var(--rm-tap);
   height: var(--rm-tap);
+  /* Never shrink below the 44px touch floor when the row is tight; the row
+     wraps instead (.list-toolbar__row { flex-wrap: wrap }). */
+  flex-shrink: 0;
   border: none;
   background: none;
   color: var(--rm-meta);
@@ -79,6 +87,14 @@
 .list-toolbar__button[aria-disabled='true'] {
   opacity: 0.4;
   cursor: default;
+}
+
+/* Pressed state for the group-by-feed toggle: accent tint so the "on" state
+   reads at a glance, alongside aria-pressed for assistive tech. Holds through
+   hover so the active color isn't masked by the hover rule below. */
+.list-toolbar__button--active,
+.list-toolbar__button--active:hover {
+  color: var(--rm-accent);
 }
 
 @media (hover: hover) {

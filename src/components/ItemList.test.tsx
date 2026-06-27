@@ -383,6 +383,82 @@ describe('ItemList', () => {
     expect(screen.queryByTestId('collapse-all-btn')).toBeNull();
   });
 
+  it('omits the group-by-feed toggle when no onToggleGroupByFeed is wired', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderHome(source);
+    await screen.findAllByTestId('item-row');
+    expect(screen.queryByTestId('group-by-feed-btn')).toBeNull();
+  });
+
+  it('surfaces a group-by-feed toggle reflecting the current state, even when flat', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const onToggle = vi.fn();
+    renderWithProviders(
+      <ItemList
+        viewKey={`gp-${Math.random()}`}
+        fetchPage={(cursor) => source.getHomeItems({ cursor })}
+        emptyLabel="All caught up."
+        onToggleGroupByFeed={onToggle}
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+    // Available even with grouping off (it's how you turn it on), reflecting the
+    // off state, and tapping it flips the preference via the wired callback.
+    const btn = screen.getByTestId('group-by-feed-btn');
+    expect(btn).toHaveAttribute('aria-pressed', 'false');
+    await userEvent.setup().click(btn);
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the group-by-feed toggle pressed in the grouped view', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderWithProviders(
+      <ItemList
+        viewKey={`gp-${Math.random()}`}
+        fetchPage={(cursor) =>
+          source.getHomeItems({ cursor, groupByFeed: true, limit: 100 })
+        }
+        emptyLabel="All caught up."
+        groupByFeed
+        onToggleGroupByFeed={vi.fn()}
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+    expect(screen.getByTestId('group-by-feed-btn')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('omits the sort-order toggle when no onToggleSort is wired', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderHome(source);
+    await screen.findAllByTestId('item-row');
+    expect(screen.queryByTestId('sort-order-btn')).toBeNull();
+  });
+
+  it('surfaces a sort-order toggle naming the current order and flips it on tap', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const onToggle = vi.fn();
+    renderWithProviders(
+      <ItemList
+        viewKey={`sort-${Math.random()}`}
+        fetchPage={(cursor) => source.getHomeItems({ cursor })}
+        emptyLabel="All caught up."
+        itemSort="oldest"
+        onToggleSort={onToggle}
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+    const btn = screen.getByTestId('sort-order-btn');
+    expect(btn).toHaveAccessibleName('Oldest first');
+    await userEvent.setup().click(btn);
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
   it('renders the first page of items with the sticky toolbar', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     renderHome(source);
