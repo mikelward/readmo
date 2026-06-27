@@ -598,7 +598,7 @@ describe('ItemList', () => {
     });
   });
 
-  it('per-feed header Sweep clears the whole section, including rows scrolled off-screen', async () => {
+  it('per-feed header Sweep leaves a row scrolled off-screen, sweeping only the visible ones', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
     const { container } = renderWithProviders(
@@ -615,23 +615,26 @@ describe('ItemList', () => {
     await screen.findAllByTestId('item-row');
     const totalBefore = container.querySelectorAll('[data-item-id]').length;
 
-    // Push one of The Verge's rows below the "fully visible" threshold, as if it
-    // were scrolled partway off-screen. Unlike the viewport-scoped toolbar
-    // Sweep, the header broom is a deliberate "clear this section" action, so it
-    // must still sweep the off-screen row. (Under the old viewport-scoped logic
-    // this swept only the 2 rows that stayed fully visible — the regression the
-    // reader hit: "sweeping a group isn't sweeping more than one or two items".)
+    // Push the first of The Verge's 3 rows below the "fully visible" threshold,
+    // as if it were scrolled partway off-screen. The header broom is
+    // viewport-scoped like the toolbar Sweep, so it must NOT touch a row the
+    // reader can't currently see — only the 2 fully-visible rows are swept.
     const vergeRows = container.querySelectorAll('[data-item-id]');
+    const offScreenId = vergeRows[0].getAttribute('data-item-id');
     act(() => {
       setVisibilityForTest(vergeRows[0].closest('li')!, 0.4);
     });
 
     await user.click(screen.getAllByTestId('group-sweep')[0]);
     await waitFor(() => {
-      expect(container.querySelectorAll('[data-item-id]').length).toBe(totalBefore - 3);
+      expect(container.querySelectorAll('[data-item-id]').length).toBe(totalBefore - 2);
     });
-    // The whole Verge section is gone even though one of its rows was off-screen.
-    expect(screen.queryByText('The Verge')).toBeNull();
+    // The off-screen Verge row survives, so the section is still present; the
+    // other feeds are untouched.
+    expect(
+      container.querySelector(`[data-item-id="${offScreenId}"]`),
+    ).not.toBeNull();
+    expect(screen.getByText('The Verge')).toBeInTheDocument();
     expect(screen.getByText('NASA Breaking News')).toBeInTheDocument();
   });
 
