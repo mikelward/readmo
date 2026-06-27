@@ -172,6 +172,37 @@ describe('useStickyInset', () => {
     expect(seen.at(-1)).toBe(48);
   });
 
+  it('re-measures the bottom inset when a content reflow moves the sticky bottom toolbar (no toolbar resize)', () => {
+    // Regression: toggling group-by-feed reorders/remounts every row at once,
+    // momentarily collapsing the list before the regrouped layout settles. The
+    // bottom toolbar is sticky `bottom: 0`, so while the content is briefly
+    // shorter than the viewport it floats in normal flow mid-screen — read at
+    // that instant it reports a large intrusion. Its own size never changes, so
+    // the strip ResizeObservers don't fire; only the document content height
+    // changed. Without observing that, the stale inset shrank the sweep
+    // observer's root so far that fully-visible rows counted as hidden and their
+    // header broom grayed out until an unrelated scroll re-measured.
+    Object.defineProperty(window, 'innerHeight', {
+      value: 844,
+      configurable: true,
+    });
+    // Mid-reflow: bottom toolbar in normal flow at top=437 → 844-437 = 407px.
+    const bottomBar = mountSticky('list-toolbar list-toolbar--bottom', 485);
+    const seen: number[] = [];
+    render(<BottomProbe onMeasure={(n) => seen.push(n)} />);
+    expect(seen.at(-1)).toBe(407);
+    // The document content is observed so a settling reflow re-measures.
+    expect(lastObserver!.observed).toContain(document.body);
+    // Content settles taller than the viewport → the toolbar pins below the
+    // fold (top=877), intrusion clamps to 0. The toolbar's own size is
+    // unchanged; the ResizeObserver fires with `body` as the target.
+    setBottomFor(bottomBar, 925);
+    act(() => {
+      lastObserver!.callback([{ target: document.body }]);
+    });
+    expect(seen.at(-1)).toBe(0);
+  });
+
   it('disconnects the observer on unmount', () => {
     mountSticky('app-header', 56);
     mountSticky('list-toolbar', 104);
