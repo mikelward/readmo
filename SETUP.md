@@ -446,3 +446,71 @@ zero-config, but **one project env var is required**:
 
 Also set `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` (see §5) — without
 them the client falls back to the in-memory mock data source.
+
+---
+
+## 12. Database performance alerting
+
+Get paged when a query (or group of queries) starves the database, without
+adding load to the very DB that's struggling. The design is two layers
+(detection is out-of-band; attribution is read-only and on-demand) — the *why*
+is in [`OBSERVABILITY.md`](./OBSERVABILITY.md). This section is the wiring.
+
+### 12a. Detection + paging — Metrics API → Grafana Cloud
+
+Supabase publishes a Prometheus endpoint of ~200 Postgres/host health series.
+Point a collector at it; nothing runs in your database.
+
+- **Endpoint:** `https://<project-ref>.supabase.co/customer/v1/privileged/metrics`
+- **Auth:** HTTP Basic — username `service_role`, password = the service-role
+  JWT (Project Settings → API). Scrape once a minute.
+
+Managed path (recommended): in **Grafana Cloud → Connections → add a
+Prometheus/Hosted endpoint scrape job** for that URL with the basic-auth
+credentials, then create the alert rules in
+[`OBSERVABILITY.md` → Alert rules](./OBSERVABILITY.md). Self-hosted Prometheus +
+Grafana works too (`supabase/supabase-grafana`).
+
+> The Metrics API is **beta** and **hosted-Supabase only**. Self-hosted
+> backends use `postgres_exporter` instead — see *Self-hosted fallback* in
+> `OBSERVABILITY.md`.
+
+### 12b. Attribution — deploy `db-perf`
+
+```sh
+make migrate            # applies 0022 (pg_stat_statements + db_perf_diagnostics RPC)
+make deploy-db-perf     # deploys the function (--no-verify-jwt)
+```
+
+The function reads `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` (already set per
+§5 — `supabase secrets set` rejects `SUPABASE_`-prefixed names, but the platform
+injects these automatically). Optional threshold overrides:
+
+```sh
+supabase secrets set \
+  DB_PERF_ACTIVE_MS=10000 \
+  DB_PERF_CRITICAL_MS=30000 \
+  DB_PERF_SLOW_MEAN_MS=1000 \
+  DB_PERF_LIMIT=10
+```
+
+Verify (returns `{ "severity": "ok", … }` on a healthy DB):
+
+```sh
+curl -s -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
+  https://<project-ref>.functions.supabase.co/db-perf | jq
+```
+
+Put that URL in the Grafana alert's runbook/annotation so a fired alert links
+straight to the culprit. The endpoint is read-only and service-role only.
+
+### 12c. Cost & reliability (rule-11)
+
+- **Metrics API:** $0 (included on all hosted projects); one HTTPS scrape/min,
+  **no load on Postgres**.
+- **Grafana Cloud:** free tier covers a one-operator project; it's a separate
+  system, so it keeps paging during a Supabase outage (the point of out-of-band
+  detection).
+- **`db-perf` + RPC:** negligible — on-demand only, read-only, self-bounded by a
+  3s `statement_timeout`, off every critical path. If down/unconfigured you lose
+  attribution convenience, not detection or any user-facing behavior.
