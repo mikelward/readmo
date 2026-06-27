@@ -24,14 +24,14 @@ describe('desktop wider-column invariants', () => {
     );
   });
 
-  it('widens the header inner toward 860px at the same breakpoint, reserving edge gutter', () => {
-    // Phone baseline keeps the header inner aligned with the 720px column.
-    expect(headerCss).toMatch(/\.app-header__inner\s*\{[^}]*max-width:\s*720px/s);
-    // Desktop: header inner grows toward .app-main's 860px to track the column,
-    // but clamps to leave ~100px/side gutter so the absolutely-positioned edge
-    // controls (esp. the signed-out "Sign in" chip) never overlap the inner.
-    expect(headerCss).toMatch(
-      /@media\s*\(min-width:\s*960px\)\s*\{\s*\.app-header__inner\s*\{[^}]*max-width:\s*min\(860px,\s*calc\(100vw - 200px\)\)/s,
-    );
+  it('keeps the header a flat left-hugging row that does not track the column widen', () => {
+    // Matching newshacker (guardrail #9): the header inner just fills the track
+    // between the edge controls — it is never width-capped or centered, so the
+    // brand stays pinned beside the menu button at every width and the wordmark
+    // never floats toward the (widening) content column on desktop.
+    expect(headerCss).not.toMatch(/\.app-header__inner\s*\{[^}]*max-width/s);
+    expect(headerCss).not.toMatch(/\.app-header__inner\s*\{[^}]*margin:\s*0\s+auto/s);
+    // No desktop centering breakpoint on the header row.
+    expect(headerCss).not.toMatch(/\.app-header\s*\{[^}]*justify-content:\s*center/s);
   });
 });
