@@ -86,6 +86,22 @@ export function useStickyInset(): StickyInset {
         const el = document.querySelector(selector);
         if (el) ro.observe(el);
       }
+      // Also watch the document's content height. The bottom toolbar is sticky
+      // `bottom: 0`, so its viewport position — and thus the bottom inset — flips
+      // between "in normal flow, mid-viewport" (short content) and "pinned to the
+      // viewport foot" (content taller than the viewport) purely as a function of
+      // content height, with no change to the toolbar's own size. A render that
+      // reflows the list without scrolling or resizing — most visibly toggling
+      // group-by-feed, which momentarily collapses every row before the regrouped
+      // layout settles, but also a "More" page or the initial content paint —
+      // can therefore be sampled mid-reflow with the toolbar floating mid-screen,
+      // leaving a large stale bottom inset that shrinks the sweep observer's root
+      // so far that rows the reader can plainly see count as hidden (their feed's
+      // header broom grays out, and a group Sweep skips them) until an unrelated
+      // scroll re-measures. Observing `body` re-measures the instant the content
+      // settles. `update` skips the state change when the rounded inset is
+      // unchanged, so the extra signal is free in the steady state.
+      if (document.body) ro.observe(document.body);
     }
     return () => {
       window.removeEventListener('resize', update);
