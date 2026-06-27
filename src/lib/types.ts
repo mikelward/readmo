@@ -110,11 +110,19 @@ export const DEFAULT_ITEM_STATE: ItemState = {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** Done, Opened (and the legacy Hidden column) are retained for 30 days, then
- * collapse to their default on read (SPEC.md *Retention*). Pinned and Favorite
- * never expire. One shared window keeps the history views (`/done`, `/opened`)
- * and the feed's dismiss state aligned. */
-export const TTL_MS = 30 * DAY_MS;
+/** Done, Opened, and the legacy Hidden column are retained for this long, then
+ * collapse to their default on read (`withRetention`), so `/done` and `/opened`
+ * auto-prune without a background sweep. Pinned and Favorite never expire.
+ *
+ * **This TTL is deliberately longer than `FLOOR_MAX_AGE_MS`** (the oldest a
+ * non-pinned item can still appear in a feed). That ordering is what stops a
+ * swept item from resurfacing: an item leaves every list once it's older than
+ * `FLOOR_MAX_AGE_MS`, which happens *before* its `done` flag expires here — so by
+ * the time Done collapses, the item is no longer listable anyway and can't pop
+ * back into the per-feed floor. (Done used to share the 30-day window with the
+ * floor's reach, so an item swept in a quiet feed reappeared the day its Done
+ * expired.) Keep `TTL_MS > FLOOR_MAX_AGE_MS > HOME_WINDOW_MS`. */
+export const TTL_MS = 33 * DAY_MS;
 
 /** Home / folder / feed list views only serve items younger than this — the
  * feed freshness window (SPEC.md *Feed freshness window*). Pinned items are
@@ -127,8 +135,23 @@ export const HOME_WINDOW_MS = 3 * DAY_MS;
  * the freshness window, so an infrequently-updated feed still shows something
  * instead of going blank (SPEC.md *Feed freshness window*). The window and the
  * floor are unioned: an item shows if it's pinned, OR younger than the window,
- * OR among its feed's newest `FEED_FLOOR`. Mirrored by the `feed_items` RPC. */
+ * OR among its feed's newest `FEED_FLOOR` AND younger than `FLOOR_MAX_AGE_MS`.
+ * Mirrored by the `feed_items` RPC. */
 export const FEED_FLOOR = 10;
+
+/** Hard age cap on the per-feed floor: the floor never lists an item older than
+ * this, even to keep a feed from going blank. Two jobs:
+ *  1. **Bounds the read.** Without a cap, the floor's "newest 10 non-dismissed"
+ *     walks a feed's whole archive when the user has swept most of it (every Done
+ *     row must be skipped before 10 survivors are found) — turning a top-N lookup
+ *     into a full scan and risking statement timeouts on heavy accounts.
+ *  2. **Stops swept items resurfacing.** Because this cap is *shorter* than
+ *     `TTL_MS`, any item still young enough for the floor still has its Done flag
+ *     active (Done outlives the floor), so a swept item is consistently excluded
+ *     for its entire listable life and can't reappear when Done later expires.
+ * Keep `TTL_MS > FLOOR_MAX_AGE_MS > HOME_WINDOW_MS`. Mirrored by `feed_items` /
+ * `feed_unread_counts` (the `30 days` interval) — keep them in sync. */
+export const FLOOR_MAX_AGE_MS = 30 * DAY_MS;
 
 /** Per-feed window for the group-by-feed view: each feed section opens showing
  * at most this many of its listable items, with a per-section "More" button to

@@ -1,5 +1,6 @@
 import {
   FEED_FLOOR,
+  FLOOR_MAX_AGE_MS,
   HOME_WINDOW_MS,
   type Feed,
   type FeedId,
@@ -54,13 +55,15 @@ export class MockDataSource implements DataSource {
   private seq = 100;
   private readonly homeWindowMs: number;
   private readonly feedFloor: number;
+  private readonly floorMaxAgeMs: number;
 
   constructor(
     stateKey = 'readmo:item-state',
-    opts: { homeWindowMs?: number; feedFloor?: number } = {},
+    opts: { homeWindowMs?: number; feedFloor?: number; floorMaxAgeMs?: number } = {},
   ) {
     this.homeWindowMs = opts.homeWindowMs ?? HOME_WINDOW_MS;
     this.feedFloor = opts.feedFloor ?? FEED_FLOOR;
+    this.floorMaxAgeMs = opts.floorMaxAgeMs ?? FLOOR_MAX_AGE_MS;
     this.stateStore = new ItemStateStore(localStoragePersistence(stateKey));
     for (const f of SEED_FEEDS) this.feeds.set(f.id, { ...f });
     this.items = SEED_ITEMS.map((it) => ({ ...it }));
@@ -111,6 +114,7 @@ export class MockDataSource implements DataSource {
   ): FeedItem[] {
     const now = Date.now();
     const freshAfter = now - this.homeWindowMs;
+    const floorAfter = now - this.floorMaxAgeMs;
     const sortAsc = opts?.sort === 'oldest';
     const groupByFeed = opts?.groupByFeed ?? false;
 
@@ -137,11 +141,13 @@ export class MockDataSource implements DataSource {
     const rows: Array<{ fi: FeedItem; pinned: boolean; pinAt: number }> = [];
     for (const { item, st } of candidates) {
       // Window ∪ floor ∪ pinned: serve recent items, each feed's newest
-      // `feedFloor`, and any pinned item regardless of age. Mirrors feed_items.
+      // `feedFloor` (capped to `floorMaxAgeMs` so the floor can't reach back into
+      // the archive), and any pinned item regardless of age. Mirrors feed_items.
       const served =
         st.pinned ||
         item.publishedAt >= freshAfter ||
-        (feedRank.get(item.id) ?? Number.POSITIVE_INFINITY) < this.feedFloor;
+        ((feedRank.get(item.id) ?? Number.POSITIVE_INFINITY) < this.feedFloor &&
+          item.publishedAt >= floorAfter);
       if (!served) continue;
       const fi = this.toFeedItem(item);
       if (fi) rows.push({ fi, pinned: !!st.pinned, pinAt: st.pinnedAt ?? 0 });
@@ -273,6 +279,7 @@ export class MockDataSource implements DataSource {
   ): Promise<Record<FeedId, number>> {
     const now = Date.now();
     const freshAfter = now - this.homeWindowMs;
+    const floorAfter = now - this.floorMaxAgeMs;
     const want = new Set(feedIds);
 
     // Gather each wanted feed's non-dismissed items (Done/active-Hidden drop
@@ -298,7 +305,9 @@ export class MockDataSource implements DataSource {
         // A pinned item always counts (a pin is a to-do, read or not); other
         // listable items drop out once Opened.
         const listable =
-          st.pinned || item.publishedAt >= freshAfter || rank < this.feedFloor;
+          st.pinned ||
+          item.publishedAt >= freshAfter ||
+          (rank < this.feedFloor && item.publishedAt >= floorAfter);
         if (listable && (st.pinned || !st.opened)) n += 1;
       });
       counts[feedId] = n;

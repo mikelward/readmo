@@ -52,17 +52,23 @@ export function applyMutation(
   return next;
 }
 
-/** True once a TTL'd field (done/hidden/opened) has aged past the retention
- * window (SPEC.md *Retention* — 30 days). */
+/** True once a TTL'd field (done/opened, or the legacy hidden column) has aged
+ * past the retention window (SPEC.md *Retention* — {@link TTL_MS}). */
 function expired(at: number | null, now: number): boolean {
   return at !== null && now - at > TTL_MS;
 }
 
-/** Collapse expired Done/Hidden/Opened flags so retention is honored at read
- * time without a background sweep (SPEC.md *Retention*). Only Pinned and
- * Favorite are permanent; Done is a 30-day completion log, so it expires here
- * too (which auto-prunes `/done` and lets a long-dismissed item fall back to
- * its default — though by then it's also past the feed freshness window). */
+/** Collapse expired Done/Opened/(legacy)Hidden flags so retention is honored at
+ * read time without a background sweep (SPEC.md *Retention*). Pinned and Favorite
+ * never expire.
+ *
+ * Done DOES expire — but `TTL_MS` is deliberately longer than `FLOOR_MAX_AGE_MS`
+ * (the oldest a non-pinned item can still appear in a feed), so a swept item ages
+ * out of every list *before* its Done collapses here. That ordering is what keeps
+ * a swept item from resurfacing: by the time Done expires the item is no longer
+ * listable, so it can't pop back into the per-feed floor. (The bug: Done shared
+ * the floor's reach, so an item swept in a quiet/re-published feed reappeared the
+ * day its Done expired even though it was still listable.) */
 export function withRetention(
   state: ItemState,
   now: number = Date.now(),

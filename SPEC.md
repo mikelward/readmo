@@ -48,8 +48,9 @@ copy it:
   display-only.
 - **Pinned / Favorite / Done — three intents, three buckets**, plus **Hidden**
   and **Opened**, with the same semantics and the same shields. Retention
-  diverges: only Pinned/Favorite persist forever, Done/Opened are 30-day views,
-  and a **3-day feed freshness window** drops old items (Pinned exempt). See
+  diverges: only Pinned/Favorite persist forever, Done/Opened are TTL'd views
+  (`TTL_MS`, ordered above the floor's reach so swept items don't resurface), and
+  a **3-day feed freshness window** drops old items (Pinned exempt). See
   *Item state model* below.
 - **Pinned prepended to the top of every feed**, rendered once, oldest-pinned
   first; pinning a body row keeps its position; **Sweep** consolidates.
@@ -209,7 +210,9 @@ the only difference is they're DB columns instead of localStorage keys.
   row carries a filled check that unmarks done. Marking Done also **unpins**
   (Pin is the queue, Done is where items go when they leave it; mutually
   exclusive). Done items are filtered out of every feed, and the `/done`
-  completion log is a **30-day** history (see *Retention*). `done` is the **one
+  completion log is a `TTL_MS` (33-day) history — long enough to outlive an item's
+  time in any feed, so a swept item never resurfaces while still listable (see
+  *Retention*). `done` is the **one
   dismiss concept**: the `hidden` DB column is retained for backward compat but
   the UI routes all dismissals through `done`, and legacy `hidden=true` rows are
   migrated to `done=true` on first load.
@@ -251,13 +254,22 @@ the only difference is they're DB columns instead of localStorage keys.
   marking Done removes Pinned.
 
 **Retention:** **Favorite and Pinned are permanent** — the only forever-keep
-states. **Done, Opened, and the legacy Hidden expire after 30 days** (`TTL_MS`),
+states. **Done, Opened, and the legacy Hidden expire after `TTL_MS` (33 days)**,
 collapsing to their default on read (`withRetention`) so `/done` and `/opened`
-auto-prune without a background sweep. This is a deliberate divergence from
-newshacker, where Done is permanent: in readmo the **feed freshness window**
-(below) already drops old items from every list, so a permanent Done would only
-ever bloat the completion log. **To *keep* an item, pin it** — pinning is the
-sole age-exempt path. (Revisit the 30-day TTL with real usage data.)
+auto-prune without a background sweep.
+
+**`TTL_MS` is deliberately ordered: `TTL_MS` (33d) > `FLOOR_MAX_AGE_MS` (30d) >
+`HOME_WINDOW_MS` (3d).** That ordering is what stops a swept item from
+resurfacing. A non-pinned item can appear in a feed only while it's younger than
+the freshness window OR inside the (now age-capped) per-feed floor — i.e. up to
+`FLOOR_MAX_AGE_MS`. Because Done lives *longer* than that, a swept item ages out
+of every list before its Done flag expires, so by the time Done collapses the
+item is no longer listable and can't pop back into the floor. (The bug this
+fixes: Done shared the floor's reach, so an item swept in a quiet feed — or one
+the poller keeps re-publishing, which rides back to the top with a *recent*
+`sort_at` but a stale `done_at` — reappeared the moment its Done expired.) The
+exact TTL isn't load-bearing; the *ordering* is. **To keep an item in a feed
+indefinitely, pin it** — pinning is the sole age-exempt path.
 
 > **Note — retention is a *read-time view* concept, not a row delete.**
 > `withRetention` collapses an expired flag when state is read; the underlying
@@ -267,16 +279,25 @@ sole age-exempt path. (Revisit the 30-day TTL with real usage data.)
 
 **Feed freshness window + per-feed floor.** Home, folder, and single-feed list
 views serve an item when it is **pinned**, OR **younger than 3 days**
-(`HOME_WINDOW_MS`), OR among **its feed's newest 10 non-dismissed items**
-(`FEED_FLOOR`). The window declutters a busy feed to "recent only"; the floor
-keeps an **infrequently-updated feed from going blank** when nothing it
-published is recent — you always see at least its latest handful. Both are knobs
-(`HOME_WINDOW_MS` / `FEED_FLOOR`); the server `feed_items` RPC applies the same
-3-day interval and a `row_number()`-per-feed floor in its body branch.
+(`HOME_WINDOW_MS`), OR among **its feed's newest 10 non-dismissed items that are
+younger than `FLOOR_MAX_AGE_MS` (30 days)** (`FEED_FLOOR`). The window declutters
+a busy feed to "recent only"; the floor keeps an **infrequently-updated feed from
+going blank** when nothing it published is recent — you always see at least its
+latest handful, but only back to the floor's age cap. The cap does double duty:
+it **bounds the floor read** (the "newest 10 non-dismissed" scan can't walk a
+whole archive of swept rows — it stops at 30 days), and it's **shorter than
+`TTL_MS`** so Done outlives any item's floor presence (swept items can't
+resurface — see *Retention*). All knobs (`HOME_WINDOW_MS` / `FEED_FLOOR` /
+`FLOOR_MAX_AGE_MS`); the server `feed_items` RPC applies the same intervals and a
+`row_number()`-per-feed floor in its body branch.
 
 - **Pinned items are exempt** from both — a pin keeps an item regardless of age.
 - The floor ranks only **non-dismissed** items, so marking one Done frees its
-  slot for the next.
+  slot for the next. Because `TTL_MS > FLOOR_MAX_AGE_MS`, a swept item's Done is
+  still active for the whole time the item is young enough for the floor, so it's
+  consistently excluded and never climbs back in (the bug that made swept
+  articles — including poller-re-published ones with a recent `sort_at` —
+  reappear once their Done expired).
 - Nothing about *opening* extends the window/floor: an un-pinned item leaves
   once it's both past 3 days and beyond its feed's newest 10 (open it → it's in
   `/opened` for 30 days; want it kept in the feed → pin it).
@@ -423,8 +444,8 @@ folders       (user_id FK, name, sort)
   doesn't orphan kept Pinned/Favorite/Done items pinned against GC. The `done`
   exemption is a *row-access* grant, not a list filter: it keeps a dismissed
   item openable even after it ages out of the feed, and it holds at the DB layer
-  because the `item_state` row persists (the 30-day Done TTL is a read-time view
-  collapse, not a delete — see *Retention*). Hidden/Opened get no such exemption.
+  because the `item_state` row persists (the read-time TTL collapse is a view, not
+  a delete — see *Retention*). Hidden/Opened get no such exemption.
   Enforce via RLS
   predicates or a security-definer view/RPC applying the same test. The poller
   writes with the service role, bypassing RLS.
@@ -1941,7 +1962,8 @@ keys differ; the strategies map one-to-one:
 - **Item retention / GC** — items per feed; exact pin-against-GC rule for
   Pinned/Favorite/Done. Start generous (e.g. 90 days or 200 items/feed,
   whichever is larger; never GC Pinned/Favorite/Done); revisit with data.
-- **TTLs, window & floor** — the 30-day Done/Opened retention, the 3-day feed
+- **TTLs, window & floor** — the 33-day Done/Opened retention, the 30-day floor
+  age cap, the 3-day feed
   freshness window, and the 10-item per-feed floor (`TTL_MS` / `HOME_WINDOW_MS`
   / `FEED_FLOOR`) are first-cut values; revisit with usage data. Consider
   whether the window/floor should be user-configurable or per-feed rather than
