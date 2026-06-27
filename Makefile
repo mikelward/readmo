@@ -1,6 +1,6 @@
 IMPORT_MAP := supabase/functions/import_map.json
 
-.PHONY: deploy deploy-discover deploy-refresh deploy-poll deploy-img deploy-fulltext deploy-notify-signup migrate check-link
+.PHONY: deploy deploy-discover deploy-refresh deploy-poll deploy-img deploy-fulltext deploy-notify-signup deploy-db-perf migrate check-link
 
 # Fail fast unless we're sitting in the linked project. Without a local
 # supabase/config.toml the CLI silently walks up the tree and resolves a
@@ -18,7 +18,7 @@ migrate: check-link
 	supabase db push
 
 ## Deploy all Edge Functions (run migrate first to apply any schema changes)
-deploy: migrate deploy-discover deploy-refresh deploy-poll deploy-img deploy-fulltext deploy-notify-signup
+deploy: migrate deploy-discover deploy-refresh deploy-poll deploy-img deploy-fulltext deploy-notify-signup deploy-db-perf
 
 deploy-discover: check-link
 	supabase functions deploy discover --import-map $(IMPORT_MAP)
@@ -39,3 +39,9 @@ deploy-fulltext: check-link
 # itself), so deploy with --no-verify-jwt like poll.
 deploy-notify-signup: check-link
 	supabase functions deploy notify-signup --import-map $(IMPORT_MAP) --no-verify-jwt
+
+# Read-only DB performance diagnostics. Called server-to-server by the operator
+# / a Grafana alert with the service-role bearer (verified in-handler), so
+# deploy with --no-verify-jwt like poll.
+deploy-db-perf: check-link
+	supabase functions deploy db-perf --import-map $(IMPORT_MAP) --no-verify-jwt

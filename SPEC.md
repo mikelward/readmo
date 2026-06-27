@@ -643,6 +643,33 @@ loopback/link-local/private/metadata targets and redirects to them.
   negligible in-app (a header compare); the gateway is $0 under 100k req/day,
   else ~$5/mo (Workers Paid).
 
+### Observability — database performance alerting
+
+Operator-facing (not user-visible). The goal: get paged **as soon as a query or
+group of queries starves the database or runs longer than it should**, without
+adding load or writes to a DB that's already struggling. Two layers, split on
+purpose — full rationale + setup in [`OBSERVABILITY.md`](./OBSERVABILITY.md):
+
+- **Detection + paging is out-of-band.** Grafana Cloud (or any Prometheus
+  collector) scrapes Supabase's **Metrics API**
+  (`/customer/v1/privileged/metrics`, basic-auth as `service_role`) once a
+  minute and alerts on saturation (connections, CPU, in-flight query age) and on
+  DB-unreachable (a failed scrape). Nothing runs inside Postgres, so the monitor
+  doesn't share fate with the database and adds zero load; dedup / `for:`
+  hysteresis / re-notify / silences are handled by the alert manager, not us.
+- **Attribution is read-only and on-demand.** The Metrics API is aggregate
+  ("the DB is starving"), not per-query. To find *which* query, the `db-perf`
+  Edge Function (service-role only, `--no-verify-jwt`) calls the read-only
+  `db_perf_diagnostics` RPC (migration `0022`): `pg_stat_activity` long-runners
+  + worst `pg_stat_statements` groups (normalized — no user literals leak). It
+  writes nothing and is bounded by a 3s `statement_timeout`; a Grafana alert's
+  runbook links to it. Thresholds tune via `DB_PERF_*` secrets.
+
+Cost/reliability: Metrics API is $0 (included, no DB load); Grafana Cloud free
+tier covers one operator and keeps paging during a Supabase outage; `db-perf` is
+negligible and off every critical path. See the External services table in
+`CLAUDE.md` and SETUP.md §12.
+
 ### Cost & reliability (rule-11 discipline, carried from newshacker)
 
 - **Supabase free tier** (Postgres 500MB, 50k MAU, scheduled functions) is $0

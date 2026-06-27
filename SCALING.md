@@ -34,7 +34,11 @@ to act) and the action.
 
 ## Database compute tier
 
-**Trigger:** CPU regularly above ~60%, or p99 query latency climbing.
+**Trigger:** CPU regularly above ~60%, or p99 query latency climbing. These are
+exactly the signals the out-of-band monitor watches — wire up the Metrics API →
+Grafana alerts in [`OBSERVABILITY.md`](./OBSERVABILITY.md) so this trigger pages
+you instead of being noticed by hand, and use the `db-perf` endpoint there to
+see *which* query group is driving the latency before reaching for a bigger tier.
 
 **Action:** Upgrade the Supabase compute tier (Dashboard → Settings →
 Compute). The free/Micro tier has ~1 shared vCPU and 512 MB RAM — it will
