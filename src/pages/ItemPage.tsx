@@ -204,7 +204,7 @@ export function ItemPage() {
   // stuck on the miss state. Outside the persist provider (tests) this is false.
   const isRestoring = useIsRestoring();
 
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['item', id],
     queryFn: () => ds.getItem(id),
   });
@@ -217,26 +217,32 @@ export function ItemPage() {
     if (error) console.error('[readmo] fetching this article failed:', error);
   }, [error]);
 
-  // Offline fallback: when the per-item detail read *fails* (the fetch errored,
-  // or we're offline and it can't run) recover the RSS body from a list page
-  // already on this device, so an unpinned article stays readable offline (the
-  // feed's own body, not the extracted reading view). See `lib/offlineItem`.
+  // Instant body from cache: paint *something* the moment the reader opens
+  // instead of a blank "Loading…". Recover this item's feed body from a list
+  // page already in the query cache (Home/folder/feed/library all carry
+  // `content_html`). One path covers two cases that both leave `data ===
+  // undefined`: the normal online open — the per-item `getItem` is still in
+  // flight, so show the feed body now and let the refetch settle in the
+  // background — and the offline/errored open, where the fetch can't resolve at
+  // all. The extracted reading view isn't in any list payload, so a pinned item
+  // layers it on top via the `['fulltext', id]` cache below (`fullReadyAtOpen`).
+  // See `lib/offlineItem`.
   //
-  // Gated to "no successful detail result" on purpose. `data === null` is a
-  // *successful* miss — the server says the item isn't visible (e.g. after
-  // unsubscribing — RLS hides it) — and stays authoritative even offline, so we
-  // key on `data === undefined` (errored / never-resolved), NOT `!data` (which
-  // would also swallow a cached `null` miss and override it with a stale row).
-  const detailUnavailable =
-    data === undefined && !isLoading && (isError || !online);
-  // Recompute once restoration finishes: `isRestoring` flipping false re-renders
-  // this component and re-runs the scan against the now-hydrated list caches.
+  // Keyed on `data === undefined`, NOT `!data`: once `getItem` resolves to `null`
+  // (a *successful* miss — the server says the item isn't visible, e.g. after
+  // unsubscribing, RLS hides it) that null is authoritative and must override any
+  // cached row, even offline. So `resolved` prefers `data` whenever the query has
+  // settled (null included) and only falls back to the cached body while the read
+  // is still unresolved.
+  //
+  // `isRestoring` gates the scan: the list caches it walks are still hydrating at
+  // boot, so wait for restoration (its flip to false re-renders and re-runs this).
   const fallback = useMemo(
     () =>
-      detailUnavailable && !isRestoring ? findCachedFeedItem(queryClient, id) : null,
-    [detailUnavailable, isRestoring, queryClient, id],
+      data === undefined && !isRestoring ? findCachedFeedItem(queryClient, id) : null,
+    [data, isRestoring, queryClient, id],
   );
-  const resolved = data ?? fallback;
+  const resolved = data === undefined ? fallback : data;
 
   // Reading mode: when the feed body looks truncated, fetch the full article
   // from its source (server-side extraction) in the background while the RSS
@@ -399,7 +405,12 @@ export function ItemPage() {
     return () => document.removeEventListener('keydown', onKey);
   }, [openOriginal, toggle, markDone]);
 
-  if (isLoading || isRestoring) {
+  // Only show the blank "Loading…" when there's nothing cached to paint yet — a
+  // cold first open, or while the persisted cache is still hydrating (the
+  // fallback scan needs it). With a cached body in hand we render immediately
+  // and let `getItem` refresh in the background, so there's no "Loading…" gap on
+  // an item we already pulled into a list.
+  if (isRestoring || (isLoading && !resolved)) {
     return (
       <div className="reader__state">
         <p>Loading…</p>

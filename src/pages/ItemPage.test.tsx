@@ -197,6 +197,61 @@ describe('ItemPage reading mode', () => {
     ).toHaveTextContent('Show feed version');
   });
 
+  it('paints the cached feed body immediately while the online detail read is still in flight', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    // The item is already in a persisted list page (the user tapped it from a
+    // feed they'd scrolled), so its feed body is on the device.
+    const seed = new MockDataSource(`test-${Math.random()}`);
+    queryClient.setQueryData(['feed', 'home'], {
+      pages: [await seed.getHomeItems()],
+      pageParams: [null],
+    });
+
+    // Online, but the per-item detail read never resolves — the reader must NOT
+    // sit on a blank "Loading…"; it shows the cached feed body straight away.
+    class HangingSource extends MockDataSource {
+      getItem(): Promise<FeedItem | null> {
+        return new Promise(() => {});
+      }
+    }
+    renderReader(new HangingSource(`test-${Math.random()}`), 'item-1', queryClient);
+
+    expect(await screen.findByText(/visible creases/)).toBeInTheDocument();
+    expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
+  });
+
+  it('opens a pinned item straight into the cached reading view, no "Loading…" gap', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    // The feed body is on the device from a list page...
+    const seed = new MockDataSource(`test-${Math.random()}`);
+    queryClient.setQueryData(['feed', 'home'], {
+      pages: [await seed.getHomeItems()],
+      pageParams: [null],
+    });
+    // ...and pinning prefetched the extracted full body into the fulltext query.
+    queryClient.setQueryData(['fulltext', 'item-1'], {
+      status: 'ok',
+      contentHtml: '<p>pinned reading body</p>',
+    });
+
+    // Detail read hangs, but both bodies are cached: the reader opens directly
+    // into the readability view without ever showing "Loading…".
+    class HangingSource extends MockDataSource {
+      getItem(): Promise<FeedItem | null> {
+        return new Promise(() => {});
+      }
+    }
+    renderReader(new HangingSource(`test-${Math.random()}`), 'item-1', queryClient);
+
+    expect(await screen.findByText(/pinned reading body/)).toBeInTheDocument();
+    expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('reader-keep-reading')).not.toBeInTheDocument();
+  });
+
   it('shows the cached RSS body when the detail read fails offline (unpinned)', async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
