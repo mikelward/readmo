@@ -135,10 +135,13 @@ describe('useOfflineCacheLock', () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
-    // Pre-seed a hydrated detail, then bucket the item.
+    // item-1 hydrated-fresh; item-3 NOT cached so its warm is observable proof
+    // the (idle-deferred) drain actually ran — otherwise the negative assertion
+    // below could pass simply because warming hadn't started yet.
     const seed = new MockDataSource(`seed-${Math.random()}`);
     queryClient.setQueryData(['item', 'item-1'], await seed.getItem('item-1'));
     source.stateStore.set('item-1', 'pinned', true);
+    source.stateStore.set('item-3', 'pinned', true);
 
     render(
       <QueryClientProvider client={queryClient}>
@@ -148,9 +151,12 @@ describe('useOfflineCacheLock', () => {
       </QueryClientProvider>,
     );
 
-    await Promise.resolve();
-    await Promise.resolve();
-    // The hydrated detail is treated as fresh → no network getItem for it.
+    // The drain warmed the un-cached item — proof warming ran…
+    await waitFor(() =>
+      expect(queryClient.getQueryData(['item', 'item-3'])).toBeTruthy(),
+    );
+    expect(source.itemCalls).toContain('item-3');
+    // …yet the hydrated-fresh detail was never refetched.
     expect(source.itemCalls).not.toContain('item-1');
   });
 
@@ -188,8 +194,12 @@ describe('useOfflineCacheLock', () => {
     );
 
     source.stateStore.set('item-1', 'pinned', true);
-    await Promise.resolve();
-    await Promise.resolve();
+    // Flush the idle-deferred warm drain so warm() actually runs on the cached
+    // item — otherwise this negative assertion could pass merely because warming
+    // hadn't started yet. whenIdle falls back to a 0ms macrotask in jsdom.
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
     expect(invalidateSpy).not.toHaveBeenCalledWith(
       expect.objectContaining({ queryKey: ['offline'] }),
     );
@@ -282,5 +292,56 @@ describe('useOfflineCacheLock', () => {
     await waitFor(() => expect(qc.getQueryData(['item', 'item-1'])).toBeTruthy());
     // Body is long enough → not truncated → no full-text fetch.
     expect(qc.getQueryData(['fulltext', 'item-1'])).toBeUndefined();
+  });
+
+  it('caps concurrent warms so the boot read burst stays bounded', async () => {
+    // Gate every getItem on a manual release so we can observe how many warm
+    // reads run at once. Six items are bucketed; the cap (3) must hold.
+    let active = 0;
+    let maxActive = 0;
+    const releases: Array<() => void> = [];
+    class GatedSource extends MockDataSource {
+      async getItem(id: string) {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise<void>((resolve) => {
+          releases.push(() => {
+            active -= 1;
+            resolve();
+          });
+        });
+        return super.getItem(id);
+      }
+    }
+    const source = new GatedSource(`test-${Math.random()}`);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    for (const n of [1, 2, 3, 4, 5, 6]) {
+      source.stateStore.set(`item-${n}`, 'pinned', true);
+    }
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DataSourceProvider source={source}>
+          <Harness />
+        </DataSourceProvider>
+      </QueryClientProvider>,
+    );
+
+    // Saturates at the cap and holds there while the other three queue — proof
+    // the burst is bounded (six wanted, only three ever started).
+    await waitFor(() => expect(active).toBe(3));
+    expect(releases.length).toBe(3);
+
+    // Drain fully, releasing each in-flight read so the next starts; the cap
+    // must hold the whole way down.
+    for (let i = 0; i < 6 && releases.length > 0; i++) {
+      await act(async () => {
+        releases.splice(0).forEach((release) => release());
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    expect(maxActive).toBe(3);
+    expect(active).toBe(0);
   });
 });
