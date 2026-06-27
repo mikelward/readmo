@@ -29,6 +29,12 @@
   margin-right: max(8px, env(safe-area-inset-right));
 }
 
+/* The brand hugs the drawer toggle on the left and the action cluster sits to
+ * the right of the spacer, with the account chip at the far edge — a flat row
+ * at every width, matching newshacker's app header (guardrail #9). The inner
+ * just fills the track between the edge controls; it is never centered or
+ * width-capped, so the wordmark never floats away from the menu button on
+ * wide viewports. */
 .app-header__inner {
   flex: 1 1 auto;
   display: flex;
@@ -37,60 +43,8 @@
    * Search/Settings pair (and any future action added here). */
   gap: 8px;
   height: var(--rm-header-h);
-  max-width: 720px;
-  margin: 0 auto;
   padding: 0 8px;
   min-width: 0;
-}
-
-/* Wide viewport: pull the edge controls out of flow and let the inner
- * center on the viewport via `justify-content`. Below this breakpoint the
- * default flex layout above keeps the inner snugly between the
- * variable-width edge buttons; above it we have room for the full centered
- * column (720px, widening to 860px at 960px — see below) plus comfortable
- * edge insets, and `margin: 0 auto` would otherwise drift the inner
- * off-center (left) whenever the right-side account chip is wider than the
- * left-side drawer toggle, putting the brand and right-side actions out of
- * alignment with the article/hero column directly below. */
-@media (min-width: 880px) {
-  .app-header {
-    justify-content: center;
-  }
-  .app-header__edge {
-    position: absolute;
-    top: env(safe-area-inset-top);
-    bottom: 0;
-  }
-  .app-header__edge--left {
-    left: max(8px, env(safe-area-inset-left));
-    margin-left: 0;
-  }
-  .app-header__edge--right {
-    right: max(8px, env(safe-area-inset-right));
-    margin-right: 0;
-  }
-  .app-header__inner {
-    flex: 0 1 auto;
-    width: 100%;
-    margin: 0;
-  }
-}
-
-/* Track the content column's desktop widen: `.app-main` grows 720→860 at
- * 960px (see global.css), so the header inner grows with it to keep the
- * brand/actions aligned with the list/article column directly below. Unlike
- * `.app-main`, the inner shares the row with the absolutely-positioned edge
- * controls (drawer toggle on the left, account chip on the right), so it
- * can't take the full 860px until the viewport is wide enough to clear them:
- * a centered 860px inner leaves only (960 - 860) / 2 = 50px of side gutter,
- * but the signed-out "Sign in" chip is wider than that and would overlap the
- * Settings tap target. Reserve ~100px per side so the inner only reaches the
- * full 860px (column-aligned) once the viewport clears ~1060px, and stays
- * narrower-but-non-overlapping below that. */
-@media (min-width: 960px) {
-  .app-header__inner {
-    max-width: min(860px, calc(100vw - 200px));
-  }
 }
 
 .app-header__icon-btn {

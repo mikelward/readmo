@@ -138,18 +138,15 @@ Everything else about the visual system mirrors newshacker.
   motif, in our ink-on-paper palette). The same mark renders inline before
   the **readmo** wordmark in the app header. Generate the icon set once
   (`scripts/generate-icons.mjs`) into `public/`.
-- **App header layout:** three slots in a single sticky row. The drawer
-  toggle is pinned to the viewport's left edge and the account chip to the
-  viewport's right edge so both stay reachable at any width; the centered
-  inner (brand mark + wordmark, Offline pill, Search, Settings) tracks the
-  article column max-width — 720px, widening toward 860px on roomy screens
-  (from ≥960px, the same breakpoint that widens `.app-main`) — so it aligns
-  with the list below. Because the inner shares the row with the
-  absolutely-positioned edge controls, the desktop widen is clamped to
-  reserve ~100px of gutter per side (so the signed-out "Sign in" chip never
-  overlaps the Settings target); the inner reaches the full column-aligned
-  860px once the viewport clears ~1060px. Safe-area
-  insets reserve space for landscape-iPhone notches on the edge controls.
+- **App header layout:** a single flat sticky row, matching newshacker. The
+  drawer toggle hugs the left edge with the brand mark + wordmark immediately
+  to its right; a flexible spacer pushes the action cluster (Offline pill,
+  Search, Settings) and the account chip to the right edge. The brand stays
+  pinned beside the menu button at every width — it is never centered or
+  pulled toward the content column, so the wordmark never floats away from the
+  menu on wide viewports. The reading column (`.app-main`) still widens
+  720→860px at ≥960px, but the header row does not track it. Safe-area insets
+  reserve space for landscape-iPhone notches on the edge controls.
 - **Navigation drawer sections:** Home (feed picker — All subscriptions or a folder), Library (Pinned / Favorites / Done / Opened / Offline), Folders (folder nav, hidden when none exist), Feeds (subscription list), Appearance (mode + palette + text-size segmented controls), App (Settings, Debug).
 - **Dark mode:** full light/dark/system via tokens.
 - **Palette:** two color families selectable in the drawer's Appearance section (and also in Settings), orthogonal to the
