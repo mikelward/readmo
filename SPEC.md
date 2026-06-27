@@ -781,7 +781,7 @@ loopback/link-local/private/metadata targets and redirects to them.
     stalled item_state read from stranding the whole feed on its loading
     skeletons — a blocking await there held the home feed query in its initial
     loading state across reloads and pull-to-refresh. The read still flows through the connectivity-tracked,
-    15s-bounded `supabaseFetch`, so Down/Offline detection is unchanged; only the
+    8s-bounded `supabaseFetch`, so Down/Offline detection is unchanged; only the
     gating of rows on it is removed.
   - **Offline write bases come from the persisted store**, not the cache. Since
     an offline boot's item-state read fails (no live `observeServerVersions`), the
@@ -1471,7 +1471,7 @@ Client reads through Supabase rather than newshacker's `/api/*` proxies, so the
 keys differ; the strategies map one-to-one:
 
 - **App shell** — precached; navigation falls back to `index.html`.
-- **Data reads (Supabase REST/RPC)** — **NetworkFirst** (~10s timeout, short
+- **Data reads (Supabase REST/RPC)** — **NetworkFirst** (~6s timeout, short
   TTL, bounded), cache fallback offline. (Same NetworkFirst-over-SWR reasoning.)
 - **Pinned/Favorite item content** — **no expiration** (the exemption
   newshacker grants pinned/favorited items); bounded only by per-origin quota.
@@ -1491,12 +1491,12 @@ keys differ; the strategies map one-to-one:
   UI, not a hung skeleton). Same rationale.
 - **Bounded Supabase requests.** `offlineFirst` only governs React Query's own
   retry pausing; it does not bound the underlying request. On a cache *miss* the
-  service worker's NetworkFirst awaits the network (its ~10s timeout only falls
+  service worker's NetworkFirst awaits the network (its ~6s timeout only falls
   back on a cache *hit*), so a lie-fi connection could leave a read pending
   indefinitely — and because `SupabaseDataSource` memoizes the in-flight
   `item_state` hydration, one hung request wedged the whole feed on its loading
   skeletons. The Supabase client therefore wraps `global.fetch` in `supabaseFetch`,
-  which caps **reads** at 15s (just past the SW's cache-fallback window): GET
+  which caps **reads** at 8s (just past the SW's ~6s cache-fallback window): GET
   requests on `/rest/v1/` (what the SW mediates, since Workbox runtime caching is
   GET-only) *plus* the `feed_items` read RPC (a POST, but the primary
   home/folder/feed read, so it must be bounded too). A hung read aborts → the read
@@ -1514,7 +1514,7 @@ keys differ; the strategies map one-to-one:
   `useUserCacheScope` treats it as a sign-out and purges the offline cache,
   turning a transient blip into a spurious sign-out. Every request still flows
   through `trackedFetch`, so a real network failure flips the Offline pill.
-- **A read *timeout* is not treated as proof of offline.** A self-imposed 15s
+- **A read *timeout* is not treated as proof of offline.** A self-imposed 8s
   read cap is ambiguous: the device may be offline, or the backend may just be
   slow (e.g. the DB overloaded and `feed_items` not answering in time). Flipping
   the Offline pill on the timeout alone mislabels a server-side slowdown as a
@@ -1710,7 +1710,7 @@ keys differ; the strategies map one-to-one:
   rather than duplicated.
 - **An empty feed is confirmed against a live server, not the SW cache, before
   claiming caught up.** `status === 'online'` alone isn't proof the *server*
-  answered: the `readmo-data` route is Workbox `NetworkFirst` with a 10s cache
+  answered: the `readmo-data` route is Workbox `NetworkFirst` with a 6s cache
   fallback, and `trackedFetch` counts any resolved response — including a SW
   cache hit — as success, so a backend-down/lie-fi read can be served a stale
   empty page while the device still reports online. So when a feed read's *first

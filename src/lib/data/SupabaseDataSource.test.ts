@@ -387,7 +387,7 @@ describe('SupabaseDataSource reads', () => {
 
     // From now on every item_state read HANGS — a connection that's established
     // but never answers (a stalled backend, or a service-worker NetworkOnly read
-    // that never settles), the case the 15s fetch cap can't always rescue.
+    // that never settles), the case the 8s fetch cap can't always rescue.
     let hungReadStarted!: () => void;
     const hungRead = new Promise<void>((r) => (hungReadStarted = r));
     const realFrom = env.fake.client.from.bind(env.fake.client);

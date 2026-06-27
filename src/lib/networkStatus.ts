@@ -93,7 +93,7 @@ let lastStatus: ConnectivityStatus = computeStatus();
 const listeners = new Set<Listener>();
 const statusListeners = new Set<StatusListener>();
 
-// A self-imposed read *timeout* (supabaseFetch aborts a hung read after 15s)
+// A self-imposed read *timeout* (supabaseFetch aborts a hung read after 8s)
 // is ambiguous: the device may be offline, or the backend may just be slow —
 // e.g. the DB pegged and the feed RPC not answering in time. Rather than guess
 // "offline" (the old behavior, which painted a wrong Offline pill whenever the
@@ -127,8 +127,8 @@ let probeBaselineSeq = 0;
 // live request (e.g. a set_item_state POST) that the backend accepted must.
 let livenessSeq = 0;
 
-// Short ceiling for the reachability probe — well under the 15s read cap so a
-// genuine offline flips the pill promptly rather than waiting a second 15s.
+// Short ceiling for the reachability probe — under the 8s read cap so a
+// genuine offline flips the pill promptly rather than waiting a second read cap.
 const PROBE_TIMEOUT_MS = 5_000;
 
 // Once a fetch failure flips us down, nothing in the app re-checks the backend
@@ -321,7 +321,7 @@ async function maybeProbeAfterTimeout(): Promise<void> {
  * (`/auth/v1/health`), which lives on `/auth/v1/` — outside the SW's
  * `/rest/v1/` NetworkFirst route — so Workbox never answers it from cache. A
  * feed read, by contrast, the SW *can* answer from a stale empty `200` while the
- * backend is down (the read's 15s cap deliberately sits past the SW's 10s
+ * backend is down (the read's 8s cap deliberately sits past the SW's 6s
  * cache-fallback window), which `trackedFetch` then reads as success → `online`.
  * Callers use this to verify an *empty* feed read came from a live server before
  * trusting it as "all caught up": a cache-served empty page would otherwise lie.

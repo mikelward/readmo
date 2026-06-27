@@ -56,7 +56,7 @@ describe('supabaseFetch', () => {
     // Avoid an unhandled rejection while we advance the clock.
     promise.catch(() => undefined);
 
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(8_000);
 
     await expect(promise).rejects.toMatchObject({ name: 'TimeoutError' });
     expect(getOnline()).toBe(false);
@@ -75,10 +75,74 @@ describe('supabaseFetch', () => {
     );
     promise.catch(() => undefined);
 
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(8_000);
 
     await expect(promise).rejects.toMatchObject({ name: 'TimeoutError' });
     expect(getOnline()).toBe(false);
+  });
+
+  it('does not abort before the 8s ceiling — a read at 7.9s still resolves', async () => {
+    // Guards the lowered cap from drifting *down* into the range a healthy-but-
+    // slow mobile read lives in: a read that answers just under the ceiling must
+    // pass through, not get aborted.
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_input: RequestInfo | URL, init?: RequestInit) =>
+          new Promise<Response>((resolve, reject) => {
+            init?.signal?.addEventListener('abort', () =>
+              reject(init.signal!.reason),
+            );
+            setTimeout(() => resolve(new Response('{}', { status: 200 })), 7_900);
+          }),
+      ),
+    );
+
+    const promise = supabaseFetch('https://x.supabase.co/rest/v1/item_state');
+    await vi.advanceTimersByTimeAsync(7_900);
+
+    expect((await promise).status).toBe(200);
+    expect(getOnline()).toBe(true);
+  });
+
+  it('runs reads concurrently — a hung read does not block or abort another in-flight read', async () => {
+    // The ceiling is per-request (each call gets its own AbortController + timer),
+    // so a stuck read can't hang the rest of the app: a second read started while
+    // the first is still in flight resolves on its own, and the first's eventual
+    // timeout aborts only itself.
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (input: RequestInfo | URL, init?: RequestInit) =>
+          new Promise<Response>((resolve, reject) => {
+            init?.signal?.addEventListener('abort', () =>
+              reject(init.signal!.reason),
+            );
+            // 'fast' answers at 3s; 'slow' never resolves on its own (only its
+            // own ceiling aborts it).
+            if (String(input).includes('fast')) {
+              setTimeout(() => resolve(new Response('{}', { status: 200 })), 3_000);
+            }
+          }),
+      ),
+    );
+
+    const slow = supabaseFetch('https://x.supabase.co/rest/v1/rpc/feed_items?slow', {
+      method: 'POST',
+    });
+    slow.catch(() => undefined);
+    // Started while `slow` is still pending.
+    const fast = supabaseFetch('https://x.supabase.co/rest/v1/item_state?fast');
+
+    // The fast read settles on its own clock, unaffected by the still-hung one.
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect((await fast).status).toBe(200);
+
+    // The slow read is still pending — only its own 8s ceiling ends it.
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(slow).rejects.toMatchObject({ name: 'TimeoutError' });
   });
 
   it('does not time out a request that resolves before the ceiling', async () => {
@@ -114,14 +178,14 @@ describe('supabaseFetch', () => {
             init?.signal?.addEventListener('abort', () =>
               reject(init.signal!.reason),
             );
-            // A long-running poller/discover call: well past the 15s read cap.
+            // A long-running poller/discover call: well past the 8s read cap.
             setTimeout(() => resolve(new Response('{}', { status: 200 })), 40_000);
           }),
       ),
     );
 
     const promise = supabaseFetch('https://x.supabase.co/functions/v1/refresh');
-    // The read cap would have aborted at 15s; the function call keeps running.
+    // The read cap would have aborted at 8s; the function call keeps running.
     await vi.advanceTimersByTimeAsync(40_000);
 
     const res = await promise;
