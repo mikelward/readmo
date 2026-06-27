@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it } from 'vitest';
 import { MockDataSource, PAGE_SIZE } from './MockDataSource';
+import { TTL_MS } from '../types';
 
 function fresh(): MockDataSource {
   // Unique state key per test so localStorage (absent in node) and the
@@ -150,6 +151,39 @@ describe('MockDataSource freshness window + per-feed floor', () => {
     const ids = css.items.map((fi) => fi.item.id);
     expect(ids).not.toContain('item-3'); // dismissed
     expect(ids).toContain('item-6'); // 30h, in window anyway, now the floor rank-0
+  });
+
+  const ONE_DAY = 24 * 60 * 60 * 1000;
+
+  it('caps the per-feed floor to a max age (the floor cannot reach into the archive)', async () => {
+    // Tiny freshness window so nothing qualifies by recency; floor capped to 1 day.
+    // css's item-3 (~9h) is within the cap; item-10 (~5.8d) is beyond it, so the
+    // floor must NOT keep it even though it's among the feed's newest 10.
+    const ds = new MockDataSource(`test-${Math.random()}`, {
+      homeWindowMs: 1,
+      floorMaxAgeMs: ONE_DAY,
+    });
+    const ids = (await ds.getFeedItems('feed-css', { limit: 100 })).items.map(
+      (fi) => fi.item.id,
+    );
+    expect(ids).toContain('item-3'); // within the 1-day floor cap
+    expect(ids).not.toContain('item-10'); // beyond the cap → not resurfaced
+  });
+
+  it('a swept item past the floor cap does not reappear when its Done expires', async () => {
+    // The core invariant: TTL_MS (Done expiry) > FLOOR_MAX_AGE_MS, so by the time
+    // a swept item's Done collapses it is already older than the floor cap and
+    // unlistable — it can't pop back into the floor. Model that with a 1-day floor
+    // cap and a Done stamped long enough ago to have expired.
+    const ds = new MockDataSource(`test-${Math.random()}`, {
+      homeWindowMs: 1,
+      floorMaxAgeMs: ONE_DAY,
+    });
+    ds.stateStore.set('item-10', 'done', true, Date.now() - TTL_MS - 1); // expired Done
+    const css = await ds.getFeedItems('feed-css', { limit: 100 });
+    expect(css.items.map((fi) => fi.item.id)).not.toContain('item-10');
+    const home = await ds.getHomeItems({ limit: 100 });
+    expect(home.items.map((fi) => fi.item.id)).not.toContain('item-10');
   });
 });
 

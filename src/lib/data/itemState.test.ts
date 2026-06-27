@@ -81,7 +81,10 @@ describe('withRetention', () => {
     expect(withRetention(s, NOW + TTL_MS - 1).opened).toBe(true);
   });
 
-  it('expires Done after the retention window (30-day completion log)', () => {
+  it('expires Done after the retention window', () => {
+    // Done is TTL'd, but TTL_MS is ordered ABOVE the floor's max age (see
+    // FLOOR_MAX_AGE_MS), so a swept item leaves every feed before this fires —
+    // the expiry only prunes /done, it can't resurface a listable item.
     const s = state({ done: true, doneAt: NOW });
     expect(withRetention(s, NOW + TTL_MS + 1).done).toBe(false);
     expect(withRetention(s, NOW + TTL_MS - 1).done).toBe(true);
@@ -294,7 +297,7 @@ describe('ItemStateStore', () => {
   });
 
   describe('hideMany undo batching', () => {
-    // Read state back at NOW (the mutation time) so the 30-day Done retention
+    // Read state back at NOW (the mutation time) so the Done retention window
     // doesn't collapse the flag — these assert batching, not retention.
     it('replaces the undo batch by default (one Undo restores the last call only)', () => {
       const store = new ItemStateStore(memoryPersistence());
