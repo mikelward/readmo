@@ -285,6 +285,14 @@ export function AppDrawer({ open, onClose }: Props) {
             Settings
           </NavLink>
           <NavLink
+            to="/about"
+            className={({ isActive }) =>
+              'app-drawer__link' + (isActive ? ' app-drawer__link--active' : '')
+            }
+          >
+            About
+          </NavLink>
+          <NavLink
             to="/debug"
             className={({ isActive }) =>
               'app-drawer__link' + (isActive ? ' app-drawer__link--active' : '')

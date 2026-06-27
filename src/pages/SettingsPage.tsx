@@ -805,9 +805,14 @@ export function SettingsPage() {
         <h2 className="settings__heading">About</h2>
         <div className="settings__account">
           <div className="settings__sub-url">{summarizeBuildAge(buildInfo)}</div>
-          <Link className="settings__btn" to="/debug">
-            Debug
-          </Link>
+          <div className="settings__about-links">
+            <Link className="settings__btn" to="/about">
+              About
+            </Link>
+            <Link className="settings__btn" to="/debug">
+              Debug
+            </Link>
+          </div>
         </div>
       </section>
     </div>

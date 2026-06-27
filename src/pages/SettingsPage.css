@@ -390,3 +390,9 @@
 .settings__account {
   justify-content: space-between;
 }
+
+.settings__about-links {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

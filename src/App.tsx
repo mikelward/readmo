@@ -21,6 +21,7 @@ import { ItemPage } from './pages/ItemPage';
 import { SearchPage } from './pages/SearchPage';
 import { OfflinePage } from './pages/OfflinePage';
 import { SignInPage } from './pages/SignInPage';
+import { AboutPage } from './pages/AboutPage';
 import { DebugPage } from './pages/DebugPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { LazyRouteBoundary } from './components/LazyRouteBoundary';
@@ -71,6 +72,8 @@ export default function App() {
         <Suspense fallback={null}>
           <Routes>
             <Route path="/signin" element={<SignInPage />} />
+            {/* Open to everyone (no auth gate) — informational, no user data. */}
+            <Route path="/about" element={<AboutPage />} />
             {/* Open to everyone (no auth gate) — diagnostics only, no secrets. */}
             <Route path="/debug" element={<DebugPage />} />
             <Route
