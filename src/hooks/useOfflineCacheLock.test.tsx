@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, render, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider, IsRestoringProvider } from '@tanstack/react-query';
+import {
+  QueryClient,
+  QueryClientProvider,
+  IsRestoringProvider,
+  QueryObserver,
+} from '@tanstack/react-query';
 import { DataSourceProvider } from '../lib/data/context';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import { _resetNetworkStatusForTests } from '../lib/networkStatus';
@@ -263,6 +268,261 @@ describe('useOfflineCacheLock', () => {
     const qc = setup(source);
 
     await waitFor(() => expect(qc.getQueryData(['item', 'item-2'])).toBeTruthy());
+  });
+
+  it('bounds warm concurrency — does not fetch every saved item at once', async () => {
+    // A user with many saved items must not fire one getItem per item all at
+    // once on boot/reconnect. getItem is gated so we can observe how many run
+    // concurrently; the limiter must cap it at OFFLINE_WARM_CONCURRENCY (4).
+    const gates: Array<() => void> = [];
+    class GatedSource extends MockDataSource {
+      inFlight = 0;
+      maxInFlight = 0;
+      getItemCalls = 0;
+      async getItem(id: string) {
+        this.getItemCalls += 1;
+        this.inFlight += 1;
+        this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
+        await new Promise<void>((res) => gates.push(res));
+        this.inFlight -= 1;
+        return super.getItem(id);
+      }
+    }
+    const source = new GatedSource(`test-${Math.random()}`);
+    setup(source);
+
+    // item-1..item-10 are all seeded in the mock, so getItem returns a real
+    // detail and no transient-miss retry replays to skew the count.
+    const ids = Array.from({ length: 10 }, (_, i) => `item-${i + 1}`);
+    for (const id of ids) source.stateStore.set(id, 'pinned', true);
+
+    // Only 4 getItem calls go out before any resolves — the other 6 queue.
+    await waitFor(() => expect(gates.length).toBe(4));
+    expect(source.getItemCalls).toBe(4);
+    expect(source.maxInFlight).toBe(4);
+
+    // Drain in waves; the queue keeps feeding but concurrency never exceeds 4.
+    const flush = async () => {
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    };
+    for (let wave = 0; wave < 20 && source.getItemCalls < 10; wave++) {
+      await waitFor(() => expect(gates.length).toBeGreaterThan(0));
+      const pending = gates.length;
+      for (let i = 0; i < pending; i++) gates.shift()!();
+      await flush();
+    }
+    while (gates.length) gates.shift()!();
+    await flush();
+
+    expect(source.getItemCalls).toBe(10); // every item warmed exactly once
+    expect(source.maxInFlight).toBe(4); // but never more than 4 concurrently
+  });
+
+  it('does not resurrect an item unpinned while its warm was queued', async () => {
+    // With the concurrency cap, a warm can sit in the queue while the item is
+    // unpinned (and unlock evicts its queries). The queued task must bail when it
+    // finally runs — not re-create gcTime:Infinity entries for evicted content.
+    const gates: Array<() => void> = [];
+    class GatedSource extends MockDataSource {
+      getItemIds: string[] = [];
+      async getItem(id: string) {
+        this.getItemIds.push(id);
+        await new Promise<void>((res) => gates.push(res));
+        return super.getItem(id);
+      }
+    }
+    const source = new GatedSource(`test-${Math.random()}`);
+    const qc = setup(source);
+
+    // 5 items (item-1..item-5, all seeded in the mock): 4 fill the concurrency
+    // slots (gated on getItem); the 5th queues.
+    for (let i = 1; i <= 5; i++) source.stateStore.set(`item-${i}`, 'pinned', true);
+    await waitFor(() => expect(gates.length).toBe(4));
+    expect(source.getItemIds).not.toContain('item-5'); // still queued, not fetched
+
+    // Unpin the still-queued item before it gets a slot → unlock evicts it.
+    source.stateStore.set('item-5', 'pinned', false);
+
+    // Release the in-flight four; a slot frees and item-4's queued warm runs — but
+    // it must bail (no longer locked), never fetching or caching it.
+    const flush = async () => {
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    };
+    for (let i = 0; i < 20 && (gates.length || source.getItemIds.length < 4); i++) {
+      while (gates.length) gates.shift()!();
+      await flush();
+    }
+
+    expect(source.getItemIds).not.toContain('item-5'); // bailed before fetching
+    expect(qc.getQueryData(['item', 'item-5'])).toBeUndefined(); // not resurrected
+    // The four still-pinned items warmed normally.
+    expect(qc.getQueryData(['item', 'item-1'])).toBeTruthy();
+  });
+
+  it('does not let slow full-text extraction block detail warming of other items', async () => {
+    // Detail (getItem) and full-text run on separate pools. If full-text shared
+    // the detail pool, a few slow extractions (the Edge call can take tens of
+    // seconds, uncapped) would hold every slot and starve later items' details —
+    // which are what make an item show up offline. Here full-text hangs for all
+    // items; every item's DETAIL must still warm.
+    const ftGates: Array<() => void> = [];
+    class SlowFullText extends MockDataSource {
+      async fetchFullText(id: string) {
+        await new Promise<void>((res) => ftGates.push(res)); // never resolves on its own
+        return super.fetchFullText(id);
+      }
+    }
+    const source = new SlowFullText(`test-${Math.random()}`);
+    const qc = setup(source);
+
+    // 6 truncated items (> the detail pool of 4): their full-text extraction hangs.
+    const ids = Array.from({ length: 6 }, (_, i) => `item-${i + 1}`);
+    for (const id of ids) source.stateStore.set(id, 'pinned', true);
+
+    // Every item's detail warms despite full-text being stuck — if the two shared
+    // one pool, items 5–6 would never get past the 4 stuck extractions.
+    for (const id of ids) {
+      await waitFor(() => expect(qc.getQueryData(['item', id])).toBeTruthy());
+    }
+  });
+
+  it('keeps a concurrently-opened item detail when unpinned during its full-text warm', async () => {
+    // If an item is unpinned while its full-text prefetch is in flight and the
+    // user opens the article (a normal reader fetch repopulates ['item', id]),
+    // the warm's cleanup must drop only the full-text key — not evict the reader's
+    // freshly-fetched detail on the shared ['item', id] key.
+    const ftGates: Array<() => void> = [];
+    class GatedFullText extends MockDataSource {
+      async fetchFullText(id: string) {
+        await new Promise<void>((res) => ftGates.push(res));
+        return super.fetchFullText(id);
+      }
+    }
+    const source = new GatedFullText(`test-${Math.random()}`);
+    const qc = setup(source);
+
+    source.stateStore.set('item-1', 'pinned', true);
+    // Detail warmed; the (truncated-feed) full-text fetch is now gated in flight.
+    await waitFor(() => expect(qc.getQueryData(['item', 'item-1'])).toBeTruthy());
+    await waitFor(() => expect(ftGates.length).toBe(1));
+
+    // Unpin → unlock evicts the offline entries while full-text is still in flight…
+    source.stateStore.set('item-1', 'pinned', false);
+    // …and the user opens the article, repopulating ['item', id] with a reader fetch.
+    qc.setQueryData(['item', 'item-1'], { reader: true });
+
+    // Full-text resolves → the warm's cleanup runs. It must remove ['fulltext']
+    // but leave the reader's ['item'] entry intact.
+    ftGates.shift()!();
+    await waitFor(() =>
+      expect(qc.getQueryData(['fulltext', 'item-1'])).toBeUndefined(),
+    );
+    expect(qc.getQueryData(['item', 'item-1'])).toEqual({ reader: true });
+  });
+
+  it('does not evict a reader-observed detail when unpinned mid-detail-fetch', async () => {
+    // If an item is unpinned while its detail prefetch is in flight and the user
+    // has the article open (an active observer on the shared ['item', id] key),
+    // the warm's unlock cleanup must NOT remove it — that would evict the detail
+    // the reader is showing. Only an unobserved (orphaned) resurrection is dropped.
+    const gates: Array<() => void> = [];
+    class GatedDetail extends MockDataSource {
+      async getItem(id: string) {
+        await new Promise<void>((res) => gates.push(res));
+        return super.getItem(id);
+      }
+    }
+    const source = new GatedDetail(`test-${Math.random()}`);
+    const qc = setup(source);
+
+    source.stateStore.set('item-1', 'pinned', true);
+    await waitFor(() => expect(gates.length).toBe(1)); // detail fetch in flight
+
+    // Unpin (unlock evicts the offline entry) and open the article — seed the
+    // reader's detail and attach a live observer on the shared ['item', id] key.
+    source.stateStore.set('item-1', 'pinned', false);
+    qc.setQueryData(['item', 'item-1'], { reader: true });
+    const observer = new QueryObserver(qc, {
+      queryKey: ['item', 'item-1'],
+      enabled: false,
+    });
+    const unsub = observer.subscribe(() => {});
+
+    // The detail fetch resolves; the warm's !locks cleanup runs but must leave the
+    // reader-observed entry intact (only an unobserved orphan is dropped).
+    gates.shift()!();
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    expect(qc.getQueryData(['item', 'item-1'])).toBeTruthy();
+    unsub();
+  });
+
+  it('replays a retry that was requested while a warm was in flight', async () => {
+    // A reconnect/sync can fire warm(id) while one is already in flight; that
+    // request is coalesced. If the in-flight warm then misses (null detail here),
+    // it must replay once when it settles instead of waiting for a later event.
+    const gates: Array<() => void> = [];
+    class FlakyGatedDetail extends MockDataSource {
+      calls = 0;
+      async getItem(id: string) {
+        this.calls += 1;
+        await new Promise<void>((res) => gates.push(res));
+        // First attempt misses (null), the replay succeeds.
+        return this.calls === 1 ? null : super.getItem(id);
+      }
+    }
+    const source = new FlakyGatedDetail(`test-${Math.random()}`);
+    const qc = setup(source);
+
+    source.stateStore.set('item-1', 'pinned', true);
+    await waitFor(() => expect(gates.length).toBe(1)); // first warm in flight
+    // A second trigger arrives while the first is in flight (e.g. a focus/sync) —
+    // coalesced as a pending retry rather than starting a duplicate.
+    source.stateStore.set('item-1', 'favorite', true);
+
+    // First attempt settles as a null miss → the coalesced retry replays.
+    gates.shift()!();
+    await waitFor(() => expect(gates.length).toBe(1)); // the replay's fetch is in flight
+    gates.shift()!();
+    await waitFor(() => expect(qc.getQueryData(['item', 'item-1'])).toBeTruthy());
+    expect(source.calls).toBe(2); // missed once, replayed once
+  });
+
+  it('re-warms the detail if it was evicted by an unpin+repin during the full-text phase', async () => {
+    // If a truncated item is unpinned (evicting ['item', id]) then re-pinned while
+    // its full-text fetch is still in flight, the full-text phase sees the item
+    // locked again. It must NOT mark the item `warmed` while the detail is missing
+    // — that would suppress the replay and leave the bucketed item out of /offline.
+    const ftGates: Array<() => void> = [];
+    let getItemCalls = 0;
+    class GatedFullText extends MockDataSource {
+      async getItem(id: string) {
+        getItemCalls += 1;
+        return super.getItem(id);
+      }
+      async fetchFullText(id: string) {
+        await new Promise<void>((res) => ftGates.push(res));
+        return super.fetchFullText(id);
+      }
+    }
+    const source = new GatedFullText(`test-${Math.random()}`);
+    const qc = setup(source);
+
+    source.stateStore.set('item-1', 'pinned', true);
+    await waitFor(() => expect(qc.getQueryData(['item', 'item-1'])).toBeTruthy());
+    await waitFor(() => expect(ftGates.length).toBe(1)); // full-text in flight
+    expect(getItemCalls).toBe(1);
+
+    // Unpin (unlock evicts the detail) then re-pin — all while full-text is still
+    // in flight, so the re-pin's warm is coalesced into a pending retry.
+    source.stateStore.set('item-1', 'pinned', false);
+    expect(qc.getQueryData(['item', 'item-1'])).toBeUndefined(); // evicted
+    source.stateStore.set('item-1', 'pinned', true);
+
+    // Full-text settles. The detail is missing, so the warm must replay and
+    // re-fetch it rather than marking the item warmed and dropping the retry.
+    ftGates.shift()!();
+    await waitFor(() => expect(qc.getQueryData(['item', 'item-1'])).toBeTruthy());
+    expect(getItemCalls).toBe(2); // detail re-fetched by the replay
   });
 
   it('does not fetch the full body for an item whose feed body is complete', async () => {
