@@ -71,18 +71,31 @@ bad minute doesn't page.
 | **CPU pinned** | host idle CPU low — `node_cpu_seconds_total{mode="idle",service_type="db"}` → busy > 85% | 10m | warning |
 | **Memory pressure** | `node_memory_MemAvailable_bytes / …MemTotal…` < 10% | 10m | warning |
 | **Disk pressure** | `node_filesystem_avail_bytes / …size…` < 15% | 15m | warning |
-| **Connection-pool starved** | pool checkout p95 climbing — `supavisor_pool_checkout_duration_local_bucket` | 5m | critical |
-| **Slow queries** | query duration p95 — `supavisor_client_query_duration_bucket` | 5m | warning |
+| **Connection-pool starved** | PostgREST pool timeouts — `pgrst_db_pool_timeouts_total` | 5m | critical |
+| **Slow queries** | DB-wide mean query time — `pg_stat_statements_total_time_seconds / …total_queries` | 5m | warning |
 | **API request storm** | total request rate >3× the last hour and >50/s — `http_status_codes_total` | 5m | warning |
-| **Query storm (per pooled user)** | per-`user` query rate >3× the last hour and >50/s — `supavisor_client_queries_count` | 5m | warning |
+| **DB query storm** | DB-wide query rate >3× the last hour and >100/s — `pg_stat_statements_total_queries` | 5m | warning |
 
-> **Note — what the Metrics API does *not* expose.** There are no `pg_stat_*`
-> per-query series here, and the `supavisor_*` query/connection metrics cover
-> **pooled (Supavisor) traffic only** — PostgREST/direct traffic isn't in them.
-> So these alerts are the "the DB is starving / flooded" trigger; the
-> authoritative per-query / per-`queryid` answer (across *all* backends) is
-> layer 2's `db-perf`. The "connection-pool starved" and "slow queries" rules
-> are the closest aggregate proxies for "a query is starving / running too long."
+> **Note — what the Metrics API does *not* expose.** There's no per-`queryid`
+> breakdown (only aggregate `pg_stat_statements_total_*`) and no query-duration
+> *histogram* for general traffic. The query-rate and mean-query-time rules use
+> `pg_stat_statements_*`, so they cover **all backends including PostgREST**
+> (readmo's request path keeps its own pool straight to Postgres and bypasses
+> PgBouncer — a `pgbouncer_stats_*` signal would miss it); the connection-pool
+> rule is PostgREST-pool-specific by design. So these alerts are the "the DB is
+> starving / flooded" trigger; the authoritative per-query / per-`queryid`
+> answer is layer 2's `db-perf`. The "connection-pool starved" and "slow
+> queries" rules are the closest aggregate proxies for "a query is starving /
+> running too long."
+>
+> **Generic over Supabase-specific.** Wherever both exist, the rules prefer
+> standard exporter metrics (`node_*`, `pg_*` / `pg_stat_*`, `pgbouncer_*`,
+> `pgrst_*`) over Supabase-only series: they're more stable (the Metrics API is
+> beta — the original `supavisor_*` rules broke because that family isn't even
+> emitted on this project) and portable if the backend ever moves off hosted
+> Supabase. The one deliberately-kept Supabase-specific metric is
+> `http_status_codes_total` (the API-gateway view): it sees 4xx/429/rejected
+> traffic that never reaches Postgres, which no DB-level metric can replace.
 
 > **Storm attribution — who/what is flooding it.** The storm alerts catch
 > *volume* but not the single offender for PostgREST traffic:

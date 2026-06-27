@@ -91,43 +91,52 @@ groups:
             full. Verify the `mountpoint` label matches your project (README.md).
 
       # --- Connection-pool starvation: clients WAITING for a connection ----
-      # Rising pool-checkout time = the pooler can't hand out connections fast
-      # enough = queries are starving each other. This is the clearest "starving
-      # right now" signal the Metrics API exposes. Threshold unit depends on the
-      # histogram's `le` units — VERIFY and tune (README.md).
+      # This project exposes NO supavisor_* metrics (verified against the live
+      # Metrics API, README §0); its pooler is PgBouncer and PostgREST keeps its
+      # own DB pool. readmo's request path is client → PostgREST → Postgres, so a
+      # PostgREST pool TIMEOUT is a user-facing connection starvation: a request
+      # gave up waiting for a DB connection. (Lower-level pooler view, if you
+      # prefer it: pgbouncer_pools_client_maxwait_seconds — longest current wait.)
       - alert: ReadmoDBConnectionPoolStarved
-        expr: >-
-          histogram_quantile(0.95,
-            sum by (le) (rate(supavisor_pool_checkout_duration_local_bucket[5m]))
-          ) > 1000
+        expr: rate(pgrst_db_pool_timeouts_total[5m]) > 0
         for: 5m
         labels:
           severity: critical
           service: readmo-db
         annotations:
-          summary: "Connection-pool checkout p95 high — DB starving connections"
+          summary: "PostgREST DB-pool timeouts — requests can't get a connection"
           description: >-
-            p95 time to check a connection out of the pooler is elevated for 5m:
-            clients are queuing for connections.
+            PostgREST requests have been timing out acquiring a database
+            connection for 5m: the pool is exhausted and requests are failing.
           runbook: "Hit db-perf for the long-running pids holding connections."
 
       # --- Slow queries: queries running longer than they should -----------
-      # p95 client query duration through the pooler. CAVEAT: covers Supavisor
-      # (pooled) traffic; PostgREST/direct traffic is best seen via db-perf.
+      # MEAN query time DB-WIDE via pg_stat_statements (total time / total
+      # queries; units seconds). Crucially this covers ALL backends — including
+      # the PostgREST path readmo actually uses, which keeps its OWN pool straight
+      # to Postgres and never traverses PgBouncer, so a pgbouncer_stats_* signal
+      # would miss the main production workload. No query-duration HISTOGRAM is
+      # exposed for general traffic (the only one, db_sql_latency_milliseconds, is
+      # the auth server's own queries), so this is a mean, not p95. The `> 1`
+      # guard avoids a divide-by-zero spike when idle. CAVEAT: pg_stat_statements
+      # can evict/reset under churn (conservative — undercounts, won't false-fire);
+      # db-perf is the per-query truth.
       - alert: ReadmoDBSlowQueries
         expr: >-
-          histogram_quantile(0.95,
-            sum by (le) (rate(supavisor_client_query_duration_bucket[5m]))
-          ) > 1000
+          sum(rate(pg_stat_statements_total_time_seconds[5m]))
+          / sum(rate(pg_stat_statements_total_queries[5m])) > 0.05
+          and
+          sum(rate(pg_stat_statements_total_queries[5m])) > 1
         for: 5m
         labels:
           severity: warning
           service: readmo-db
         annotations:
-          summary: "p95 query duration high — queries slower than they should be"
+          summary: "Mean query time high — queries slower than they should be"
           description: >-
-            p95 query duration through the pooler is elevated for 5m. Covers
-            pooled traffic only; use db-perf for the full per-query picture.
+            DB-wide mean query duration (pg_stat_statements) has exceeded 50ms for
+            5m (mean, not p95; all backends incl. PostgREST). Tune the threshold to
+            your workload; use db-perf for the full per-query picture.
           runbook: "Hit db-perf for the offending pid (active) / queryid (group)."
 
       # --- Query storm: way more requests/queries than expected ------------
@@ -157,23 +166,29 @@ groups:
             the Cloudflare gateway analytics / Supabase API logs. Per-FUNCTION
             attribution (which queryid is being hammered) comes from db-perf.
 
-      # --- Pooler query storm, broken out by db user -----------------------
-      # Same shape but per Supavisor `user`, so a single pooled DB user flooding
-      # queries surfaces on its own. CAVEAT: pooled traffic only, and readmo's
-      # PostgREST traffic shares one role — this catches a rogue pooled user, not
-      # an individual end-client. Verify whether `host` is a usable per-client
-      # label on your project (README §0) and add `by (user, host)` if so.
-      - alert: ReadmoDBQueryStormByUser
+      # --- DB query storm: way more queries than expected ------------------
+      # DB-wide query rate spiking vs. its own recent baseline — complements the
+      # gateway-level ReadmoApiRequestStorm above: this catches query fan-out /
+      # N+1 / a loop hammering Postgres that needn't show as extra API requests.
+      # Uses pg_stat_statements_total_queries so it covers ALL backends incl. the
+      # PostgREST path (which keeps its own pool and bypasses PgBouncer — a
+      # pgbouncer_stats_* signal would miss readmo's real workload). Fires only
+      # when BOTH >100/s AND >3x the last hour, so it stays quiet at normal
+      # volume; tune the absolute floor to your traffic. CAVEAT: per-CLIENT
+      # attribution is not in the Metrics API (readmo's PostgREST traffic shares
+      # one role) — use db-perf for the hot queryid; pg_stat_statements can evict
+      # under churn.
+      - alert: ReadmoDBQueryStorm
         expr: >-
-          sum by (user) (rate(supavisor_client_queries_count[5m])) > 50
+          sum(rate(pg_stat_statements_total_queries[5m])) > 100
           and
-          sum by (user) (rate(supavisor_client_queries_count[5m]))
-            > 3 * sum by (user) (rate(supavisor_client_queries_count[1h]))
+          sum(rate(pg_stat_statements_total_queries[5m]))
+            > 3 * sum(rate(pg_stat_statements_total_queries[1h]))
         for: 5m
         labels:
           severity: warning
           service: readmo-db
         annotations:
-          summary: "Query storm from pooled user {{ $labels.user }} (>3x last hour, >50/s)"
-          description: "A single pooled DB user is issuing far more queries than usual."
+          summary: "DB query storm — query rate >3x the last hour (and >100/s)"
+          description: "Postgres is fielding far more queries than its recent baseline."
           runbook: "Hit db-perf; pg_stat_statements `calls` shows which queryid is hot."
