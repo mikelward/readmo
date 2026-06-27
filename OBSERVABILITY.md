@@ -57,27 +57,49 @@ steps live in [`SETUP.md` §12](./SETUP.md).
 
 ### Alert rules to start with
 
-Tune the numbers to the compute tier (see [`SCALING.md`](./SCALING.md)); these
-are sane defaults. Set a **`for:` duration** on each so a single bad minute
-doesn't page.
+These ship as code in [`grafana/`](./grafana/) — `alerts.rules.yaml` (the PromQL
+below), `alertmanager.yaml` (email + suppression), `agent.alloy` (scrape), and a
+setup `README.md`. Metric names are from `supabase/supabase-grafana`; **the
+Metrics API is beta, so verify names/labels/units against your live endpoint**
+(the README has a one-line `curl` for this) and tune thresholds to the compute
+tier (see [`SCALING.md`](./SCALING.md)). Each rule carries a `for:` so a single
+bad minute doesn't page.
 
-| Alert | Condition (rule of thumb) | `for:` | Severity |
+| Alert | Signal (metric) | `for:` | Severity |
 |---|---|---|---|
-| **DB unreachable** | scrape of the Metrics API fails / `up == 0` | 2m | critical (page) |
-| **Connection saturation** | active+idle connections ≥ ~80% of the pool/tier limit | 5m | critical |
-| **CPU pinned** | DB CPU ≥ ~85% | 10m | warning → critical |
-| **Long-running queries** | max in-flight query age climbing past the user statement cap (5s authenticated; see migration 0015) | 5m | warning |
-| **Disk / WAL pressure** | disk usage trend or replication/WAL backlog rising | 15m | warning |
+| **DB unreachable** | scrape fails — `up{job="supabase-metrics"} == 0` | 2m | critical (page) |
+| **CPU pinned** | host idle CPU low — `node_cpu_seconds_total{mode="idle",service_type="db"}` → busy > 85% | 10m | warning |
+| **Memory pressure** | `node_memory_MemAvailable_bytes / …MemTotal…` < 10% | 10m | warning |
+| **Disk pressure** | `node_filesystem_avail_bytes / …size…` < 15% | 15m | warning |
+| **Connection-pool starved** | pool checkout p95 climbing — `supavisor_pool_checkout_duration_local_bucket` | 5m | critical |
+| **Slow queries** | query duration p95 — `supavisor_client_query_duration_bucket` | 5m | warning |
+| **API request storm** | total request rate >3× the last hour and >50/s — `http_status_codes_total` | 5m | warning |
+| **Query storm (per pooled user)** | per-`user` query rate >3× the last hour and >50/s — `supavisor_client_queries_count` | 5m | warning |
 
-Route critical alerts to a channel that actually buzzes (Grafana OnCall,
-PagerDuty, Opsgenie — all free-tier-friendly). The dedup/grouping/silence
-behavior that stops the every-minute spam is configured **here**, in the alert
-manager — not in our code.
+> **Note — what the Metrics API does *not* expose.** There are no `pg_stat_*`
+> per-query series here, and the `supavisor_*` query/connection metrics cover
+> **pooled (Supavisor) traffic only** — PostgREST/direct traffic isn't in them.
+> So these alerts are the "the DB is starving / flooded" trigger; the
+> authoritative per-query / per-`queryid` answer (across *all* backends) is
+> layer 2's `db-perf`. The "connection-pool starved" and "slow queries" rules
+> are the closest aggregate proxies for "a query is starving / running too long."
 
-> **Why these and not "alert on a slow query"?** The Metrics API is
-> **aggregate** — it tells you the DB is starving, not which query is to blame.
-> That's deliberate (it's also why it's cheap and out-of-band). The "which
-> query" answer is layer 2.
+> **Storm attribution — who/what is flooding it.** The storm alerts catch
+> *volume* but not the single offender for PostgREST traffic:
+> - **Which single query / function** (a `queryid`/RPC hammered hundreds of
+>   times/sec) → `pg_stat_statements.calls` via `db-perf`. The endpoint returns
+>   `calls` per group today; a per-`queryid` **calls-rate** breakout (sample the
+>   delta over a short window) is a planned follow-up to turn this into a direct
+>   "this query is storming" signal.
+> - **Which single end-client** (IP / `auth.uid`) → not in the Metrics API. That
+>   lives at the **Cloudflare gateway** (per-IP rate, already fronting the API
+>   for rate limiting — `infra/cf-gateway/`, SCALING.md → *Shedding an abusive
+>   or runaway client*) and in the Supabase API request logs.
+
+The dedup/grouping/silence that stops the every-minute spam is configured in the
+**alert manager** (`grafana/alertmanager.yaml` — `group_by` + `repeat_interval`),
+not in our code. Email is the v1 contact point; swap in Grafana OnCall /
+PagerDuty / Opsgenie later for real escalation.
 
 ## Layer 2 — attribution (`db-perf` Edge Function)
 
