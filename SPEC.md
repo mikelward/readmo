@@ -1866,6 +1866,15 @@ keys differ; the strategies map one-to-one:
   per advertised width. `<picture><source>` art-direction is preserved (media
   queries kept; each source likewise collapsed to one width).
 
+  Rows stored *before* this collapse shipped still carry the full multi-width
+  `srcset`, so the client mirrors the same collapse on read: the reader runs
+  `collapseProxiedSrcset` over stored HTML before injecting it, and the offline
+  prefetch (`extractProxiedImageUrls`) picks the same ~1600px candidate. Both
+  agree on one URL per image, so a stale row warms (and renders) one width
+  instead of the whole ladder, and a pinned/favorited article's images stay in
+  the service-worker cache offline rather than missing whenever the browser
+  would have selected a different candidate.
+
   **Security (retained regardless of the above):** every fetch goes through the
   SSRF-hardened helper (guardrail #6 — this is a security control, independent of
   the privacy framing); only raster image types are served — `image/svg+xml` is
