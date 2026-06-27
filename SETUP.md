@@ -465,13 +465,106 @@ Point a collector at it; nothing runs in your database.
 - **Auth:** HTTP Basic — username `service_role`, password = the service-role
   JWT (Project Settings → API). Scrape once a minute.
 
-Managed path (recommended): in **Grafana Cloud → Connections → add a
-Prometheus/Hosted endpoint scrape job** for that URL with the basic-auth
-credentials (job label `supabase-metrics`), then load the alert rules + email
-routing. Both ship as code in [`grafana/`](./grafana/) — `alerts.rules.yaml`,
-`alertmanager.yaml`, `agent.alloy`, and a step-by-step `README.md` (incl. a
-`curl` to verify the beta metric names against your project). Self-hosted
-Prometheus + Grafana works too (`supabase/supabase-grafana`).
+Managed path (recommended) — **Grafana Cloud**. The scrape runs in Grafana
+Cloud's hosted Prometheus; the alert rules and email routing are loaded from the
+in-repo [`grafana/`](./grafana/) files (`alerts.rules.yaml`, `alertmanager.yaml`)
+with `mimirtool`. Step by step:
+
+**1. Scrape the Metrics API.** Grafana Cloud → **Connections → Add new
+connection → Metrics endpoint** (hosted Prometheus scrape). URL = the endpoint
+above, scheme HTTPS, **Basic auth** with the credentials above, scrape interval
+`60s`, and **set the job label to `supabase-metrics`** — the rules match
+`job="supabase-metrics"`, so a different label silently breaks
+`ReadmoDBUnreachable`. Verify in **Explore**: `up{job="supabase-metrics"}` should
+read `1`.
+
+**2. Install `mimirtool`** (loads the rules + Alertmanager config as code — a
+single static binary):
+
+```sh
+# macOS arm64 — swap in darwin-amd64 / linux-amd64 / linux-arm64 to match your machine
+curl -fLo mimirtool https://github.com/grafana/mimir/releases/latest/download/mimirtool-darwin-arm64
+chmod +x mimirtool && sudo mv mimirtool /usr/local/bin/
+mimirtool version
+```
+
+(Or skip the install and run it via Docker: `docker run --rm -v "$PWD/grafana:/g"
+grafana/mimirtool:latest rules load /g/alerts.rules.yaml …`.)
+
+**3. Get a Grafana Cloud token + the endpoint values.** The token is a **Cloud
+Access Policy token**, created in the **grafana.com portal** (not your
+`*.grafana.net` Grafana instance — that's the usual wrong turn):
+
+- grafana.com → your org → **Security → Access Policies → Create access policy**.
+  Realm = your **stack**; scopes **`rules:read`, `rules:write`, `alerts:read`,
+  `alerts:write`** (the `rules:*` pair loads the alert rules; `alerts:*` loads the
+  Alertmanager config). Then **Add token** → copy the `glc_…` value (shown once).
+- **Each hosted service has its own URL *and* its own instance ID** (the
+  "Username" on its details page), and the **Prometheus ID and the Alertmanager
+  ID are usually different numbers** — don't reuse one for both. From the
+  **Prometheus** details page take its Username + base URL (the remote-write URL
+  **with `/api/prom/push` stripped off**); from the **Alerts** page (Grafana
+  Cloud → *Alerts* / hosted-alerts — that's the Mimir Alertmanager) take its
+  Username + endpoint.
+
+```sh
+export GRAFANA_CLOUD_TOKEN="glc_…"                                             # access-policy token (the ONE shared value)
+# Metrics endpoint — for `mimirtool rules`:
+export GRAFANA_CLOUD_PROM_URL="https://prometheus-prod-XX-region.grafana.net"  # base, NO /api/prom/push
+export GRAFANA_CLOUD_PROM_ID="111111"                                          # Username on the Prometheus page
+# Alertmanager endpoint — for `mimirtool alertmanager`:
+export GRAFANA_CLOUD_AM_URL="https://alertmanager-prod-region.grafana.net"     # the Alerts / hosted-alerts endpoint
+export GRAFANA_CLOUD_AM_ID="222222"                                            # Username on the Alerts page (usually a DIFFERENT number)
+```
+
+> **Don't conflate the endpoints.** `GRAFANA_CLOUD_PROM_URL`/`_PROM_ID` (the Mimir
+> metrics tenant) are for `mimirtool rules …`; `GRAFANA_CLOUD_AM_URL`/`_AM_ID`
+> (the Alertmanager tenant) are for `mimirtool alertmanager …` — both URL *and*
+> ID differ between them. Only the access-policy **token** (`--key`) is shared.
+> The `…/api/prom/push` remote-write URL is something else again — only for a
+> self-run Alloy collector (`grafana/agent.alloy`).
+
+**4. Load the alert rules.** First sanity-check the beta metric names against your
+project (the one-line `curl` in [`grafana/README.md`](./grafana/README.md) §0 —
+names/labels can differ per project), then:
+
+```sh
+mimirtool rules load grafana/alerts.rules.yaml \
+  --address "$GRAFANA_CLOUD_PROM_URL" --id "$GRAFANA_CLOUD_PROM_ID" --key "$GRAFANA_CLOUD_TOKEN"
+mimirtool rules list  --address "$GRAFANA_CLOUD_PROM_URL" --id "$GRAFANA_CLOUD_PROM_ID" --key "$GRAFANA_CLOUD_TOKEN"
+```
+
+`list` should show the `readmo-db-perf` group. (Or recreate the expressions as
+Grafana-managed rules in the UI — no token needed, but it's manual.)
+
+**5. Load the email routing + suppression + inhibitions.**
+`grafana/alertmanager.yaml` holds the `route:`, `receivers:`, **and**
+`inhibit_rules:` (the inhibition that mutes the saturation alerts while
+`ReadmoDBUnreachable` is firing — there is no separate "inhibits" UI page; they
+live in this Alertmanager config). Fill in its **SMTP fields** (`smarthost`,
+`auth_username`, `auth_password`, `from`) from your mail relay first — the Mimir
+Alertmanager sends over SMTP and has no built-in mailer — then:
+
+```sh
+mimirtool alertmanager load grafana/alertmanager.yaml \
+  --address "$GRAFANA_CLOUD_AM_URL" --id "$GRAFANA_CLOUD_AM_ID" --key "$GRAFANA_CLOUD_TOKEN"
+```
+
+> **Which Alertmanager?** Rules loaded with `mimirtool` are **Mimir-managed**, so
+> their alerts route through the **Cloud/Mimir Alertmanager** — exactly what
+> `alertmanager load` configures. If you instead add a contact point on the
+> **Grafana-managed** Alertmanager (the UI's default selector), the rules will
+> fire but **never email**. To do this step in the UI instead of the CLI, switch
+> the Alertmanager selector (Alerts & IRM → Contact points / Notification
+> policies) to your **Mimir/Cloud** stack and paste the same
+> `route`/`receivers`/`inhibit_rules` there.
+
+**6. Smoke-test.** Temporarily point the scrape at a bad path → `up` goes `0` →
+`ReadmoDBUnreachable` emails after ~2m → revert. Optionally run a deliberately
+heavy query on a non-prod project to trip a saturation alert end-to-end.
+
+Self-hosted Prometheus + Grafana works too (`supabase/supabase-grafana`); the
+same `mimirtool` commands apply against your own Mimir/Alertmanager.
 
 > The Metrics API is **beta** and **hosted-Supabase only**. Self-hosted
 > backends use `postgres_exporter` instead — see *Self-hosted fallback* in

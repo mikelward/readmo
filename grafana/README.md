@@ -65,7 +65,7 @@ incident instead of an email a minute.
 
 ```sh
 mimirtool rules load grafana/alerts.rules.yaml \
-  --address "$GRAFANA_CLOUD_PROM_URL" --id "$GRAFANA_CLOUD_TENANT" --key "$GRAFANA_CLOUD_TOKEN"
+  --address "$GRAFANA_CLOUD_PROM_URL" --id "$GRAFANA_CLOUD_PROM_ID" --key "$GRAFANA_CLOUD_TOKEN"
 ```
 
 (Or recreate the same expressions as Grafana-managed alert rules in the UI.)
@@ -77,6 +77,12 @@ mimirtool rules load grafana/alerts.rules.yaml \
 > with `/api/prom/push`), exposed as `GRAFANA_CLOUD_PROM_PUSH_URL`. Both are on
 > your Grafana Cloud Prometheus details page; using one for the other makes
 > either rule upload or metric forwarding hit the wrong path.
+>
+> **`--id` is per-service.** The Prometheus tenant ID (`GRAFANA_CLOUD_PROM_ID`,
+> from the Prometheus details page) and the Alertmanager tenant ID
+> (`GRAFANA_CLOUD_AM_ID`, from the **Alerts**/hosted-alerts page) are usually
+> **different numbers** — use each endpoint's own "Username". Only the
+> access-policy **token** (`--key`) is shared across both.
 
 ## 4. Test it
 
