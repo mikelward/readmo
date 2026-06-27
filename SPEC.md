@@ -855,7 +855,13 @@ negligible and off every critical path. See the External services table in
   `set_item_state` RPC — surviving reloads/offline gaps and replaying on
   reconnect. Each changed field carries its action timestamp; `set_item_state`
   (`0023_item_state_lww.sql`) keeps, per field, whichever write has the newer
-  `at`, so a stale replay is superseded rather than rejected. The hydrate path
+  `at`, so a stale replay is superseded rather than rejected. A transitional
+  compat shim (`0024_set_item_state_compat.sql`) re-adds a trailing,
+  accepted-and-ignored `p_base_version` param and treats a missing `p_<f>_at` as
+  `now()`, so a pre-0023 service-worker-cached client's write still resolves and
+  applies during the deploy window instead of 404ing and retrying forever (its
+  item_state *read* still degrades until it reloads — `feed_items` is unaffected);
+  drop the shim once no pre-0023 client remains. The hydrate path
   overlays only still-pending fields onto server truth and clears genuinely-stale
   rows. Add-feed / OPML import / parked-feed retry go through the
   `subscribe_to_feed` RPC and the `refresh` function. `main.tsx` selects the live
