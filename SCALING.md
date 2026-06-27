@@ -97,7 +97,7 @@ wanted:
 |---|---|
 | staleTime reduced or removed | Restore `staleTime: 5 * 60 * 1000` in `main.tsx` |
 | New `useQuery` without staleTime | Ensure all queries inherit or override with a reasonable staleTime |
-| Refetch/retry loop in the live build (e.g. an expired-token request retried with no backoff) | **Guarded in-code:** the retry policy (`src/lib/queryRetry.ts`) never retries a 4xx/5xx/timeout/abort/server-coded error and uses capped exponential backoff, so a failing request can't amplify into a flood. (A client-side request circuit breaker is an additive layer in a separate PR.) If a loop still gets through, arm `MIN_CLIENT_BUILD` and rate-limit at the gateway (below). |
+| Refetch/retry loop in the live build (e.g. an expired-token request retried with no backoff) | **Guarded in-code:** the retry policy (`src/lib/queryRetry.ts`) never retries a 4xx/5xx/timeout/abort/server-coded error and uses capped exponential backoff, so a failing request can't amplify into a flood; and a client-side circuit breaker (`src/lib/data/requestCircuitBreaker.ts`) sheds a failing loop on the **network-authoritative reads** (the `feed_items`/`feed_unread_counts` RPCs and the NetworkOnly `item_state` hydration GET — the reads the SW cache never serves) once its requests rack up consecutive failures (failure-based, so a legitimate bulk burst like an offline warmup won't trip it; any non-2xx counts as a failure, and NetworkFirst-cached GET reads bypass the breaker since a cache fallback isn't a backend-liveness signal). A *succeeding* high-rate loop is shed at the gateway instead. If a loop still gets through, arm `MIN_CLIENT_BUILD` and rate-limit at the gateway (below). |
 | Supabase Realtime subscriptions | Each subscription keeps a WebSocket open but also makes REST calls; audit with the dashboard |
 | Poller burst on cold start | Stagger `next_fetch_at` across feeds so they don't all come due at once after a restart |
 
@@ -192,8 +192,12 @@ needed:**
      tiny Worker — rule expressions don't do header→int compare. ~10 lines
      (below). Lets you raise the floor over time without editing rules.
 5. **Rate-limit rule — backstop for a future loop that DOES send a header.**
-   Cloudflare → Security → Rate limiting rules: on `/rest/v1/rpc/feed_items` and
-   `/functions/v1/*`, e.g. > 120 req/min per client → `429` for 60s. Exempt
+   Cloudflare → Security → Rate limiting rules: on the bounded read RPCs
+   (`/rest/v1/rpc/feed_items` and `/rest/v1/rpc/feed_unread_counts`) and
+   `/functions/v1/*`, e.g. > 120 req/min per client → `429` for 60s. Both read
+   RPCs need a cap: the failure-based breaker never trips on a *succeeding*
+   high-rate loop, so a grouped-view loop hammering the count RPC is the
+   gateway's job to shed. Exempt
    `OPTIONS` here too (`http.request.method ne "OPTIONS"`) so a burst of
    preflights can't trip it and break CORS. Key by IP (free, but blunt — NAT
    lumps users together, the one keying where you could throttle yourself) or,

@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { setConnectivityProbeUrl, trackedFetch } from '../networkStatus';
 import { buildInfo } from '../buildInfo';
+import { RequestCircuitBreaker } from '../data/requestCircuitBreaker';
 
 // Hard ceiling on a single PostgREST GET read. Without it a request that never
 // answers (lie-fi, or the service worker's NetworkFirst awaiting a hung network
@@ -77,11 +78,18 @@ function requestMethod(input: RequestInfo | URL, init?: RequestInit): string {
 
 // PostgREST sends `rpc()` as a POST, so read-only RPCs can't be recognized by
 // method — list them explicitly. These are pure reads (safe to abort + retry
-// like any GET), and `feed_items` is the primary feed read (home/folder/feed),
-// so it must be bounded too or a hung feed RPC still strands the view on its
-// skeletons even when item_state is cached. Write RPCs (set_item_state,
-// subscribe_to_feed) are deliberately ABSENT — see isBoundedRead.
-const READ_RPC_PATHS = ['/rest/v1/rpc/feed_items'];
+// like any GET) and so get the read timeout AND the read breaker:
+//   - feed_items — the primary feed read (home/folder/feed); a hung one strands
+//     the view on its skeletons even when item_state is cached.
+//   - feed_unread_counts — the grouped-view per-feed unread counts; a failing
+//     grouped refetch/invalidation loop hits this, so it must be shed by the
+//     breaker too, not just feed_items.
+// Write RPCs (set_item_state, subscribe_to_feed, reorder_subscriptions) are
+// deliberately ABSENT — see isBoundedRead.
+const READ_RPC_PATHS = [
+  '/rest/v1/rpc/feed_items',
+  '/rest/v1/rpc/feed_unread_counts',
+];
 
 /**
  * The requests that get the short cap: **GET reads** on PostgREST (`/rest/v1/`)
@@ -106,6 +114,40 @@ function isBoundedRead(input: RequestInfo | URL, init?: RequestInit): boolean {
 }
 
 /**
+ * The bounded reads the circuit breaker guards: the **network-authoritative**
+ * ones — a subset of {@link isBoundedRead} the service worker never answers from
+ * cache. The breaker's half-open probe must be network-authoritative: its result
+ * decides whether the backend recovered, so a response that didn't reach the
+ * backend would close the circuit on a lie. Two kinds qualify:
+ *
+ *   1. The read-only RPCs (`feed_items`, `feed_unread_counts`) — POSTs, and the
+ *      SW's `NetworkFirst` runtime cache is GET-only (`vite.config.ts`), so it
+ *      NEVER serves them from cache.
+ *   2. The `item_state` hydration GET — served by the SW's **NetworkOnly** route
+ *      (`vite.config.ts` `supabaseItemStatePattern`, registered before the
+ *      NetworkFirst REST route), so it too always hits the backend. It precedes
+ *      every feed read (`ensureHydratedForRead`), so a failing feed loop's
+ *      hydration GET must be shed alongside the RPC, not bypass the breaker.
+ *
+ * Every OTHER GET `/rest/v1/` read is `NetworkFirst`-cached: it can be answered
+ * from a stale Workbox cache (a `200` the backend never saw), so it keeps the read
+ * *timeout* (a hung GET must still abort) but bypasses the *breaker* — letting a
+ * cached `200` probe close the circuit would falsely recover it mid-outage. A
+ * failing cacheable-GET loop is already bounded by the retry discipline
+ * (`queryRetry.ts`, no 4xx/5xx retries) plus NetworkFirst's own cache fallback;
+ * a *succeeding* high-rate loop is the gateway's job (SCALING.md), which the
+ * failure-based breaker never caught anyway.
+ *
+ * (Keep the item_state path in sync with `supabaseItemStatePattern` in
+ * vite.config.ts — both encode that item_state is the NetworkOnly read.)
+ */
+function isBreakerScopedRead(input: RequestInfo | URL, init?: RequestInit): boolean {
+  const u = requestUrl(input);
+  if (READ_RPC_PATHS.some((path) => u.includes(path))) return true;
+  return requestMethod(input, init) === 'GET' && u.includes('/rest/v1/item_state');
+}
+
+/**
  * Connectivity-tracking fetch for the Supabase client. Every request flows
  * through {@link trackedFetch} so a real failure flips the offline indicator.
  * Reads (GET on `/rest/v1/`, plus the `feed_items` read RPC) additionally get a
@@ -115,12 +157,52 @@ function isBoundedRead(input: RequestInfo | URL, init?: RequestInit): boolean {
  * Query cancelling a superseded query) still aborts; the timeout adds a second
  * abort reason without clobbering it.
  */
-export function supabaseFetch(
+// Client-side flood guard for the network-authoritative bounded reads — the read
+// RPCs (feed_items, feed_unread_counts) and the NetworkOnly item_state hydration
+// GET that precedes every feed read (see isBreakerScopedRead). A failing loop
+// trips the breaker after a burst of failures and is SHED, failing fast instead
+// of pinning Postgres. Healthy bursts (e.g. a large offline warmup) never trip it
+// — it's failure-based, not rate-based. The additive backstop behind the retry
+// discipline (src/lib/queryRetry.ts); the server-side `x-readmo-build` gate sheds
+// a known-bad *build*, this caps a failing loop in the live build. NetworkFirst-
+// cached GET /rest/v1/ reads keep the read timeout but bypass the breaker (a cache
+// fallback isn't a backend-liveness signal — see isBreakerScopedRead); writes
+// (outbox-owned), auth, Edge Functions, storage and realtime bypass it too — see
+// supabaseFetch for why.
+let requestBreaker = new RequestCircuitBreaker();
+
+/** Test-only: reset the module-level breaker between cases (it's a singleton). */
+export function _resetRequestBreakerForTests(): void {
+  requestBreaker = new RequestCircuitBreaker();
+}
+
+/** A caller/cancellation abort — surfaced as an AbortError (DOMException OR a
+ * plain Error named 'AbortError', runtime dependent), distinct from a
+ * TimeoutError. Not a backend-health signal. */
+function isAbortError(error: unknown): boolean {
+  return (
+    error != null &&
+    typeof error === 'object' &&
+    (error as { name?: unknown }).name === 'AbortError'
+  );
+}
+
+// Any error response counts as a breaker FAILURE. The breaker is scoped to the
+// network-authoritative reads (the read RPCs + the item_state hydration GET; see
+// isBreakerScopedRead), which return 2xx in normal use — so a 4xx is NOT a benign
+// app response here: a PostgREST 404 (the feed_items/feed_unread_counts function
+// missing on a stale or schema-mismatched backend), 400, or 422 is a genuinely
+// failed read that a refetch loop would otherwise repeat forever without ever
+// tripping the circuit. So only 2xx/3xx is healthy; 4xx and 5xx (including
+// 401/403/408/429) count as failures.
+function isHealthyResponse(status: number): boolean {
+  return status < 400;
+}
+
+function boundedReadFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
-  if (!isBoundedRead(input, init)) return trackedFetch(input, init);
-
   const controller = new AbortController();
   const callerSignal = init?.signal ?? undefined;
   const forwardAbort = () => controller.abort(callerSignal?.reason);
@@ -139,6 +221,72 @@ export function supabaseFetch(
     () => {
       clearTimeout(timer);
       callerSignal?.removeEventListener('abort', forwardAbort);
+    },
+  );
+}
+
+export function supabaseFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  // Everything that isn't a bounded read is uncapped exactly as before — no read
+  // timeout, no breaker:
+  //   - WRITES (rpc/set_item_state, rpc/subscribe_to_feed, subscription
+  //     PATCH/DELETE) are owned by the item-state outbox (its own backoff +
+  //     durability); shedding one would surface a spurious local failure on a
+  //     subscription edit and just delay outbox delivery.
+  //   - AUTH (/auth/v1/) must stay reachable to refresh/sign-out and recover an
+  //     expired-token storm — exactly when the breaker is open — as must the
+  //     /auth/v1/health connectivity probe. Edge Functions/storage/realtime too.
+  if (!isBoundedRead(input, init)) {
+    return trackedFetch(input, init);
+  }
+
+  // A bounded read. It always gets the 8s timeout, but only the network-
+  // authoritative reads go through the breaker — the read RPCs (POSTs the GET-only
+  // SW cache never serves) and the item_state hydration GET (a NetworkOnly route).
+  // Every other GET /rest/v1/ read is NetworkFirst-cached, so a stale cache `200`
+  // could falsely close the breaker mid-outage; those bypass it (see
+  // isBreakerScopedRead).
+  if (!isBreakerScopedRead(input, init)) {
+    return boundedReadFetch(input, init);
+  }
+
+  const ticket = requestBreaker.shouldAllow();
+  if (ticket === null) {
+    // Not admitted. Two cases:
+    const probeWait = requestBreaker.probeWait();
+    if (probeWait) {
+      // Half-open: a single probe is in flight. HOLD this peer read until the
+      // probe settles, then re-decide — rather than failing it now and relying
+      // on its (short) retry budget to outlast a healthy-but-slow probe. The
+      // wait is bounded by the probe's own 8s read cap, and on re-entry it's
+      // admitted (probe closed the circuit) or shed (probe re-opened it).
+      return probeWait.then(() => supabaseFetch(input, init));
+    }
+    // Open + cooling down: shed with a RETRIABLE statusless error (queryRetry
+    // treats it as a transient blip — NOT an AbortError) so a real outage fails
+    // fast but recovers on the next refetch. Sheds never reach the network, so
+    // retrying them adds no DB load.
+    return Promise.reject(
+      new Error('Supabase request shed: backend circuit open'),
+    );
+  }
+  return boundedReadFetch(input, init).then(
+    (res) => {
+      requestBreaker.settle(ticket, isHealthyResponse(res.status));
+      return res;
+    },
+    (err) => {
+      // A caller/cancellation abort (e.g. React Query superseding a query via
+      // the forwarded signal) is neither a failure nor a success; settleCanceled
+      // records it as such and re-arms a canceled half-open probe so the breaker
+      // can't get stuck. Our own shed returns before the fetch and the read
+      // timeout aborts with TimeoutError (a real failure), so AbortError here is
+      // always a caller cancel.
+      if (isAbortError(err)) requestBreaker.settleCanceled(ticket);
+      else requestBreaker.settle(ticket, false);
+      throw err;
     },
   );
 }
