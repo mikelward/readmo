@@ -167,22 +167,35 @@ function emitIfChanged() {
   if (next === lastStatus) return;
   const wasOnline = lastStatus === 'online';
   const isOnline = next === 'online';
+  // Device reachability, distinct from the online/not-online edge: 'backend-
+  // unreachable' still has a working connection (the DB is just slow/erroring),
+  // so the device is reachable. Only a true 'offline' means it isn't.
+  const wasDeviceReachable = lastStatus !== 'offline';
+  const isDeviceReachable = next !== 'offline';
   lastStatus = next;
   // NB: the recovery probe is NOT started/stopped here — its lifecycle keys on
   // `awaitingLiveness` (set in goOffline, cleared by a cache-bypassing success),
   // not on status, so a cache hit flipping us to 'online' can't cancel it while
   // the backend is still down. See updateRecoveryProbe.
   // Status subscribers see every transition (e.g. 'offline' -> 'backend-
-  // unreachable'); boolean subscribers + onlineManager only fire on the
-  // online/not-online edge so query pausing/resume behaves exactly as before.
+  // unreachable').
   for (const fn of statusListeners) fn(next);
-  if (wasOnline === isOnline) return;
-  for (const fn of listeners) fn(isOnline);
-  // Keep React Query's own onlineManager in sync so paused queries
-  // resume when we reconnect (belt-and-braces with networkMode:
-  // 'offlineFirst' — that mode prevents hanging, this keeps
-  // refetch-on-reconnect working).
-  onlineManager.setOnline(isOnline);
+  // Boolean (pill / legacy `online`) subscribers fire on the online/not-online
+  // edge — unchanged.
+  if (wasOnline !== isOnline) for (const fn of listeners) fn(isOnline);
+  // React Query's onlineManager tracks DEVICE reachability only — NOT a
+  // transient 'backend-unreachable'. A self-imposed read timeout (the DB pegged,
+  // a read aborted at 8s) flips us to 'backend-unreachable'; toggling
+  // onlineManager off then on for that fires `refetchOnReconnect`, which
+  // re-issues the whole boot read burst and re-saturates the connection pool —
+  // a ~10s loop that keeps the home feed stuck on skeletons. Only a genuine
+  // device offline->online transition should drive refetch-on-reconnect.
+  // (networkMode 'offlineFirst' already keeps queries running while we're in
+  // 'backend-unreachable', so leaving onlineManager `true` there doesn't strand
+  // anything — it just stops the storm.)
+  if (wasDeviceReachable !== isDeviceReachable) {
+    onlineManager.setOnline(isDeviceReachable);
+  }
 }
 
 export function getOnline(): boolean {
@@ -543,6 +556,7 @@ export function _resetNetworkStatusForTests() {
   awaitingLiveness = false;
   // Re-sync React Query's singleton onlineManager to the reset state — a test
   // that drove us offline (pausing queries) would otherwise leak that into the
-  // next test, stranding its queries paused.
-  onlineManager.setOnline(lastStatus === 'online');
+  // next test, stranding its queries paused. Tracks device reachability (see
+  // emitIfChanged), so 'backend-unreachable' counts as reachable.
+  onlineManager.setOnline(lastStatus !== 'offline');
 }
