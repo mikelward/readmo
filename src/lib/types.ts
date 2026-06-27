@@ -65,7 +65,11 @@ export type ItemStateField =
   | 'opened';
 
 /** Per-(user, item) state. Absence of a stored row means the default below
- * (everything false) — see SPEC.md *Data model* (sparse item_state). */
+ * (everything false) — see SPEC.md *Data model* (sparse item_state).
+ *
+ * Each `*At` is the wall-clock time the field last changed value — both the
+ * ordering/TTL key (read only while the flag is true) AND the per-field
+ * last-write-wins clock the sync path compares (SPEC.md *Sync*). */
 export interface ItemState {
   pinned: boolean;
   pinnedAt: number | null;
@@ -77,8 +81,6 @@ export interface ItemState {
   hiddenAt: number | null;
   opened: boolean;
   openedAt: number | null;
-  /** Server-assigned monotonic version (SPEC.md *Sync*). */
-  version: number;
 }
 
 export interface Subscription {
@@ -105,7 +107,6 @@ export const DEFAULT_ITEM_STATE: ItemState = {
   hiddenAt: null,
   opened: false,
   openedAt: null,
-  version: 0,
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;

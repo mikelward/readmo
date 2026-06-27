@@ -676,7 +676,7 @@ describe('ItemList', () => {
     // get held in the body.
     await act(async () => {
       source.stateStore.hydrate([
-        [target.id, { ...DEFAULT_ITEM_STATE, pinned: true, pinnedAt: 1000, version: 1 }],
+        [target.id, { ...DEFAULT_ITEM_STATE, pinned: true, pinnedAt: 1000 }],
       ]);
       await queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
     });

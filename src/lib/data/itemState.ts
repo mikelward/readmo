@@ -48,7 +48,6 @@ export function applyMutation(
     }
   }
 
-  next.version = prev.version + 1;
   return next;
 }
 
@@ -96,10 +95,7 @@ function mergePending(
   now: number,
 ): ItemState {
   if (local) {
-    const next: ItemState = {
-      ...srv,
-      version: Math.max(srv.version, local.version),
-    };
+    const next: ItemState = { ...srv };
     for (const f of Object.keys(changed) as ItemStateField[]) {
       next[f] = local[f];
       next[`${f}At` as const] = local[`${f}At` as const];
@@ -125,8 +121,7 @@ function sameState(a: ItemState, b: ItemState): boolean {
     a.hidden === b.hidden &&
     a.hiddenAt === b.hiddenAt &&
     a.opened === b.opened &&
-    a.openedAt === b.openedAt &&
-    a.version === b.version
+    a.openedAt === b.openedAt
   );
 }
 
@@ -203,15 +198,20 @@ export class ItemStateStore {
   // can't be re-extended by a later scroll hide. null = no extendable batch.
   private lastUndoKey: string | number | null = null;
   // Optional write-through: invoked with the set of boolean fields a mutation
-  // actually CHANGED (prev→next diff), so a backing data source can persist just
-  // those (SupabaseDataSource routes this to the set_item_state RPC). Sending the
-  // diff — not the full state — means exclusivity-cleared fields (e.g. pin
-  // clearing done/hidden) and undo's restored fields ARE sent, while independent
-  // fields untouched by this action (e.g. favorite) are left alone, so a stale
-  // local mirror can't clobber a concurrent change made elsewhere. The local map
-  // stays the optimistic mirror; the mock leaves this unset.
+  // actually CHANGED (prev→next diff) plus the action timestamp `at`, so a
+  // backing data source can persist just those (SupabaseDataSource routes this to
+  // the set_item_state RPC). Sending the diff — not the full state — means
+  // exclusivity-cleared fields (e.g. pin clearing done/hidden) and undo's restored
+  // fields ARE sent, while independent fields untouched by this action (e.g.
+  // favorite) are left alone. `at` is the per-field last-write-wins clock the
+  // server compares, so a stale write can't clobber a newer change made elsewhere.
+  // The local map stays the optimistic mirror; the mock leaves this unset.
   private sink:
-    | ((id: ItemId, changed: Partial<Record<ItemStateField, boolean>>) => void)
+    | ((
+        id: ItemId,
+        changed: Partial<Record<ItemStateField, boolean>>,
+        at: number,
+      ) => void)
     | null = null;
 
   constructor(private persistence: StatePersistence) {
@@ -228,18 +228,10 @@ export class ItemStateStore {
         // expired and reappeared anyway; don't resurrect them as fresh Done.
         // Also clear hidden/hiddenAt so "Unmark done" / "Forget all" on the
         // Done page leaves the item fully visible again rather than re-hiding it.
-        // Preserve the row's existing version: this migration is a local
-        // representation change that never wrote the server, so it must NOT
-        // advance the version. applyMutation bumps it +1; keeping that bump would
-        // make `seedConfirmedVersions` seed an inflated optimistic-concurrency
-        // base that the live hydrate's real (lower) server version can't correct
-        // (monotonic merge), 40001-conflicting the next edit. (Cf.
-        // confirmServerVersion for the coalesced-write counterpart.)
         map[id] = {
           ...applyMutation(state, 'done', true, now),
           hidden: false,
           hiddenAt: null,
-          version: state.version,
         };
         migrated = true;
       } else {
@@ -254,20 +246,43 @@ export class ItemStateStore {
    * mutation (see `sink`). Hydration does NOT fire it — only user-driven
    * set/hide/undo mutations do. */
   setMutationSink(
-    sink: (id: ItemId, changed: Partial<Record<ItemStateField, boolean>>) => void,
+    sink: (
+      id: ItemId,
+      changed: Partial<Record<ItemStateField, boolean>>,
+      at: number,
+    ) => void,
   ): void {
     this.sink = sink;
   }
 
   /** Fields whose boolean value differs between two states, with their `to`
-   * values — the minimal write that moves `from` to `to`. */
-  private emitDiff(id: ItemId, from: ItemState, to: ItemState): void {
+   * values — the minimal write that moves `from` to `to`. `at` is the action
+   * time (the last-write-wins clock the sink forwards to the server). */
+  private emitDiff(id: ItemId, from: ItemState, to: ItemState, at: number): void {
     if (!this.sink && this.mutationListeners.size === 0) return;
     const fields: ItemStateField[] = ['pinned', 'favorite', 'done', 'hidden', 'opened'];
     const changed: Partial<Record<ItemStateField, boolean>> = {};
     for (const f of fields) if (from[f] !== to[f]) changed[f] = to[f];
     if (Object.keys(changed).length === 0) return;
-    if (this.sink) this.sink(id, changed);
+    // The server sink gets the EXCLUSIVITY-CLOSED diff: when an action turns
+    // pinned/done/hidden on, always carry the fields it clears (done+hidden for a
+    // Pin; pinned for a Done/Hide) even if they were ALREADY false in the local
+    // mirror. The mirror can be stale — another device may have set the cleared
+    // field server-side and this tab hasn't hydrated it — so a natural diff would
+    // omit p_done, and per-field LWW would leave an invalid pinned+done row on the
+    // server. Closing over the action's own exclusivity keeps every server write
+    // self-consistent regardless of local-mirror staleness. (The local mutation
+    // listeners get the natural diff — what changed for this user on this device.)
+    if (this.sink) {
+      const closed: Partial<Record<ItemStateField, boolean>> = { ...changed };
+      if (to.pinned && !from.pinned) {
+        closed.done = false;
+        closed.hidden = false;
+      }
+      if (to.done && !from.done) closed.pinned = false;
+      if (to.hidden && !from.hidden) closed.pinned = false;
+      this.sink(id, closed, at);
+    }
     for (const l of this.mutationListeners) l(id, changed);
   }
 
@@ -341,15 +356,12 @@ export class ItemStateStore {
       const merged = changed ? mergePending(srv, this.map[id], changed, now) : srv;
       // Migrate pre-merge hidden rows that arrive from the server: same logic
       // as the constructor migration so Supabase-hydrated hidden=true/done=false
-      // rows don't stay invisible with /hidden removed. Keep the (server-derived)
-      // version rather than applyMutation's +1, so a migrated row never seeds an
-      // inflated optimistic-concurrency base — see the constructor migration.
+      // rows don't stay invisible with /hidden removed.
       if (merged.hidden && !merged.done && !expired(merged.hiddenAt, now)) {
         next[id] = {
           ...applyMutation(merged, 'done', true, now),
           hidden: false,
           hiddenAt: null,
-          version: merged.version,
         };
       } else {
         next[id] = merged;
@@ -382,7 +394,7 @@ export class ItemStateStore {
     const next = applyMutation(prev, field, value, now);
     this.map = { ...this.map, [id]: next };
     this.persistence.save(this.map);
-    this.emitDiff(id, prev, next);
+    this.emitDiff(id, prev, next, now);
     this.emit();
     return next;
   }
@@ -428,7 +440,7 @@ export class ItemStateStore {
       }
       const next = applyMutation(prev, 'done', true, now);
       this.map = { ...this.map, [id]: next };
-      this.emitDiff(id, prev, next);
+      this.emitDiff(id, prev, next, now);
     }
     this.lastUndo = batch;
     this.lastUndoKey = batchKey ?? null;
@@ -441,7 +453,7 @@ export class ItemStateStore {
   }
 
   /** Restore the most recent hide/sweep batch. */
-  undoLast(): void {
+  undoLast(now: number = Date.now()): void {
     const batch = this.lastUndo;
     if (!batch) return;
     const next = { ...this.map };
@@ -449,9 +461,15 @@ export class ItemStateStore {
     // BEFORE reassigning the map — restoring re-sends whatever hiding changed
     // (hidden, plus any Pinned/Done it cleared), so the server doesn't keep them
     // cleared and drop the restored pin on the next hydrate. Untouched fields
-    // aren't sent.
+    // aren't sent. The restore is a fresh action, so it carries `now` as its
+    // last-write-wins clock and wins over the dismissal it reverses.
     for (const [id, prior] of batch) {
-      this.emitDiff(id, this.map[id] ?? DEFAULT_ITEM_STATE, prior ?? DEFAULT_ITEM_STATE);
+      this.emitDiff(
+        id,
+        this.map[id] ?? DEFAULT_ITEM_STATE,
+        prior ?? DEFAULT_ITEM_STATE,
+        now,
+      );
     }
     for (const [id, prior] of batch) {
       if (prior === null) delete next[id];
@@ -479,27 +497,6 @@ export class ItemStateStore {
     return () => {
       this.mutationListeners.delete(listener);
     };
-  }
-
-  /**
-   * Record the authoritative server `version` for a row after a successful
-   * write, leaving every field value untouched. The store's `version` is
-   * otherwise an optimistic per-mutation counter (`applyMutation` bumps it by
-   * one on every local toggle), so when several local edits coalesce into a
-   * single `set_item_state` write the local version outruns the server's — the
-   * server row only increments once. Left unreconciled, a later cold boot whose
-   * NetworkOnly hydration fails would `seedConfirmedVersions` from that inflated
-   * value and base the next offline edit on a too-high `p_base_version`, which
-   * the RPC rejects as a 40001 conflict and the outbox drops — losing a change
-   * no other device touched. Normalizing the settled row to the confirmed server
-   * version keeps the seed honest. No emit: no field changed, so nothing that
-   * renders item flags needs to re-read; we only persist so the corrected
-   * version survives to the next boot. */
-  confirmServerVersion(id: ItemId, version: number): void {
-    const cur = this.map[id];
-    if (!cur || cur.version === version) return;
-    this.map = { ...this.map, [id]: { ...cur, version } };
-    this.persistence.save(this.map);
   }
 
   /** Notify subscribers without a local state change. Used by the durable outbox

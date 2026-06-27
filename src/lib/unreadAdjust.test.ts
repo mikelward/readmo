@@ -14,7 +14,6 @@ function st(over: Partial<ItemState> = {}): ItemState {
     hiddenAt: null,
     opened: false,
     openedAt: null,
-    version: 1,
     ...over,
   };
 }

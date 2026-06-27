@@ -24,12 +24,13 @@ export const PARKED_ERROR_THRESHOLD = 8;
 
 /** SQLSTATEs a set_item_state write can return that are *permanent* — retrying
  * the same write won't succeed, so the outbox drops it and re-reconciles:
- *   - 40001 serialization_failure → our optimistic-concurrency version conflict
  *   - 42501 insufficient_privilege → the caller lost visibility of the item
  * Everything else (429/5xx server hiccup, missing/unknown code, auth that a
  * token refresh fixes) is treated as transient so a short outage can't roll back
- * and lose a user's triage action. */
-export const PERMANENT_WRITE_CODES = new Set(['40001', '42501']);
+ * and lose a user's triage action. (Per-field last-write-wins means a stale
+ * write is silently superseded server-side, not rejected, so there's no
+ * version-conflict code to treat as permanent.) */
+export const PERMANENT_WRITE_CODES = new Set(['42501']);
 
 /** Whether a PostgREST/Supabase RPC error is a permanent write rejection (see
  * PERMANENT_WRITE_CODES). A thrown/network error never reaches here — the outbox
@@ -115,7 +116,6 @@ export interface ItemStateRow {
   hidden_at: string | null;
   opened: boolean;
   opened_at: string | null;
-  version: number;
 }
 
 export interface SubscriptionRow {
@@ -192,7 +192,6 @@ export function mapItemState(row: ItemStateRow): ItemState {
     hiddenAt: tsToMs(row.hidden_at),
     opened: row.opened,
     openedAt: tsToMs(row.opened_at),
-    version: row.version,
   };
 }
 

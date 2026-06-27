@@ -19,7 +19,6 @@ describe('applyMutation', () => {
     const next = applyMutation(DEFAULT_ITEM_STATE, 'favorite', true, NOW);
     expect(next.favorite).toBe(true);
     expect(next.favoriteAt).toBe(NOW);
-    expect(next.version).toBe(1);
   });
 
   it('clears the timestamp when a field is turned off', () => {
@@ -140,41 +139,18 @@ describe('ItemStateStore', () => {
     // Hydration (cold/slow path, cross-device sync) reconciles server rows but
     // must NOT look like a user mutation — otherwise a background server pin
     // would be mistaken for one the reader just made.
-    store.hydrate([['b', state({ pinned: true, pinnedAt: NOW, version: 1 })]], new Map(), NOW);
+    store.hydrate([['b', state({ pinned: true, pinnedAt: NOW })]], new Map(), NOW);
     expect(events).toHaveLength(2); // unchanged — no mutation event for hydrate
   });
 
-  it('confirmServerVersion normalizes a settled row to the server version, persisted and silent', () => {
-    const p = memoryPersistence();
-    const store = new ItemStateStore(p);
-    let notified = 0;
-    // Two local edits coalesce into a single server write: the optimistic
-    // version bumps twice, but the server row only increments once.
-    store.set('a', 'pinned', true); // optimistic version 1
-    store.set('a', 'pinned', false); // optimistic version 2
-    expect(store.get('a').version).toBe(2);
-    store.subscribe(() => notified++);
-    store.confirmServerVersion('a', 1); // server only reached version 1
-    expect(store.get('a').version).toBe(1);
-    expect(store.get('a').pinned).toBe(false); // fields untouched
-    expect(notified).toBe(0); // no field changed → no emit
-    // Persisted, so the next boot seeds the real server version, not the
-    // inflated optimistic one.
-    expect(new ItemStateStore(p).get('a').version).toBe(1);
-  });
-
-  it('hidden→Done migration (constructor) preserves the server version, not applyMutation’s +1', () => {
-    // A legacy hidden row persisted at version 4. The constructor migrates it to
-    // Done so it surfaces in /done, but that is a local representation change —
-    // it never wrote the server, so the version must stay 4. Bumping it would
-    // seed an inflated optimistic-concurrency base on the next boot (the live
-    // hydrate's real version-4 row can't pull it back down via the monotonic
-    // merge), 40001-conflicting the next edit.
+  it('hidden→Done migration (constructor) surfaces a legacy hidden row in /done', () => {
+    // A legacy hidden row: the constructor migrates it to Done so it surfaces in
+    // /done instead of being invisible with no recovery path.
     // The constructor migration uses real Date.now(), so the hidden timestamp
     // must be recent (un-expired) for it to fire.
     const now = Date.now();
     let saved: Record<string, ItemState> = {
-      a: state({ hidden: true, hiddenAt: now, version: 4 }),
+      a: state({ hidden: true, hiddenAt: now }),
     };
     const store = new ItemStateStore({
       load: () => saved,
@@ -185,30 +161,15 @@ describe('ItemStateStore', () => {
     const a = store.get('a', now);
     expect(a.done).toBe(true);
     expect(a.hidden).toBe(false);
-    expect(a.version).toBe(4); // preserved, not 5
   });
 
-  it('hidden→Done migration (hydrate) preserves the server version, not applyMutation’s +1', () => {
+  it('hidden→Done migration (hydrate) surfaces a legacy hidden server row in /done', () => {
     const store = new ItemStateStore(memoryPersistence());
-    // Server returns a legacy hidden row at version 7; hydrate migrates it to
-    // Done locally but must keep the server's version so seeding stays honest.
-    store.hydrate([['a', state({ hidden: true, hiddenAt: NOW, version: 7 })]], new Map(), NOW);
+    // Server returns a legacy hidden row; hydrate migrates it to Done locally.
+    store.hydrate([['a', state({ hidden: true, hiddenAt: NOW })]], new Map(), NOW);
     const a = store.get('a', NOW);
     expect(a.done).toBe(true);
     expect(a.hidden).toBe(false);
-    expect(a.version).toBe(7); // preserved, not 8
-  });
-
-  it('confirmServerVersion no-ops for an unknown or already-matching row', () => {
-    const store = new ItemStateStore(memoryPersistence());
-    store.confirmServerVersion('missing', 5); // no row → no create, no throw
-    expect(store.get('missing')).toEqual(DEFAULT_ITEM_STATE);
-    store.set('a', 'done', true); // version 1
-    let notified = 0;
-    store.subscribe(() => notified++);
-    store.confirmServerVersion('a', 1); // already at 1
-    expect(store.get('a').version).toBe(1);
-    expect(notified).toBe(0);
   });
 
   it('write-through sink fires the changed-field diff (set / hide / undo), not on hydrate', () => {
@@ -220,11 +181,15 @@ describe('ItemStateStore', () => {
     store.hide('b'); // done = true (undoable)
     store.undoLast(); // reverts b -> done false
     // Hydration overlays server rows and must NOT write back through the sink.
-    store.hydrate([['c', { ...DEFAULT_ITEM_STATE, done: true, version: 5 }]]);
+    store.hydrate([['c', { ...DEFAULT_ITEM_STATE, done: true }]]);
 
+    // The sink receives the exclusivity-closed diff: a Pin carries the cleared
+    // done/hidden even though they were already false locally (so a stale mirror
+    // can't leave an invalid pinned+done row on the server); a dismiss carries the
+    // cleared pinned.
     expect(calls).toEqual([
-      ['a', { pinned: true }],
-      ['b', { done: true }],
+      ['a', { pinned: true, done: false, hidden: false }],
+      ['b', { done: true, pinned: false }],
       ['b', { done: false }],
     ]);
   });
@@ -239,7 +204,8 @@ describe('ItemStateStore', () => {
 
     expect(calls).toEqual([
       ['x', { pinned: false, done: true }],
-      ['x', { pinned: true, done: false }],
+      // Restoring the pin re-closes its exclusivity (done+hidden cleared).
+      ['x', { pinned: true, done: false, hidden: false }],
     ]);
   });
 
@@ -250,6 +216,25 @@ describe('ItemStateStore', () => {
     store.set('y', 'favorite', true);
     // Favoriting must not send pinned/done/hidden/opened (no stale clobber).
     expect(calls).toEqual([['y', { favorite: true }]]);
+  });
+
+  it('closes a Pin over done/hidden even when the local mirror already shows them false', () => {
+    // The local mirror can lag the server — another device set done=true and this
+    // tab hasn't hydrated it, so done reads as false locally. A Pin must STILL
+    // send done:false / hidden:false (the action's exclusivity closure), or
+    // per-field LWW would leave the server's done=true untouched → invalid
+    // pinned+done. The sink closure guarantees this regardless of mirror staleness.
+    const store = new ItemStateStore(memoryPersistence());
+    const sink: Array<[string, Partial<Record<string, boolean>>]> = [];
+    const seen: Array<[string, Partial<Record<string, boolean>>]> = [];
+    store.setMutationSink((id, changed) => sink.push([id, changed]));
+    store.subscribeMutations((id, changed) => seen.push([id, changed]));
+    store.set('a', 'pinned', true); // local done/hidden already false
+
+    expect(sink).toEqual([['a', { pinned: true, done: false, hidden: false }]]);
+    // The in-session mutation listeners still get the NATURAL diff (what changed
+    // for this user on this device), not the server closure.
+    expect(seen).toEqual([['a', { pinned: true }]]);
   });
 
   it('applies retention on read', () => {
@@ -270,7 +255,7 @@ describe('ItemStateStore', () => {
     // Re-dismissing must register as a real transition (not a no-op diff against
     // the still-raw `done:true`), so the sink fires and the timestamp re-stamps.
     store.set('z', 'done', true, later);
-    expect(calls).toEqual([['z', { done: true }]]);
+    expect(calls).toEqual([['z', { done: true, pinned: false }]]);
     expect(store.get('z', later).done).toBe(true); // no longer expired
   });
 
@@ -287,7 +272,7 @@ describe('ItemStateStore', () => {
     // Dismiss sends done:true; Undo must send done:false so the server doesn't
     // keep it dismissed after the next hydrate.
     expect(calls).toEqual([
-      ['z', { done: true }],
+      ['z', { done: true, pinned: false }],
       ['z', { done: false }],
     ]);
     expect(store.get('z', later).done).toBe(false);
@@ -396,7 +381,7 @@ describe('ItemStateStore', () => {
       const store = new ItemStateStore(memoryPersistence());
       store.set('a', 'pinned', true);
       // Server says a is done (not pinned); a has no pending write → server wins.
-      store.hydrate([['a', srv({ done: true, version: 9 })]], new Map());
+      store.hydrate([['a', srv({ done: true })]], new Map());
       expect(store.get('a').pinned).toBe(false);
       expect(store.get('a').done).toBe(true);
     });
@@ -421,7 +406,7 @@ describe('ItemStateStore', () => {
       store.set('a', 'pinned', true);
       // Server still shows the pre-write (unpinned) row, but a is pending.
       store.hydrate(
-        [['a', srv({ pinned: false, version: 2 })]],
+        [['a', srv({ pinned: false })]],
         new Map([['a', { pinned: true }]]),
       );
       expect(store.get('a').pinned).toBe(true);
@@ -432,7 +417,7 @@ describe('ItemStateStore', () => {
       store.set('a', 'pinned', true); // local pending write: pinned
       // Server hasn't got the pin yet, but another device favorited a.
       store.hydrate(
-        [['a', srv({ pinned: false, favorite: true, version: 3 })]],
+        [['a', srv({ pinned: false, favorite: true })]],
         new Map([['a', { pinned: true }]]),
       );
       expect(store.get('a').pinned).toBe(true); // pending field preserved
