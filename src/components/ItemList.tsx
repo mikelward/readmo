@@ -289,6 +289,19 @@ export function ItemList({
   // it renders.
   const pendingAnchorId = useRef<string | null>(null);
 
+  // Per-section "More" taps that landed while the base query was refetching.
+  // The cursor `handleFeedMore` computes reads off `items[]`, which is the
+  // stale pre-refetch window mid-refresh (e.g. right after a Sweep) — so rather
+  // than disable the button (which flickered every section's More to "Loading…"
+  // on any background refetch, even ones the reader never tapped), we keep the
+  // button as a stable, tappable "More" and defer the tap. A drain effect
+  // re-fires `handleFeedMore` once a *successful* refetch settles and the cursor
+  // calc can run against fresh `items[]`, so the tap is honored, not dropped.
+  // Declared up here so `handleMore` (the global pager, below) can clear it.
+  const [pendingFeedMore, setPendingFeedMore] = useState<ReadonlySet<FeedId>>(
+    () => new Set(),
+  );
+
   // How many list elements a given page set would render (headers + visible
   // rows), via the live collapsed ref so the async loop below isn't stale. Used
   // to keep fetching past pages that render nothing new — but a newly appearing
@@ -309,6 +322,12 @@ export function ItemList({
       window.scrollBy({ top: Math.max(page, 200), behavior: 'smooth' });
       return;
     }
+    // Tapping the global pager fetches the next base page via fetchNextPage,
+    // which can cancel an in-flight background refetch and settle with page 1
+    // still on the stale pre-refetch window and no `error`. Drop any deferred
+    // section-"More" taps so the drain effect doesn't run handleFeedMore against
+    // that stale window — the reader re-taps the section once data is fresh.
+    setPendingFeedMore((prev) => (prev.size === 0 ? prev : new Set()));
     // At the end with another page available → fetch it; the effect scrolls the
     // first new element below the top chrome once it lands. When grouping with
     // collapsed sections, a fetched page can render nothing new (all hidden rows
@@ -433,6 +452,7 @@ export function ItemList({
     () => new Map(),
   );
 
+
   // The set of ids currently in front of the reader, used by the in-session pin
   // tracking below. Not just `items`: in the windowed grouped view, rows
   // revealed by a section's "More" live in `feedExtras` / the sticky display
@@ -488,6 +508,12 @@ export function ItemList({
   // Monotonic id stamped on each per-section More fetch, so a response that
   // settles after its entry was reset or superseded can be discarded.
   const moreSeqRef = useRef(0);
+  // Feeds with a section-"More" fetch in flight, tracked synchronously so a
+  // rapid double tap can't fire a second `fetchFeedPage` before React commits
+  // the `loading: true` state (and the resulting `disabled`) from the first.
+  // The reqId check already keeps the committed *state* correct under a race;
+  // this just stops the wasted duplicate request.
+  const feedMoreFetchingRef = useRef<Set<FeedId>>(new Set());
   // Drop a view's expanded sections only when the view actually changes (not on
   // mount), so switching home → folder → a single feed never carries one view's
   // depth into the next, while a same-view re-render keeps what's expanded.
@@ -498,6 +524,8 @@ export function ItemList({
       setFeedExtras(new Map());
       setDisplayedByFeed(new Map());
       setStayInBodyIds(new Set());
+      setPendingFeedMore(new Set());
+      feedMoreFetchingRef.current = new Set();
     }
   }, [viewKey]);
 
@@ -585,8 +613,25 @@ export function ItemList({
   const handleFeedMore = useCallback(
     async (feedId: FeedId) => {
       if (!fetchFeedPage || perFeedLimit == null) return;
+      // Synchronous double-tap guard: a second tap that lands in the gap
+      // between the first tap and React committing `loading: true` would slip
+      // past the `existing?.loading` state check below and fire a duplicate
+      // fetch. The ref reflects the in-flight fetch immediately.
+      if (feedMoreFetchingRef.current.has(feedId)) return;
       const existing = feedExtras.get(feedId);
       if (existing?.loading) return;
+      // Base query refetching → `items[]` is the stale pre-refetch window, so
+      // the cursor calc below would mis-offset and skip the freshest page (the
+      // classic post-Sweep case). Defer the tap instead of dropping it: queue
+      // the feed and let the drain effect re-run this once the refetch settles
+      // against fresh `items[]`. The button keeps showing a tappable "More" the
+      // whole time, so a background refresh never flickers it to "Loading…".
+      if (isFetching) {
+        setPendingFeedMore((prev) =>
+          prev.has(feedId) ? prev : new Set(prev).add(feedId),
+        );
+        return;
+      }
       // An exhausted entry (`done: true`) normally blocks further taps, but
       // a new top item arriving after exhaustion (cross-device pin, polled
       // RSS item) shows up as "unseen in base window" — handleFeedMore's
@@ -683,6 +728,9 @@ export function ItemList({
         }
       }
       if (cursor === null) return;
+      // Claim the in-flight slot synchronously (before the first await) so a
+      // rapid second tap is rejected by the top guard. Released in `finally`.
+      feedMoreFetchingRef.current.add(feedId);
       // Tag this fetch so a response that settles after the entry was reset
       // (window changed) or superseded (a later tap) is discarded instead of
       // writing its stale-offset page back over the fresh state.
@@ -784,10 +832,33 @@ export function ItemList({
           next.set(feedId, { ...cur, loading: false });
           return next;
         });
+      } finally {
+        feedMoreFetchingRef.current.delete(feedId);
       }
     },
-    [fetchFeedPage, perFeedLimit, feedExtras, items, displayedByFeed, ds],
+    [fetchFeedPage, perFeedLimit, feedExtras, items, displayedByFeed, ds, isFetching],
   );
+
+  // Drain the deferred section-"More" taps once the base refetch settles, so a
+  // tap that landed mid-refresh fetches the correct page against fresh
+  // `items[]` instead of being lost. handleFeedMore re-checks its own guards
+  // (done / unseen-top) against the current view, so a feed that no longer has
+  // a next page after the refetch simply no-ops.
+  useEffect(() => {
+    if (isFetching || pendingFeedMore.size === 0) return;
+    // Only drain after a *successful* refetch. A failed one (`error` set, data
+    // retained) leaves `items[]` as the stale pre-refetch window, so draining
+    // now would compute the next-page offset off stale rows and could skip the
+    // fresh page. Drop the queued taps instead — the button reverts to a
+    // tappable "More" so the reader can retry once a refresh succeeds.
+    if (error) {
+      setPendingFeedMore(new Set());
+      return;
+    }
+    const feeds = [...pendingFeedMore];
+    setPendingFeedMore(new Set());
+    for (const feedId of feeds) void handleFeedMore(feedId);
+  }, [isFetching, error, pendingFeedMore, handleFeedMore]);
 
   // Per-id cache of FeedItem objects so a sticky row stays renderable even
   // when a refetch flushes it out of `items[]` and `feedExtras` (e.g. more
@@ -1069,21 +1140,15 @@ export function ItemList({
     if (!perGroupMore) return undefined;
     const s = new Set<FeedId>();
     for (const [feedId, ex] of feedExtras) if (ex.loading) s.add(feedId);
-    // While the base query is refetching (typically right after a Sweep that
-    // invalidated it), the cached `items[]` is still the pre-Sweep window — so
-    // the first-page cursor `handleFeedMore` computes off it would count the
-    // just-Done rows as seen and send an offset that skips past the freshest
-    // page the refetch is about to expose. Hold EVERY section "More" in a
-    // loading/disabled state until the refetch settles and the cursor calc
-    // runs against fresh `items[]`. This includes both phantom sections (all-
-    // unpinned sweeps) and live sections anchored by a pinned row that
-    // survived the sweep. The brief disable on a no-op background refresh is
-    // an accepted cost — typically a few hundred ms.
-    if (isFetching && feedsWithMore) {
-      for (const feedId of feedsWithMore) s.add(feedId);
-    }
+    // A section the reader tapped while the base query was refetching: its tap
+    // is deferred (see `pendingFeedMore`) and fires once the refetch settles,
+    // so show "Loading…" in the meantime. Unlike the old behavior, a *back-
+    // ground* refetch the reader never tapped no longer flips every section's
+    // More to "Loading…" — those buttons stay a stable, tappable "More", and a
+    // tap during that window is deferred rather than dropped.
+    for (const feedId of pendingFeedMore) s.add(feedId);
     return s;
-  }, [perGroupMore, feedExtras, isFetching, feedsWithMore]);
+  }, [perGroupMore, feedExtras, pendingFeedMore]);
 
   // Number of list elements actually rendered: one header per feed section plus
   // each non-collapsed row (a collapsed feed shows only its header). When not

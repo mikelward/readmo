@@ -1024,7 +1024,15 @@ negligible and off every critical path. See the External services table in
          reader can pull the next page without remounting; the empty state
          only appears once every section is genuinely exhausted. Pull-to-
          refresh resets the sticky set, so the reader can always opt in to
-         the newest top items.
+         the newest top items. A section's "More" **stays a stable, tappable
+         "More" through a background refetch** — it is never flickered to a
+         disabled "Loading…" by a refresh the reader didn't trigger. Because
+         the next-page offset is computed off `items`, which is briefly stale
+         mid-refetch, a tap that lands during one is **deferred** and fires
+         once the refetch settles (against fresh `items`), so the tap is
+         honored rather than dropped or run against a stale offset. Only the
+         section the reader actually tapped shows "Loading…", and a rapid
+         double tap issues a single page fetch.
    - **Done and Hidden filtered out**; **Opened** items render with the faded
      title.
    - **Initial paint one page (30 items)** in the flat river; the grouped view
