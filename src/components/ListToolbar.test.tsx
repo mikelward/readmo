@@ -231,8 +231,11 @@ describe('ListToolbar sort-order toggle', () => {
     );
     const btn = screen.getByTestId('sort-order-btn');
     expect(btn).toHaveAccessibleName('Newest first');
-    expect(btn).toHaveTextContent('');
-    expect(btn.querySelector('svg')).not.toBeNull();
+    // The glyph carries digit text (9/0) but it lives in an aria-hidden svg, so
+    // the button stays label-free to the accessibility tree.
+    const svg = btn.querySelector('svg');
+    expect(svg).not.toBeNull();
+    expect(svg!.getAttribute('aria-hidden')).toBe('true');
   });
 
   it('names the current order (oldest first) when flipped', () => {

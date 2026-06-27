@@ -262,52 +262,107 @@ export function ListTree(props: IconProps) {
   );
 }
 
-// ---- Sort order: a single arrow showing the current direction -------------
+// ---- Sort order: stacked digits + a direction arrow -----------------------
 
 // The top toolbar's sort toggle reflects the *current* order, not both
-// directions (SPEC.md *List toolbar*): `ArrowDownward` = newest-first
-// (descending), `ArrowUpward` = oldest-first (ascending) — the universal
-// table-sort convention. Custom 24×24 glyphs so the direction reads cleanly;
-// the tooltip / accessible name ("Newest first" / "Oldest first") stays
-// authoritative.
-// Stroked (not a solid triangle) and weighted to ~2.2px so it sits at the same
-// visual weight as the list / tree glyphs instead of reading heaviest.
-export function ArrowDownward(props: IconProps) {
+// directions (SPEC.md *List toolbar*). Each glyph pairs a stacked digit column
+// (left) with a direction arrow (right): `SortNewestFirst` reads 9→0 with a
+// down arrow (descending), `SortOldestFirst` reads 0→9 with an up arrow
+// (ascending) — the universal numeric-sort convention, and the two are exact
+// vertical mirrors so the toggle is unmistakable. The tooltip / accessible
+// name ("Newest first" / "Oldest first") stays authoritative.
+// Arrows are stroked and weighted to ~2.2px so the glyph sits at the same
+// visual weight as the list / tree icons instead of reading heaviest.
+
+// Shared layout constants so the two mirror glyphs stay aligned.
+const SORT_DIGIT_X = 6.25;
+const SORT_DIGIT_TOP_Y = 10;
+const SORT_DIGIT_BOTTOM_Y = 21.5;
+
+export function SortNewestFirst(props: IconProps) {
   return (
     <svg
       viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
       width={24}
       height={24}
       aria-hidden="true"
       focusable="false"
       {...props}
     >
-      <path d="M12 4.5V19M6.5 13L12 19L17.5 13" />
+      <text
+        x={SORT_DIGIT_X}
+        y={SORT_DIGIT_TOP_Y}
+        textAnchor="middle"
+        fontSize="11"
+        fontWeight="700"
+        fontFamily="system-ui, sans-serif"
+        fill="currentColor"
+      >
+        9
+      </text>
+      <text
+        x={SORT_DIGIT_X}
+        y={SORT_DIGIT_BOTTOM_Y}
+        textAnchor="middle"
+        fontSize="11"
+        fontWeight="700"
+        fontFamily="system-ui, sans-serif"
+        fill="currentColor"
+      >
+        0
+      </text>
+      <path
+        d="M16.5 4.5V18M12.5 13L16.5 18L20.5 13"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 
-export function ArrowUpward(props: IconProps) {
+export function SortOldestFirst(props: IconProps) {
   return (
     <svg
       viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
       width={24}
       height={24}
       aria-hidden="true"
       focusable="false"
       {...props}
     >
-      <path d="M12 19.5V5M6.5 11L12 5L17.5 11" />
+      <text
+        x={SORT_DIGIT_X}
+        y={SORT_DIGIT_TOP_Y}
+        textAnchor="middle"
+        fontSize="11"
+        fontWeight="700"
+        fontFamily="system-ui, sans-serif"
+        fill="currentColor"
+      >
+        0
+      </text>
+      <text
+        x={SORT_DIGIT_X}
+        y={SORT_DIGIT_BOTTOM_Y}
+        textAnchor="middle"
+        fontSize="11"
+        fontWeight="700"
+        fontFamily="system-ui, sans-serif"
+        fill="currentColor"
+      >
+        9
+      </text>
+      <path
+        d="M16.5 19.5V6M12.5 11L16.5 6L20.5 11"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }

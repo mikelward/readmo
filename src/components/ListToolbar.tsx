@@ -4,8 +4,8 @@ import { useBottomBarPosition } from '../hooks/useReadingPrefs';
 import { useFeedBar } from './FeedBarContext';
 import { TooltipButton } from './TooltipButton';
 import {
-  ArrowDownward,
-  ArrowUpward,
+  SortNewestFirst,
+  SortOldestFirst,
   ListFlat,
   ListTree,
   Sweep,
@@ -201,9 +201,13 @@ export function ListToolbar({
               sort.itemSort === 'newest' ? 'Newest first' : 'Oldest first'
             }
           >
-            {/* Arrow shows the current order: down = newest-first (descending),
-                up = oldest-first (ascending). */}
-            {sort.itemSort === 'newest' ? <ArrowDownward /> : <ArrowUpward />}
+            {/* Stacked digits + arrow show the current order: 9→0 + down =
+                newest-first (descending), 0→9 + up = oldest-first (ascending). */}
+            {sort.itemSort === 'newest' ? (
+              <SortNewestFirst />
+            ) : (
+              <SortOldestFirst />
+            )}
           </TooltipButton>
         ) : null}
         {more ? (

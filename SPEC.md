@@ -945,7 +945,7 @@ negligible and off every critical path. See the External services table in
        chronological order — **newest-first** (default) or **oldest-first** —
        on Home, folders, and single feeds. Pinned ordering is unaffected (always
        oldest-pin first within its section). Toggleable from Settings **and**
-       from the list **top toolbar** (the **Sort order** toggle, whose arrow
+       from the list **top toolbar** (the **Sort order** toggle, whose glyph
        reflects the current order — see *List toolbar*), which writes the same
        per-device preference.
      - **Group by feed** (`readmo:group-by-feed`, default **off**) sections Home
@@ -1087,9 +1087,10 @@ negligible and off every critical path. See the External services table in
    long-press / hover tooltips — see *Feed views → Collapse / expand sections*)
    appear only in the **group-by-feed** view. The **Sort order** toggle
    flips the `readmo:item-sort` preference between **newest-** and
-   **oldest-first**; its arrow reflects the **current** order (down =
-   newest-first / descending, up = oldest-first / ascending) and its tooltip /
-   accessible name names that order, and it rides **every** feed view — Home,
+   **oldest-first**; its glyph reflects the **current** order — a stacked digit
+   column plus a direction arrow (9→0 + down arrow = newest-first / descending,
+   0→9 + up arrow = oldest-first / ascending) — and its tooltip / accessible
+   name names that order, and it rides **every** feed view — Home,
    folders, and single feeds — since sort applies even where grouping doesn't. Sweep marks done only
    the unpinned rows that
    are **fully visible right now** — not the whole loaded list — so scrolling
