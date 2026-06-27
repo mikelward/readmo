@@ -20,6 +20,7 @@ import { useHideOnScroll, useBottomBarPosition } from '../hooks/useReadingPrefs'
 import { useCollapsedFeeds } from '../hooks/useCollapsedFeeds';
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
 import type { FeedId, FeedItem, ItemId } from '../lib/types';
+import { placeStayInBodyPins } from '../lib/feedOrder';
 import { measureStickyBottomInset, measureTopChromeHeight } from '../lib/stickyInset';
 import { adjustUnreadCounts } from '../lib/unreadAdjust';
 import { loadFailureCopy, presentableDetail } from '../lib/loadErrorCopy';
@@ -373,6 +374,19 @@ export function ItemList({
     [ds],
   );
 
+  // In-session pins keep their place. The data source orders every pin to the
+  // top of its section, which is the right resting state on a fresh load — but
+  // pinning a row the reader is *looking at* shouldn't yank it up under their
+  // eye (SPEC.md *Feed views*: "pinning a body row keeps its position"). We
+  // track the ids the reader pins this session while the row is in the loaded
+  // window and keep those at their natural feed position; `mergedRaw` below
+  // applies the override. The set lives only in component state, so a reload
+  // starts clean (every pin groups at the top); pull-to-refresh and Sweep clear
+  // it explicitly to consolidate (SPEC.md "Sweep consolidates").
+  const [stayInBodyIds, setStayInBodyIds] = useState<ReadonlySet<ItemId>>(
+    () => new Set(),
+  );
+
   // Per-section "More" (group-by-feed): each feed's extra pages, fetched on
   // demand from that feed alone and appended after its base run. The base read
   // is a single page capped to `perFeedLimit` rows per feed; tapping a section's
@@ -412,6 +426,59 @@ export function ItemList({
   const [displayedByFeed, setDisplayedByFeed] = useState<Map<FeedId, Set<ItemId>>>(
     () => new Map(),
   );
+
+  // The set of ids currently in front of the reader, used by the in-session pin
+  // tracking below. Not just `items`: in the windowed grouped view, rows
+  // revealed by a section's "More" live in `feedExtras` / the sticky display
+  // window (`displayedByFeed`), not the base read — so a pin on one of those
+  // rows would otherwise go undetected and the next refetch (which promotes the
+  // pin into the base window) would lift it to the section top. Union all three
+  // so pinning any visible row is observed.
+  const itemIds = useMemo(() => {
+    const s = new Set<ItemId>(items.map((fi) => fi.item.id));
+    for (const ex of feedExtras.values()) {
+      for (const fi of ex.items) s.add(fi.item.id);
+    }
+    for (const set of displayedByFeed.values()) {
+      for (const id of set) s.add(id);
+    }
+    return s;
+  }, [items, feedExtras, displayedByFeed]);
+  const itemIdsRef = useRef(itemIds);
+  itemIdsRef.current = itemIds;
+  // A pin counts as in-session only when the reader does it themselves. We
+  // listen on the store's *mutation* channel (set / hide / sweep / undo) rather
+  // than the general subscribe, so a background hydrate or cross-device sync —
+  // which flips pre-existing server pins to pinned via hydrate(), emitting no
+  // diff — is never mistaken for the reader pinning a row. A fresh pin on a row
+  // in the loaded window is held at its place.
+  //
+  // Unpinning does NOT drop the id here: the feed cache stays pinned-first until
+  // the unpin's refetch lands, so the row must keep being anchored to its body
+  // slot through that round-trip (placeStayInBodyPins re-sorts a held row by
+  // date whether or not it's still pinned). The id is cleared when it leaves the
+  // window (the GC effect below) or on the next consolidation (PTR / Sweep /
+  // view change) — by which point the cache no longer lifts it anyway.
+  useEffect(() => {
+    return ds.stateStore.subscribeMutations((id, changed) => {
+      if (!changed.pinned) return;
+      if (!itemIdsRef.current.has(id)) return;
+      setStayInBodyIds((cur) => (cur.has(id) ? cur : new Set(cur).add(id)));
+    });
+  }, [ds]);
+  // As the loaded window changes (pagination, refetch), drop stay ids that left
+  // it — a held pin that's no longer displayed has nothing to anchor.
+  useEffect(() => {
+    setStayInBodyIds((cur) => {
+      if (cur.size === 0) return cur;
+      let next: Set<ItemId> | null = null;
+      for (const id of cur) {
+        if (!itemIds.has(id)) (next ??= new Set(cur)).delete(id);
+      }
+      return next ?? cur;
+    });
+  }, [itemIds]);
+
   // Monotonic id stamped on each per-section More fetch, so a response that
   // settles after its entry was reset or superseded can be discarded.
   const moreSeqRef = useRef(0);
@@ -424,6 +491,7 @@ export function ItemList({
       prevViewKey.current = viewKey;
       setFeedExtras(new Map());
       setDisplayedByFeed(new Map());
+      setStayInBodyIds(new Set());
     }
   }, [viewKey]);
 
@@ -744,9 +812,24 @@ export function ItemList({
   // rows anymore. Other code paths read from this merged list so Sweep,
   // headers, counts and the end-of-list measurement all see exactly the
   // displayed rows. Identity-stable (=== items) outside the windowed grouped
-  // view, so the flat river and single-feed views are untouched.
+  // view, so the flat river and single-feed views are untouched — except while
+  // an in-session pin is held in body position, where it returns a reordered
+  // copy (see placeStayInBodyPins).
   const mergedRaw = useMemo(() => {
-    if (!perGroupMore || perFeedLimit == null) return items;
+    if (!perGroupMore || perFeedLimit == null) {
+      // Flat river, single-feed, and grouped-without-windowing all read the
+      // data source's order directly — apply the in-session pin override so a
+      // just-pinned visible row keeps its place instead of jumping to the top.
+      // No-op (returns `items` unchanged) when no in-session pin is present, so
+      // identity is preserved for the views that rely on `mergedRaw === items`.
+      void storeVersion;
+      return placeStayInBodyPins(items, {
+        groupByFeed,
+        sortAsc: itemSort === 'oldest',
+        stay: stayInBodyIds,
+        isPinned: (id) => ds.stateStore.get(id).pinned,
+      });
+    }
     void storeVersion; // re-run on store changes so pinned-at-top stays current.
     const result: FeedItem[] = [];
     let i = 0;
@@ -793,7 +876,14 @@ export function ItemList({
         // non-pinned new rows do.
         for (const fi of baseRun) {
           if (!allowed.has(fi.item.id)) continue;
-          if (ds.stateStore.get(fi.item.id).pinned) push(fi);
+          // An in-session pin stays at its natural position (handled by the
+          // sticky-order pass below), so it's skipped here rather than lifted.
+          if (
+            ds.stateStore.get(fi.item.id).pinned &&
+            !stayInBodyIds.has(fi.item.id)
+          ) {
+            push(fi);
+          }
         }
         // Non-pinned rows render in sticky iteration order — the order the
         // reader actually opted into. Without this, a heavy refetch that
@@ -855,7 +945,18 @@ export function ItemList({
     // the section collapse to the empty/phantom state and require a fresh
     // tap or PTR to reconcile.
     return result;
-  }, [perGroupMore, perFeedLimit, items, feedExtras, displayedByFeed, ds, storeVersion]);
+  }, [
+    perGroupMore,
+    perFeedLimit,
+    items,
+    feedExtras,
+    displayedByFeed,
+    ds,
+    storeVersion,
+    stayInBodyIds,
+    groupByFeed,
+    itemSort,
+  ]);
 
   const visibleItems = mergedRaw.filter((fi) => {
     const st = ds.stateStore.get(fi.item.id);
@@ -1097,6 +1198,8 @@ export function ItemList({
     // Capture the height while the swept rows are still on screen, then hide.
     lockBodyHeight();
     ds.stateStore.hideMany(ids);
+    // Sweep consolidates: in-body pins snap into the top block (SPEC.md).
+    setStayInBodyIds(new Set());
     setSweepingIds((prev) => {
       if (prev.size === 0) return prev;
       const next = new Set(prev);
@@ -1151,6 +1254,8 @@ export function ItemList({
         // height first, same as the animated commitSweep path does.
         lockBodyHeight();
         ds.stateStore.hideMany(batch);
+        // Sweep consolidates: in-body pins snap into the top block (SPEC.md).
+        setStayInBodyIds(new Set());
         beginSweepCooldown();
         return;
       }
@@ -1477,6 +1582,8 @@ export function ItemList({
           // against the new base window.
           setDisplayedByFeed(new Map());
           setFeedExtras(new Map());
+          // A pull-to-refresh consolidates: in-session pins re-group at the top.
+          setStayInBodyIds(new Set());
           await checkForServiceWorkerUpdate();
         }}
       >

@@ -8,7 +8,7 @@ import { ItemList } from './ItemList';
 import type { FetchPage } from '../hooks/useFeedItems';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import { _resetNetworkStatusForTests } from '../lib/networkStatus';
-import type { FeedItem } from '../lib/types';
+import { DEFAULT_ITEM_STATE, type FeedItem } from '../lib/types';
 import { resetPromoDismissedCacheForTest } from '../hooks/usePromoDismissed';
 import {
   BOTTOM_BAR_KEY,
@@ -525,6 +525,167 @@ describe('ItemList', () => {
     await waitFor(() => {
       const rows = screen.getAllByTestId('item-title');
       expect(rows[0]).toHaveTextContent(target.title);
+    });
+  });
+
+  it('keeps an in-session pin at its position instead of jumping it to the top', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderHome(source);
+
+    const rows = await screen.findAllByTestId('item-row');
+    const firstTitle = within(rows[0]).getByTestId('item-title').textContent;
+    const target = rows[3];
+    const targetTitle = within(target).getByTestId('item-title').textContent;
+
+    // Pin the 4th row while looking at it.
+    await user.click(within(target).getByTestId('pin-btn'));
+
+    // It must not jump to the top: the first row is unchanged and the pinned
+    // row keeps its slot (the data source orders pins to the top, but an
+    // in-session pin holds its place — SPEC.md "pinning a body row keeps its
+    // position").
+    await waitFor(() => {
+      const after = screen.getAllByTestId('item-row');
+      expect(within(after[3]).getByTestId('pin-btn')).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    });
+    const after = screen.getAllByTestId('item-row');
+    expect(within(after[0]).getByTestId('item-title')).toHaveTextContent(
+      firstTitle!,
+    );
+    expect(within(after[3]).getByTestId('item-title')).toHaveTextContent(
+      targetTitle!,
+    );
+  });
+
+  it('consolidates an in-session pin to the top once Sweep clears the in-body hold', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderHome(source);
+
+    const rows = await screen.findAllByTestId('item-row');
+    const target = rows[3];
+    const targetTitle = within(target).getByTestId('item-title').textContent;
+    await user.click(within(target).getByTestId('pin-btn'));
+    // Held in place by the in-session rule.
+    await waitFor(() => {
+      const after = screen.getAllByTestId('item-row');
+      expect(within(after[3]).getByTestId('item-title')).toHaveTextContent(
+        targetTitle!,
+      );
+    });
+
+    // Sweep dismisses the unpinned rows and consolidates: the pin snaps into
+    // the top block. Undo restores the dismissed rows; the pin now leads them.
+    await user.click(screen.getByTestId('sweep-btn'));
+    await waitFor(() => {
+      expect(screen.getAllByTestId('item-row')).toHaveLength(1);
+    });
+    await user.click(screen.getByTestId('undo-btn'));
+    await waitFor(() => {
+      const after = screen.getAllByTestId('item-row');
+      expect(after.length).toBeGreaterThan(1);
+      expect(within(after[0]).getByTestId('item-title')).toHaveTextContent(
+        targetTitle!,
+      );
+    });
+  });
+
+  it('keeps a held row in the body through an unpin (before the refetch lands)', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    const page = await source.getHomeItems();
+    const target = page.items[3].item;
+    const viewKey = `home-unpin-${viewKeySeq++}`;
+    renderWithProviders(
+      <ItemList
+        viewKey={viewKey}
+        fetchPage={(cursor) => source.getHomeItems({ cursor })}
+        emptyLabel="x"
+      />,
+      { source, queryClient },
+    );
+    const rows = await screen.findAllByTestId('item-row');
+    const targetTitle = within(rows[3]).getByTestId('item-title').textContent;
+
+    // Pin the 4th row, then refresh the cache so it is now pinned-first — the
+    // row is held in the body by the in-session rule.
+    await user.click(within(rows[3]).getByTestId('pin-btn'));
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
+    });
+    await waitFor(() => {
+      const after = screen.getAllByTestId('item-row');
+      expect(within(after[3]).getByTestId('item-title')).toHaveTextContent(
+        targetTitle!,
+      );
+    });
+
+    // Unpin it. The cache is still pinned-first until the unpin's refetch lands;
+    // the row must stay anchored to its body slot, not snap to the top.
+    await user.click(
+      within(
+        document.querySelector(`[data-item-id="${target.id}"]`) as HTMLElement,
+      ).getByTestId('pin-btn'),
+    );
+    await waitFor(() => {
+      const a = document.querySelector(
+        `[data-item-id="${target.id}"]`,
+      ) as HTMLElement;
+      expect(within(a).getByTestId('pin-btn')).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      );
+    });
+    const afterUnpin = screen.getAllByTestId('item-row');
+    expect(within(afterUnpin[0]).getByTestId('item-title')).not.toHaveTextContent(
+      targetTitle!,
+    );
+    expect(within(afterUnpin[3]).getByTestId('item-title')).toHaveTextContent(
+      targetTitle!,
+    );
+  });
+
+  it('does not hold a pin applied by background hydration in the body', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    const page = await source.getHomeItems();
+    const target = page.items[3].item;
+    const viewKey = `home-hydrate-${viewKeySeq++}`;
+    renderWithProviders(
+      <ItemList
+        viewKey={viewKey}
+        fetchPage={(cursor) => source.getHomeItems({ cursor })}
+        emptyLabel="x"
+      />,
+      { source, queryClient },
+    );
+    await screen.findAllByTestId('item-row');
+
+    // Cold/slow hydration path: server item_state arrives AFTER the feed has
+    // painted, flipping a pre-existing pin false→true in the local store. That
+    // is not an in-session pin, so it must lift to the top (resting state), not
+    // get held in the body.
+    await act(async () => {
+      source.stateStore.hydrate([
+        [target.id, { ...DEFAULT_ITEM_STATE, pinned: true, pinnedAt: 1000, version: 1 }],
+      ]);
+      await queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
+    });
+
+    await waitFor(() => {
+      const rows = screen.getAllByTestId('item-row');
+      expect(within(rows[0]).getByTestId('item-title')).toHaveTextContent(
+        target.title,
+      );
     });
   });
 
@@ -2192,6 +2353,48 @@ describe('ItemList', () => {
       return { source, mk };
     }
 
+    it('keeps an in-session pin in place within a windowed feed section', async () => {
+      const user = userEvent.setup();
+      const { source, mk } = await makeRows();
+      const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2)];
+      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
+      const fetchFeedPage = vi.fn(() =>
+        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
+      );
+      renderWithProviders(
+        <ItemList
+          viewKey={`psm-pin-${viewKeySeq++}`}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+          groupByFeed
+          fetchFeedPage={fetchFeedPage}
+          perFeedLimit={3}
+        />,
+        { source },
+      );
+      await screen.findAllByTestId('item-row');
+      const order = () =>
+        [...document.querySelectorAll('[data-item-id]')].map((el) =>
+          el.getAttribute('data-item-id'),
+        );
+      expect(order()).toEqual(['A-0', 'A-1', 'A-2']);
+
+      // Pin the middle row while viewing it.
+      const midRow = document.querySelector('[data-item-id="A-1"]') as HTMLElement;
+      await user.click(within(midRow).getByTestId('pin-btn'));
+      await waitFor(() => {
+        const row = document.querySelector('[data-item-id="A-1"]') as HTMLElement;
+        expect(within(row).getByTestId('pin-btn')).toHaveAttribute(
+          'aria-pressed',
+          'true',
+        );
+      });
+      // It must not lead the section — the in-session pin keeps its slot
+      // (without the in-session rule the data layer lifts pins to the section
+      // top, which would reorder this to ['A-1', 'A-0', 'A-2']).
+      expect(order()).toEqual(['A-0', 'A-1', 'A-2']);
+    });
+
     it('grows one feed section inline, leaving the others untouched, until exhausted', async () => {
       const user = userEvent.setup();
       const { source, mk } = await makeRows();
@@ -2470,14 +2673,17 @@ describe('ItemList', () => {
       });
 
       // All previously visible rows still show — pinning an extra did not
-      // collapse the section. A-4 sits at the top (pinned).
+      // collapse the section. And because the reader pinned it in-session while
+      // looking at it, A-4 keeps its place rather than jumping to the section
+      // top (SPEC.md "pinning a body row keeps its position"); the in-session
+      // tracking covers extras revealed by More, not just base-window rows.
       await waitFor(() => {
         expect(screen.getAllByTestId('item-row')).toHaveLength(6);
       });
       const ids = [...document.querySelectorAll('[data-item-id]')].map(
         (el) => el.getAttribute('data-item-id'),
       );
-      expect(ids).toEqual(['A-4', 'A-0', 'A-1', 'A-2', 'A-3', 'A-5']);
+      expect(ids).toEqual(['A-0', 'A-1', 'A-2', 'A-3', 'A-4', 'A-5']);
     });
 
     it('a fresh top item arriving via invalidation stays hidden until the next "More" tap (sticky display window)', async () => {

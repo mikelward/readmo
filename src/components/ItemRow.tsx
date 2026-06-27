@@ -76,7 +76,8 @@ export function ItemRow({
     // Swipe-right hides the row → it will unmount when the data layer
     // refetches; hold the off-screen state until then so the row doesn't
     // visibly snap back during the async unmount window. Swipe-left pins,
-    // which keeps the row mounted (it moves to the top), so it snaps back.
+    // which keeps the row mounted in place (an in-session pin holds its
+    // position rather than jumping to the top), so it snaps back.
     dismissOnRight: true,
   });
 

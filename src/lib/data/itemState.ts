@@ -147,6 +147,16 @@ function sameMap(
 
 export type StateListener = () => void;
 
+/** Notified only on *user-driven* mutations (set / hide / sweep / undo) with the
+ * changed-field diff — never on hydration or cross-device sync, which reconcile
+ * via {@link ItemStateStore.hydrate} and emit no diff. Lets a subscriber react
+ * to "the user just pinned this" without mistaking a background server pin for
+ * one (see ItemList's in-session pin tracking). */
+export type MutationListener = (
+  id: ItemId,
+  changed: Partial<Record<ItemStateField, boolean>>,
+) => void;
+
 /** Pluggable persistence for the state map. The mock uses localStorage; a
  * future Supabase-backed store swaps the implementation while the store API
  * (and every UI hook above it) stays identical. */
@@ -168,6 +178,7 @@ type UndoBatch = Array<[ItemId, ItemState | null]>;
 export class ItemStateStore {
   private map: Record<ItemId, ItemState>;
   private listeners = new Set<StateListener>();
+  private mutationListeners = new Set<MutationListener>();
   // Per-id cache of the retention-applied snapshot so `get()` returns a
   // referentially-stable object between store changes. Without this, an item
   // whose Hidden/Opened flag has aged past the TTL would yield a fresh object
@@ -251,11 +262,13 @@ export class ItemStateStore {
   /** Fields whose boolean value differs between two states, with their `to`
    * values — the minimal write that moves `from` to `to`. */
   private emitDiff(id: ItemId, from: ItemState, to: ItemState): void {
-    if (!this.sink) return;
+    if (!this.sink && this.mutationListeners.size === 0) return;
     const fields: ItemStateField[] = ['pinned', 'favorite', 'done', 'hidden', 'opened'];
     const changed: Partial<Record<ItemStateField, boolean>> = {};
     for (const f of fields) if (from[f] !== to[f]) changed[f] = to[f];
-    if (Object.keys(changed).length > 0) this.sink(id, changed);
+    if (Object.keys(changed).length === 0) return;
+    if (this.sink) this.sink(id, changed);
+    for (const l of this.mutationListeners) l(id, changed);
   }
 
   get(id: ItemId, now: number = Date.now()): ItemState {
@@ -455,6 +468,16 @@ export class ItemStateStore {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
+    };
+  }
+
+  /** Subscribe to user-driven mutations only (see {@link MutationListener}).
+   * Fires with the changed-field diff on every set/hide/sweep/undo; never on
+   * hydration or cross-device sync. */
+  subscribeMutations(listener: MutationListener): () => void {
+    this.mutationListeners.add(listener);
+    return () => {
+      this.mutationListeners.delete(listener);
     };
   }
 
