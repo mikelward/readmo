@@ -10,6 +10,7 @@ import { DataSourceProvider } from './lib/data/context';
 import { MockDataSource } from './lib/data/MockDataSource';
 import { SupabaseDataSource } from './lib/data/SupabaseDataSource';
 import { isSupabaseConfigured } from './lib/supabase/client';
+import { retryDelayMs, shouldRetryQuery } from './lib/queryRetry';
 import {
   applyFont,
   applyFontSize,
@@ -49,35 +50,27 @@ const CACHE_BUSTER = '1';
 // IndexedDB for article bodies; PR1 uses localStorage with the mock seed.)
 const PERSIST_MAX_AGE = Number.POSITIVE_INFINITY;
 
-/**
- * Don't retry when the server itself is the problem — a 5xx / PGRST error
- * or a timed-out request won't improve on an immediate retry, and retrying
- * doubles the time before the user sees the error UI. Retry once for
- * everything else (transient network blip, dropped connection).
- */
-function shouldRetry(_count: number, error: unknown): boolean {
-  // Timed-out request (supabaseFetch aborts with TimeoutError after 8 s).
-  if (error instanceof DOMException && error.name === 'TimeoutError') return false;
-  // PostgREST / Supabase JS error — has a numeric `status` field.
-  if (error != null && typeof error === 'object' && 'status' in error) {
-    const status = (error as { status: unknown }).status;
-    if (typeof status === 'number' && status >= 500) return false;
-  }
-  // Default: retry once.
-  return _count < 1;
-}
-
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 5 * 60 * 1000,
       gcTime: 60 * 60 * 1000,
-      retry: shouldRetry,
+      // Retry only transient (statusless) network blips, bounded, with capped
+      // exponential backoff — never a 4xx/5xx/timeout. A 401/403 retried in a
+      // hot loop is what pinned the DB; see src/lib/queryRetry.ts.
+      retry: shouldRetryQuery,
+      retryDelay: retryDelayMs,
       refetchOnWindowFocus: false,
       // The service worker answers from the Cache API when it can, so run the
       // fetch even when the browser reports offline; a true miss surfaces as
       // an error the offline UI can render (newshacker's rationale).
       networkMode: 'offlineFirst',
+    },
+    // Writes are NOT auto-retried by React Query: the itemStateOutbox owns write
+    // durability + optimistic-concurrency backoff, and a blind mutation retry
+    // could double-apply or re-flood. (No-op for queries.)
+    mutations: {
+      retry: false,
     },
   },
 });
