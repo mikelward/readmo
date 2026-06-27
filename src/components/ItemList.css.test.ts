@@ -45,6 +45,19 @@ describe('group-by-feed section header positioning contract', () => {
     expect(top).toContain('--rm-tap');
   });
 
+  it('overlaps the chrome by 1px so a sub-pixel rounding gap never shows', () => {
+    // The offset is summed from the chrome strips' integer offsetHeights, so on
+    // fractional-DPI viewports it can land ~1px below the toolbar's true bottom,
+    // exposing a white sliver of rows. Pulling the pin up a pixel closes that
+    // gap; the overlap tucks invisibly under the higher-z chrome.
+    const header = declarationsFor('.item-list__group-header');
+    expect(header.top).toContain('- 1px');
+    // The matching padding keeps the overlapped pixel non-interactive so the
+    // 44px toggle / action buttons start below the toolbar edge and aren't
+    // shaved to 43px (guardrail #2's 44px touch floor).
+    expect(header['padding-top']).toBe('1px');
+  });
+
   it('stacks the pinned header under the app header + toolbar, over the rows', () => {
     const z = Number(declarationsFor('.item-list__group-header')['z-index']);
     // Below the top toolbar (z 10) and app header (z 20) so it tucks under them;
