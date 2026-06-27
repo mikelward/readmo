@@ -236,3 +236,24 @@ begin
   if n <> 1 then raise exception 'FAIL T11: token holder cannot see the feed'; end if;
   raise notice 'PASS T11: presenting the tokenized URL grants access';
 end $$;
+
+-- ===== Test 12: compat shim (0024) — an old-shape write resolves and applies ==
+-- A pre-LWW cached client sends the flag plus a (now-ignored) p_base_version and
+-- NO per-field timestamp. The shim must accept the base param and stamp now() so
+-- the write actually lands, instead of 404ing or silently losing LWW.
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  -- User 1 still holds permanent state on item E (from T5/T9), so it's visible.
+  perform public.set_item_state(
+    'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+    p_pinned => true, p_base_version => 7   -- old shape: base version, no p_pinned_at
+  );
+  select count(*) into n from public.item_state
+    where item_id='eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
+      and pinned and pinned_at is not null;   -- applied AND stamped now(), not null
+  if n <> 1 then raise exception 'FAIL T12: old-shape write did not apply / stamp now()'; end if;
+  raise notice 'PASS T12: compat shim applies an old-shape (base-version, no *_at) write';
+end $$;
