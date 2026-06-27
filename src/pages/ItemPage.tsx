@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useIsRestoring, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { findCachedFeedItem } from '../lib/offlineItem';
+import { collapseProxiedSrcset } from '../lib/extractProxiedImageUrls';
 import { useItemState } from '../hooks/useItemState';
 import { useWideViewport } from '../hooks/useWideViewport';
 import { useShareItem } from '../hooks/useShareItem';
@@ -451,7 +452,14 @@ export function ItemPage() {
   // (pinned/previously read) defaults straight to the reading view. `view` /
   // `showReading` / `fullHtml` are computed above so the overflow menu can
   // offer "Show feed version" while reading.
-  const bodyHtml = showReading ? fullHtml : item.contentHtml;
+  // Collapse any stale responsive srcset to a single width before injecting it,
+  // so the rendered <img> requests the SAME proxy URL the offline prefetch warms
+  // (both use the ~1600px pick) — otherwise a pre-collapse row could render a
+  // viewport-dependent candidate that isn't in the offline cache. A no-op for
+  // newly-sanitized rows, which already carry a single src.
+  const rawBodyHtml = showReading ? fullHtml : item.contentHtml;
+  const bodyHtml =
+    rawBodyHtml == null ? rawBodyHtml : collapseProxiedSrcset(rawBodyHtml);
   const fetchingFull = fullQuery.isFetching && !fullHtml;
   // Full article is fetched and ready, but we're still showing the feed body —
   // offer to reveal it (no auto-swap, so the reader doesn't reflow mid-read).
