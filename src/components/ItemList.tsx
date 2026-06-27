@@ -1236,6 +1236,15 @@ export function ItemList({
   // height BEFORE it removes any rows — see `lockBodyHeight` below.
   const bodyRef = useRef<HTMLDivElement>(null);
   const heightLockedRef = useRef(false);
+  // The sweep's scroll-anchoring opt-out (overflow-anchor: none) has a SHORTER
+  // life than the height lock: it's needed only for the single layout where the
+  // swept in-viewport rows leave the DOM, whereas the min-height freeze must
+  // persist across the whole post-sweep refetch. Tracked separately so a
+  // post-paint effect can drop it one frame after the removal — keeping
+  // anchoring available for any auto-hide-on-scroll removal the reader triggers
+  // by scrolling during that refetch (those remove rows above the viewport and
+  // depend on anchoring to hold the first still-visible row steady).
+  const anchorLockedRef = useRef(false);
   // Freeze the body at its current rendered height. Idempotent: a no-op if the
   // lock is already held (so a sweep landing mid-refresh doesn't re-measure at a
   // momentarily-shrunken height). The matching release lives in the
@@ -1253,7 +1262,37 @@ export function ItemList({
   // pre-sweep height.
   const lockBodyHeight = useCallback(() => {
     const el = bodyRef.current;
-    if (!el || heightLockedRef.current) return;
+    if (!el) return;
+    // Sweep-only: opt the body out of the browser's scroll anchoring for the
+    // frame in which the swept rows leave the DOM. A Sweep dismisses the rows
+    // that are fully inside the viewport, collapsing a scrolled-into section by
+    // up to a viewport of height. Anchoring would react by rewinding
+    // window.scrollY by that height to keep a row *below* the swept ones fixed —
+    // and when the collapse is taller than the current scroll offset, the rewind
+    // clamps scrollY to 0 and snaps the reader to the top. The min-height lock
+    // can't stop this on its own: anchoring adjusts off the anchor element's
+    // movement, not the document's total height. Nothing above the viewport top
+    // is removed by a Sweep, so the offset should simply hold — disabling
+    // anchoring delivers that. Scoped to the sweep path (only lockBodyHeight
+    // sets it) precisely so auto-hide-on-scroll — which removes rows *above* the
+    // viewport and relies on anchoring to keep the first still-visible row fixed
+    // — keeps its anchoring. The opt-out is dropped one frame after the removal
+    // paints (the post-paint release effect below), NOT held for the whole
+    // refetch like the min-height lock — otherwise an auto-hide triggered by
+    // scrolling mid-refresh would lose anchoring too.
+    //
+    // Set unconditionally — even when a height lock is already held. A general
+    // background refresh (pin/dismiss/auto-hide) takes the min-height lock via
+    // the layout effect below WITHOUT disabling anchoring (correctly — those
+    // paths don't remove in-viewport rows). If the reader then sweeps mid-
+    // refresh, this is the only place that opts anchoring out, so it must run
+    // even though `heightLockedRef` is already true; otherwise the swept rows
+    // leave with anchoring live and the top-snap recurs. Only the height
+    // *measurement* is gated on the lock (re-measuring now would freeze the
+    // already-shrunken mid-refresh list too short).
+    el.style.overflowAnchor = 'none';
+    anchorLockedRef.current = true;
+    if (heightLockedRef.current) return;
     el.style.minHeight = `${el.offsetHeight}px`;
     heightLockedRef.current = true;
   }, []);
@@ -1561,6 +1600,12 @@ export function ItemList({
   // absorbs the small final height delta. `isRefreshing` excludes the
   // next-page fetch (which legitimately grows the list), so paging is unaffected.
   //
+  // The sweep path additionally opts the body out of scroll anchoring while its
+  // rows leave the DOM (see lockBodyHeight) — that's a separate clamp (the
+  // anchor rewind) the height freeze alone can't stop. Background refreshes that
+  // don't remove in-viewport rows (pin/dismiss, auto-hide-on-scroll) keep
+  // anchoring, so a row removed above the viewport still holds the view steady.
+  //
   // This effect both takes the lock (on the isRefreshing→true edge) and releases
   // it (on isRefreshing→false). Sweep is the exception that can't wait for the
   // edge: it drops rows synchronously in the same commit the refetch starts, so
@@ -1584,10 +1629,21 @@ export function ItemList({
       return;
     }
     if (isRefreshing && !heightLockedRef.current) {
+      // General background-refresh lock (pin/dismiss/auto-hide): freeze height
+      // only. Anchoring is deliberately left ON here — auto-hide-on-scroll
+      // removes rows above the viewport and needs it to keep the first visible
+      // row fixed. Only the sweep path (lockBodyHeight) opts anchoring out.
       el.style.minHeight = `${el.offsetHeight}px`;
       heightLockedRef.current = true;
     } else if (!isRefreshing && heightLockedRef.current) {
       el.style.minHeight = '';
+      // Defensive: the sweep anchor opt-out is normally dropped a frame after
+      // the removal (the dedicated effect below), well before the refetch
+      // settles — but clear it here too so a held lock never strands it.
+      if (anchorLockedRef.current) {
+        el.style.overflowAnchor = '';
+        anchorLockedRef.current = false;
+      }
       heightLockedRef.current = false;
     }
   }, [isRefreshing, showMissState]);
@@ -1607,9 +1663,30 @@ export function ItemList({
   useEffect(() => {
     if (!isRefreshing && heightLockedRef.current && bodyRef.current) {
       bodyRef.current.style.minHeight = '';
+      if (anchorLockedRef.current) {
+        bodyRef.current.style.overflowAnchor = '';
+        anchorLockedRef.current = false;
+      }
       heightLockedRef.current = false;
     }
   }, [isRefreshing, visibleItems.length]);
+
+  // Drop the sweep's scroll-anchoring opt-out one frame after the swept rows
+  // leave the DOM — a passive (post-paint) effect, so the browser has already
+  // laid out the row-removal with anchoring suppressed (no rewind/top-snap)
+  // before we re-enable it. Decoupled from the min-height lock on purpose: the
+  // height freeze must persist for the whole post-sweep refetch, but anchoring
+  // only needs to be off for that one collapsing layout. Holding it longer would
+  // strip anchoring from any auto-hide-on-scroll removal the reader triggers by
+  // scrolling during the refetch (those drop rows ABOVE the viewport and need
+  // anchoring to keep the first still-visible row fixed). `visibleItems.length`
+  // drops on the sweep's removal, so this runs on exactly that commit; the ref
+  // guard makes every other run a no-op.
+  useEffect(() => {
+    if (!anchorLockedRef.current) return;
+    anchorLockedRef.current = false;
+    if (bodyRef.current) bodyRef.current.style.overflowAnchor = '';
+  }, [visibleItems.length]);
 
   return (
     <div

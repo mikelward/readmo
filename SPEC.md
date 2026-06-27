@@ -1053,7 +1053,20 @@ negligible and off every critical path. See the External services table in
      starts (in the same commit), so it grabs the pre-sweep height itself —
      before the rows leave the DOM — rather than waiting for the refresh edge to
      measure an already-shrunken list. Matters most when a whole grouped section
-     is swept at once.
+     is swept at once. The height-lock is paired with a **sweep-scoped scroll-
+     anchoring opt-out** (`overflow-anchor: none` set on the body only while the
+     sweep's rows leave the DOM): sweeping a section the reader has scrolled into
+     collapses it by up to a viewport of height, and anchoring would otherwise
+     rewind `scrollY` by that amount to keep a row below the swept ones fixed —
+     snapping the reader to the top when the collapse is taller than the current
+     scroll offset. The swept rows all sit inside the viewport, so the scroll
+     offset holds exactly where it is: the lock stops the document-too-short
+     clamp, the anchor opt-out stops the rewind. The opt-out is **scoped to the
+     sweep** so it doesn't touch **auto-hide on scroll**, which removes rows
+     *above* the viewport and depends on anchoring to keep the first still-
+     visible row fixed — and it's **dropped one frame after the swept rows leave
+     the DOM**, not held for the whole post-sweep refetch like the height lock,
+     so an auto-hide triggered by scrolling mid-refetch still gets anchoring.
    - **Pin-to-download promo bar** above the first row ("Pin an article to
      download it"), explaining that pinning warms the offline cache (see
      *Prefetch on Pin/Favorite*). Shown only once rows exist; dismissable via a
