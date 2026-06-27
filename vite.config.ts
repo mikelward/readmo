@@ -286,7 +286,12 @@ export default defineConfig({
               handler: 'NetworkFirst',
               options: {
                 cacheName: 'readmo-data',
-                networkTimeoutSeconds: 10,
+                // A slow-but-working read falls back to cache after 6s rather
+                // than the old 10s, so a stuck single page fetch surfaces cached
+                // content sooner. Kept just below supabaseFetch's REQUEST_TIMEOUT_MS
+                // (8s) so the cache fallback fires before the app-level abort —
+                // move the two together if either changes.
+                networkTimeoutSeconds: 6,
                 expiration: { maxEntries: 200, maxAgeSeconds: 24 * 60 * 60 },
                 cacheableResponse: { statuses: [0, 200] },
               },

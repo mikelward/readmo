@@ -56,7 +56,7 @@ const PERSIST_MAX_AGE = Number.POSITIVE_INFINITY;
  * everything else (transient network blip, dropped connection).
  */
 function shouldRetry(_count: number, error: unknown): boolean {
-  // Timed-out request (supabaseFetch aborts with TimeoutError after 15 s).
+  // Timed-out request (supabaseFetch aborts with TimeoutError after 8 s).
   if (error instanceof DOMException && error.name === 'TimeoutError') return false;
   // PostgREST / Supabase JS error — has a numeric `status` field.
   if (error != null && typeof error === 'object' && 'status' in error) {

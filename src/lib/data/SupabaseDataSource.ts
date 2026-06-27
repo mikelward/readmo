@@ -91,7 +91,7 @@ const ITEM_STATE_PAGE = 1000;
  * case — a fresh or cache-purged device whose first hydration is the slow/paged
  * or stalled read this fix targets — so it can't strand that device on loading
  * skeletons. Only the read's *wait* is capped; the hydration fetch itself runs
- * unbounded in the background (still subject to supabaseFetch's own 15s cap), so
+ * unbounded in the background (still subject to supabaseFetch's own 8s cap), so
  * connectivity/Down detection is unaffected. */
 const COLD_HYDRATE_WAIT_MS = 4000;
 
@@ -502,7 +502,7 @@ export class SupabaseDataSource implements DataSource {
    * reload and pull-to-refresh because every cold boot re-runs the same blocking
    * read. (The earlier fix added a redundant read timeout and was reverted for
    * regressing offline detection; this fixes it at the right layer instead —
-   * the read still flows through the connectivity-tracked, 15s-bounded
+   * the read still flows through the connectivity-tracked, 8s-bounded
    * `supabaseFetch`, so Down/Offline detection is unchanged. We just stop
    * gating rows on it.)
    *
@@ -701,8 +701,8 @@ export class SupabaseDataSource implements DataSource {
 
     // An empty first page renders the "all caught up" empty state. But the
     // service worker's NetworkFirst cache can answer this read with a stale empty
-    // 200 while the backend is actually down — the 15s read cap sits past the
-    // SW's 10s cache-fallback window precisely so a slow read still gets served
+    // 200 while the backend is actually down — the 8s read cap sits past the
+    // SW's 6s cache-fallback window precisely so a slow read still gets served
     // from cache — and trackedFetch reads that cache hit as success, leaving the
     // status 'online'. So a cache-served empty page would falsely claim the
     // reader is caught up. Confirm with a live, SW-bypassing reachability probe

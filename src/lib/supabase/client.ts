@@ -8,8 +8,12 @@ import { buildInfo } from '../buildInfo';
 // SupabaseDataSource memoizes the in-flight item_state hydration, one hung read
 // wedges the whole feed on its loading skeletons. Timing out rejects the read
 // instead, so React Query can surface the offline/retry UI and retry on
-// reconnect. 15s sits just past the SW's 10s cache-fallback window so a
-// genuinely slow-but-working read still gets served from cache first.
+// reconnect. 8s sits just past the SW's 6s cache-fallback window
+// (`networkTimeoutSeconds` in vite.config.ts) so a genuinely slow-but-working
+// read still gets served from cache first — keep the two in lockstep (cap >
+// window) if either moves. A single page fetch hanging now clears in ~8s rather
+// than the old 15s, so stuck skeletons / a queued-behind hydration recover
+// faster without aborting a read the cache could still answer.
 //
 // The cap is scoped to reads — GET on /rest/v1/ plus the feed_items read RPC
 // (see isBoundedRead) — deliberately NOT applied to writes (the outbox owns
@@ -17,7 +21,7 @@ import { buildInfo } from '../buildInfo';
 // spurious sign-out + cache purge), or Edge Functions (legitimately
 // long-running). All of those still flow through trackedFetch, so a real failure
 // flips the Offline pill.
-const REQUEST_TIMEOUT_MS = 15_000;
+const REQUEST_TIMEOUT_MS = 8_000;
 
 // Single browser Supabase client for the whole app. The URL + anon key are
 // public (RLS-gated); the service-role key never reaches the client. When the
@@ -87,7 +91,7 @@ const READ_RPC_PATHS = ['/rest/v1/rpc/feed_items'];
  * uncapped:
  *   - Write RPCs (POST `rpc/set_item_state`, `rpc/subscribe_to_feed`) and table
  *     writes (DELETE/PATCH on `subscriptions`) share the `/rest/v1/` prefix but
- *     must NOT be aborted mid-commit — the item-state outbox treats a 15s abort
+ *     must NOT be aborted mid-commit — the item-state outbox treats an 8s abort
  *     as a transient failure and retries on a stale base version (risking a
  *     permanent conflict / dropped edit), and a subscription edit could surface
  *     an error even though the server committed. The outbox's own

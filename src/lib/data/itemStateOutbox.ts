@@ -62,12 +62,12 @@ const RETRY_MAX_MS = 60_000;
 
 // Longest a no-base write is HELD waiting for an in-flight hydration to resolve
 // its concurrency base before falling back to an unchecked send. A hydration
-// that merely fails (offline / the 15s supabaseFetch read cap) settles on its
+// that merely fails (offline / the 8s supabaseFetch read cap) settles on its
 // own and releases the hold via noteHydrationSettled, so this only bites the
 // pathological case the hold can't otherwise escape: a hydrate that NEVER
 // settles (e.g. a service-worker NetworkOnly read whose abort doesn't surface),
 // which would otherwise strand the write — and the optimistic UI — forever.
-// Sits past the 15s read cap so a normally-failing hydrate gets to resolve a
+// Sits past the 8s read cap so a normally-failing hydrate gets to resolve a
 // real base first; only a truly-stuck one trips this.
 const HOLD_MAX_MS = 20_000;
 
