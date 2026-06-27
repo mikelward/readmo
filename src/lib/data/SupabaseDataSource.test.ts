@@ -54,7 +54,7 @@ function mkState(item_id: string, over: Record<string, unknown>) {
     user_id: 'u1', item_id,
     pinned: false, pinned_at: null, favorite: false, favorite_at: null,
     done: false, done_at: null, hidden: false, hidden_at: null,
-    opened: false, opened_at: null, version: 1, ...over,
+    opened: false, opened_at: null, ...over,
   };
 }
 
@@ -421,13 +421,11 @@ describe('SupabaseDataSource reads', () => {
     expect(env.ds.stateStore.get('i2').pinned).toBe(true); // last-good state preserved
   });
 
-  it('holds a brand-new-row write while the boot item_state hydrate is in flight (no unchecked send)', async () => {
-    // Feed/library reads no longer block on hydration, so a user can pin a
-    // brand-new row before the boot item_state read lands. That write must be
-    // HELD until the read resolves a concurrency base — sending it unchecked
-    // could clobber a row another device changed since the persisted snapshot.
-    // (The outbox unit tests cover the resolve-and-send half; this proves the
-    // data source actually holds the write while its hydrate is in flight.)
+  it('sends a brand-new-row write immediately even while the boot item_state hydrate is in flight', async () => {
+    // Per-field last-write-wins needs no concurrency base, so a write made before
+    // the boot read lands is NOT held — it flushes right away carrying its action
+    // timestamp, and the server resolves any cross-device race by `at`. (This is
+    // the deliberate simplification over the old hold-for-hydration machinery.)
     const fake = makeFakeSupabase(seed());
     const realFrom = fake.client.from.bind(fake.client);
     let bootStartedResolve!: () => void;
@@ -450,9 +448,13 @@ describe('SupabaseDataSource reads', () => {
     }) as typeof fake.client.from;
 
     let setCalls = 0;
+    let lastParams: Record<string, unknown> | undefined;
     const realRpc = fake.client.rpc.bind(fake.client);
     fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
-      if (name === 'set_item_state') setCalls += 1;
+      if (name === 'set_item_state') {
+        setCalls += 1;
+        lastParams = params;
+      }
       return realRpc(name, params);
     }) as typeof fake.client.rpc;
 
@@ -462,14 +464,14 @@ describe('SupabaseDataSource reads', () => {
     );
     await bootStarted; // boot read parked → a hydrate is in flight
 
-    // i6 has no item_state row in the seed — a brand-new row. Pinning it enqueues
-    // a write whose base can't be determined while the hydrate is in flight.
+    // i6 has no item_state row in the seed — a brand-new row. Pinning it flushes
+    // straight away, no hold.
     ds.stateStore.set('i6', 'pinned', true);
     await new Promise((r) => setTimeout(r));
-    // Held: had it sent unchecked (the old behavior), set_item_state would have
-    // fired within this tick.
-    expect(setCalls).toBe(0);
-    expect(ds.stateStore.get('i6').pinned).toBe(true); // optimistic UI still applied
+    expect(setCalls).toBe(1);
+    expect(lastParams?.p_pinned).toBe(true);
+    expect(typeof lastParams?.p_pinned_at).toBe('string'); // carries its LWW clock
+    expect(ds.stateStore.get('i6').pinned).toBe(true); // optimistic UI applied
   });
 
   it('does not block a cold (empty-store) feed read indefinitely when the item_state hydrate stalls', async () => {
@@ -685,76 +687,6 @@ describe('SupabaseDataSource reads', () => {
     for (const t of tokens) expect(t).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
   });
 
-  it('normalizes the optimistic store version to the server version after a coalesced write', async () => {
-    // Drift scenario: two local edits made offline COALESCE into a single server
-    // write. The store's optimistic version bumps once per edit (twice here), but
-    // the single server write increments the row once. Left unreconciled, a later
-    // cold-boot `seedConfirmedVersions` would base an offline edit on the inflated
-    // version and the RPC would 40001-reject it, dropping a change no other device
-    // touched. A successful write must normalize the store to the server version.
-    const fake = makeFakeSupabase(seed());
-    const navDesc = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
-    let online = false; // gate the OUTBOX (reads ignore navigator)
-    Object.defineProperty(globalThis, 'navigator', {
-      value: {
-        get onLine() {
-          return online;
-        },
-      },
-      configurable: true,
-    });
-    try {
-      const ds = new SupabaseDataSource(
-        'readmo:item-state:test',
-        fake.client as unknown as SupabaseClient,
-      );
-      await ds.getItemsByIds([]); // boot hydrate (reads work; outbox is offline)
-
-      // Two coalesced offline edits → optimistic version 2, one queued write.
-      ds.stateStore.set('i3', 'pinned', true);
-      ds.stateStore.set('i3', 'pinned', false);
-      expect(ds.stateStore.get('i3').version).toBe(2);
-
-      // Hold the resync's item_state READ open so only the WRITE's
-      // confirmServerVersion — not a follow-up hydrate (which would also rewrite
-      // the version to server truth and mask the fix) — can touch the version.
-      const realFrom = fake.client.from.bind(fake.client);
-      let releaseRead!: () => void;
-      const readGate = new Promise<void>((r) => (releaseRead = r));
-      fake.client.from = ((table: string) => {
-        if (table !== 'item_state') return realFrom(table);
-        // Gated read: `.not()` resolves only after releaseRead(), so the hydrate
-        // stays parked and can't rewrite the version before the assertion.
-        return itemStateReadStub(() =>
-          readGate.then(() => ({ data: [], count: null, error: null })),
-        ) as ReturnType<typeof realFrom>;
-      }) as typeof fake.client.from;
-
-      // Back online; the coalesced write flushes. Await the post-commit emit
-      // (onDrained → notifySynced) so the assertion waits on the real write, not a
-      // timer. confirmServerVersion runs inside the send, before that emit.
-      const committed = new Promise<void>((resolve) => {
-        const unsub = ds.stateStore.subscribe(() => {
-          unsub();
-          resolve();
-        });
-      });
-      online = true;
-      void ds.resyncState(); // kicks outbox.flush(); the hydration read stays gated
-      await committed;
-
-      // Server applied ONE write → version 1. The store is normalized to it, not
-      // left at the inflated optimistic 2.
-      expect(ds.stateStore.get('i3').version).toBe(1);
-      expect(ds.stateStore.get('i3').pinned).toBe(false);
-
-      releaseRead();
-    } finally {
-      if (navDesc) Object.defineProperty(globalThis, 'navigator', navDesc);
-      else delete (globalThis as { navigator?: unknown }).navigator;
-    }
-  });
-
   it('search matches item title and feed title, deduped + newest-first', async () => {
     const results = await env.ds.search('alpha');
     expect(ids(results)).toEqual(['i6', 'i2', 'i1']);
@@ -834,19 +766,98 @@ describe('SupabaseDataSource dispatch + writes', () => {
     const env = setup();
     await env.ds.getHomeItems(); // hydrate
 
-    // Hiding i6 locally writes only the changed field through to the server...
+    // Hiding i6 writes the changed field through to the server (plus its
+    // exclusivity closure — a dismiss clears pinned), each carrying the action
+    // time as its per-field last-write-wins clock.
     env.ds.stateStore.set('i6', 'hidden', true);
     await new Promise((r) => setTimeout(r)); // drain the per-item write chain
-    // i6 had no server state, so the optimistic-concurrency base is 0 (expect
-    // no row yet).
-    expect(env.fake.rpcCalls).toContainEqual({
-      name: 'set_item_state',
-      params: { p_item_id: 'i6', p_hidden: true, p_base_version: 0 },
-    });
+    const write = env.fake.rpcCalls.find(
+      (c) => c.name === 'set_item_state' && c.params.p_item_id === 'i6',
+    );
+    expect(write?.params.p_hidden).toBe(true);
+    expect(typeof write?.params.p_hidden_at).toBe('string');
+    expect(Number.isNaN(Date.parse(write?.params.p_hidden_at as string))).toBe(false);
+    // No version/base param survives in the LWW write path.
+    expect(write?.params).not.toHaveProperty('p_base_version');
 
     // ...so the next feed read (server truth via feed_items) no longer surfaces it.
     const page = await env.ds.getHomeItems();
     expect(ids(page.items)).not.toContain('i6');
+  });
+
+  it('re-pulls server truth when an LWW write loses, correcting the stale optimistic value', async () => {
+    // i2 is pinned server-side at `recent` (2026-06-20). A *stale* local unpin —
+    // an older action than the server's pin — loses LWW: the RPC returns the
+    // unchanged (still-pinned) row with no error. Without correction the device
+    // would keep showing its losing unpinned state until an unrelated resync; the
+    // send path must detect the loss from the returned row and re-hydrate at once.
+    const env = setup();
+    await env.ds.getHomeItems(); // boot hydrate → store shows i2 pinned
+    expect(env.ds.stateStore.get('i2').pinned).toBe(true);
+
+    // The optimistic unpin fires (pinned=false), then the re-pull restores true.
+    const corrected = new Promise<void>((resolve) => {
+      const unsub = env.ds.stateStore.subscribe(() => {
+        if (env.ds.stateStore.get('i2').pinned) {
+          unsub();
+          resolve();
+        }
+      });
+    });
+    const staleAt = Date.parse('2026-06-19T00:00:00.000Z'); // older than `recent`
+    env.ds.stateStore.set('i2', 'pinned', false, staleAt);
+    expect(env.ds.stateStore.get('i2').pinned).toBe(false); // optimistic loser shown
+
+    await corrected;
+    expect(env.ds.stateStore.get('i2').pinned).toBe(true); // server truth restored
+  });
+
+  it('re-pulls when an LWW write loses only on the clock (boolean already matched)', async () => {
+    // Offline-replay race: this device marked i6 done "yesterday" (T1) while
+    // another device already set done "today" (recent, T2 > T1). The boolean
+    // matches (both done=true), but our older write loses on the LWW clock, so the
+    // server keeps done_at=T2. A boolean-only loss check would skip the re-pull and
+    // leave the local store with the stale T1 doneAt — skewing the 30-day TTL and
+    // /done ordering. The returned-row timestamp comparison must catch it.
+    const fake = makeFakeSupabase(seed());
+    fake.store.item_state.push(mkState('i6', { done: true, done_at: recent })); // server "today"
+    // Boot reads fail (so the store doesn't hydrate i6 first); the re-pull's read
+    // then succeeds and corrects the timestamp.
+    const realFrom = fake.client.from.bind(fake.client);
+    let readsWork = false;
+    fake.client.from = ((table: string) => {
+      if (table !== 'item_state' || readsWork) return realFrom(table);
+      return itemStateReadStub(() => ({
+        data: null,
+        count: null,
+        error: { message: 'offline' },
+      })) as ReturnType<typeof realFrom>;
+    }) as typeof fake.client.from;
+
+    const ds = new SupabaseDataSource(
+      'readmo:item-state:test',
+      fake.client as unknown as SupabaseClient,
+    );
+    await ds.getItemsByIds([]).catch(() => {}); // boot hydrate fails → i6 absent locally
+    expect(ds.stateStore.get('i6').doneAt).toBeNull();
+
+    readsWork = true; // the loss-triggered re-pull will now succeed
+    const t2 = Date.parse(recent);
+    const t1 = Date.parse('2026-06-10T00:00:00.000Z'); // older than recent
+    const corrected = new Promise<void>((resolve) => {
+      const unsub = ds.stateStore.subscribe(() => {
+        if (ds.stateStore.get('i6').doneAt === t2) {
+          unsub();
+          resolve();
+        }
+      });
+    });
+    ds.stateStore.set('i6', 'done', true, t1); // optimistic done=true@T1, queued + flushed
+    expect(ds.stateStore.get('i6').doneAt).toBe(t1); // stale local timestamp shown
+
+    await corrected;
+    expect(ds.stateStore.get('i6').done).toBe(true);
+    expect(ds.stateStore.get('i6').doneAt).toBe(t2); // adopted the server's newer doneAt
   });
 
   it('overlays local optimistic state even before the write commits', async () => {

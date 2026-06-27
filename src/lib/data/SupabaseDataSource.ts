@@ -9,6 +9,7 @@ import {
   type Folder,
   type ItemId,
   type ItemState,
+  type ItemStateField,
   type Subscription,
 } from '../types';
 import type { FullTextResult, FullTextStatus } from '../fullText';
@@ -55,7 +56,7 @@ const ITEM_COLS =
 // (user-scoped) React Query cache. Only the single-item detail read fetches it.
 const ITEM_DETAIL_COLS = `${ITEM_COLS}, full_content_html`;
 const ITEM_STATE_COLS =
-  'item_id, pinned, pinned_at, favorite, favorite_at, done, done_at, hidden, hidden_at, opened, opened_at, version';
+  'item_id, pinned, pinned_at, favorite, favorite_at, done, done_at, hidden, hidden_at, opened, opened_at';
 const SUBSCRIPTION_COLS = 'feed_id, folder, title_override, muted, sort';
 
 /** Max ids per `in (…)` lookup, so a large library bucket (Done/Hidden/Favorite
@@ -197,10 +198,11 @@ async function classifyFunctionError(error: unknown): Promise<AddFeedError> {
  * import / parked-feed retry use the `subscribe_to_feed` RPC and the `refresh`
  * Edge Function.
  *
- * Deferred to the offline/sync milestone (see SPEC *Sync*): the offline mutation
- * outbox + server-version reconciliation/rollback (item_state writes are
- * currently fire-and-forget optimistic), and an authenticated OPML *export* RPC
- * (the client can't emit server-only fetch URLs).
+ * Triage writes flow through the durable offline outbox ({@link ItemStateOutbox})
+ * to `set_item_state`, which resolves cross-device conflicts by per-field
+ * last-write-wins on each field's action timestamp (see SPEC *Sync*). Still
+ * deferred: an authenticated OPML *export* RPC (the client can't emit server-only
+ * fetch URLs).
  *
  * Pagination is offset-based behind an opaque numeric cursor (mirroring the
  * mock); each page is the bounded slice of the combined pinned-then-body
@@ -212,6 +214,11 @@ export class SupabaseDataSource implements DataSource {
   private readonly sb: SupabaseClient;
   private readonly feedCache = new Map<FeedId, Feed>();
   private hydration: Promise<void> | null = null;
+  // Set by the write path when an LWW write lost (the server returned a row that
+  // didn't take our value). Consumed by onDrained — *after* the drain clears the
+  // entry — to re-pull server truth, so the re-hydrate's pending overlay no longer
+  // preserves the stale optimistic value the in-flight write would have kept.
+  private lwwLossPending = false;
   /** Set once any item_state hydration has successfully applied. Lets a read
    * tell "the store has never been populated" (wait for the first hydration so
    * the first paint isn't all default flags) from "we already have last-good
@@ -241,25 +248,47 @@ export class SupabaseDataSource implements DataSource {
     // reconnect, and surviving a reload/offline gap. A permanent server rejection
     // re-pulls server truth to correct the optimistic state.
     this.outbox = new ItemStateOutbox(
-      async (id, changed, baseVersion) => {
+      async (id, changed) => {
         const params: Record<string, unknown> = { p_item_id: id };
         // Send only the changed fields (set_item_state leaves null params
-        // untouched), so a stale mirror can't clobber a field changed elsewhere.
-        for (const [f, v] of Object.entries(changed)) params[`p_${f}`] = v;
-        // Optimistic-concurrency base: apply only if the row is still at this
-        // version (0007). A conflict comes back as an error → permanent.
-        if (baseVersion != null) params.p_base_version = baseVersion;
+        // untouched), each with its action time as the per-field last-write-wins
+        // clock (`p_<f>_at`). The server keeps whichever write has the newer `at`,
+        // so a stale mirror can't clobber a field changed more recently elsewhere.
+        for (const [f, c] of Object.entries(changed)) {
+          params[`p_${f}`] = c.value;
+          params[`p_${f}_at`] = new Date(c.at).toISOString();
+        }
         const { data, error } = await this.sb.rpc('set_item_state', params);
-        // Only a KNOWN-permanent error (version conflict / lost visibility) drops
-        // the write; a 429/5xx hiccup (or a thrown/network error) stays queued
-        // and retries, so a short outage can't roll back the user's action.
-        const version = (data as ItemStateRow | null)?.version;
-        // Normalize the optimistic store version to the confirmed server version
-        // so a later cold-boot `seedConfirmedVersions` bases offline edits on the
-        // real server version, not an inflated local counter (coalesced edits bump
-        // the local version more than the single server write does).
-        if (!error && version != null) this.stateStore.confirmServerVersion(id, version);
-        return { ok: !error, permanent: isPermanentWriteError(error), version };
+        // LWW: the RPC returns the post-write server row. If a field we sent did
+        // NOT land — an older offline write that lost to a newer server value —
+        // the optimistic local value is now wrong, and because a stale write is
+        // superseded rather than rejected, nothing else corrects it until an
+        // unrelated focus/online resync. Detect the loss from the returned row and
+        // re-pull server truth at once, the same prompt correction the old
+        // version-conflict path gave via onPermanentReject.
+        if (!error && data) {
+          const serverRow = mapItemState(data as ItemStateRow);
+          // Our write fully landed only if, for every field we sent, BOTH the
+          // value AND its timestamp match what we sent (the server echoes our
+          // `at` when we win). A field that lost on value, OR one whose boolean
+          // already matched but lost on the LWW clock (an older replay of the same
+          // value), leaves the local store stale — a wrong value, or a stale `*At`
+          // that skews the TTL window and library ordering. Either way, re-pull.
+          const lost = Object.entries(changed).some(([f, c]) => {
+            const field = f as ItemStateField;
+            return (
+              serverRow[field] !== c.value || serverRow[`${field}At`] !== c.at
+            );
+          });
+          // Flag it; onDrained re-pulls once the entry is no longer pending. Doing
+          // the re-pull here (while this write is still in flight) would let the
+          // hydrate's pending overlay keep the very stale value we need to drop.
+          if (lost) this.lwwLossPending = true;
+        }
+        // Only a KNOWN-permanent error (lost visibility) drops the write; a
+        // 429/5xx hiccup (or a thrown/network error) stays queued and retries, so
+        // a short outage can't roll back the user's action.
+        return { ok: !error, permanent: isPermanentWriteError(error) };
       },
       localStorageOutboxPersistence(`${stateKey}${OUTBOX_SUFFIX}`),
       () => {
@@ -282,39 +311,28 @@ export class SupabaseDataSource implements DataSource {
         // feed-invalidation hook re-invalidates and the badge re-reads the now-
         // correct count.
         this.stateStore.notifySynced();
+        // A write lost LWW this drain — its entry is now cleared, so re-pull
+        // server truth to replace the stale optimistic value with the winner.
+        if (this.lwwLossPending) {
+          this.lwwLossPending = false;
+          this.hydration = null;
+          void this.ensureHydrated();
+        }
       },
     );
-    this.stateStore.setMutationSink((id, changed) => this.outbox.enqueue(id, changed));
-    // Seed the outbox's optimistic-concurrency write bases from the persisted
-    // store's per-row versions. item_state is read NetworkOnly, so an offline
-    // cold boot gets no live hydration to observe versions from; without this
-    // seed, an edit made before the first online read would flush with a null
-    // base ("no check") and could clobber a concurrent change from another
-    // device. The seeded version is this device's last-known server version
-    // (corrected by the next live hydrate), so the edit conflicts/reconciles
-    // instead. Does NOT mark the outbox "fully hydrated" — only a live read
-    // confirms an item is absent (which authorizes base 0).
-    this.outbox.seedConfirmedVersions(
-      this.stateStore.entries().map(([id, s]) => [id, s.version] as const),
+    this.stateStore.setMutationSink((id, changed, at) =>
+      this.outbox.enqueue(id, changed, at),
     );
     // Kick off item_state hydration at boot so the library routes (/pinned,
     // /favorites, …), which derive their ids from the store, populate even when
     // no feed view has run yet. ensureHydrated is memoized; when the rows land
     // the store emits and those views refetch with real ids.
-    //
-    // This MUST precede the initial outbox flush below: runHydration marks a
-    // hydration in flight synchronously (noteHydrationStarted), so a persisted
-    // no-base write — a brand-new row acted on in a prior session, replayed at
-    // boot — is HELD by that flush until the hydrate resolves its base, instead
-    // of being sent unchecked before the boot read even starts (which would let a
-    // reload defeat the in-session hold and clobber a cross-device change). On a
-    // failed (offline) hydrate the hold releases unchecked on reconnect, the same
-    // documented offline behavior.
     void this.ensureHydrated().catch(() => {});
 
-    // Replay anything queued in a prior session now (entries with a known base —
-    // e.g. seeded from the persisted store — send immediately; no-base entries
-    // are held per above), and again when connectivity returns.
+    // Replay anything queued in a prior session now, and again when connectivity
+    // returns. A queued write carries its own action time, so per-field
+    // last-write-wins on the server resolves it against any change another device
+    // made in the meantime — no base version to resolve first.
     void this.outbox.flush();
     if (typeof window !== 'undefined') {
       window.addEventListener('online', () => void this.outbox.flush());
@@ -352,10 +370,9 @@ export class SupabaseDataSource implements DataSource {
    * an old cached snapshot, AND keeps an offline cold boot from dropping a
    * resync-adopted row by reconciling against a stale cached boot snapshot:
    * offline the read simply fails and callers leave the local store on its
-   * last-good (localStorage) state. The outbox's optimistic-concurrency write
-   * bases come from the persisted store instead (constructor
-   * `seedConfirmedVersions`), so an offline edit still conflicts/reconciles on
-   * reconnect rather than flushing a blind no-base write.
+   * last-good (localStorage) state. An offline edit just replays from the outbox
+   * on reconnect carrying its own action time, so per-field last-write-wins
+   * resolves it against any newer change without needing this read first.
    *
    * Hydrations are **serialized** (`hydrationChain`): a read doesn't start until
    * any in-flight one has finished applying. Running them one-at-a-time means the
@@ -368,12 +385,6 @@ export class SupabaseDataSource implements DataSource {
    * because a resync had already applied.
    */
   private runHydration(): Promise<void> {
-    // Tell the outbox a base-resolving read is pending (from now until it
-    // settles), so it HOLDS an unresolvable-base write instead of sending it
-    // unchecked — important now that feed/library reads no longer block on
-    // hydration, so a write can be made before this lands. Settling (success OR
-    // failure) decrements the count and re-flushes any held writes.
-    this.outbox.noteHydrationStarted();
     const run = this.hydrationChain.then(
       () => this.applyHydration(),
       // A prior hydration's failure must not poison the chain — still run ours.
@@ -384,10 +395,6 @@ export class SupabaseDataSource implements DataSource {
     this.hydrationChain = run.then(
       () => {},
       () => {},
-    );
-    void run.then(
-      () => this.outbox.noteHydrationSettled(),
-      () => this.outbox.noteHydrationSettled(),
     );
     return run;
   }
@@ -438,9 +445,6 @@ export class SupabaseDataSource implements DataSource {
       if (page.length < ITEM_STATE_PAGE) break;
       afterId = page[page.length - 1].item_id;
     }
-    // Record server versions (monotonic) for the outbox's optimistic-concurrency
-    // base.
-    this.outbox.observeServerVersions(rows.map((r) => [r.item_id, r.version]));
     // Union with anything pending now, so an enqueue made DURING the select is
     // preserved too (newer fields win). Either snapshot alone misses one of the
     // two races; the union covers both.

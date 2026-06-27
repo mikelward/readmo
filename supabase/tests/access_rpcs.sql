@@ -113,21 +113,33 @@ begin
 end $$;
 
 -- ===== Test 5: pin while subscribed; retain access after unsubscribe ========
+-- The client sends exclusivity-closed diffs (a Done diff carries pinned=false),
+-- so per-field LWW lands on a consistent state without server-side re-derivation.
 do $$
-declare v bigint; n int;
+declare n int;
 begin
   perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
   set local role authenticated;
-  select version into v from public.set_item_state('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', p_pinned => true);
-  if v <> 1 then raise exception 'FAIL T5a: expected version 1, got %', v; end if;
+  perform public.set_item_state(
+    'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+    p_pinned => true, p_pinned_at => now()
+  );
+  select count(*) into n from public.item_state
+    where item_id='eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee' and pinned;
+  if n <> 1 then raise exception 'FAIL T5a: pin not applied'; end if;
   delete from public.subscriptions where user_id=auth.uid();        -- unsubscribe
   select count(*) into n from public.items where id='eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
   if n <> 1 then raise exception 'FAIL T5b: kept item orphaned after unsubscribe'; end if;
-  select version into v from public.set_item_state('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', p_done => true);
-  if v <> 2 then raise exception 'FAIL T5c: expected version 2, got %', v; end if;
-  select count(*) into n from public.item_state where item_id='eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee' and pinned;
-  if n <> 0 then raise exception 'FAIL T5d: pin not cleared by Done'; end if;
-  raise notice 'PASS T5: permanent state retained post-unsubscribe; trigger intact';
+  -- Closed Done diff: marks Done AND clears Pin in one write (as the client does).
+  perform public.set_item_state(
+    'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+    p_done => true, p_done_at => now(),
+    p_pinned => false, p_pinned_at => now()
+  );
+  select count(*) into n from public.item_state
+    where item_id='eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee' and done and not pinned;
+  if n <> 1 then raise exception 'FAIL T5c: Done not applied / Pin not cleared'; end if;
+  raise notice 'PASS T5: permanent state retained post-unsubscribe via LWW';
 end $$;
 
 -- ===== Test 6: repointing subscriptions.feed_id via direct UPDATE is denied =
@@ -185,7 +197,10 @@ declare n int;
 begin
   perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
   set local role authenticated;
-  perform public.set_item_state('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', p_favorite => true);
+  perform public.set_item_state(
+    'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+    p_favorite => true, p_favorite_at => now()
+  );
   select count(*) into n from public.item_state
     where item_id='eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee' and favorite;
   if n <> 1 then raise exception 'FAIL T9: RPC flag update broken'; end if;

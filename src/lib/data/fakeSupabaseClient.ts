@@ -253,36 +253,34 @@ function runRpc(
     const itemId = params.p_item_id as string;
     const fields = ['pinned', 'favorite', 'done', 'hidden', 'opened'] as const;
     let row = stateByItem.get(itemId);
-    // Optimistic concurrency (0007): apply only if the row is still at the
-    // caller's base version (0 = expect no row yet), else a conflict error.
-    const base = params.p_base_version;
-    if (typeof base === 'number') {
-      const cur = (row?.version as number | undefined) ?? 0;
-      if (cur !== base) {
-        return {
-          data: null,
-          error: { code: '40001', message: `item_state ${itemId} changed since version ${base} (server at ${cur})` },
-        };
-      }
-    }
     if (!row) {
-      row = { item_id: itemId, pinned: false, favorite: false, done: false, hidden: false, opened: false, version: 0 };
+      row = {
+        item_id: itemId,
+        pinned: false, pinned_at: null,
+        favorite: false, favorite_at: null,
+        done: false, done_at: null,
+        hidden: false, hidden_at: null,
+        opened: false, opened_at: null,
+      };
       states.push(row);
     }
+    // Per-field last-write-wins (mirrors the set_item_state migration): apply a
+    // field only when its incoming action time `p_<f>_at` is at least the stored
+    // one, and record that time as the field's last-change clock (kept even when
+    // the field goes false so a later stale write still loses). The client always
+    // sends an exclusivity-closed diff, so this lands on a consistent state with
+    // no server-side pin/done/hidden re-derivation.
     for (const f of fields) {
       const v = params[`p_${f}`];
-      if (typeof v === 'boolean') {
-        row[f] = v;
-        row[`${f}_at`] = v ? new Date().toISOString() : null;
-      }
+      if (typeof v !== 'boolean') continue;
+      const atIso = params[`p_${f}_at`] as string | undefined;
+      const at = atIso ? Date.parse(atIso) : Date.now();
+      const curIso = row[`${f}_at`] as string | null | undefined;
+      const curAt = curIso ? Date.parse(curIso) : null;
+      if (curAt !== null && at < curAt) continue; // stale write loses
+      row[f] = v;
+      row[`${f}_at`] = atIso ?? new Date(at).toISOString();
     }
-    // Mirror the pin exclusivity the DB trigger enforces.
-    if (params.p_pinned === true) {
-      row.done = false;
-      row.hidden = false;
-    }
-    // Server-assigned monotonic version bump (mirrors the 0003 trigger).
-    row.version = ((row.version as number | undefined) ?? 0) + 1;
     return { data: row, error: null };
   }
 

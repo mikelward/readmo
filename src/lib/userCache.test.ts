@@ -12,11 +12,11 @@ describe('cache key derivation', () => {
   it('keys by uid and falls back to the base key when signed out', () => {
     expect(rqCacheKey('u1')).toBe('readmo:rq-cache:u1');
     expect(rqCacheKey(null)).toBe('readmo:rq-cache');
-    expect(itemStateKey('u1')).toBe('readmo:item-state:u1');
-    expect(itemStateKey(null)).toBe('readmo:item-state');
+    expect(itemStateKey('u1')).toBe('readmo:item-state:v2:u1');
+    expect(itemStateKey(null)).toBe('readmo:item-state:v2');
     // The outbox key must match SupabaseDataSource's `${stateKey}:outbox`.
-    expect(outboxKey('u1')).toBe('readmo:item-state:u1:outbox');
-    expect(outboxKey(null)).toBe('readmo:item-state:outbox');
+    expect(outboxKey('u1')).toBe('readmo:item-state:v2:u1:outbox');
+    expect(outboxKey(null)).toBe('readmo:item-state:v2:outbox');
   });
 });
 

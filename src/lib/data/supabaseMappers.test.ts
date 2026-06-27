@@ -36,12 +36,14 @@ describe('toRequestError', () => {
 });
 
 describe('isPermanentWriteError', () => {
-  it('treats version conflict and lost visibility as permanent', () => {
-    expect(isPermanentWriteError({ code: '40001' })).toBe(true); // conflict
+  it('treats lost visibility as permanent', () => {
     expect(isPermanentWriteError({ code: '42501' })).toBe(true); // visibility
   });
 
   it('treats transient/unknown failures as non-permanent (keep queued)', () => {
+    // Per-field LWW means a stale write is superseded server-side, not rejected,
+    // so there is no version-conflict code (40001) to roll back on.
+    expect(isPermanentWriteError({ code: '40001' })).toBe(false); // not a conflict now
     expect(isPermanentWriteError({ code: '53300' })).toBe(false); // too many conns
     expect(isPermanentWriteError({ code: '28000' })).toBe(false); // auth (refresh)
     expect(isPermanentWriteError({ message: '503' })).toBe(false); // no code
@@ -129,7 +131,7 @@ describe('mapItem', () => {
 });
 
 describe('mapItemState', () => {
-  it('maps booleans + timestamps + version, dropping the key columns', () => {
+  it('maps booleans + timestamps, dropping the key columns', () => {
     const row: ItemStateRow = {
       user_id: 'u1',
       item_id: 'item-1',
@@ -143,7 +145,6 @@ describe('mapItemState', () => {
       hidden_at: null,
       opened: true,
       opened_at: '2026-01-02T00:00:00.000Z',
-      version: 7,
     };
     const st = mapItemState(row);
     expect(st).toEqual({
@@ -157,7 +158,6 @@ describe('mapItemState', () => {
       hiddenAt: null,
       opened: true,
       openedAt: Date.parse('2026-01-02T00:00:00.000Z'),
-      version: 7,
     });
   });
 });

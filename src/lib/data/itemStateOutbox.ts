@@ -10,31 +10,40 @@ import type { ItemId, ItemStateField } from '../types';
 //    burst collapses to one write carrying the final values;
 //  - serialized per item via a single drain loop, so writes can't reorder;
 //  - retried on reconnect; a *transient* (network) failure keeps the entry queued,
-//    while a *permanent* server rejection (e.g. lost visibility, or a version
-//    conflict) drops it and asks the caller to re-reconcile from server truth.
+//    while a *permanent* server rejection (lost visibility) drops it and asks the
+//    caller to re-reconcile from server truth.
 //
-// Optimistic concurrency (SPEC.md *Sync → Conflict resolution*): each queued
-// write carries the server `version` its change was based on. The send path
-// passes it to `set_item_state`, which applies the write only if the row is
-// still at that version, else rejects (a stale offline replay then reconciles
-// instead of clobbering a newer change from another device). The base is
-// snapshotted when an item first goes pending and advances to the server's
-// returned version after each successful write, so sequential edits don't
-// false-conflict; a conflict is permanent → the entry (and any newer queued
-// edits for it) is dropped and the store rolls back to server truth.
+// Conflict resolution is per-field LAST-WRITE-WINS (SPEC.md *Sync → Conflict
+// resolution*): each changed field carries the wall-clock time of the action
+// that set it (`at`). `set_item_state` keeps, per field, whichever write has the
+// newer `at`, so two devices touching independent fields never conflict and a
+// stale offline replay loses to a newer change instead of clobbering it — no
+// version numbers, base tracking, or conflict/hold machinery. Because the client
+// always sends an exclusivity-closed diff (a Pin diff carries the cleared
+// Done/Hidden, all stamped with the same `at`), per-field LWW lands on a
+// consistent state without server-side re-derivation.
 //
 // `pendingIds()` lets the hydrate path preserve un-synced local rows while
 // clearing genuinely-stale ones (closing the "clear local states absent from
 // hydration" gap without a data-loss race).
 
+/** The boolean changed-field diff that the store emits and the hydrate path
+ * overlays. The outbox stamps each field with its action time internally. */
 export type ChangedFields = Partial<Record<ItemStateField, boolean>>;
+
+/** A changed field plus the wall-clock time it changed — the per-field
+ * last-write-wins clock the server compares. */
+interface StampedChange {
+  value: boolean;
+  at: number;
+}
+
+/** Per-item merged changed fields with their action timestamps. */
+type StampedFields = Partial<Record<ItemStateField, StampedChange>>;
 
 interface OutboxEntry {
   id: ItemId;
-  changed: ChangedFields;
-  /** Server version the change is based on (see optimistic concurrency above).
-   * Absent for legacy persisted entries → sent as null (no check). */
-  base?: number | null;
+  changed: StampedFields;
 }
 
 export interface OutboxPersistence {
@@ -46,12 +55,9 @@ export interface OutboxPersistence {
 export interface SendResult {
   ok: boolean;
   /** True when the server rejected the write for good (not a transient network
-   * error) — e.g. a version conflict or lost visibility. The entry is dropped
-   * and the caller re-reconciles. */
+   * error) — i.e. the caller lost visibility of the item (42501). The entry is
+   * dropped and the caller re-reconciles. */
   permanent?: boolean;
-  /** The row's new server `version` after a successful write, so the outbox can
-   * base the item's next queued write on it. */
-  version?: number;
 }
 
 // Transient-retry backoff bounds. A transient failure while still "online"
@@ -60,25 +66,20 @@ export interface SendResult {
 const RETRY_BASE_MS = 2_000;
 const RETRY_MAX_MS = 60_000;
 
-// Longest a no-base write is HELD waiting for an in-flight hydration to resolve
-// its concurrency base before falling back to an unchecked send. A hydration
-// that merely fails (offline / the 8s supabaseFetch read cap) settles on its
-// own and releases the hold via noteHydrationSettled, so this only bites the
-// pathological case the hold can't otherwise escape: a hydrate that NEVER
-// settles (e.g. a service-worker NetworkOnly read whose abort doesn't surface),
-// which would otherwise strand the write — and the optimistic UI — forever.
-// Sits past the 8s read cap so a normally-failing hydrate gets to resolve a
-// real base first; only a truly-stuck one trips this.
-const HOLD_MAX_MS = 20_000;
+/** Merge `next` over `base` per field — `next` wins because its action time is
+ * the same or newer (enqueues arrive in wall-clock order). */
+function mergeStamped(base: StampedFields, next: StampedFields): StampedFields {
+  return { ...base, ...next };
+}
 
 export class ItemStateOutbox {
   // Pending merged changes per item, in insertion order (Map preserves it).
-  private readonly queue = new Map<ItemId, ChangedFields>();
+  private readonly queue = new Map<ItemId, StampedFields>();
   // Entries whose send() is awaiting a response: removed from `queue` so a
   // concurrent enqueue re-adds cleanly, but still reported as pending so a
   // hydrate racing the in-flight write doesn't treat the optimistic local row as
   // synced and wipe/overwrite it.
-  private readonly inFlight = new Map<ItemId, ChangedFields>();
+  private readonly inFlight = new Map<ItemId, StampedFields>();
   private draining = false;
   // Set when a fresh enqueue arrives mid-drain — distinct from an item left
   // queued by a transient failure, so re-entrant work re-flushes at once while
@@ -86,44 +87,13 @@ export class ItemStateOutbox {
   private dirtyDuringDrain = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private retryAttempt = 0;
-  // The server version each pending item's queued change is based on (sent to
-  // the server for the optimistic-concurrency check). Snapshotted when an item
-  // first goes pending; advanced to the server's returned version after a
-  // successful write so sequential edits don't false-conflict.
-  private readonly base = new Map<ItemId, number>();
-  // Last known server version per item, from hydrate observation and successful
-  // sends — the base a *fresh* (not-yet-pending) edit will be based on.
-  private readonly serverVersion = new Map<ItemId, number>();
-  // Whether a full server hydrate has been observed. Until then we can't tell an
-  // item with no known version apart from a genuinely-new one, so we send a null
-  // base (no check) rather than assume 0 ("expect no row") and false-conflict an
-  // edit made on an already-existing item during a cold boot.
-  private hydrated = false;
-  // How many item_state hydrations are currently in flight (the data source
-  // brackets each read with noteHydrationStarted/Settled). When > 0, a write
-  // whose concurrency base can't be determined yet is HELD rather than sent with
-  // no base check: the in-flight hydrate is about to resolve the base (the row's
-  // version, or its absence → base 0), so sending unchecked now could clobber a
-  // concurrent cross-device change to a row we haven't learned about. With no
-  // hydrate in flight to wait on (e.g. an offline edit on a brand-new item), the
-  // write still goes out unchecked as before — see resolveBase.
-  private hydrationsInFlight = 0;
-  // Bounded fallback for the hold: a one-shot timer armed while a no-base write
-  // is being held, and the flag it sets. If a hydrate never settles (so
-  // noteHydrationSettled never fires and hydrationsInFlight stays positive), the
-  // timer flips `holdReleased` true so resolveBase stops holding and the write
-  // goes out unchecked rather than being stranded forever. Reset once a hydrate
-  // settles, so a later stall gets its own bounded wait.
-  private holdReleaseTimer: ReturnType<typeof setTimeout> | null = null;
-  private holdReleased = false;
 
   constructor(
-    /** Persist `changed` for one item (carrying the base version for the
-     * optimistic-concurrency check); resolves with delivery outcome. */
+    /** Persist one item's changed fields (each carrying its action time for the
+     * per-field last-write-wins merge); resolves with the delivery outcome. */
     private readonly send: (
       id: ItemId,
-      changed: ChangedFields,
-      baseVersion: number | null,
+      changed: StampedFields,
     ) => Promise<SendResult>,
     private readonly persistence: OutboxPersistence,
     /** Online check — flush is a no-op while offline. */
@@ -137,116 +107,7 @@ export class ItemStateOutbox {
      * landed. Optional — the mock source has no outbox. */
     private readonly onDrained?: () => void,
   ) {
-    for (const e of this.persistence.load()) {
-      this.queue.set(e.id, e.changed);
-      if (e.base != null) this.base.set(e.id, e.base);
-    }
-  }
-
-  /** Record server versions observed by a hydrate so a future (not-yet-pending)
-   * edit is based on the right version. Skips items with a pending write — their
-   * base is locked to what the edit was made against, and a successful send (or
-   * a conflict reconcile) is the authority for advancing it. */
-  observeServerVersions(rows: Iterable<readonly [ItemId, number]>): void {
-    this.hydrated = true;
-    for (const [id, version] of rows) {
-      // Skip an item with a LOCKED base — its base is pinned to the version the
-      // edit was made against, and a successful send (or a conflict reconcile) is
-      // the authority for advancing it. But a queued/in-flight write with NO
-      // locked base (one that was HELD because its base couldn't be determined
-      // before this hydrate) DOES want this version, so its now-unblocked send
-      // uses the right base instead of falsely assuming absence (base 0) and
-      // dropping a legitimate edit as a phantom conflict.
-      if (this.base.has(id)) continue;
-      // Monotonic: the server `version` only ever increases, so a lower observed
-      // value is a stale read (e.g. a select that began before an in-flight write
-      // committed and returned after). Ignoring it stops a stale hydrate from
-      // rewinding a version a successful send just recorded — which would make
-      // the next edit base on an old version and false-conflict.
-      const known = this.serverVersion.get(id);
-      if (known == null || version >= known) this.serverVersion.set(id, version);
-    }
-  }
-
-  /** Seed last-known server versions from the persisted local store at boot, so
-   * an edit made before the first live hydrate (e.g. while offline, when the
-   * NetworkOnly item_state read fails) still bases on a known version rather
-   * than a blind no-check write. Same monotonic merge as observeServerVersions
-   * but does NOT mark "hydrated": only a real server read confirms an item is
-   * absent, which is what authorizes base 0 for a brand-new edit. */
-  seedConfirmedVersions(rows: Iterable<readonly [ItemId, number]>): void {
-    for (const [id, version] of rows) {
-      if (this.queue.has(id) || this.inFlight.has(id)) continue;
-      const known = this.serverVersion.get(id);
-      if (known == null || version >= known) this.serverVersion.set(id, version);
-    }
-  }
-
-  /** The data source calls this when it begins an item_state hydration, so the
-   * outbox knows a base-resolving read is coming and can HOLD an unresolvable-base
-   * write rather than send it unchecked (see hydrationsInFlight / resolveBase). */
-  noteHydrationStarted(): void {
-    this.hydrationsInFlight += 1;
-  }
-
-  /** Counterpart to noteHydrationStarted — call when the hydration settles
-   * (success OR failure). A settled hydrate has either recorded the held writes'
-   * versions (success) or removed the reason to keep waiting (failure leaves no
-   * read in flight), so re-flush to deliver anything that was held. */
-  noteHydrationSettled(): void {
-    if (this.hydrationsInFlight > 0) this.hydrationsInFlight -= 1;
-    // The hold's reason is (at least partly) gone — a settled hydrate either
-    // resolved held bases (success) or left no read in flight (failure). Once
-    // none are in flight, clear the bounded-fallback so a future stall waits
-    // afresh rather than sending unchecked off a stale release.
-    if (this.hydrationsInFlight === 0) {
-      this.holdReleased = false;
-      if (this.holdReleaseTimer != null) {
-        clearTimeout(this.holdReleaseTimer);
-        this.holdReleaseTimer = null;
-      }
-    }
-    // Re-flush so writes held for a base now go out. If a drain is in progress,
-    // mark it so the current drain re-runs at its end rather than racing it.
-    if (this.draining) this.dirtyDuringDrain = true;
-    else void this.flush();
-  }
-
-  /** Arm the one-shot bounded-hold fallback (idempotent): if a held write isn't
-   * released by a settling hydrate within HOLD_MAX_MS, send it unchecked rather
-   * than strand it on a hydrate that never settles. */
-  private armHoldRelease(): void {
-    if (this.holdReleaseTimer != null || this.holdReleased) return;
-    this.holdReleaseTimer = setTimeout(() => {
-      this.holdReleaseTimer = null;
-      this.holdReleased = true;
-      void this.flush();
-    }, HOLD_MAX_MS);
-    this.holdReleaseTimer.unref?.();
-  }
-
-  /** The optimistic-concurrency base to send a write on, or `undefined` to HOLD
-   * the write until a base can be determined:
-   *  - a base locked when the item first went pending (the version the edit was
-   *    made against), else
-   *  - the last-known server version (observed by a hydrate or a prior send), else
-   *  - 0 ("expect no row") once a live hydrate has CONFIRMED the item is absent
-   *    server-side, else
-   *  - `undefined` (HOLD) while a hydrate is in flight that's about to resolve one
-   *    of the above — sending unchecked now could clobber a concurrent change to a
-   *    row we haven't learned about, and the held write retries when it settles —
-   *    UNLESS the bounded fallback has fired (`holdReleased`), meaning the hydrate
-   *    never settled and we'd otherwise hold forever, else
-   *  - `null` (send with NO check) when there's no hydrate to wait on — an offline
-   *    edit on a brand-new item replays on reconnect, same as before. */
-  private resolveBase(id: ItemId): number | null | undefined {
-    const locked = this.base.get(id);
-    if (locked !== undefined) return locked;
-    const known = this.serverVersion.get(id);
-    if (known !== undefined) return known;
-    if (this.hydrated) return 0;
-    if (this.hydrationsInFlight > 0 && !this.holdReleased) return undefined;
-    return null;
+    for (const e of this.persistence.load()) this.queue.set(e.id, e.changed);
   }
 
   /** Merged un-synced changed-fields per item — both queued and in-flight
@@ -254,10 +115,20 @@ export class ItemStateOutbox {
    * truth. Queued (newer) values win per field over an in-flight send. */
   pendingChanges(): Map<ItemId, ChangedFields> {
     const out = new Map<ItemId, ChangedFields>();
-    for (const [id, changed] of this.inFlight) out.set(id, { ...changed });
-    for (const [id, changed] of this.queue) {
-      out.set(id, { ...out.get(id), ...changed });
-    }
+    const merge = (src: Map<ItemId, StampedFields>) => {
+      for (const [id, changed] of src) {
+        const cur = out.get(id) ?? {};
+        for (const [f, c] of Object.entries(changed) as [
+          ItemStateField,
+          StampedChange,
+        ][]) {
+          cur[f] = c.value;
+        }
+        out.set(id, cur);
+      }
+    };
+    merge(this.inFlight);
+    merge(this.queue);
     return out;
   }
 
@@ -267,20 +138,14 @@ export class ItemStateOutbox {
   }
 
   /** Queue a mutation (merging into any pending entry for the item) and kick a
-   * flush. The local store has already applied it optimistically. */
-  enqueue(id: ItemId, changed: ChangedFields): void {
-    // First un-synced edit for this item: lock its base. Use the known server
-    // version if we have one; else 0 ("expect no row") only once a full hydrate
-    // has confirmed the item has no server row — before that, leave the base
-    // unset so the send goes out with a null base (no check) rather than
-    // false-conflict an existing item on a cold boot. Coalesced follow-ups keep
-    // whatever base the first edit locked.
-    if (!this.queue.has(id) && !this.inFlight.has(id) && !this.base.has(id)) {
-      const known = this.serverVersion.get(id);
-      if (known != null) this.base.set(id, known);
-      else if (this.hydrated) this.base.set(id, 0);
+   * flush. `at` is the action's wall-clock time — the per-field last-write-wins
+   * clock. The local store has already applied it optimistically. */
+  enqueue(id: ItemId, changed: ChangedFields, at: number): void {
+    const cur = this.queue.get(id) ?? {};
+    for (const [f, v] of Object.entries(changed) as [ItemStateField, boolean][]) {
+      cur[f] = { value: v, at };
     }
-    this.queue.set(id, { ...this.queue.get(id), ...changed });
+    this.queue.set(id, cur);
     if (this.draining) this.dirtyDuringDrain = true;
     this.persist();
     void this.flush();
@@ -299,46 +164,15 @@ export class ItemStateOutbox {
       for (const id of [...this.queue.keys()]) {
         const changed = this.queue.get(id);
         if (!changed) continue;
-        const baseVersion = this.resolveBase(id);
-        // HOLD a write whose concurrency base can't be determined yet (a hydrate
-        // is in flight that will resolve it). Leave it queued; noteHydrationSettled
-        // re-flushes it once the hydrate lands. This is what stops a write made
-        // on a brand-new row exposed before hydration completed from going out
-        // with no base check and clobbering a concurrent cross-device change.
-        if (baseVersion === undefined) {
-          // Bound the hold: if the hydrate never settles, release it eventually
-          // rather than strand the write (and the optimistic UI) forever.
-          this.armHoldRelease();
-          continue;
-        }
-        // Lock the resolved base for a held write (one enqueued with no base,
-        // resolved here from the hydrate's observed version or confirmed
-        // absence → 0) so it sticks to the version the user actually acted on.
-        // Without this, a transient send failure requeues the entry unlocked, and
-        // a later focus/visibility hydrate observing another device's newer
-        // version would let the retry rebase onto it (observeServerVersions skips
-        // only LOCKED bases) and overwrite that change instead of conflicting.
-        // No-op for an already-locked entry; null (no-check) can't be locked.
-        if (baseVersion !== null && !this.base.has(id)) {
-          this.base.set(id, baseVersion);
-          // Persist the resolved base NOW, before the send. The flush's `finally`
-          // persist runs only after `send()` resolves, so without this a tab that
-          // closes/crashes while the RPC is in flight would leave the entry at
-          // base:null on disk — the next boot would re-hold it for a fresh
-          // hydrate and could rebase it onto a version another device wrote after
-          // the user's action, overwriting instead of conflict/reconcile.
-          this.persist();
-        }
         // Take the entry before sending. A concurrent enqueue during the await
         // re-adds the item with the newer fields, so coalescing never loses the
-        // latest action (and we never clear a field that changed mid-flight). The
-        // entry stays visible via `inFlight` so it's still reported as pending
-        // until the send resolves.
+        // latest action. The entry stays visible via `inFlight` so it's still
+        // reported as pending until the send resolves.
         this.queue.delete(id);
         this.inFlight.set(id, changed);
         let result: SendResult;
         try {
-          result = await this.send(id, changed, baseVersion);
+          result = await this.send(id, changed);
         } catch {
           result = { ok: false, permanent: false }; // network error → transient
         } finally {
@@ -346,27 +180,17 @@ export class ItemStateOutbox {
         }
         if (!result.ok && !result.permanent) {
           // Transient: requeue, letting any newer enqueue (arrived during send)
-          // win per field. Base is unchanged — the write never landed.
+          // win per field. The write never landed.
           transient = true;
           const newer = this.queue.get(id);
-          this.queue.set(id, newer ? { ...changed, ...newer } : changed);
+          this.queue.set(id, newer ? mergeStamped(changed, newer) : changed);
         } else if (result.permanent) {
-          // Conflict / lost visibility: roll back. Drop this item entirely —
-          // including any newer edits queued during the send, which were based
-          // on the now-reconciled-away optimistic state — and re-reconcile.
+          // Lost visibility: roll back. Drop this item entirely — including any
+          // newer edits queued during the send — and re-reconcile.
           this.queue.delete(id);
-          this.base.delete(id);
           rejected.push(id);
         } else {
-          // Success. Advance the known server version; base the item's next
-          // queued edit (if any arrived during the send) on it, else clear it.
           delivered = true;
-          if (result.version != null) this.serverVersion.set(id, result.version);
-          if (this.queue.has(id) && result.version != null) {
-            this.base.set(id, result.version);
-          } else {
-            this.base.delete(id);
-          }
         }
         if (!this.isOnline()) break; // went offline mid-drain; keep the rest
       }
@@ -421,17 +245,13 @@ export class ItemStateOutbox {
     // pendingChanges). A persist triggered by a follow-up enqueue must NOT drop
     // an in-flight predecessor that's been taken out of `queue` for its send —
     // otherwise a crash/reload before that RPC confirms would never replay it.
-    const merged = new Map<ItemId, ChangedFields>();
+    const merged = new Map<ItemId, StampedFields>();
     for (const [id, changed] of this.inFlight) merged.set(id, { ...changed });
     for (const [id, changed] of this.queue) {
-      merged.set(id, { ...merged.get(id), ...changed });
+      merged.set(id, mergeStamped(merged.get(id) ?? {}, changed));
     }
     this.persistence.save(
-      [...merged.entries()].map(([id, changed]) => ({
-        id,
-        changed,
-        base: this.base.get(id) ?? null,
-      })),
+      [...merged.entries()].map(([id, changed]) => ({ id, changed })),
     );
   }
 }

@@ -8,7 +8,14 @@
 // against the real Supabase auth.uid() in PR2 with no call-site changes.
 
 const RQ_CACHE_BASE = 'readmo:rq-cache';
-const ITEM_STATE_BASE = 'readmo:item-state';
+// `:v2` orphans the pre-LWW persisted blobs (the item-state store still carried a
+// `version` field and the outbox stored a base-version per entry; the LWW outbox
+// stores a per-field action timestamp instead, an incompatible shape that an old
+// entry would choke a replay on). Bumping the base key — the outbox key derives
+// from it — discards both old blobs so the store re-hydrates clean from the
+// server (which remains the source of truth for pins/favorites/done). See
+// SPEC.md *Sync* and 0023_item_state_lww.sql.
+const ITEM_STATE_BASE = 'readmo:item-state:v2';
 // Collapsed feed-sections set (group-by-feed view, see useCollapsedFeeds). It's a
 // single per-device key rather than uid-scoped — but it holds a *subscription-
 // derived* list of feed ids, so on a shared device it must not survive an account

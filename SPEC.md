@@ -367,7 +367,8 @@ subscriptions (user_id FK, feed_id FK, folder, title_override,
 item_state    (user_id FK, item_id FK,
                pinned bool, pinned_at, favorite bool, favorite_at,
                done bool, done_at, hidden bool, hidden_at,
-               opened bool, opened_at, version bigint)               -- PK(user_id,item_id)
+               opened bool, opened_at)                               -- PK(user_id,item_id)
+               -- each *_at is the field's last-change time = its LWW clock
 folders       (user_id FK, name, sort)
 ```
 
@@ -741,18 +742,29 @@ negligible and off every critical path. See the External services table in
 - **Offline mutation outbox.** Because Readmo owns its backend, state changes
   made offline are **queued and replayed** (newshacker dropped offline votes;
   Readmo keeps offline pin/favorite/done/hide/open). A toggle writes to a local
-  outbox keyed by `(item_id, field)` recording the desired value + local order;
-  on reconnect it flushes to Postgres. The UI reflects it immediately, rolling
-  back only on a non-transient server rejection.
-- **Conflict resolution uses a server-assigned version, not client wall time.**
-  Each `item_state` row carries a monotonic `version` bumped **by the server**
-  on every write; the flush applies an incoming field only if the caller's
-  last-seen `version` is current, else returns the winning value to reconcile.
-  We deliberately do **not** compare a client `updated_at` (a skewed/fast clock
-  could stamp a future time and clobber newer changes). Per-field, so the
-  independent booleans can't cross-conflict. (newshacker's client-timestamp LWW
-  was fine for single-user list reconciliation with no server in the path;
-  Readmo has a real backend, so the authoritative clock lives there.)
+  outbox keyed by `item_id` recording the changed fields and the action's
+  timestamp; on reconnect it flushes to Postgres, coalesced and serialized per
+  item. The UI reflects it immediately, rolling back only on a non-transient
+  server rejection (lost item visibility — never a sync conflict).
+- **Conflict resolution is per-field last-write-wins on the action timestamp.**
+  Each field carries the wall-clock time of the action that set it (`<f>_at`,
+  which doubles as the field's ordering/TTL key, read only while the flag is
+  true). `set_item_state` keeps, per field, whichever write has the newer `at`.
+  So two devices touching independent booleans never conflict, and a stale
+  offline replay loses to a newer change instead of clobbering it — it is simply
+  superseded, with no version numbers, base tracking, conflict rejection, or
+  hold-for-hydration machinery (this is the same model newshacker uses, and
+  replaced an earlier server-assigned-`version` scheme whose conflict/reconcile
+  apparatus was far heavier than per-item boolean flags warrant). Pin/done/hidden
+  **exclusivity is maintained by the client**: every triage write the client
+  sends to the server is exclusivity-closed (a Pin carries Done=false +
+  Hidden=false, a Done/Hide carries Pinned=false, all stamped with the same `at`)
+  — and the closure is *unconditional*, emitted even when the local mirror already
+  shows the cleared field false (it may be stale relative to the server), so a
+  stale mirror can't leave an invalid pinned+done row. Per-field LWW then lands on
+  a consistent state without the server re-deriving it. The trade vs. a server clock: a device with a badly
+  wrong wall-clock can mis-order its own writes — accepted (single-writer client,
+  two-user app), the same trade newshacker makes.
 - **Refetch-on-focus.** Boot hydration of `item_state` is memoized and never
   re-runs on its own, so a backgrounded tab would keep showing the pins it
   loaded at boot. `DataSource.resyncState()` re-pulls the caller's `item_state`
@@ -817,42 +829,12 @@ negligible and off every critical path. See the External services table in
     loading state across reloads and pull-to-refresh. The read still flows through the connectivity-tracked,
     8s-bounded `supabaseFetch`, so Down/Offline detection is unchanged; only the
     gating of rows on it is removed.
-  - **Offline write bases come from the persisted store**, not the cache. Since
-    an offline boot's item-state read fails (no live `observeServerVersions`), the
-    constructor seeds the outbox's optimistic-concurrency versions from the
-    persisted store's per-row `version`s (`seedConfirmedVersions`). So an edit
-    made before the first online read still bases on this device's last-known
-    server version and conflicts/reconciles on reconnect, rather than flushing a
-    blind no-base write. (The seed does not authorize base 0 — only a live read
-    confirms an item is absent.) For the seed to be accurate, a successful write
-    normalizes the persisted store's `version` to the server's returned value
-    (`confirmServerVersion`): the store's `version` is an optimistic per-mutation
-    counter, so coalesced edits (several local toggles → one server write) would
-    otherwise leave it above the server's and seed a too-high base that
-    false-conflicts. For the same reason the local-only hidden→Done migration
-    (constructor and hydrate) preserves the row's existing version rather than
-    bumping it — it rewrites a field without writing the server, so it must not
-    advance the version.
-  - **A write whose concurrency base can't be determined yet is HELD while a
-    hydrate is in flight**, not sent unchecked. Because feed/library reads no
-    longer block on hydration (above), a user can act on a brand-new row — one
-    with no persisted/observed version — before the hydrate lands. The outbox
-    brackets each hydration (`noteHydrationStarted`/`noteHydrationSettled`); while
-    one is in flight it holds such a write rather than send it with no
-    `p_base_version`, then sends it once the hydrate resolves the base (the row's
-    observed version, or its absence → base 0). This keeps a write made in that
-    window from blindly overwriting a concurrent cross-device change. With **no**
-    hydrate in flight to wait on (an offline edit on a brand-new item), the write
-    still goes out unchecked on reconnect, as before — the hold only applies while
-    a base-resolving read is actually pending. This holds **across a reload** too:
-    a no-base write persisted in a prior session would otherwise be replayed
-    unchecked at boot, so the data source starts the boot hydration (marking it in
-    flight) *before* the initial outbox flush, so the persisted entry is held until
-    that hydrate resolves its base. The hold itself is **bounded**
-    (`HOLD_MAX_MS`): if a hydrate never settles (the same never-surfacing
-    NetworkOnly read the bounded *read* wait guards against), the write is released
-    unchecked rather than stranded forever — the resolved base is also persisted
-    the moment it's locked, so a crash mid-send replays with it intact.
+  - **Offline writes replay from the persisted outbox**, each carrying its own
+    action timestamp. An edit made before the first online read needs no
+    concurrency base to resolve first — it flushes on reconnect and per-field
+    last-write-wins settles it against any change another device made in the
+    meantime. So there is no hold-for-hydration window, no base seeding, and no
+    version normalization: the write simply goes out and the newer `at` wins.
 - Realtime (optional, post-MVP): Supabase Realtime can push `item_state`
   changes to other open sessions. MVP relies on the refetch-on-focus above + PTR.
 - **Implementation status.** `SupabaseDataSource` (`src/lib/data/`) implements
@@ -871,33 +853,25 @@ negligible and off every critical path. See the External services table in
   offline outbox (`itemStateOutbox.ts`): triage flags apply to the store
   optimistically, then queue for durable, coalesced, serialized delivery to the
   `set_item_state` RPC — surviving reloads/offline gaps and replaying on
-  reconnect. Each queued write carries the server `version` it was based on;
-  `set_item_state` (0007) applies it only if the row is still at that version,
-  else rejects so the stale replay rolls back and re-reconciles instead of
-  clobbering newer truth. The hydrate path overlays only still-pending fields
-  onto server truth and clears genuinely-stale rows. Add-feed / OPML import /
-  parked-feed retry go through the `subscribe_to_feed` RPC and the `refresh`
-  function. `main.tsx` selects the live source when `isSupabaseConfigured()`
-  (else the mock seed), so a configured deployment boots on real RLS-scoped data.
-  The version check is row-level (per item), so two devices editing the same
-  item conflict even on independent flags — deliberately conservative (the loser
-  re-reconciles) rather than risk a silent clobber; per-field versioning is a
-  possible future refinement. Still deferred: an **authenticated OPML-export
-  RPC** — the client can't
-  emit real feed fetch URLs (`feeds_public` exposes only `site_url`, never
-  `url`/`secret_url`),
-  so live `exportOpml` carries homepage URLs until a server-side export exists.
-- **Deferred — idempotency keys for exactly-once write delivery.** The outbox is
-  at-least-once: a write can commit on the server while the client crashes/loses
-  the response before recording the returned `version`. On replay the version
-  check (0007) then sees the row already advanced and rejects with `40001`, so
-  that write — and any same-item follow-up queued behind it — reconciles away.
-  The state stays *consistent* (it matches what committed); at most a triage
-  toggle made in that narrow crash-during-ack window is dropped. The complete fix
-  is a per-write idempotency token the server dedups on (a replay of a committed
-  write returns success + the new version, letting the outbox advance the
-  successor's base) — a dedicated milestone, since a client-only dependency hack
-  can't close it (the predecessor replay itself conflicts without server dedup).
+  reconnect. Each changed field carries its action timestamp; `set_item_state`
+  (`0023_item_state_lww.sql`) keeps, per field, whichever write has the newer
+  `at`, so a stale replay is superseded rather than rejected. The hydrate path
+  overlays only still-pending fields onto server truth and clears genuinely-stale
+  rows. Add-feed / OPML import / parked-feed retry go through the
+  `subscribe_to_feed` RPC and the `refresh` function. `main.tsx` selects the live
+  source when `isSupabaseConfigured()` (else the mock seed), so a configured
+  deployment boots on real RLS-scoped data. Conflict resolution is per-field, so
+  two devices editing the same item never cross-conflict on independent flags;
+  same-field edits resolve to the later action time. Still deferred: an
+  **authenticated OPML-export RPC** — the client can't emit real feed fetch URLs
+  (`feeds_public` exposes only `site_url`, never `url`/`secret_url`), so live
+  `exportOpml` carries homepage URLs until a server-side export exists.
+- **At-least-once delivery, no exactly-once needed.** The outbox can re-send a
+  write that committed but whose ack was lost to a crash. Under per-field LWW a
+  replay is idempotent in effect: re-applying the same field with the same (or an
+  equal) `at` lands on the same value, so there's nothing to dedup and no
+  follow-up to strand. (The old `version` scheme needed idempotency keys here
+  precisely because a replay would `40001`-conflict; LWW removes that hazard.)
 
 ---
 
@@ -1572,9 +1546,9 @@ keys differ; the strategies map one-to-one:
   reads only; deliberately left uncapped: **write RPCs/table writes** (POST
   `rpc/set_item_state`, `rpc/subscribe_to_feed`, DELETE/PATCH on `subscriptions`)
   — aborting
-  a slow-but-committing write would make the item-state outbox retry on a stale
-  base version (permanent conflict / dropped edit) or surface a spurious error,
-  so the outbox's own retry/durability is the right bound; **Edge Functions**
+  a slow-but-committing write would surface a spurious error and force a
+  redundant outbox retry, so the outbox's own retry/durability (and per-field
+  LWW, which makes a re-send idempotent) is the right bound; **Edge Functions**
   (`/functions/v1/` — refresh, discover, fulltext), which legitimately run longer
   than a read; and **auth** (`/auth/v1/`), where a capped token-refresh timeout
   would surface as a failed `getSession()` → the user is nulled →
