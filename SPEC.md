@@ -941,13 +941,20 @@ negligible and off every critical path. See the External services table in
      - **Sort order** (`readmo:item-sort`, default **`newest`**) sets the body's
        chronological order — **newest-first** (default) or **oldest-first** —
        on Home, folders, and single feeds. Pinned ordering is unaffected (always
-       oldest-pin first within its section).
+       oldest-pin first within its section). Toggleable from Settings **and**
+       from the list **top toolbar** (the **Sort order** toggle, whose arrow
+       reflects the current order — see *List toolbar*), which writes the same
+       per-device preference.
      - **Group by feed** (`readmo:group-by-feed`, default **off**) sections Home
        and folder lists by feed instead of one merged river. Sections follow the
        user's **manual feed order** (the `subscriptions.sort` field, set by
        drag-to-reorder in Settings); within a section the chosen sort order
        applies, and that feed's pinned items sit at the top of the section. A
        feed-name header introduces each section. No effect on a single-feed view.
+       Toggleable from Settings **and** from the multi-feed list **top toolbar**
+       (the **Group by feed** toggle, whose flat-list / tree icon mirrors the
+       current layout — see *List toolbar*), which writes the same per-device
+       preference.
      - **Section header controls** (group-by-feed only). Each feed's header is a
        small control strip: the **chevron + feed name + unread/to-do count
        badge** form the collapse tap target (see below), and on the right sit two
@@ -1069,10 +1076,24 @@ negligible and off every critical path. See the External services table in
    comments. See *Reader view*.
 
 6. **List toolbar** — sticky below the header: right-aligned **Undo** +
-   **Sweep unpinned** (Mark all done). In the **group-by-feed** view it also
-   carries left-aligned **Collapse all** / **Expand all** icon buttons
-   (`unfold_less` / `unfold_more`, with long-press / hover tooltips — see *Feed
-   views → Collapse / expand sections*). Sweep marks done only the unpinned rows that
+   **Sweep unpinned** (Mark all done), and a left-aligned cluster of view
+   toggles in this order: **Group by feed**, **Collapse all / Expand all**,
+   **Sort order**. The **Group by feed** toggle (a flat-list / tree icon
+   that mirrors the current layout, with a
+   long-press / hover tooltip and `aria-pressed` for its on/off state) is a
+   one-tap shortcut for the `readmo:group-by-feed` reading preference, so the
+   reader can switch between the merged river and per-feed sections without a
+   trip to Settings; it shows only on **multi-feed views** (Home, folders) and
+   is omitted on single-feed views, where grouping is a no-op. The **Collapse
+   all** / **Expand all** icon buttons (`unfold_less` / `unfold_more`, with
+   long-press / hover tooltips — see *Feed views → Collapse / expand sections*)
+   appear only in the **group-by-feed** view. The **Sort order** toggle
+   flips the `readmo:item-sort` preference between **newest-** and
+   **oldest-first**; its arrow reflects the **current** order (down =
+   newest-first / descending, up = oldest-first / ascending) and its tooltip /
+   accessible name names that order, and it rides **every** feed view — Home,
+   folders, and single feeds — since sort applies even where grouping doesn't. Sweep marks done only
+   the unpinned rows that
    are **fully visible right now** — not the whole loaded list — so scrolling
    past content and tapping the broom can't dismiss rows off-screen. A row
    counts as visible iff its bounding box sits entirely inside the viewport

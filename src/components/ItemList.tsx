@@ -14,7 +14,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { useFeedItems, type FetchPage } from '../hooks/useFeedItems';
-import type { Page } from '../lib/data/DataSource';
+import type { ItemSort, Page } from '../lib/data/DataSource';
 import { useInViewIds } from '../hooks/useInViewIds';
 import { useHideOnScroll, useBottomBarPosition } from '../hooks/useReadingPrefs';
 import { useCollapsedFeeds } from '../hooks/useCollapsedFeeds';
@@ -134,6 +134,18 @@ interface Props {
    * rows each section opens with, and the offset the first per-section "More"
    * fetches from. Only meaningful alongside {@link Props.fetchFeedPage}. */
   perFeedLimit?: number;
+  /** Multi-feed views (Home, folders) pass this to surface a group-by-feed
+   * toggle in the top toolbar. Omitted on single-feed views, where grouping is
+   * a no-op. Flipping it re-keys the view (the page folds the pref into
+   * `viewKey`), so the list refetches with the new layout. */
+  onToggleGroupByFeed?: () => void;
+  /** The current `readmo:item-sort` value, shown by the toolbar's sort toggle.
+   * Only meaningful alongside {@link Props.onToggleSort}. */
+  itemSort?: ItemSort;
+  /** Feed views pass this to surface a newest/oldest-first toggle in the top
+   * toolbar. Like grouping, flipping it re-keys the view so the list refetches
+   * in the new order. */
+  onToggleSort?: () => void;
 }
 
 /** A feed view (home / folder / single feed): sticky toolbar, item rows with
@@ -145,6 +157,9 @@ export function ItemList({
   groupByFeed = false,
   fetchFeedPage,
   perFeedLimit,
+  onToggleGroupByFeed,
+  itemSort = 'newest',
+  onToggleSort,
 }: Props) {
   const ds = useDataSource();
   // Per-section "More" is live only when the page wired a single-feed pager AND
@@ -1291,6 +1306,18 @@ export function ItemList({
     );
   }, [groupByFeed, unreadCounts, mergedRaw, ds, storeVersion]);
 
+  // The group-by-feed toggle rides the top toolbar on multi-feed views (the
+  // page wires `onToggleGroupByFeed`); single-feed views leave it undefined so
+  // the button doesn't render where grouping would be a no-op.
+  const groupControl = onToggleGroupByFeed
+    ? { groupByFeed, onToggle: onToggleGroupByFeed }
+    : undefined;
+  // The sort toggle rides every feed view (sort applies even to a single feed),
+  // so it's wired independently of grouping.
+  const sortControl = onToggleSort
+    ? { itemSort, onToggle: onToggleSort }
+    : undefined;
+
   const collapseControls =
     groupByFeed && feedIdsInView.length > 0
       ? {
@@ -1417,7 +1444,11 @@ export function ItemList({
 
   return (
     <div className="item-list">
-      <ListToolbar collapse={collapseControls} />
+      <ListToolbar
+        collapse={collapseControls}
+        group={groupControl}
+        sort={sortControl}
+      />
 
       <PullToRefresh
         onRefresh={async () => {

@@ -155,3 +155,101 @@ describe('ListToolbar collapse controls', () => {
     );
   });
 });
+
+describe('ListToolbar group-by-feed toggle', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+
+  it('renders no group toggle without the group prop', () => {
+    renderWithProviders(<ListToolbar />);
+    expect(screen.queryByTestId('group-by-feed-btn')).toBeNull();
+  });
+
+  it('renders an icon-only toggle with an accessible name', () => {
+    renderWithProviders(
+      <ListToolbar group={{ groupByFeed: false, onToggle: vi.fn() }} />,
+    );
+    const btn = screen.getByTestId('group-by-feed-btn');
+    // Icon-only: the accessible name comes from aria-label, not visible text.
+    expect(btn).toHaveAccessibleName('Group by feed');
+    expect(btn).toHaveTextContent('');
+    expect(btn.querySelector('svg')).not.toBeNull();
+  });
+
+  it('reflects the off state via aria-pressed', () => {
+    renderWithProviders(
+      <ListToolbar group={{ groupByFeed: false, onToggle: vi.fn() }} />,
+    );
+    const btn = screen.getByTestId('group-by-feed-btn');
+    expect(btn).toHaveAttribute('aria-pressed', 'false');
+    expect(btn).not.toHaveClass('list-toolbar__button--active');
+  });
+
+  it('reflects the on state via aria-pressed and the active class', () => {
+    renderWithProviders(
+      <ListToolbar group={{ groupByFeed: true, onToggle: vi.fn() }} />,
+    );
+    const btn = screen.getByTestId('group-by-feed-btn');
+    expect(btn).toHaveAttribute('aria-pressed', 'true');
+    expect(btn).toHaveClass('list-toolbar__button--active');
+  });
+
+  it('calls onToggle when tapped', async () => {
+    const onToggle = vi.fn();
+    renderWithProviders(
+      <ListToolbar group={{ groupByFeed: false, onToggle }} />,
+    );
+    await userEvent.setup().click(screen.getByTestId('group-by-feed-btn'));
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ListToolbar sort-order toggle', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+
+  it('renders no sort toggle without the sort prop', () => {
+    renderWithProviders(<ListToolbar />);
+    expect(screen.queryByTestId('sort-order-btn')).toBeNull();
+  });
+
+  it('names the current order (newest first) as an icon-only button', () => {
+    renderWithProviders(
+      <ListToolbar sort={{ itemSort: 'newest', onToggle: vi.fn() }} />,
+    );
+    const btn = screen.getByTestId('sort-order-btn');
+    expect(btn).toHaveAccessibleName('Newest first');
+    expect(btn).toHaveTextContent('');
+    expect(btn.querySelector('svg')).not.toBeNull();
+  });
+
+  it('names the current order (oldest first) when flipped', () => {
+    renderWithProviders(
+      <ListToolbar sort={{ itemSort: 'oldest', onToggle: vi.fn() }} />,
+    );
+    expect(screen.getByTestId('sort-order-btn')).toHaveAccessibleName(
+      'Oldest first',
+    );
+  });
+
+  it('calls onToggle when tapped', async () => {
+    const onToggle = vi.fn();
+    renderWithProviders(
+      <ListToolbar sort={{ itemSort: 'newest', onToggle }} />,
+    );
+    await userEvent.setup().click(screen.getByTestId('sort-order-btn'));
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+});

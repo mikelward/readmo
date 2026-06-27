@@ -3,7 +3,18 @@ import { useDataSource } from '../lib/data/context';
 import { useBottomBarPosition } from '../hooks/useReadingPrefs';
 import { useFeedBar } from './FeedBarContext';
 import { TooltipButton } from './TooltipButton';
-import { Sweep, Undo, UnfoldLess, UnfoldMore, VerticalAlignTop } from './icons';
+import {
+  ArrowDownward,
+  ArrowUpward,
+  ListFlat,
+  ListTree,
+  Sweep,
+  Undo,
+  UnfoldLess,
+  UnfoldMore,
+  VerticalAlignTop,
+} from './icons';
+import type { ItemSort } from '../lib/data/DataSource';
 import './ListToolbar.css';
 
 function scrollToTop() {
@@ -39,6 +50,26 @@ export interface CollapseAction {
   anyCollapsed: boolean;
 }
 
+/** Top-bar toggle for the group-by-feed reading preference. Passed only to the
+ * top bar on multi-feed views (Home, folders) where grouping changes the layout;
+ * single-feed views omit it since grouping is a no-op there. */
+export interface GroupAction {
+  /** Current state of the `readmo:group-by-feed` preference. */
+  groupByFeed: boolean;
+  /** Flip the preference (which re-keys the list view and refetches). */
+  onToggle: () => void;
+}
+
+/** Top-bar toggle for the chronological sort preference. Passed to the top bar
+ * on every feed view (Home, folders, and single feeds — sort applies to all,
+ * unlike grouping). Flips between newest- and oldest-first. */
+export interface SortAction {
+  /** Current state of the `readmo:item-sort` preference. */
+  itemSort: ItemSort;
+  /** Flip the order (which re-keys the list view and refetches). */
+  onToggle: () => void;
+}
+
 interface Props {
   /** Where the bar sits. The bottom copy mirrors the top bar but leads with a
    * Back to top button in the left slot, matching the reader's two bars
@@ -55,6 +86,12 @@ interface Props {
   /** Group-by-feed views pass this to the top bar to render Collapse all /
    * Expand all. Omitted when not grouping or on the bottom bar. */
   collapse?: CollapseAction;
+  /** Multi-feed views pass this to the top bar to render the group-by-feed
+   * toggle. Omitted on single-feed views (no-op) and on the bottom bar. */
+  group?: GroupAction;
+  /** Feed views pass this to the top bar to render the sort-order toggle.
+   * Omitted on the bottom bar. */
+  sort?: SortAction;
 }
 
 /** Sticky list toolbar: Back to top (bottom bar only) on the left, then
@@ -66,6 +103,8 @@ export function ListToolbar({
   actions = true,
   more,
   collapse,
+  group,
+  sort,
 }: Props = {}) {
   const ds = useDataSource();
   const store = ds.stateStore;
@@ -107,6 +146,24 @@ export function ListToolbar({
             <VerticalAlignTop />
           </TooltipButton>
         ) : null}
+        {group ? (
+          <TooltipButton
+            type="button"
+            className={
+              'list-toolbar__button' +
+              (group.groupByFeed ? ' list-toolbar__button--active' : '')
+            }
+            data-testid="group-by-feed-btn"
+            aria-pressed={group.groupByFeed}
+            onClick={group.onToggle}
+            tooltip="Group by feed"
+            aria-label="Group by feed"
+          >
+            {/* The glyph mirrors the current layout: a tree when grouped, a
+                flat list when not — reinforcing the aria-pressed state. */}
+            {group.groupByFeed ? <ListTree /> : <ListFlat />}
+          </TooltipButton>
+        ) : null}
         {collapse ? (
           <div className="list-toolbar__collapse">
             <TooltipButton
@@ -132,6 +189,22 @@ export function ListToolbar({
               <UnfoldMore />
             </TooltipButton>
           </div>
+        ) : null}
+        {sort ? (
+          <TooltipButton
+            type="button"
+            className="list-toolbar__button"
+            data-testid="sort-order-btn"
+            onClick={sort.onToggle}
+            tooltip={sort.itemSort === 'newest' ? 'Newest first' : 'Oldest first'}
+            aria-label={
+              sort.itemSort === 'newest' ? 'Newest first' : 'Oldest first'
+            }
+          >
+            {/* Arrow shows the current order: down = newest-first (descending),
+                up = oldest-first (ascending). */}
+            {sort.itemSort === 'newest' ? <ArrowDownward /> : <ArrowUpward />}
+          </TooltipButton>
         ) : null}
         {more ? (
           <button
