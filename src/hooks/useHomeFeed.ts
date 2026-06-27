@@ -1,4 +1,6 @@
-import { useCallback, useSyncExternalStore } from 'react';
+import { useCallback } from 'react';
+import { createPersistentStore } from '../lib/persistentStore';
+import { usePersistentStore } from './usePersistentStore';
 
 // Per-device preference for what `/` renders: the aggregate Unread river
 // across all subscriptions ('all'), or a chosen folder. Mirrors newshacker's
@@ -9,52 +11,35 @@ const CHANGE_EVENT = 'readmo:home-feed-changed';
 
 export type HomeFeed = { kind: 'all' } | { kind: 'folder'; name: string };
 
-function read(): HomeFeed {
-  if (typeof window === 'undefined') return { kind: 'all' };
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { kind: 'all' };
-    const parsed = JSON.parse(raw) as HomeFeed;
-    if (parsed?.kind === 'folder' && typeof parsed.name === 'string') {
-      return parsed;
+const DEFAULT_HOME_FEED: HomeFeed = { kind: 'all' };
+
+const homeFeedStore = createPersistentStore<HomeFeed>({
+  storageKey: STORAGE_KEY,
+  changeEvent: CHANGE_EVENT,
+  defaultValue: DEFAULT_HOME_FEED,
+  parse: (raw) => {
+    try {
+      const parsed = JSON.parse(raw) as HomeFeed;
+      if (parsed?.kind === 'folder' && typeof parsed.name === 'string') {
+        return parsed;
+      }
+      if (parsed?.kind === 'all') return DEFAULT_HOME_FEED;
+      return undefined;
+    } catch {
+      return undefined;
     }
-    return { kind: 'all' };
-  } catch {
-    return { kind: 'all' };
-  }
-}
-
-let cached: HomeFeed = read();
-
-function subscribe(cb: () => void): () => void {
-  const handler = () => cb();
-  window.addEventListener(CHANGE_EVENT, handler);
-  window.addEventListener('storage', handler);
-  return () => {
-    window.removeEventListener(CHANGE_EVENT, handler);
-    window.removeEventListener('storage', handler);
-  };
-}
-
-function getSnapshot(): HomeFeed {
-  return cached;
-}
+  },
+  serialize: (value) => JSON.stringify(value),
+});
 
 export function useHomeFeed(): {
   homeFeed: HomeFeed;
   setHomeFeed: (next: HomeFeed) => void;
 } {
-  const homeFeed = useSyncExternalStore(subscribe, getSnapshot, () => cached);
-
-  const setHomeFeed = useCallback((next: HomeFeed) => {
-    cached = next;
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      // ignore storage failures
-    }
-    window.dispatchEvent(new Event(CHANGE_EVENT));
-  }, []);
-
+  const homeFeed = usePersistentStore(homeFeedStore);
+  const setHomeFeed = useCallback(
+    (next: HomeFeed) => homeFeedStore.set(next),
+    [],
+  );
   return { homeFeed, setHomeFeed };
 }
