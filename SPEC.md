@@ -1646,7 +1646,18 @@ keys differ; the strategies map one-to-one:
   `QueryObserver` per query blocks GC while bucketed and re-locks from hydrated
   state on mount (so a reload doesn't drop them); an entry is evicted only once
   the item is in NO bucket (so unpinning an item that's still favorited keeps its
-  cache). It reacts to every pin/favorite path centrally. `/offline` assembles
+  cache). It reacts to every pin/favorite path centrally. **Warming is
+  concurrency-bounded:** a user with many saved items would otherwise fire one
+  `getItem` (+ `fetchFullText` for truncated feeds) per item all at once on
+  boot/reconnect — a self-inflicted backend burst — so warms run through small FIFO
+  limiters (`src/lib/concurrencyLimiter.ts`). **Detail (`getItem`) and full-text
+  extraction use separate pools** (`OFFLINE_WARM_CONCURRENCY = 4`,
+  `OFFLINE_FULLTEXT_CONCURRENCY = 2`): the cheap detail read — what makes an item
+  show up offline — never waits behind slow full-text extraction (an uncapped Edge
+  call), which would otherwise head-of-line-block the rest of the saved set's
+  details. An in-flight guard skips duplicate warms of the same id, and a queued
+  warm bails if the item was unpinned/unfavorited (`unlock`'d) while it waited.
+  `/offline` assembles
   its list **purely from the persisted query cache — it never issues a fetch**,
   so it doesn't depend on connectivity detection having flipped us offline yet
   (a hung or mislabeled read would otherwise leave the saved set looking empty):
