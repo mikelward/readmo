@@ -6,7 +6,14 @@ import {
 } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useOnlineStatus } from './useOnlineStatus';
+import { useAuth } from './useAuth';
 import { fullTextStaleTime, isFullTextSettled, looksTruncated } from '../lib/fullText';
+import {
+  CAPABILITIES_QUERY_KEY,
+  canUseFullText,
+  useCapabilitiesQuery,
+} from './useCapabilities';
+import type { Capabilities } from '../lib/data/DataSource';
 import type { FullTextResult } from '../lib/fullText';
 import type { FeedItem } from '../lib/types';
 import { extractProxiedImageUrls } from '../lib/extractProxiedImageUrls';
@@ -57,6 +64,39 @@ export function useOfflineCacheLock(): void {
   // Shared across the lock effect and the reconnect effect.
   const locks = useRef(new Map<string, () => void>()).current; // id -> release
   const warmed = useRef(new Set<string>()).current; // ids whose data is cached
+  // Subset of `warmed` marked warmed ONLY because reading mode was gated off for
+  // this user (not a settled fetch). If membership later flips to family we
+  // un-warm and re-warm these so their full-text body fills the offline bucket.
+  const gateSkipped = useRef(new Set<string>()).current;
+  // Tri-state reading-mode gate for the fulltext prefetch, derived from the
+  // capabilities query:
+  //   'allowed' — issue the fulltext call.
+  //   'denied'  — armed allowlist, off-list → gate-skip (mark warmed+gateSkipped).
+  //   'unknown' — signed-in with no resolved capabilities yet (loading OR
+  //               errored) → HOLD OFF (don't fetch, don't mark) so an off-list
+  //               user makes zero Edge calls until we know the gate; re-warmed
+  //               once it resolves.
+  // The "unknown" condition keys off the user (the query is enabled iff signed
+  // in), NOT fetchStatus — a transient `get_capabilities` failure ends 'idle'
+  // with no data, which must still hold off rather than read as open. Signed out
+  // → the query is disabled, no gate to wait on → allowed.
+  // `fullTextGate` is the reactive value that drives the re-warm effect below.
+  // warm() itself reads the capability VALUE synchronously from the cache (so a
+  // just-written membership change is honored without waiting for a render); the
+  // only thing it needs from React state is whether the gate is unresolved, via
+  // `capsUnresolvedRef`.
+  const { user } = useAuth();
+  const capsQuery = useCapabilitiesQuery();
+  const capsUnresolved = !!user && !capsQuery.data;
+  const capsUnresolvedRef = useRef(capsUnresolved);
+  capsUnresolvedRef.current = capsUnresolved;
+  const fullTextGate: 'allowed' | 'denied' | 'unknown' = capsQuery.data
+    ? canUseFullText(capsQuery.data)
+      ? 'allowed'
+      : 'denied'
+    : capsUnresolved
+      ? 'unknown'
+      : 'allowed'; // disabled (signed out, old backend) → no gate to wait on
 
   // Populate an item's reader queries (idempotent). No-op when offline or
   // already warmed. An id is only marked warmed once it's FULLY cached — detail
@@ -109,6 +149,30 @@ export function useOfflineCacheLock(): void {
             warmed.add(id); // nothing more to fetch
             return;
           }
+          // Reading mode is allowlist-gated. Read the capability VALUE live from
+          // the cache so a just-written membership change is honored immediately.
+          //  - DENIED (armed allowlist, off-list): the fulltext call would only
+          //    ever return the silent `retryable` denial, and since that's never
+          //    "settled" the item would be re-prefetched on EVERY store emit (the
+          //    off-list amplification the reviewer flagged). Mark it warmed so the
+          //    emits stop, but record it in `gateSkipped` too — it's a capability
+          //    skip, not a settled fetch — so the gate effect below un-warms and
+          //    re-warms it the moment membership flips to family (without it the
+          //    top-of-warm `warmed.has(id)` guard would strand it on the stub).
+          //  - UNKNOWN (signed-in, caps unresolved → no cached value yet, loading
+          //    OR errored): HOLD OFF — don't fetch, don't mark — so an off-list
+          //    user makes zero `fulltext` calls until the gate is known. A later
+          //    resolve re-warms (the gate effect below); the next store emit also
+          //    retries it.
+          const caps = queryClient.getQueryData<Capabilities>(CAPABILITIES_QUERY_KEY);
+          if (caps && !canUseFullText(caps)) {
+            warmed.add(id);
+            gateSkipped.add(id);
+            return;
+          }
+          if (!caps && capsUnresolvedRef.current) return;
+          // Allowed → this id is no longer a gated skip.
+          gateSkipped.delete(id);
           // Truncated feed: also need the extracted reading body. Only mark
           // warmed on a SETTLED result — a transient `unreachable`, or a
           // retryable allowlist denial that a later allowlist change could flip,
@@ -125,7 +189,7 @@ export function useOfflineCacheLock(): void {
           if (ft && isFullTextSettled(ft)) warmed.add(id);
         });
     },
-    [ds, queryClient, warmed],
+    [ds, queryClient, warmed, gateSkipped],
   );
 
   // Lock/unlock cache entries as items enter/leave the offline buckets.
@@ -195,4 +259,18 @@ export function useOfflineCacheLock(): void {
     if (isRestoring || !online) return;
     for (const id of locks.keys()) warm(id);
   }, [online, isRestoring, warm, locks]);
+
+  // The reading-mode gate changed: capabilities resolved (unknown → allowed/
+  // denied) or membership flipped to family (denied → allowed). Re-warm locked
+  // items so the ones held off while 'unknown', or gate-skipped while 'denied',
+  // fetch their full body now. When the gate is 'allowed' we first clear the
+  // gate-skip marks so the top-of-warm `warmed.has` guard doesn't strand them.
+  useEffect(() => {
+    if (restoringRef.current || !onlineRef.current) return;
+    if (fullTextGate === 'allowed' && gateSkipped.size > 0) {
+      for (const id of gateSkipped) warmed.delete(id);
+      gateSkipped.clear();
+    }
+    for (const id of locks.keys()) warm(id);
+  }, [fullTextGate, warm, locks, warmed, gateSkipped]);
 }

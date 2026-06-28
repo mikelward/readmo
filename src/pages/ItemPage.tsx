@@ -8,6 +8,7 @@ import { useItemState } from '../hooks/useItemState';
 import { useWideViewport } from '../hooks/useWideViewport';
 import { useShareItem } from '../hooks/useShareItem';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
+import { useFullTextAllowed } from '../hooks/useCapabilities';
 import {
   articleSourceDomain,
   formatAge,
@@ -270,7 +271,14 @@ export function ItemPage() {
 
   const cachedFull = resolved?.item.fullContentHtml ?? null;
   const truncated = resolved ? looksTruncated(resolved.item) : false;
-  const wantFull = !!resolved && !cachedFull && online && (truncated || manualTrigger);
+  // Reading mode is allowlist-gated: when the allowlist is armed and this user
+  // isn't on it, don't call the (gated) fulltext function at all — they'd only
+  // get the silent feed-stub fallback, and skipping the call avoids the
+  // off-list request amplification (see useOfflineCacheLock). The server still
+  // enforces the gate; this is purely the client not asking.
+  const allowFull = useFullTextAllowed();
+  const wantFull =
+    !!resolved && !cachedFull && online && allowFull && (truncated || manualTrigger);
 
   const fullQuery = useQuery({
     queryKey: ['fulltext', id],
@@ -285,8 +293,17 @@ export function ItemPage() {
   // Lifted above menuItems so the overflow menu can offer "Show feed version"
   // whenever we're sitting in the reading view and a feed body exists to swap
   // back to. The mode bar used to carry this toggle; it's now menu-only.
-  const fetched = fullQuery.data;
-  const fullHtml = cachedFull ?? (fetched?.status === 'ok' ? fetched.contentHtml : null);
+  // Reading-mode access gate: when the caller may NOT use full text (armed
+  // allowlist, off-list), ignore any full body — including one already cached
+  // (a `['fulltext', id]` result from before the allowlist was armed, or before
+  // they were removed) — so they're limited to the feed version. `enabled: false`
+  // only stops *fetching*; React Query still hands back cached data, so the gate
+  // has to drop it here, not just at the query. (We ignore, not evict, so the
+  // body is instantly available again if membership flips back to family.)
+  const fetched = allowFull ? fullQuery.data : undefined;
+  const fullHtml = allowFull
+    ? (cachedFull ?? (fetched?.status === 'ok' ? fetched.contentHtml : null))
+    : null;
   // Whether the full body on show came from the bot-block fallback fetch, so the
   // reader can flag its provenance ("via fallback") next to the source. Only the
   // fetched body carries this — a `cachedFull` body read off the item has no
@@ -294,7 +311,8 @@ export function ItemPage() {
   // treated as a direct fetch.
   const fullViaFallback =
     !cachedFull && fetched?.status === 'ok' && fetched.viaFallback === true;
-  const defaultView: 'feed' | 'full' = cachedFull || fullReadyAtOpen ? 'full' : 'feed';
+  const defaultView: 'feed' | 'full' =
+    allowFull && (cachedFull || fullReadyAtOpen) ? 'full' : 'feed';
   const view = userView ?? defaultView;
   const showReading = view === 'full' && !!fullHtml;
 
@@ -484,7 +502,7 @@ export function ItemPage() {
   // A non-"ok" result (paywall/teaser/unreachable) — only worth surfacing once
   // we have nothing better than the feed body to show.
   const fullFailed = !fullHtml && fetched != null && fetched.status !== 'ok';
-  const canGetFull = !fullHtml && !fetchingFull && !wantFull && online;
+  const canGetFull = !fullHtml && !fetchingFull && !wantFull && online && allowFull;
 
   const toolbarProps = {
     item,

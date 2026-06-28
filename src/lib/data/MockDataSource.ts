@@ -16,6 +16,8 @@ import {
 } from './itemState';
 import type { FullTextResult } from '../fullText';
 import {
+  type AllowlistEntry,
+  type Capabilities,
   type DataSource,
   type DiscoveredFeed,
   type FeedListOptions,
@@ -52,6 +54,12 @@ export class MockDataSource implements DataSource {
   private subs = new Map<FeedId, Subscription>();
   private folders: Folder[] = [];
   private seq = 100;
+  /** In-memory trusted-user allowlist so the FAMILY chip and /admin are
+   * demoable with no backend. The demo user is the operator (admin) and is
+   * seeded onto the list, so they see the chip until they remove themselves in
+   * /admin. Tests override getCapabilities() to exercise the off-list paths. */
+  private readonly selfEmail = 'demo@readmo.app';
+  private allowlist = new Set<string>([this.selfEmail]);
   private readonly homeWindowMs: number;
   private readonly feedFloor: number;
 
@@ -547,6 +555,33 @@ export class MockDataSource implements DataSource {
       .filter(Boolean)
       .join('\n');
     return `<?xml version="1.0" encoding="UTF-8"?>\n<opml version="2.0">\n  <head><title>Readmo subscriptions</title></head>\n  <body>\n${outlines}\n  </body>\n</opml>\n`;
+  }
+
+  // --- Capabilities & admin (in-memory) -------------------------------------
+
+  async getCapabilities(): Promise<Capabilities> {
+    const armed = this.allowlist.size > 0;
+    return {
+      family: armed && this.allowlist.has(this.selfEmail),
+      admin: true, // the demo user is the operator in mock/dev
+      allowlistArmed: armed,
+    };
+  }
+
+  async listAllowlist(): Promise<AllowlistEntry[]> {
+    return [...this.allowlist].map((email) => ({
+      email,
+      addedBy: this.selfEmail,
+      createdAt: '2024-01-01T00:00:00.000Z',
+    }));
+  }
+
+  async addToAllowlist(email: string): Promise<void> {
+    this.allowlist.add(email.trim().toLowerCase());
+  }
+
+  async removeFromAllowlist(email: string): Promise<void> {
+    this.allowlist.delete(email.trim().toLowerCase());
   }
 }
 

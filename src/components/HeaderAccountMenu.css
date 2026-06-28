@@ -50,6 +50,23 @@
 .account-menu__name {
   font-weight: 700;
   font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Small pill shown next to the name when the signed-in user is on the
+ * trusted-user allowlist. Accent-on-tint, matching the design tokens. */
+.account-menu__badge {
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  color: var(--rm-accent);
+  background: var(--rm-bg);
+  border: 1px solid var(--rm-accent);
+  border-radius: 999px;
+  padding: 3px 7px;
 }
 
 .account-menu__email {
