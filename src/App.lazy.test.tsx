@@ -24,7 +24,7 @@ describe('lazy-loaded FeedsPage', () => {
 
     // ...then the real page mounts. The "Add a feed" URL field is unique to it.
     await waitFor(() => {
-      expect(screen.getByLabelText('Feed URL')).toBeInTheDocument();
+      expect(screen.getByLabelText('Feed name or URL')).toBeInTheDocument();
     });
     expect(screen.queryByText('loading-fallback')).not.toBeInTheDocument();
   });

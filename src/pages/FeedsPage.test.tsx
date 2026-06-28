@@ -144,7 +144,7 @@ class GatedFailSource extends MockDataSource {
 
 async function addFeed(url: string) {
   const user = userEvent.setup();
-  await user.type(screen.getByLabelText('Feed URL'), url);
+  await user.type(screen.getByLabelText('Feed name or URL'), url);
   await user.click(screen.getByRole('button', { name: /^Add$/ }));
 }
 
@@ -152,22 +152,19 @@ describe('FeedsPage — popular feed autocomplete', () => {
   it('shows matching suggestions as the user types', async () => {
     const user = userEvent.setup();
     renderWithProviders(<FeedsPage />);
-    await user.type(screen.getByLabelText('Feed URL'), 'bbc news');
+    await user.type(screen.getByLabelText('Feed name or URL'), 'bbc news');
     expect(await screen.findByRole('listbox')).toBeTruthy();
     expect(screen.getByText('BBC News')).toBeTruthy();
   });
 
-  it('shows no suggestions for empty input until the field is focused', async () => {
-    renderWithProviders(<FeedsPage />);
-    expect(screen.queryByRole('listbox')).toBeNull();
-  });
-
-  it('shows the recommended starter feeds when the empty field is focused', async () => {
+  it('shows the recommended feeds in the dropdown when the empty field is focused', async () => {
     const user = userEvent.setup();
     renderWithProviders(<FeedsPage />);
-    await user.click(screen.getByLabelText('Feed URL'));
+    // Nothing until the user interacts.
+    expect(screen.queryByRole('listbox')).toBeNull();
+    // Focusing the empty field offers the curated starter set as suggestions.
+    await user.click(screen.getByLabelText('Feed name or URL'));
     const listbox = await screen.findByRole('listbox');
-    // Exactly the curated starter set — no more, no less.
     const options = within(listbox).getAllByRole('option');
     expect(options).toHaveLength(RECOMMENDED_FEEDS.length);
     for (const feed of RECOMMENDED_FEEDS) {
@@ -175,18 +172,78 @@ describe('FeedsPage — popular feed autocomplete', () => {
     }
   });
 
-  it('subscribes directly when a recommended starter feed is picked', async () => {
+  it('replaces the recommended set with typed matches once the user types', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<FeedsPage />);
+    await user.type(screen.getByLabelText('Feed name or URL'), 'wsj');
+    const listbox = await screen.findByRole('listbox');
+    // The fuzzy (acronym) match takes over from the starter set.
+    expect(within(listbox).getByText('Wall Street Journal')).toBeTruthy();
+    // A recommended-only entry that doesn't match "wsj" is no longer shown.
+    expect(within(listbox).queryByText(RECOMMENDED_FEEDS[0].name)).toBeNull();
+  });
+
+  it('subscribes via a recommended suggestion picked from the focus dropdown', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const discoverSpy = vi.spyOn(source, 'discover');
+    const before = (await source.getSubscriptions()).length;
+    renderWithProviders(<FeedsPage />, { source });
+    const input = screen.getByLabelText('Feed name or URL') as HTMLInputElement;
+    // Focus → recommended dropdown → pick fills the feed URL → Add subscribes.
+    await user.click(input);
+    const listbox = await screen.findByRole('listbox');
+    await user.click(within(listbox).getByText(RECOMMENDED_FEEDS[0].name));
+    expect(input.value).toBe(RECOMMENDED_FEEDS[0].feedUrl);
+    await user.click(screen.getByRole('button', { name: /^Add$/ }));
+    await screen.findByText(`Subscribed to ${RECOMMENDED_FEEDS[0].name}`);
+    // Curated picks bypass discovery.
+    expect(discoverSpy).not.toHaveBeenCalled();
+    expect((await source.getSubscriptions()).length).toBe(before + 1);
+  });
+
+  it('uses the "Feed name or URL" placeholder on the Add-a-feed input', () => {
+    renderWithProviders(<FeedsPage />);
+    expect(screen.getByPlaceholderText('Feed name or URL')).toBeTruthy();
+  });
+
+  it('resolves a typed feed name to its catalog feed on Add (no dropdown pick)', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
     const discoverSpy = vi.spyOn(source, 'discover');
     renderWithProviders(<FeedsPage />, { source });
-    await user.click(screen.getByLabelText('Feed URL'));
-    const listbox = await screen.findByRole('listbox');
-    await user.click(within(listbox).getByText(RECOMMENDED_FEEDS[0].name));
+    // The field says it accepts a name, so typing "wsj" and pressing Add without
+    // picking a suggestion must resolve to Wall Street Journal, not be sent to
+    // discover() as a bogus URL.
+    await user.type(screen.getByLabelText('Feed name or URL'), 'wsj');
     await user.click(screen.getByRole('button', { name: /^Add$/ }));
-    await screen.findByText(`Subscribed to ${RECOMMENDED_FEEDS[0].name}`);
-    // Curated picks bypass discovery, like any other suggestion.
+    await screen.findByText('Subscribed to Wall Street Journal');
     expect(discoverSpy).not.toHaveBeenCalled();
+  });
+
+  it('resolves an exact dotted catalog name on Add (e.g. "The A.V. Club")', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const discoverSpy = vi.spyOn(source, 'discover');
+    renderWithProviders(<FeedsPage />, { source });
+    // A catalog name containing dots must resolve by exact name, not be sent to
+    // discovery as a URL just because it has a ".".
+    await user.type(screen.getByLabelText('Feed name or URL'), 'The A.V. Club');
+    await user.click(screen.getByRole('button', { name: /^Add$/ }));
+    await screen.findByText('Subscribed to The A.V. Club');
+    expect(discoverSpy).not.toHaveBeenCalled();
+  });
+
+  it('still sends a URL-shaped entry to discovery, not name resolution', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const discoverSpy = vi.spyOn(source, 'discover');
+    renderWithProviders(<FeedsPage />, { source });
+    // A dotted/host-shaped entry must go through discovery as before.
+    await user.type(screen.getByLabelText('Feed name or URL'), 'example.com/blog');
+    await user.click(screen.getByRole('button', { name: /^Add$/ }));
+    await screen.findByText(/^Subscribed to /);
+    expect(discoverSpy).toHaveBeenCalled();
   });
 
   it('shows the type-a-site/topic/country helper text under the Add-a-feed input', () => {
@@ -199,7 +256,7 @@ describe('FeedsPage — popular feed autocomplete', () => {
   it('matches a topic by category', async () => {
     const user = userEvent.setup();
     renderWithProviders(<FeedsPage />);
-    await user.type(screen.getByLabelText('Feed URL'), 'science');
+    await user.type(screen.getByLabelText('Feed name or URL'), 'science');
     const listbox = await screen.findByRole('listbox');
     // "science" appears in no Science-category feed's *name*, so a hit proves
     // the category field is being searched.
@@ -209,10 +266,18 @@ describe('FeedsPage — popular feed autocomplete', () => {
     expect(within(listbox).getByText(scienceFeed.name)).toBeTruthy();
   });
 
+  it('matches an acronym to a multi-word feed (WSJ → Wall Street Journal)', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<FeedsPage />);
+    await user.type(screen.getByLabelText('Feed name or URL'), 'WSJ');
+    const listbox = await screen.findByRole('listbox');
+    expect(within(listbox).getByText('Wall Street Journal')).toBeTruthy();
+  });
+
   it('matches a country code via the feed URL', async () => {
     const user = userEvent.setup();
     renderWithProviders(<FeedsPage />);
-    await user.type(screen.getByLabelText('Feed URL'), '.com.au');
+    await user.type(screen.getByLabelText('Feed name or URL'), '.com.au');
     const listbox = await screen.findByRole('listbox');
     // An Australian outlet whose name doesn't contain the code is found only
     // because its .com.au feed URL matches.
@@ -222,7 +287,7 @@ describe('FeedsPage — popular feed autocomplete', () => {
   it('fills the feed URL when a suggestion is clicked', async () => {
     const user = userEvent.setup();
     renderWithProviders(<FeedsPage />);
-    const input = screen.getByLabelText('Feed URL') as HTMLInputElement;
+    const input = screen.getByLabelText('Feed name or URL') as HTMLInputElement;
     await user.type(input, 'bbc news');
     const suggestion = await screen.findByText('BBC News');
     await user.click(suggestion);
@@ -234,7 +299,7 @@ describe('FeedsPage — popular feed autocomplete', () => {
   it('selects a suggestion with keyboard navigation', async () => {
     const user = userEvent.setup();
     renderWithProviders(<FeedsPage />);
-    const input = screen.getByLabelText('Feed URL') as HTMLInputElement;
+    const input = screen.getByLabelText('Feed name or URL') as HTMLInputElement;
     await user.type(input, 'bbc news');
     await screen.findByRole('listbox');
     await user.keyboard('{ArrowDown}{Enter}');
@@ -248,7 +313,7 @@ describe('FeedsPage — popular feed autocomplete', () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     const discoverSpy = vi.spyOn(source, 'discover');
     renderWithProviders(<FeedsPage />, { source });
-    const input = screen.getByLabelText('Feed URL') as HTMLInputElement;
+    const input = screen.getByLabelText('Feed name or URL') as HTMLInputElement;
     await user.type(input, 'bbc news');
     await user.click(await screen.findByText('BBC News'));
     await user.click(screen.getByRole('button', { name: /^Add$/ }));
@@ -260,7 +325,7 @@ describe('FeedsPage — popular feed autocomplete', () => {
     const user = userEvent.setup();
     const source = new RefreshFailSource(`test-${Math.random()}`);
     renderWithProviders(<FeedsPage />, { source });
-    const input = screen.getByLabelText('Feed URL') as HTMLInputElement;
+    const input = screen.getByLabelText('Feed name or URL') as HTMLInputElement;
     await user.type(input, 'bbc news');
     await user.click(await screen.findByText('BBC News'));
     await user.click(screen.getByRole('button', { name: /^Add$/ }));
@@ -286,7 +351,7 @@ describe('FeedsPage — popular feed autocomplete', () => {
     const source = new RealTitleSource(`test-${Math.random()}`);
     const setSpy = vi.spyOn(source, 'setTitleOverride');
     renderWithProviders(<FeedsPage />, { source });
-    const input = screen.getByLabelText('Feed URL') as HTMLInputElement;
+    const input = screen.getByLabelText('Feed name or URL') as HTMLInputElement;
     await user.type(input, 'the economist');
     await user.click(await screen.findByText('The Economist'));
     await user.click(screen.getByRole('button', { name: /^Add$/ }));
@@ -317,7 +382,7 @@ describe('FeedsPage — popular feed autocomplete', () => {
 
     // Re-add via the curated suggestion. subscribe() returns the existing
     // feed; the override must NOT be touched.
-    const input = screen.getByLabelText('Feed URL') as HTMLInputElement;
+    const input = screen.getByLabelText('Feed name or URL') as HTMLInputElement;
     await user.type(input, 'bbc news');
     const listbox = await screen.findByRole('listbox');
     await user.click(within(listbox).getByText('BBC News'));
@@ -334,7 +399,7 @@ describe('FeedsPage — popular feed autocomplete', () => {
   it('closes the dropdown on Escape', async () => {
     const user = userEvent.setup();
     renderWithProviders(<FeedsPage />);
-    await user.type(screen.getByLabelText('Feed URL'), 'bbc news');
+    await user.type(screen.getByLabelText('Feed name or URL'), 'bbc news');
     await screen.findByRole('listbox');
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('listbox')).toBeNull();
@@ -393,7 +458,7 @@ describe('FeedsPage — Add a feed', () => {
     await addFeed('r/programming');
 
     await screen.findByRole('group', { name: /choose feeds/i });
-    expect(screen.getByLabelText('Feed URL')).toHaveProperty(
+    expect(screen.getByLabelText('Feed name or URL')).toHaveProperty(
       'value',
       'https://www.reddit.com/r/programming',
     );
@@ -470,7 +535,7 @@ describe('FeedsPage — Add a feed', () => {
 
     // Typing a new query invalidates the picker (it was discovered for the old
     // URL); it must not linger with an enabled Subscribe button.
-    await user.type(screen.getByLabelText('Feed URL'), 'x');
+    await user.type(screen.getByLabelText('Feed name or URL'), 'x');
 
     expect(screen.queryByRole('group', { name: /choose feeds/i })).toBeNull();
   });
@@ -484,7 +549,7 @@ describe('FeedsPage — Add a feed', () => {
     await addFeed('https://news.example.com');
     // Edit the URL while discovery is still in flight — this supersedes the
     // request (bumps the discovery token).
-    await user.type(screen.getByLabelText('Feed URL'), 'x');
+    await user.type(screen.getByLabelText('Feed name or URL'), 'x');
 
     // Release the now-stale discovery and let its mutation settle.
     await act(async () => {
@@ -506,7 +571,7 @@ describe('FeedsPage — Add a feed', () => {
     // Submit site A; discovery blocks, then will reject.
     await addFeed('https://news.example.com');
     // Edit the URL while discovery is in flight, superseding the request.
-    await user.type(screen.getByLabelText('Feed URL'), 'x');
+    await user.type(screen.getByLabelText('Feed name or URL'), 'x');
 
     await act(async () => {
       source.release();
@@ -531,7 +596,7 @@ describe('FeedsPage — Add a feed', () => {
 
     // Submit a different URL that fails discovery; the site-A picker must not
     // linger (it would otherwise be subscribable under the new input).
-    const input = screen.getByLabelText('Feed URL') as HTMLInputElement;
+    const input = screen.getByLabelText('Feed name or URL') as HTMLInputElement;
     await user.clear(input);
     await user.type(input, 'https://dead.example.com');
     await user.click(screen.getByRole('button', { name: /^Add$/ }));
@@ -594,7 +659,7 @@ describe('FeedsPage — Add a feed', () => {
 
     // Subscribe is in flight (gated). The field stays editable, so the user
     // starts the next URL before it finishes.
-    const input = screen.getByLabelText('Feed URL') as HTMLInputElement;
+    const input = screen.getByLabelText('Feed name or URL') as HTMLInputElement;
     await user.clear(input);
     await user.type(input, 'https://other.example.com');
 
@@ -615,7 +680,7 @@ describe('FeedsPage — Add a feed', () => {
 
     // Select a curated suggestion and add it; subscribe resolves with a
     // fallback title, so onSuccess awaits the (gated) setTitleOverride.
-    const input = screen.getByLabelText('Feed URL') as HTMLInputElement;
+    const input = screen.getByLabelText('Feed name or URL') as HTMLInputElement;
     await user.type(input, 'bbc news');
     await user.click(await screen.findByText('BBC News'));
     await user.click(screen.getByRole('button', { name: /^Add$/ }));

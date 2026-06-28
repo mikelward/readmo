@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useId } from 'react';
 import { POPULAR_FEEDS, RECOMMENDED_FEEDS } from '../lib/popularFeeds';
+import { searchFeeds, resolveFeedByName } from '../lib/feedSearch';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import {
@@ -93,22 +94,14 @@ export function FeedsPage() {
   // as a title override if the server-side refresh fails to populate the feed.
   const selectedSuggestionName = useRef<string | null>(null);
 
-  // With text typed, filter the full catalog. With the box empty, fall back to
-  // a short curated set of freely-readable starter feeds so a new account with
-  // nothing subscribed has a one-tap way in when it focuses the field.
-  // Matching is substring on the name, the feed URL (so a country code like
-  // "au"/"uk" finds .com.au / .co.uk outlets), and the category (so a topic
-  // like "science" or "sports" surfaces that section) — the three things the
-  // helper text invites the user to type.
+  // Autocomplete content. While the user types, fuzzy-match the catalog (see
+  // searchFeeds): substring on the name, feed URL (so a country code like
+  // "au"/"uk" finds .com.au / .co.uk), or category (so a topic like "science"
+  // surfaces that section), plus acronym matching so "wsj" finds "Wall Street
+  // Journal". With the box empty, show the curated RECOMMENDED_FEEDS as the top
+  // suggestions, so focusing the field offers a starting point.
   const suggestions = feedUrl.trim().length > 0
-    ? POPULAR_FEEDS.filter((f) => {
-        const q = feedUrl.toLowerCase();
-        return (
-          f.name.toLowerCase().includes(q) ||
-          f.feedUrl.toLowerCase().includes(q) ||
-          f.category.toLowerCase().includes(q)
-        );
-      }).slice(0, 8)
+    ? searchFeeds(feedUrl, POPULAR_FEEDS).slice(0, 8)
     : RECOMMENDED_FEEDS;
   useDocumentTitle('Feeds · readmo');
 
@@ -292,13 +285,33 @@ export function FeedsPage() {
       return;
     }
     // Expand a known shorthand ("r/sub" → reddit.com; "youtube/<handle>" →
-    // youtube.com/@<handle>) before discovery; reflect it in the box so the
-    // user sees what's being added. The server derives the .rss feed form for
-    // Reddit and discovery picks up YouTube's <link rel="alternate"> from the
-    // channel page (SPEC.md "Feed discovery").
+    // youtube.com/@<handle>) before anything else; reflect it in the box so the
+    // user sees what's being added. A shorthand is an explicit "go fetch this"
+    // request, so it goes straight to discovery and skips name resolution (even
+    // though e.g. "r/programming" happens to substring-match a catalog feed's
+    // URL). The server derives the .rss feed form for Reddit and discovery picks
+    // up YouTube's <link rel="alternate"> from the channel page (SPEC.md "Feed
+    // discovery").
     const expanded = expandFeedShorthand(url);
-    if (expanded !== url) setFeedUrl(expanded);
-    discoverFeeds.mutate({ url: expanded, seq });
+    if (expanded !== url) {
+      setFeedUrl(expanded);
+      discoverFeeds.mutate({ url: expanded, seq });
+      return;
+    }
+    // The field accepts a feed *name*, not just a URL (placeholder "Feed name or
+    // URL"). If a typed entry resolves unambiguously to a catalog feed (exact
+    // name, or exactly one match — see resolveFeedByName), subscribe via the
+    // curated path instead of sending the raw name to discover() as a bogus URL.
+    // So "wsj", "Wall Street Journal", and dotted names like "The A.V. Club"
+    // work without picking from the dropdown; broad/ambiguous queries and real
+    // URLs fall through to discovery.
+    const nameMatch = resolveFeedByName(url, POPULAR_FEEDS);
+    if (nameMatch) {
+      selectedSuggestionName.current = nameMatch.name;
+      subscribeFeeds.mutate({ urls: [nameMatch.feedUrl], curatedName: nameMatch.name, seq });
+      return;
+    }
+    discoverFeeds.mutate({ url, seq });
   };
 
   const toggleCandidate = (url: string) => {
@@ -355,9 +368,9 @@ export function FeedsPage() {
               autoCorrect="off"
               spellCheck={false}
               className="search-input"
-              placeholder="Site or feed URL"
+              placeholder="Feed name or URL"
               value={feedUrl}
-              aria-label="Feed URL"
+              aria-label="Feed name or URL"
               aria-autocomplete="list"
               aria-controls={suggestionsId}
               aria-activedescendant={
