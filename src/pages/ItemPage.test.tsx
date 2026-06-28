@@ -127,7 +127,7 @@ describe('ItemPage (reader)', () => {
 });
 
 describe('ItemPage reading mode', () => {
-  it('shows the RSS body first and reveals the full article via "Keep reading"', async () => {
+  it('shows the RSS body first and reveals the full article via "Read more"', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
     renderReader(source);
@@ -136,7 +136,7 @@ describe('ItemPage reading mode', () => {
     // swapping it in automatically (no reflow mid-read).
     expect(await screen.findByText(/visible creases/)).toBeInTheDocument();
     const keepReading = await screen.findByTestId('reader-keep-reading');
-    expect(keepReading).toHaveTextContent('Keep reading');
+    expect(keepReading).toHaveTextContent('Read more');
     expect(screen.queryByText(/full article text/)).not.toBeInTheDocument();
 
     await user.click(keepReading);
@@ -167,7 +167,7 @@ describe('ItemPage reading mode', () => {
     // The original feed body is still present.
     expect(screen.getByText(/visible creases/)).toBeInTheDocument();
 
-    // Back to the reading view via Keep reading on the mode bar.
+    // Back to the reading view via Read more on the mode bar.
     await user.click(screen.getByTestId('reader-keep-reading'));
     expect(await screen.findByText(/full article text/)).toBeInTheDocument();
   });
@@ -548,7 +548,7 @@ describe('ItemPage reading mode', () => {
     expect(screen.getByText(/visible creases/)).toBeInTheDocument();
 
     await user.click(retry);
-    // Recovered: reveal the full body via Keep reading (no auto-swap).
+    // Recovered: reveal the full body via Read more (no auto-swap).
     await user.click(await screen.findByTestId('reader-keep-reading'));
     expect(await screen.findByText(/recovered full body/)).toBeInTheDocument();
   });
