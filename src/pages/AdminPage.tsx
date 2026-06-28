@@ -2,13 +2,17 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
+import { useAuth } from '../hooks/useAuth';
 import { useCapabilities, CAPABILITIES_QUERY_KEY } from '../hooks/useCapabilities';
 import { useToast } from '../hooks/useToast';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { ItemRowMenu, type ItemRowMenuItem } from '../components/ItemRowMenu';
+import { usePointerDevice } from '../hooks/usePointerDevice';
 import './AdminPage.css';
 
 const ALLOWLIST_KEY = ['admin-allowlist'] as const;
 const USERS_KEY = ['admin-users'] as const;
+const SIGNUPS_KEY = ['admin-signups'] as const;
 
 /** Operator-only page to manage the trusted-user allowlist (who gets reading
  * mode + Google News feeds, and the FAMILY chip). Gated on the `admin`
@@ -18,7 +22,13 @@ export function AdminPage() {
   const ds = useDataSource();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
-  const { admin } = useCapabilities();
+  const { admin, canManageUsers } = useCapabilities();
+  const { user } = useAuth();
+  const selfEmail = user?.email?.toLowerCase() ?? null;
+  // Pointer devices get the anchored popover; touch gets the bottom sheet (44px
+  // rows). ItemRowMenu picks the variant by whether it has an anchor, so we only
+  // hand it one on hover-capable devices.
+  const pointerDevice = usePointerDevice();
   const [email, setEmail] = useState('');
 
   const {
@@ -69,6 +79,43 @@ export function AdminPage() {
   // the allowlist (the same admin RPCs back both the list and the user toggle).
   const familyBusy = add.isPending || remove.isPending;
 
+  const block = useMutation({
+    mutationFn: ({ email: value, blocked }: { email: string; blocked: boolean }) =>
+      ds.setUserBlocked(value, blocked),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: USERS_KEY }),
+    onError: (err) =>
+      showToast({ message: 'Couldn’t update that account.', detail: String(err) }),
+  });
+
+  const del = useMutation({
+    mutationFn: (value: string) => ds.deleteUser(value),
+    // A deleted account also drops off the allowlist → refresh both lists.
+    onSuccess: invalidate,
+    onError: (err) =>
+      showToast({ message: 'Couldn’t delete that account.', detail: String(err) }),
+  });
+
+  // Global "allow new sign-ups" switch.
+  const {
+    data: signupsEnabled,
+    isLoading: signupsLoading,
+    isError: signupsError,
+    refetch: refetchSignups,
+  } = useQuery({
+    queryKey: SIGNUPS_KEY,
+    queryFn: () => ds.getSignupsEnabled(),
+    // Only read the switch once 0030 is deployed (its RPC exists).
+    enabled: admin && !!canManageUsers,
+  });
+  const signups = useMutation({
+    mutationFn: (enabled: boolean) => ds.setSignupsEnabled(enabled),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: SIGNUPS_KEY }),
+    onError: (err) =>
+      showToast({ message: 'Couldn’t change sign-ups.', detail: String(err) }),
+  });
+
   // Client-side sort/group of the registered-user list (per-device, ephemeral).
   const [sortBy, setSortBy] = useState<'email' | 'created'>('email');
   const [familyFirst, setFamilyFirst] = useState(false);
@@ -84,6 +131,55 @@ export function AdminPage() {
     // the chosen order within each group.
     return sorted.sort((a, b) => Number(b.family) - Number(a.family));
   }, [users, sortBy, familyFirst]);
+
+  // Per-user actions live behind a single row-level "Manage" menu (guardrail #2:
+  // one tap zone per row, not a row of three buttons). Track which row's menu is
+  // open and its trigger element (the menu anchors to it on pointer, falls back
+  // to a bottom sheet on touch — shared ItemRowMenu).
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
+  const closeMenu = () => {
+    setMenuFor(null);
+    setMenuAnchor(null);
+  };
+  const menuUser = menuFor
+    ? sortedUsers.find((u) => u.email === menuFor) ?? null
+    : null;
+  const menuItems: ItemRowMenuItem[] = [];
+  if (menuUser) {
+    const isSelf = selfEmail != null && menuUser.email === selfEmail;
+    menuItems.push({
+      key: 'family',
+      label: menuUser.family ? 'Remove from family' : 'Make family',
+      onSelect: () =>
+        menuUser.family
+          ? remove.mutate(menuUser.email)
+          : add.mutate(menuUser.email),
+    });
+    // Block/Delete only exist once 0030 is deployed, and the server refuses to
+    // target the calling admin — so omit them off an old backend or on self.
+    if (canManageUsers && !isSelf) {
+      menuItems.push({
+        key: 'block',
+        label: menuUser.blocked ? 'Unblock' : 'Block',
+        onSelect: () =>
+          block.mutate({ email: menuUser.email, blocked: !menuUser.blocked }),
+      });
+      menuItems.push({
+        key: 'delete',
+        label: 'Delete…',
+        onSelect: () => {
+          if (
+            window.confirm(
+              `Delete ${menuUser.email}? This removes their account and all their data. This can’t be undone.`,
+            )
+          ) {
+            del.mutate(menuUser.email);
+          }
+        },
+      });
+    }
+  }
 
   if (!admin) {
     return (
@@ -181,6 +277,37 @@ export function AdminPage() {
 
       <section className="settings__section" data-testid="admin-users">
         <h2 className="settings__heading">Registered users</h2>
+        {/* The sign-up switch and the per-row Block/Delete actions ride on
+            migration 0030's RPCs. The client auto-deploys ahead of migrations,
+            so hide them until `canManageUsers` confirms 0030 is live rather than
+            offer controls whose RPCs would 404. */}
+        {canManageUsers &&
+          (signupsLoading ? (
+            <p className="admin__empty">Loading…</p>
+          ) : signupsError ? (
+            // Don't paint a checked "on" switch when the read failed — the real
+            // value is unknown and may be off. Show a retry instead.
+            <p className="admin__empty">
+              Couldn’t load the sign-up setting.{' '}
+              <button
+                type="button"
+                className="admin__retry"
+                onClick={() => void refetchSignups()}
+              >
+                Retry
+              </button>
+            </p>
+          ) : (
+            <label className="admin__control admin__signups">
+              <input
+                type="checkbox"
+                checked={signupsEnabled ?? true}
+                disabled={signups.isPending}
+                onChange={(e) => signups.mutate(e.target.checked)}
+              />
+              Allow new sign-ups
+            </label>
+          ))}
         {usersLoading ? (
           <p className="admin__empty">Loading…</p>
         ) : usersError ? (
@@ -221,32 +348,49 @@ export function AdminPage() {
             </div>
             <ul className="admin__list">
               {sortedUsers.map((u) => (
-              <li key={u.email} className="admin__row">
-                <span className="admin__email">
-                  {u.email}
-                  {u.admin && <span className="admin__tag">Admin</span>}
-                  {u.family && (
-                    <span className="admin__tag admin__tag--family">Family</span>
-                  )}
-                </span>
-                <button
-                  type="button"
-                  className="admin__family-toggle"
-                  aria-label={
-                    u.family
-                      ? `Remove ${u.email} from family`
-                      : `Make ${u.email} family`
-                  }
-                  disabled={familyBusy}
-                  onClick={() =>
-                    u.family ? remove.mutate(u.email) : add.mutate(u.email)
-                  }
-                >
-                  {u.family ? 'Remove family' : 'Make family'}
-                </button>
-              </li>
+                <li key={u.email} className="admin__row admin__row--user">
+                  <span className="admin__email">
+                    {u.email}
+                    {u.admin && <span className="admin__tag">Admin</span>}
+                    {u.family && (
+                      <span className="admin__tag admin__tag--family">Family</span>
+                    )}
+                    {u.blocked && (
+                      <span className="admin__tag admin__tag--blocked">Blocked</span>
+                    )}
+                  </span>
+                  {/* One row action — a Manage menu holding family / block /
+                      delete — keeps the row at a single tap zone (guardrail #2). */}
+                  <button
+                    type="button"
+                    className="admin__manage"
+                    aria-haspopup="menu"
+                    aria-expanded={menuFor === u.email}
+                    aria-label={`Manage ${u.email}`}
+                    disabled={familyBusy || block.isPending || del.isPending}
+                    onClick={(e) => {
+                      if (menuFor === u.email) {
+                        closeMenu();
+                      } else {
+                        // Anchor only on pointer devices → touch falls back to
+                        // the 44px bottom sheet.
+                        setMenuAnchor(pointerDevice ? e.currentTarget : null);
+                        setMenuFor(u.email);
+                      }
+                    }}
+                  >
+                    ⋯
+                  </button>
+                </li>
               ))}
             </ul>
+            <ItemRowMenu
+              open={menuFor !== null}
+              title={menuFor ?? ''}
+              items={menuItems}
+              anchorEl={menuAnchor}
+              onClose={closeMenu}
+            />
           </>
         )}
       </section>

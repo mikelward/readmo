@@ -1364,13 +1364,21 @@ export class SupabaseDataSource implements DataSource {
     }
     // `get_capabilities` returns a single-row table → an array of one row.
     const row = (Array.isArray(data) ? data[0] : data) as
-      | { family?: boolean; admin?: boolean; allowlist_armed?: boolean }
+      | {
+          family?: boolean;
+          admin?: boolean;
+          allowlist_armed?: boolean;
+          can_manage_users?: boolean;
+        }
       | null
       | undefined;
     return {
       family: row?.family === true,
       admin: row?.admin === true,
       allowlistArmed: row?.allowlist_armed === true,
+      // Absent against a backend that predates 0030 → false, so /admin hides the
+      // block/delete/sign-up controls until their RPCs are deployed.
+      canManageUsers: row?.can_manage_users === true,
     };
   }
 
@@ -1414,6 +1422,7 @@ export class SupabaseDataSource implements DataSource {
       last_sign_in_at: string | null;
       family: boolean;
       admin: boolean;
+      blocked?: boolean;
     }>;
     return rows.map((r) => ({
       email: r.email,
@@ -1421,6 +1430,41 @@ export class SupabaseDataSource implements DataSource {
       lastSignInAt: r.last_sign_in_at ?? null,
       family: r.family === true,
       admin: r.admin === true,
+      // `blocked` is absent against a backend that predates 0030 — treat the
+      // missing column as "not blocked" so an old backend renders fine.
+      blocked: r.blocked === true,
     }));
+  }
+
+  async deleteUser(email: string): Promise<void> {
+    const { error } = await this.sb.rpc('admin_delete_user', { p_email: email });
+    if (error) throw error instanceof Error ? error : new Error(String(error));
+  }
+
+  async setUserBlocked(email: string, blocked: boolean): Promise<void> {
+    const { error } = await this.sb.rpc('admin_set_user_blocked', {
+      p_email: email,
+      p_blocked: blocked,
+    });
+    if (error) throw error instanceof Error ? error : new Error(String(error));
+  }
+
+  async getSignupsEnabled(): Promise<boolean> {
+    const { data, error } = await this.sb.rpc('get_signups_enabled');
+    if (error) {
+      // Feature-detect a backend that predates the switch (PostgREST PGRST202)
+      // → report sign-ups on, the default-open state (guardrail #11). Other
+      // errors propagate so the toggle can surface a failure.
+      if ((error as { code?: string }).code === 'PGRST202') return true;
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+    return data === true;
+  }
+
+  async setSignupsEnabled(enabled: boolean): Promise<void> {
+    const { error } = await this.sb.rpc('set_signups_enabled', {
+      p_enabled: enabled,
+    });
+    if (error) throw error instanceof Error ? error : new Error(String(error));
   }
 }

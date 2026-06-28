@@ -22,6 +22,13 @@ export interface Capabilities {
   /** The allowlist has at least one entry, so the gates are enforced. When
    * false the gates are open to all; `canUseFullText = !allowlistArmed || family`. */
   allowlistArmed: boolean;
+  /** The backend has migration 0030's user-management RPCs (block / delete /
+   * disable-signups) deployed. The frontend auto-deploys ahead of migrations,
+   * so a new client can hit a backend that predates 0030; this is absent there,
+   * letting `/admin` hide those controls until their RPCs exist rather than
+   * offer buttons that only error. Optional so the default (undefined → falsy)
+   * is the safe "not available yet" state. */
+  canManageUsers?: boolean;
 }
 
 /** One allowlist entry as shown on `/admin` (admin-only read). */
@@ -41,6 +48,9 @@ export interface RegisteredUser {
   family: boolean;
   /** An operator (in `admin_users`; may reach `/admin`). */
   admin: boolean;
+  /** Suspended — `auth.users.banned_until` is in the future, so the account
+   * can't sign in until unblocked. Distinct from deleted (the row is gone). */
+  blocked: boolean;
 }
 
 export interface Page<T> {
@@ -218,6 +228,19 @@ export interface DataSource {
    * Feature-detects a backend that predates the RPC and returns `[]` so an old
    * backend just shows an empty list rather than crashing (guardrail #11). */
   listUsers(): Promise<RegisteredUser[]>;
+  /** Admin-only: permanently delete an account by email (cascades the user's
+   * reader data; drops them from the allowlist + admin list). The server
+   * refuses to delete the calling admin. */
+  deleteUser(email: string): Promise<void>;
+  /** Admin-only: suspend (`blocked = true`) or restore an account by email.
+   * The server refuses to block the calling admin. */
+  setUserBlocked(email: string, blocked: boolean): Promise<void>;
+  /** Admin-only: whether new sign-ups are currently allowed. Feature-detects a
+   * backend that predates the switch and returns `true` (the default-open
+   * state) so an old backend just reports sign-ups on (guardrail #11). */
+  getSignupsEnabled(): Promise<boolean>;
+  /** Admin-only: turn new account creation on or off globally. */
+  setSignupsEnabled(enabled: boolean): Promise<void>;
 }
 
 /** Items already cached on this device (offline view); resolved from the

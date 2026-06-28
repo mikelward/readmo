@@ -84,6 +84,64 @@
   background: var(--rm-accent);
 }
 
+.admin__tag--blocked {
+  background: var(--rm-danger, var(--rm-meta));
+}
+
+/* A registered-user row carries several actions; let the email line and the
+   action buttons wrap onto separate lines on narrow screens instead of
+   crushing the 44px tap targets together. */
+.admin__row--user {
+  flex-wrap: wrap;
+}
+
+.admin__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* The global sign-ups switch sits on its own line under the heading. */
+.admin__signups {
+  display: flex;
+}
+
+/* Single per-row action: the "Manage" (⋯) menu trigger. Square 44px tap target
+   (guardrail #2), so the row stays at one tap zone. */
+.admin__manage {
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: var(--rm-tap);
+  height: var(--rm-tap);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid var(--rm-border);
+  border-radius: var(--rm-radius);
+  color: var(--rm-text);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.admin__manage:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .admin__manage:hover:not(:disabled) {
+    background: var(--rm-bg);
+  }
+}
+
+.admin__manage:active:not(:disabled) {
+  background: var(--rm-bg);
+}
+
 /* Promote/demote a user to/from family. Accent (not danger) — it's reversible. */
 .admin__family-toggle {
   flex: 0 0 auto;
