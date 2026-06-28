@@ -520,7 +520,7 @@ straight to the culprit. The endpoint is read-only and service-role only.
 ## 13. Trusted-user allowlist & admins
 
 Reading-mode full text and Google News feeds are gated on a **trusted-user
-allowlist** that lives in the Postgres `allowlist` table (migration `0027`). It
+allowlist** that lives in the Postgres `allowlist` table (migration `0028`). It
 supersedes the old `READMO_ALLOWLIST` env var — if you ever set that secret you
 can now unset it (`supabase secrets unset READMO_ALLOWLIST`); the gate functions
 read the table (and, transitionally, still honor the secret until you unset it).
