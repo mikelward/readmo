@@ -23,8 +23,9 @@ const LIBRARY_LINKS = [
 /** Navigation drawer — Home, Library, Feeds (with an edit affordance linking to
  * the Feeds management page), an Appearance section with the Dark/Light mode
  * and Text size pickers (the most-changed settings, one tap from anywhere), and
- * an App section with Settings and About. The remaining appearance controls
- * (color theme, font) live in Settings; Debug is reached from the About page. */
+ * an App section with Settings, About, and Legal. The remaining appearance
+ * controls (color theme, font) live in Settings; Debug is reached from the
+ * About page. */
 export function AppDrawer({ open, onClose }: Props) {
   const ds = useDataSource();
 
@@ -140,6 +141,14 @@ export function AppDrawer({ open, onClose }: Props) {
             }
           >
             About
+          </NavLink>
+          <NavLink
+            to="/legal"
+            className={({ isActive }) =>
+              'app-drawer__link' + (isActive ? ' app-drawer__link--active' : '')
+            }
+          >
+            Legal
           </NavLink>
         </div>
 

@@ -214,6 +214,9 @@ export function SettingsPage() {
           <Link className="settings__btn" to="/about">
             About
           </Link>
+          <Link className="settings__btn" to="/legal">
+            Legal
+          </Link>
         </div>
       </section>
     </div>
