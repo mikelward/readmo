@@ -3164,6 +3164,111 @@ describe('ItemList', () => {
       expect(fetchFeedPage).toHaveBeenCalledWith('A', '5');
     });
 
+    it('marking one row Done in a windowed section shrinks it without refilling or reordering (group-by-feed)', async () => {
+      // Reported regression: in group-by-feed, with a few rows of a section and
+      // the following sections on screen, marking ONE row Done made the section
+      // "recalculate" — a fresh row sliding up to replace the dismissed one (or
+      // the survivors reordering) — instead of the section simply shrinking and
+      // handing its freed space to the content below it.
+      //
+      // The per-feed sticky display window (`displayedByFeed`) is what holds a
+      // section to the rows the reader opted into. A Done flip drops the row
+      // from `visibleItems`; the post-Done feed refetch answers with the next
+      // top-N (the dismissed row gone, a fresh row promoted into its slot), and
+      // that fresh row must stay GATED — surfaced only by More/pull-to-refresh,
+      // never auto-slotted in. So the section goes from N to N-1, the survivors
+      // keep their order, and the following section is untouched.
+      const { source, mk } = await makeRows();
+      const K = 3;
+      // Feed A opens windowed to A0-A2 with an overfetched probe (A3); feed B
+      // follows so we can assert the next section never moves.
+      let basePage = [
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+        mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
+      ];
+      // The post-Done refetch is held open behind a gate the test releases, so we
+      // can assert the no-refill contract AFTER that page is committed to the DOM
+      // — not merely after the local Done flip (which already removes A-1 on its
+      // own). Without this, the assertion could run against the immediate local
+      // state and pass without ever exercising the post-refetch path the sticky
+      // window actually guards (the refetch is where a refill would slot A-4 in).
+      let releaseRefetch: (() => void) | null = null;
+      let calls = 0;
+      const fetchPage = vi.fn(() => {
+        calls += 1;
+        if (calls === 1) return Promise.resolve({ items: basePage, nextCursor: null });
+        return new Promise<{ items: FeedItem[]; nextCursor: string | null }>(
+          (resolve) => {
+            releaseRefetch = () => resolve({ items: basePage, nextCursor: null });
+          },
+        );
+      });
+      const fetchFeedPage = vi.fn(() =>
+        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
+      );
+      const { container } = renderWithProviders(
+        <ItemList
+          viewKey={`psm-single-done-${viewKeySeq++}`}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+          groupByFeed
+          fetchFeedPage={fetchFeedPage}
+          perFeedLimit={K}
+        />,
+        { source },
+      );
+      await screen.findAllByTestId('item-row');
+      const idsOf = () =>
+        [...container.querySelectorAll('[data-item-id]')].map((el) =>
+          el.getAttribute('data-item-id'),
+        );
+      // Section A opens windowed to A0-A2 (probe A3 not painted); B shows in full.
+      expect(idsOf()).toEqual(['A-0', 'A-1', 'A-2', 'B-0', 'B-1']);
+
+      // Server's post-Done page: A's window with A-1 gone and the next row (A-4)
+      // promoted into the freed slot — exactly the page a refill regression would
+      // surface — PLUS a brand-new feed C (its first item just polled in). C-0
+      // exists ONLY in this second page, so it's a refetch-only marker: its
+      // appearance proves the resolved page actually committed to the DOM, rather
+      // than the assertion racing the identical local-hide state (no-refill looks
+      // the same before and after the refetch, which is the whole point).
+      basePage = [
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3), mk('A', 'Feed A', 4),
+        mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
+        mk('C', 'Feed C', 0),
+      ];
+
+      // The reader marks the middle visible row Done — the single-dismiss store
+      // path every row-level Done action funnels through (row menu, Done button,
+      // the `d` shortcut, swipe-right). It drops from the rendered list at once,
+      // and the mounted useFeedInvalidation kicks off the (gated) post-Done
+      // refetch.
+      act(() => {
+        source.stateStore.hide('A-1');
+      });
+      await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+      // Local Done state, refetch still in flight: A-1 already gone, and the new
+      // feed C has NOT appeared yet (it lives only in the unresolved page).
+      expect(idsOf()).toEqual(['A-0', 'A-2', 'B-0', 'B-1']);
+
+      // Release the refetch and wait on the refetch-only marker (C-0) so the next
+      // assertion runs strictly AFTER the second page committed — the very moment
+      // a refill regression would slot A-3/A-4 into A's window.
+      await act(async () => {
+        releaseRefetch?.();
+      });
+      await screen.findByText('Feed C 0');
+
+      // Second page committed: A shrank by exactly one and did NOT refill — the
+      // promoted A-3/A-4 stay gated — the survivors keep their order, feed B never
+      // moved, and only the genuinely-new feed C surfaced.
+      expect(idsOf()).toEqual(['A-0', 'A-2', 'B-0', 'B-1', 'C-0']);
+      // …and A-4 is still reachable on demand — A keeps offering More.
+      expect(
+        screen.getByTestId('group-more').getAttribute('data-feed-more'),
+      ).toBe('A');
+    });
+
     it("shrinks a section's next-More cursor when an extra-loaded row is Done on another device", async () => {
       // Regression: the section's next-More cursor counts how many already-seen
       // rows the server still carries (the offset for the next batch). A cached
