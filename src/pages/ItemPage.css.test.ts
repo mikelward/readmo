@@ -86,6 +86,32 @@ describe('reader toolbar positioning contract', () => {
   });
 });
 
+describe('reader toolbar feed-name link', () => {
+  // The feed name beside the leading button is an interactive link, so it must
+  // clear the 44px touch floor (guardrail #2) like the adjacent toolbar buttons
+  // — not shrink to a thin text-height strip. The inner text span carries the
+  // ellipsis truncation (text-overflow doesn't apply to the flex container).
+  it('gives the link a full --rm-tap touch height', () => {
+    const link = declarationsFor('.reader__feedname');
+    expect(link['min-height']).toBe('var(--rm-tap)');
+    expect(link.display).toBe('flex');
+  });
+
+  it('truncates the feed name on the inner text span', () => {
+    const text = declarationsFor('.reader__feedname-text');
+    expect(text['text-overflow']).toBe('ellipsis');
+    expect(text.overflow).toBe('hidden');
+    expect(text['white-space']).toBe('nowrap');
+  });
+
+  // Guardrail #2: every tap zone needs a pressed state. The `:active` rule must
+  // stay outside the hover media query so the confirmation fires on touch (a
+  // touch has no hover) before the link routes away.
+  it('gives the link a pressed (:active) state that fires on touch', () => {
+    expect(declarationsFor('.reader__feedname:active').background).toBeTruthy();
+  });
+});
+
 describe('reader body typography contract', () => {
   // SPEC.md "Reader view → Body": long-form article copy is set one step
   // larger and denser than newshacker's 15px comment text. Sized in `rem`

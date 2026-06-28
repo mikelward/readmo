@@ -61,11 +61,51 @@
   flex: 0 0 auto;
 }
 
+/* Feed name beside the leading button, linking back to the feed. Grows to fill
+   the space between that button and the action cluster. Full --rm-tap height so
+   the link clears the 44px touch floor like the adjacent toolbar buttons (the
+   text alone would be a thin strip); the inner span carries the truncation
+   (text-overflow doesn't apply to the flex container itself). */
+.reader__feedname {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: var(--rm-tap);
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--rm-accent);
+  text-decoration: none;
+}
+
+.reader__feedname-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Pressed-state on this tap zone (guardrail #2). `:active` stays OUTSIDE the
+   hover media query so the accent-tint confirmation fires on touch before the
+   route changes; the neutral `:hover` sits inside it to avoid the sticky-hover
+   smear on touch devices (same shape as `.reader__action`). */
+.reader__feedname:active {
+  background: color-mix(in srgb, var(--rm-accent) 14%, transparent);
+}
+
+@media (hover: hover) {
+  .reader__feedname:hover {
+    background: var(--rm-bg);
+  }
+}
+
 .reader__actions {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   justify-content: flex-end;
 }
 

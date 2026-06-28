@@ -1588,6 +1588,13 @@ opened) → **Done** (✓) → **Pin/Unpin** (📌) → **More ⋮**. On wide vi
 the overflow. The overflow ⋮ → Pin → Done cluster at the right matches the
 other toolbars in the app. (No Upvote — RSS has no votes.)
 
+- **Feed name** sits immediately right of the leading button (Back on the top
+  bar, Back to top on the bottom bar), linking to `/feed/:feedId` — the same
+  source name and target as the header, repeated on both bars so "which feed is
+  this?" stays answerable while reading (the top bar is sticky) and at the
+  article's foot. It grows to fill the gap before the action cluster and
+  **truncates with an ellipsis** so a long title can't push the actions off the
+  bar. Not a new tap zone on the row — it's reader chrome, not the feed list.
 - **Done** also unpins and **navigates back** (the "I'm finished, move on"
   gesture); **Unmark done** does not navigate. Same as newshacker.
 - Bottom bar swaps the primary slot to **Back to top** (neutral, stretched) so
