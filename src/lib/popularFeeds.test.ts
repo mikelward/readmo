@@ -38,9 +38,16 @@ describe('POPULAR_FEEDS', () => {
       'https://www.abc.net.au/news/feed/45910/rss.xml',
     );
     expect(byName.get('SBS News')).toBe('https://www.sbs.com.au/news/feed');
-    // Sky News Australia has no native feed; it rides a Google News query feed.
-    const sky = byName.get('Sky News Australia');
-    expect(sky).toBeDefined();
-    expect(new URL(sky!).hostname).toBe('news.google.com');
+  });
+
+  it('contains no Google News feeds (a curated pick bypasses the discover gate)', () => {
+    // Curated suggestions are submitted straight to subscribe(), skipping the
+    // discover Edge Function — so they bypass its Google News allowlist gate.
+    // Keeping news.google.com out of the catalog keeps that gate effective.
+    for (const feed of POPULAR_FEEDS) {
+      expect(new URL(feed.feedUrl).hostname.replace(/^www\./, '')).not.toBe(
+        'news.google.com',
+      );
+    }
   });
 });

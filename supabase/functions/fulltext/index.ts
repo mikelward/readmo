@@ -11,6 +11,12 @@
 //     0002): a user who can't see the item gets a 404 — they cannot trigger a
 //     fetch for an article they aren't entitled to. The service-role client does
 //     the cached write (client item writes are revoked; 0002/0009).
+//   - Reading mode is the highest copyright-exposure surface (it fetches beyond
+//     the feed AND stores a shared copy), so the optional READMO_ALLOWLIST secret
+//     restricts who may use it (the shared trusted-user list; see
+//     _shared/allowlist.ts). Unset → open to all; once armed, a non-listed caller
+//     gets the silent `empty` fallback before any item lookup or cache read, so
+//     they never receive full content.
 //   - The article fetch is a brand-new publisher fetch of a user-influenced URL,
 //     so it goes through safeFetch (SSRF-hardened: scheme allow-list, resolved-IP
 //     denylist incl. metadata, redirect re-validation, timeout + size cap, no
@@ -48,6 +54,7 @@ import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
 import { looksTokenized, redactUrl } from '../_shared/urlSafety.ts';
 import { corsHeaders, preflight } from '../_shared/cors.ts';
+import { parseAllowlist, isAllowed } from '../_shared/allowlist.ts';
 
 const JINA_MAX_BYTES = 4 * 1024 * 1024; // 4 MiB
 const FETCH_MAX_BYTES = 8 * 1024 * 1024; // 8 MiB — article pages can be large
@@ -93,6 +100,33 @@ async function handle(req: Request): Promise<Response> {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     { auth: { autoRefreshToken: false, persistSession: false } },
   );
+
+  // Reading-mode allowlist (guardrail #6's content-exposure cousin): full text
+  // both fetches beyond the feed AND stores a shared copy, so the operator can
+  // restrict it to themselves/family via READMO_ALLOWLIST (the shared trusted-
+  // user list — see _shared/allowlist.ts). Checked BEFORE the item lookup and
+  // the cache-hit return, so a non-allowlisted caller never receives full
+  // content — cached or fresh. An unset secret leaves the feature open to all
+  // (the deploy is a no-op until armed). A blocked caller gets the `empty`
+  // outcome, which the reader renders silently as the feed body (SPEC
+  // "Full-text reading mode").
+  const allowlist = parseAllowlist(Deno.env.get('READMO_ALLOWLIST'));
+  if (allowlist.size > 0) {
+    const { data: auth, error: authError } = await userClient.auth.getUser();
+    if (authError || !auth?.user) {
+      // A transient auth lookup failure must NOT be cached as the terminal
+      // `empty` outcome (fullTextStaleTime treats `empty` as non-retryable),
+      // or an allowlisted caller would be stuck on the feed body until the
+      // local query cache clears. Report the retryable `unreachable` instead;
+      // only a CONFIRMED non-allowlisted user (below) gets `empty`.
+      console.warn('fulltext: auth lookup failed — retryable unreachable:', authError);
+      return json({ status: 'unreachable', contentHtml: null });
+    }
+    if (!isAllowed({ id: auth.user.id, email: auth.user.email }, allowlist)) {
+      console.log('fulltext: caller not on READMO_ALLOWLIST — feed-stub fallback');
+      return json({ status: 'empty', contentHtml: null });
+    }
+  }
 
   // RLS-scoped lookup: only resolves if the caller may see this item.
   const { data: item, error } = await userClient
