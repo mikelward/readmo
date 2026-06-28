@@ -1086,6 +1086,74 @@ describe('ItemList', () => {
     await waitFor(() => expect(body.style.minHeight).toBe(''));
   });
 
+  it('opts out of scroll anchoring when a single row is marked Done, so the scroll position and the rows above hold', async () => {
+    // Regression: marking ONE visible article Done (row menu Done, the Done
+    // button, the `d` shortcut, or swipe-right — all route through store.hide)
+    // drops that row from the rendered list. The browser's scroll anchoring
+    // would react by rewinding window.scrollY to keep a row below the removed
+    // one fixed — moving the scroll position and shifting every row above. The
+    // single-dismiss path now takes the same anchor opt-out (+ height freeze)
+    // the Sweep uses, scoped to the frame the row leaves the DOM, so the offset
+    // holds exactly and only the rows below the dismissed one slide up.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems();
+
+    let release: (() => void) | null = null;
+    let callCount = 0;
+    const fetchPage = vi.fn(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({ items: seed.items, nextCursor: null });
+      }
+      // Hold the post-dismiss refetch open so isRefreshing stays true while we
+      // read the lock.
+      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>(
+        (resolve) => {
+          release = () => resolve({ items: seed.items, nextCursor: null });
+        },
+      );
+    });
+
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`single-done-anchor-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    const rowsBefore = await screen.findAllByTestId('item-row');
+    const firstId = rowsBefore[0].closest('li')!.getAttribute('data-item-id')!;
+
+    const body = screen.getByTestId('item-list-body');
+    Object.defineProperty(body, 'offsetHeight', { value: 1000, configurable: true });
+    const anchorWrites = recordOverflowAnchorWrites(body);
+
+    // Mark the first (visible) row Done — the single-dismiss store path every
+    // row-level Done action funnels through.
+    act(() => {
+      source.stateStore.hide(firstId);
+    });
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+
+    // The body was opted out of scroll anchoring while the row left the DOM, so
+    // its removal couldn't rewind window.scrollY — and the height was frozen so
+    // the shrinking document can't be clamped toward the top either.
+    expect(anchorWrites).toContain('none');
+    expect(body.style.minHeight).toBe('1000px');
+    // The opt-out is dropped a frame after the removal, not held for the whole
+    // refetch — anchoring is back on by the time effects flush.
+    expect(body.style.overflowAnchor).toBe('');
+    // Sanity: the dismissed row really did leave the rendered list.
+    expect(
+      container.querySelector(`[data-item-id="${firstId}"]`),
+    ).toBeNull();
+
+    // Releasing the held refetch settles isRefreshing and frees the height lock.
+    act(() => release?.());
+    await waitFor(() => expect(body.style.minHeight).toBe(''));
+  });
+
   it('opts out of scroll anchoring even when a background refresh already holds the height lock', async () => {
     // Regression (Codex review on #226): if a pin/dismiss/auto-hide refresh is
     // already in flight when the reader sweeps, the general layout-effect path
