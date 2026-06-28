@@ -7,6 +7,12 @@
 // offered. Discovery is the highest-risk fetch (brand-new user-supplied URL),
 // so EVERY outbound request goes through safeFetch. SPEC.md "Feed discovery".
 //
+// Deep-link fallback: a pasted article rarely advertises the site's feed in its
+// own <head>, so when the page yields nothing we re-probe the site home page.
+// Last-resort fallback: if neither advertises a feed, we offer a Google News
+// `site:<domain>` RSS search so the reader still gets *something*. The
+// publisher's own feed always wins when one exists.
+//
 // Bot-blocking fallback: if the direct fetch returns 403 (Cloudflare etc.),
 // we retry via Jina Reader (r.jina.ai) which uses a headless browser. Jina
 // is a fixed trusted host — the user-supplied URL only appears in the path,
@@ -18,7 +24,13 @@
 // Deno resolves bare specifiers via ../import_map.json.
 
 // @ts-nocheck — runs under Deno, not node/tsc.
-import { discoverFromHtml, redditFeedFor, type FeedCandidate } from '../_shared/discover.ts';
+import {
+  discoverFromHtml,
+  googleNewsFeedFor,
+  homePageUrl,
+  redditFeedFor,
+  type FeedCandidate,
+} from '../_shared/discover.ts';
 import { parseFeed } from '../_shared/parser.ts';
 import { safeFetch, SsrfError } from '../_shared/ssrf.ts';
 import { corsHeaders, preflight } from '../_shared/cors.ts';
@@ -100,8 +112,52 @@ Deno.serve(async (req: Request) => {
     if (targetCode) return feedErrorResponse(targetCode);
 
     // Otherwise treat it as HTML and probe each candidate.
-    const result = await probeHtml(body, res.url);
+    let result = await probeHtml(body, res.url);
     console.log(`discover: HTML path — ${result.validated.length} candidate(s) validated`);
+
+    // Deep-link fallback: a pasted article (e.g. .../news/123/story-slug)
+    // usually doesn't advertise the site's feed in its own <head>, but the home
+    // page almost always does. Re-probe the origin root before giving up. Gated
+    // on `!candidateFail` for the same reason as the Google News block below:
+    // when the page *advertises* a feed that's gated/dead/5xx, surface that
+    // specific reason rather than masking it with the site's generic home feed
+    // (SPEC.md "discovery reports *why* a URL yields no feed").
+    if (result.validated.length === 0 && !result.candidateFail) {
+      const home = homePageUrl(res.url);
+      if (home) {
+        console.log(`discover: no feed on page — probing home page ${redactUrl(home)}`);
+        const homeResult = await fetchAndProbe(home);
+        if (homeResult) {
+          result = {
+            validated: homeResult.validated,
+            candidateFail: mergeFail(result.candidateFail, homeResult.candidateFail),
+          };
+          console.log(`discover: home page — ${result.validated.length} candidate(s) validated`);
+        }
+      }
+    }
+
+    // Last-resort fallback: the page advertises NO feed at all (none on the
+    // page, none on its home page), so offer a Google News `site:` search feed
+    // of the publisher's recent articles — better than "no feed found". Gated on
+    // `!candidateFail`: when an *advertised* feed exists but is gated/dead/5xx we
+    // surface that specific reason below instead of silently diverting the reader
+    // to a Google News search (SPEC.md "discovery reports *why* a URL yields no
+    // feed"). The publisher's own feed always wins.
+    if (result.validated.length === 0 && !result.candidateFail) {
+      const gnews = googleNewsFeedFor(res.url);
+      if (gnews) {
+        console.log(`discover: falling back to Google News for ${redactUrl(res.url)}`);
+        const { feed } = await tryParse(gnews);
+        // Require a non-empty sample so we don't subscribe the reader to a feed
+        // that's empty for this domain (Google indexes nothing for it).
+        if (feed && feed.sample.length > 0) {
+          console.log('discover: Google News feed validated');
+          return json({ candidates: [feed] });
+        }
+      }
+    }
+
     if (result.validated.length === 0 && result.candidateFail) {
       return feedErrorResponse(result.candidateFail);
     }
@@ -141,6 +197,21 @@ async function probeHtml(html: string, baseUrl: string) {
     }
   }
   return { validated, candidateFail };
+}
+
+/** Fetch a URL through the SSRF-hardened path and probe its HTML for feed
+ * candidates. Returns null on a non-2xx response or any fetch failure — the
+ * caller treats that as "no extra candidates" and falls through. Used by the
+ * deep-link home-page fallback. */
+async function fetchAndProbe(url: string) {
+  try {
+    const res = await safeFetch(url, { timeoutMs: 10_000, maxBytes: 8 * 1024 * 1024 });
+    if (res.status >= 400) return null;
+    const body = new TextDecoder().decode(res.body);
+    return await probeHtml(body, res.url);
+  } catch {
+    return null;
+  }
 }
 
 const JINA_MAX_BYTES = 4 * 1024 * 1024; // 4 MiB — enough for any HTML head

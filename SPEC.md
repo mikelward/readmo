@@ -516,6 +516,28 @@ folders       (user_id FK, name, sort)
   curated autocomplete suggestions bypass discovery entirely as before. The
   picker only surfaces the sections a site advertises on the submitted page; it
   does not crawl the site for sections that page doesn't link.
+- **Deep-link fallback: pasting an article URL still finds the site's feed.** A
+  pasted article (e.g. a Sky Sports match report deep in `/football/news/…`)
+  usually doesn't advertise the site's feed in its own `<head>`, so when the
+  submitted page advertises **no feed of its own**, discovery re-probes the
+  **site home page** (the origin root) — which almost always does carry the
+  `<link rel="alternate">` tags — before reporting failure. Skipped when the
+  submitted URL is already the root, and skipped when the page *did* advertise a
+  feed that's merely gated/dead/unreachable (that specific reason is surfaced
+  instead — see below — rather than masked by the site's generic home feed).
+  This is one extra fetch only on the otherwise-empty path.
+- **Last-resort fallback: a Google News feed when the publisher advertises
+  none.** If neither the pasted page nor the site home page yields a real feed,
+  discovery offers a **Google News `site:<domain>` RSS search** — a
+  continuously-updated feed of that publisher's recent articles, assembled by
+  Google rather than the publisher — so the reader still gets *something* rather
+  than "no feed found". The publisher's own feed always wins when one exists;
+  this fires only when the page advertises **no feed at all** and only when the
+  search actually returns recent items for the domain. When a page *does*
+  advertise a feed that's gated/dead/unreachable, that specific reason
+  (`auth`/`not-found`/`unreachable`, below) is surfaced instead — Google News
+  does not override it. (Cost/reliability: see *External services* in CLAUDE.md —
+  free, no API key, unofficial endpoint.)
 - Discovery reports *why* a URL yields no feed so the client shows a specific
   message instead of a blanket "no feed found": a `code` of `auth`
   (login-gated — the feed/site returned 401/403), `not-found` (404/410), or
