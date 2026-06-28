@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useId } from 'react';
-import { POPULAR_FEEDS } from '../lib/popularFeeds';
+import { POPULAR_FEEDS, RECOMMENDED_FEEDS } from '../lib/popularFeeds';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import {
@@ -93,12 +93,23 @@ export function FeedsPage() {
   // as a title override if the server-side refresh fails to populate the feed.
   const selectedSuggestionName = useRef<string | null>(null);
 
+  // With text typed, filter the full catalog. With the box empty, fall back to
+  // a short curated set of freely-readable starter feeds so a new account with
+  // nothing subscribed has a one-tap way in when it focuses the field.
+  // Matching is substring on the name, the feed URL (so a country code like
+  // "au"/"uk" finds .com.au / .co.uk outlets), and the category (so a topic
+  // like "science" or "sports" surfaces that section) — the three things the
+  // helper text invites the user to type.
   const suggestions = feedUrl.trim().length > 0
     ? POPULAR_FEEDS.filter((f) => {
         const q = feedUrl.toLowerCase();
-        return f.name.toLowerCase().includes(q) || f.feedUrl.toLowerCase().includes(q);
+        return (
+          f.name.toLowerCase().includes(q) ||
+          f.feedUrl.toLowerCase().includes(q) ||
+          f.category.toLowerCase().includes(q)
+        );
       }).slice(0, 8)
-    : [];
+    : RECOMMENDED_FEEDS;
   useDocumentTitle('Feeds · readmo');
 
   const { data: subs = [] } = useQuery({
@@ -429,6 +440,9 @@ export function FeedsPage() {
             {isAdding ? 'Adding…' : 'Add'}
           </button>
         </form>
+        <p className="settings__hint settings__add-hint">
+          Type a site, a topic, or a country code to see suggestions.
+        </p>
 
         {picker && (
           <div

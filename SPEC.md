@@ -477,8 +477,16 @@ folders       (user_id FK, name, sort)
 - The Feeds page's **Add a feed** input shows a filtered autocomplete dropdown as
   the user types. Suggestions come from a curated list of popular feeds
   (`src/lib/popularFeeds.ts`); each entry carries a display name, direct feed
-  URL, and category. Matching is case-insensitive substring on either the name
-  or the feed URL; up to 8 suggestions are shown. Selecting a suggestion fills
+  URL, and category. Matching is case-insensitive substring on the name, the
+  feed URL (so a country code like `au`/`uk` finds `.com.au` / `.co.uk`
+  outlets), or the category (so a topic like `science` or `sports` surfaces
+  that section); up to 8 suggestions are shown. When the box is focused but
+  **empty**, the dropdown instead shows a short curated set of recommended
+  starter feeds (`RECOMMENDED_FEEDS` in `src/lib/popularFeeds.ts` — five
+  broadly-appealing, freely-readable feeds with no paywall/login) so a new
+  account with nothing subscribed has a one-tap way in. A line of helper text
+  under the input ("Type a site, a topic, or a country code to see
+  suggestions.") points first-time users at those paths. Selecting a suggestion fills
   the feed URL directly into the input and bypasses the HTML-discovery step —
   the known feed URL is submitted straight to `subscribe()`. This also avoids
   bot-blocking issues for popular sites whose homepages reject programmatic
