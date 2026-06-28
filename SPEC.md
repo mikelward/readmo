@@ -356,8 +356,8 @@ feeds         (id, url UNIQUE, secret_url, site_url, title, etag,
                fetch_interval_s, error_count, last_error)             -- shared across users
 items         (id, feed_id FK, guid, url, title, author, published_at,
                content_html, summary, full_content_html,
-               full_content_fetched_at, enclosures, content_hash,
-               created_at,
+               full_content_fetched_at, full_content_via_fallback,
+               enclosures, content_hash, created_at,
                sort_at = coalesce(published_at, created_at))          -- shared; UNIQUE(feed_id, guid), UNIQUE(feed_id, url) WHERE url IS NOT NULL
 subscriptions (user_id FK, feed_id FK, folder, title_override,
                muted bool, sort, created_at)                         -- user ↔ feed
@@ -1428,7 +1428,18 @@ page's discipline is unchanged.
     the mode bar shows a **"Loading full article…"** note alongside an **"Open
     original"** button (in the same slot as "Read more"), so the reader can
     jump to the source without waiting for extraction.
-  - **Outcomes** (the function returns `{ status, contentHtml }`): `ok`,
+  - **Provenance ("via fallback").** When the publisher bot-blocks the direct
+    fetch (401/403) the function retries through the r.jina.ai fallback. A body
+    obtained that way is flagged: the function records
+    `items.full_content_via_fallback` on the shared row and returns an additive
+    **`viaFallback: true`** on the `ok` envelope, and the reader shows a muted
+    **"via fallback"** tag after the source title (`reader__source`) while that
+    body is on screen. The flag is additive (omitted = direct fetch) and rides
+    **only** through the allowlist-gated `fulltext` function — the column is not
+    in any client read (see the reading-mode allowlist below) — so fallback
+    content, like all full content, reaches only allowlisted callers.
+  - **Outcomes** (the function returns `{ status, contentHtml, retryable?,
+    viaFallback? }`): `ok`,
     `empty` (nothing article-like found), `auth` (publisher gated the page even
     via the Jina fallback → the reader keeps the feed body and shows "needs
     sign-in — open the original"), `unreachable` (fetch failed → feed body kept,
@@ -1475,11 +1486,17 @@ page's discipline is unchanged.
     the gate to actually
     bind, the cached body **must only reach the client through this function**:
     the reader's `getItem` read deliberately **does not select
-    `full_content_html`** (it would otherwise hand any subscriber who can see the
-    item the cached full article, bypassing the gate), so the reader always
-    obtains the full body via `fetchFullText`. (A column-level `REVOKE` so a
-    hand-crafted PostgREST read can't reach it either is folded into the DB-backed
-    allowlist follow-up.)
+    `full_content_html`** (nor the `full_content_via_fallback` provenance flag) —
+    it would otherwise hand any subscriber who can see the item the cached full
+    article (fallback-sourced or not), bypassing the gate — so the reader always
+    obtains the full body via `fetchFullText`, and `feed_items` scrubs both
+    columns from list payloads (migration 0026). (A column-level `REVOKE` so a
+    hand-crafted PostgREST read can't reach **either** column — `full_content_html`
+    or `full_content_via_fallback` — is folded into the DB-backed allowlist
+    follow-up; table-level `select on items` (0008) plus row-only RLS leaves a
+    direct column read open until then. The provenance bit is strictly less
+    sensitive than the body in the same row, so it adds nothing beyond that
+    already-tracked gap.)
 - **Reading affordances:** comfortable measure, paper surface, light/dark,
   `prefers-reduced-motion`.
 
@@ -1828,8 +1845,9 @@ keys differ; the strategies map one-to-one:
   while liveness is in doubt.
 - **Reader body from the list cache (instant open + offline fallback):** the
   reader paints this item's body from a list page already on the device the
-  moment it opens — list payloads carry `content_html` (only `full_content_html`
-  is stripped; see migration 0011), recovered via
+  moment it opens — list payloads carry `content_html` (the gated full-text
+  fields `full_content_html` and `full_content_via_fallback` are stripped; see
+  migrations 0011 and 0026), recovered via
   `lib/offlineItem.ts:findCachedFeedItem`. One path serves two cases: the
   **normal online open**, where the feed body shows immediately while the
   per-item `getItem` refetches in the background (no "Loading…" gap), and an
