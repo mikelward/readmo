@@ -150,15 +150,21 @@ describe('MockDataSource freshness window + per-feed floor', () => {
     expect(ids[0]).toBe('item-10'); // pinned section, at the top
   });
 
-  it('a dismissed item does not occupy a floor slot', async () => {
-    // With floor=1, marking the newest css item done lets the next one take the
-    // floor slot (the floor ranks only non-dismissed items).
+  it('dismissing recent items does not backfill an older one into the floor', async () => {
+    // The floor ranks by date, irrespective of state, so a Done item still holds
+    // its slot. css items by date: item-3 (9h), item-6 (30h), item-10 (140h,
+    // out of window). With floor=1 only item-3 is in the floor; item-6 rides the
+    // window; item-10 (rank 2) is out of both. Marking the two newest Done must
+    // NOT pull item-10 up into the floor — under the old non-dismissed ranking it
+    // would have become rank 0 and reappeared.
     const ds = new MockDataSource(`test-${Math.random()}`, { feedFloor: 1 });
-    ds.stateStore.set('item-3', 'done', true); // css newest → dismissed
+    ds.stateStore.set('item-3', 'done', true);
+    ds.stateStore.set('item-6', 'done', true);
     const css = await ds.getFeedItems('feed-css', { limit: 100 });
     const ids = css.items.map((fi) => fi.item.id);
     expect(ids).not.toContain('item-3'); // dismissed
-    expect(ids).toContain('item-6'); // 30h, in window anyway, now the floor rank-0
+    expect(ids).not.toContain('item-6'); // dismissed
+    expect(ids).not.toContain('item-10'); // NOT backfilled into the floor
   });
 });
 
@@ -196,6 +202,19 @@ describe('MockDataSource getFeedUnreadCounts', () => {
     const ds = new MockDataSource(`test-${Math.random()}`);
     // feed-park has no items in the seed.
     expect((await ds.getFeedUnreadCounts(['feed-park']))['feed-park']).toBe(0);
+  });
+
+  it('counts down as recent items are dismissed, without backfilling the floor', async () => {
+    // The user-visible bug: marking recent items Done and fetching more left the
+    // badge stuck at the floor. With floor=1 on css, item-3 (9h) and item-6 (30h)
+    // are listable (floor/window); item-10 (140h) is out of both. Dismissing the
+    // two listable items must take the count to 0 — not backfill item-10 (which
+    // the old non-dismissed floor ranking would have counted as 1).
+    const ds = new MockDataSource(`test-${Math.random()}`, { feedFloor: 1 });
+    expect((await ds.getFeedUnreadCounts(['feed-css']))['feed-css']).toBe(2);
+    ds.stateStore.set('item-3', 'done', true);
+    ds.stateStore.set('item-6', 'done', true);
+    expect((await ds.getFeedUnreadCounts(['feed-css']))['feed-css']).toBe(0);
   });
 });
 

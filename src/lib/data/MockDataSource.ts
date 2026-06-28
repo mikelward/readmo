@@ -98,7 +98,10 @@ export class MockDataSource implements DataSource {
    * the feed freshness window + per-feed floor applied.
    *
    * An item is served if it's **pinned**, OR younger than `homeWindowMs`
-   * (3 days), OR among its feed's newest `feedFloor` (10) non-dismissed items.
+   * (3 days), OR among its feed's newest `feedFloor` (10) items *by date,
+   * irrespective of read/done state* (Done/Hidden are then filtered from the
+   * body, but they still occupy their recency slot — so dismissing a recent
+   * item does NOT pull an older one up to refill the floor).
    * The floor keeps an infrequently-updated feed from going blank when nothing
    * it published is recent; the window keeps a busy feed decluttered. Pinned
    * items are always served regardless of age (SPEC.md *Feed freshness window*).
@@ -125,19 +128,22 @@ export class MockDataSource implements DataSource {
     const sortAsc = opts?.sort === 'oldest';
     const groupByFeed = opts?.groupByFeed ?? false;
 
-    // First pass: gather the non-dismissed candidates and rank each within its
-    // feed by publish date (newest = rank 0), so the per-feed floor can keep a
-    // feed's newest `feedFloor` items even when they're older than the window.
+    // First pass: rank EVERY item within its feed by publish date (newest =
+    // rank 0) for the per-feed floor, then collect the non-dismissed ones as
+    // body candidates. Ranking over the whole feed — not just non-dismissed
+    // items — is what makes the floor "the feed's newest `feedFloor` by date":
+    // a Done/Hidden item still consumes its recency slot, so dismissing a recent
+    // item can't pull an older one up to refill the floor.
     const candidates: Array<{ item: Item; st: ItemState }> = [];
     const byFeed = new Map<FeedId, Item[]>();
     for (const item of this.items) {
       if (!predicate(item)) continue;
-      const st = this.stateStore.get(item.id, now);
-      if (st.done || st.hidden) continue; // filtered from every feed
-      candidates.push({ item, st });
       const arr = byFeed.get(item.feedId);
       if (arr) arr.push(item);
       else byFeed.set(item.feedId, [item]);
+      const st = this.stateStore.get(item.id, now);
+      if (st.done || st.hidden) continue; // dismissed: never served in the body
+      candidates.push({ item, st });
     }
     const feedRank = new Map<ItemId, number>();
     for (const arr of byFeed.values()) {
@@ -286,13 +292,14 @@ export class MockDataSource implements DataSource {
     const freshAfter = now - this.homeWindowMs;
     const want = new Set(feedIds);
 
-    // Gather each wanted feed's non-dismissed items (Done/active-Hidden drop
-    // out, same as the list), bucketed by feed for the per-feed floor ranking.
+    // Bucket EVERY wanted-feed item (not just non-dismissed) so the per-feed
+    // floor ranks over the feed's whole recency order — the floor is its newest
+    // `feedFloor` items by date, irrespective of state, so a dismissed recent
+    // item still consumes its slot and can't be backfilled by an older one.
     const byFeed = new Map<FeedId, Array<{ item: Item; st: ItemState }>>();
     for (const item of this.items) {
       if (!want.has(item.feedId)) continue;
       const st = this.stateStore.get(item.id, now);
-      if (st.done || st.hidden) continue;
       const arr = byFeed.get(item.feedId);
       if (arr) arr.push({ item, st });
       else byFeed.set(item.feedId, [{ item, st }]);
@@ -306,11 +313,14 @@ export class MockDataSource implements DataSource {
       let n = 0;
       arr.forEach(({ item, st }, rank) => {
         // Listable = window ∪ floor ∪ pinned (mirrors orderedFor / feed_items).
-        // A pinned item always counts (a pin is a to-do, read or not); other
-        // listable items drop out once Opened.
         const listable =
           st.pinned || item.publishedAt >= freshAfter || rank < this.feedFloor;
-        if (listable && (st.pinned || !st.opened)) n += 1;
+        if (!listable) return;
+        // Among listable items, count the unread/to-do ones: not Done or active
+        // Hidden, and either pinned OR not Opened — a pinned item always counts
+        // (a pin is a to-do, read or not); others drop out once Opened.
+        if (st.done || st.hidden) return;
+        if (st.pinned || !st.opened) n += 1;
       });
       counts[feedId] = n;
     }
