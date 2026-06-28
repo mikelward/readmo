@@ -226,5 +226,5 @@ constraint is documented in more detail.
   + checks the allowlist before calling the RPC, or have the poller refuse to
   fetch a Google News feed for a feed with no allowlisted subscriber. Low
   priority — `discover` already covers the UI, and an empty allowlist is open to
-  all. See `supabase/migrations/0027_allowlist_admin.sql` and SPEC *Feed
+  all. See `supabase/migrations/0028_allowlist_admin.sql` and SPEC *Feed
   discovery*.

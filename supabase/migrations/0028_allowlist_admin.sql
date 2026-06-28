@@ -63,10 +63,15 @@ begin
 end;
 $$;
 
+-- drop-then-create so the migration stays re-runnable: bare `create trigger`
+-- aborts on a second apply, which can happen if a partial/failed deploy left
+-- these triggers behind.
+drop trigger if exists admin_users_normalize_email on public.admin_users;
 create trigger admin_users_normalize_email
   before insert or update on public.admin_users
   for each row execute function public.normalize_email();
 
+drop trigger if exists allowlist_normalize_email on public.allowlist;
 create trigger allowlist_normalize_email
   before insert or update on public.allowlist
   for each row execute function public.normalize_email();

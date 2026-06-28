@@ -21,6 +21,12 @@ fi
 
 cd "${CLAUDE_PROJECT_DIR:-$(dirname "$0")/../..}"
 
+# Point git at the version-controlled hooks (.githooks/pre-commit guards against
+# duplicate migration ids). core.hooksPath is per-clone local config, so the
+# fresh web-sandbox clone needs this set each session.
+echo "[session-start] Wiring git hooks (core.hooksPath=.githooks)..."
+git config core.hooksPath .githooks || true
+
 echo "[session-start] Installing Node dependencies (npm install)..."
 npm install --no-audit --no-fund
 
