@@ -16,6 +16,7 @@ import type { FullTextResult, FullTextStatus } from '../fullText';
 import { getSupabase } from '../supabase/client';
 import { confirmBackendReachable } from '../networkStatus';
 import { OUTBOX_SUFFIX } from '../userCache';
+import { isGoogleNewsFeedUrl } from '../googleNews';
 import { ItemStateStore, localStoragePersistence } from './itemState';
 import {
   ItemStateOutbox,
@@ -49,12 +50,16 @@ const FEED_COLS =
   'id, site_url, title, last_fetched_at, next_fetch_at, fetch_interval_s, error_count, last_error, created_at';
 const ITEM_COLS =
   'id, feed_id, guid, url, title, author, published_at, content_html, summary, enclosures, content_hash, created_at';
-// The reader (getItem) additionally needs the cached full-article body. List /
-// search / library reads deliberately OMIT it: those rows only need metadata +
-// the feed snippet, and pulling every cached full article into a 50-result
-// search or a large library bucket would bloat the payload and the persisted
-// (user-scoped) React Query cache. Only the single-item detail read fetches it.
-const ITEM_DETAIL_COLS = `${ITEM_COLS}, full_content_html`;
+// No client read selects the cached full-article body (`full_content_html`).
+// It is gated on the trusted-user allowlist and served ONLY through the
+// `fulltext` Edge Function, which checks the allowlist and returns the cached
+// body to listed callers (a cache hit) — see fetchFullText / SPEC "Full-text
+// reading mode". A direct column read here would hand the cached full article
+// to any subscriber who can see the item row, bypassing that gate. (List /
+// search / library reads omit it anyway for payload/cache size.) So the reader's
+// single-item detail read uses the same ITEM_COLS as list rows; the full body
+// arrives via fetchFullText. A column-level REVOKE so a hand-crafted PostgREST
+// read can't reach it either is folded into the DB-backed allowlist follow-up.
 const ITEM_STATE_COLS =
   'item_id, pinned, pinned_at, favorite, favorite_at, done, done_at, hidden, hidden_at, opened, opened_at';
 const SUBSCRIPTION_COLS = 'feed_id, folder, title_override, muted, sort';
@@ -176,6 +181,7 @@ async function classifyFunctionError(error: unknown): Promise<AddFeedError> {
       auth: 'feed-auth',
       'not-found': 'not-found',
       unreachable: 'unreachable',
+      blocked: 'blocked',
     };
     if (code && byCode[code]) return new AddFeedError(byCode[code], serverMsg);
     // Platform auth layer: the caller's JWT is missing/expired.
@@ -825,7 +831,7 @@ export class SupabaseDataSource implements DataSource {
 
   async getItem(id: ItemId): Promise<FeedItem | null> {
     const row = this.unwrap<ItemRow | null>(
-      await this.sb.from('items').select(ITEM_DETAIL_COLS).eq('id', id).maybeSingle(),
+      await this.sb.from('items').select(ITEM_COLS).eq('id', id).maybeSingle(),
     );
     if (!row) return null;
     const [fi] = await this.resolveFeedItems([row]);
@@ -1186,7 +1192,29 @@ export class SupabaseDataSource implements DataSource {
     let added = 0;
     let skipped = 0;
     for (const url of urls) {
-      const feed = await this.subscribeOnly(url); // no per-feed refresh storm
+      // Google News feeds are restricted to the trusted-user allowlist, enforced
+      // server-side in the `discover` Edge Function. importOpml otherwise
+      // subscribes directly (no discover step), which would let an OPML import
+      // bypass that gate — so route Google News URLs through discover instead.
+      // An unlisted caller's entry comes back `blocked` (a thrown AddFeedError)
+      // and is skipped; a network/parse failure is skipped too, never fatal to
+      // the rest of the import.
+      let feed: Feed;
+      if (isGoogleNewsFeedUrl(url)) {
+        try {
+          const [candidate] = await this.discover(url);
+          if (!candidate) {
+            skipped++;
+            continue;
+          }
+          feed = await this.subscribeOnly(candidate.url);
+        } catch {
+          skipped++;
+          continue;
+        }
+      } else {
+        feed = await this.subscribeOnly(url); // no per-feed refresh storm
+      }
       if (subscribed.has(feed.id)) {
         skipped++;
       } else {

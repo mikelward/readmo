@@ -29,9 +29,10 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   // Australia — ABC (public broadcaster), the News Corp metro mastheads, and
   // the Nine/ACM papers. ABC publishes per-section feeds at
   // abc.net.au/news/feed/<id>/rss.xml; "Top Stories" and "Just In" are the two
-  // general ones. Sky News Australia exposes no usable native RSS, so it rides
-  // a Google News query feed (one reliable host; links resolve via a Google
-  // redirect rather than direct to skynews.com.au).
+  // general ones. (Sky News Australia has no native RSS and would need a Google
+  // News query feed, which is gated to the trusted-user allowlist — see
+  // discover/googleNews — so it is not offered as a one-tap curated suggestion;
+  // a listed user can still add it by pasting the URL.)
   { name: 'ABC News (Australia)', feedUrl: 'https://www.abc.net.au/news/feed/45910/rss.xml', category: 'News' },
   { name: 'ABC News Just In', feedUrl: 'https://www.abc.net.au/news/feed/51120/rss.xml', category: 'News' },
   { name: 'The Courier-Mail', feedUrl: 'https://www.couriermail.com.au/rss', category: 'News' },
@@ -41,7 +42,6 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   { name: 'The Canberra Times', feedUrl: 'https://www.canberratimes.com.au/rss.xml', category: 'News' },
   { name: 'SBS News', feedUrl: 'https://www.sbs.com.au/news/feed', category: 'News' },
   { name: 'The Conversation (Australia)', feedUrl: 'https://theconversation.com/au/articles.atom', category: 'News' },
-  { name: 'Sky News Australia', feedUrl: 'https://news.google.com/rss/search?q=site:skynews.com.au+when:7d&hl=en-AU&gl=AU&ceid=AU:en', category: 'News' },
   { name: 'The Globe and Mail', feedUrl: 'https://www.theglobeandmail.com/arc/outboundfeeds/rss/', category: 'News' },
   { name: 'HuffPost', feedUrl: 'https://www.huffpost.com/section/front-page/feed', category: 'News' },
   { name: 'Fox News', feedUrl: 'https://moxie.foxnews.com/google-publisher/latest.xml', category: 'News' },

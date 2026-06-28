@@ -60,6 +60,8 @@ export interface DiscoveredFeed {
  *     refresh Edge Functions verify the JWT); the fix is to sign in again.
  *   - `feed-auth`   — the *target* feed itself is gated (the publisher returned
  *     401/403); a private/login-only feed can't be added.
+ *   - `blocked`     — adding this feed isn't allowed for this account (e.g. a
+ *     Google News feed when the caller isn't on the trusted-user allowlist).
  */
 export type AddFeedErrorKind =
   | 'signed-out'
@@ -67,6 +69,7 @@ export type AddFeedErrorKind =
   | 'no-feed' // reachable, but neither a feed nor advertising one
   | 'not-found' // the URL 404/410'd
   | 'unreachable' // network/DNS/timeout/SSRF-blocked/5xx
+  | 'blocked' // disallowed for this account (e.g. Google News, off-allowlist)
   | 'unknown';
 
 /** A classified "Add a feed" failure (discover or subscribe). `kind` drives the

@@ -13,6 +13,14 @@
 // `site:<domain>` RSS search so the reader still gets *something*. The
 // publisher's own feed always wins when one exists.
 //
+// Google News RSS feeds (news.google.com/rss/…) are gated on the shared
+// trusted-user allowlist (READMO_ALLOWLIST; see _shared/allowlist.ts) because
+// they are a Google-ToS gray area. Unset → open to all. Once armed: an explicit
+// paste of a Google News feed by a non-listed caller is `blocked`, while
+// discovered or synthesized Google News candidates (an advertised alternate or
+// the last-resort search above) are silently dropped for non-listed callers so
+// a normal add just falls back to "no feed found". Plain feeds are unaffected.
+//
 // Bot-blocking fallback: if the direct fetch returns 403 (Cloudflare etc.),
 // we retry via Jina Reader (r.jina.ai) which uses a headless browser. Jina
 // is a fixed trusted host — the user-supplied URL only appears in the path,
@@ -24,6 +32,7 @@
 // Deno resolves bare specifiers via ../import_map.json.
 
 // @ts-nocheck — runs under Deno, not node/tsc.
+import { createClient } from 'jsr:@supabase/supabase-js@2';
 import {
   discoverFromHtml,
   googleNewsFeedFor,
@@ -35,6 +44,8 @@ import { parseFeed } from '../_shared/parser.ts';
 import { safeFetch, SsrfError } from '../_shared/ssrf.ts';
 import { corsHeaders, preflight } from '../_shared/cors.ts';
 import { redactUrl } from '../_shared/urlSafety.ts';
+import { parseAllowlist, isAllowed } from '../_shared/allowlist.ts';
+import { isGoogleNewsFeedUrl } from '../_shared/googleNews.ts';
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return preflight();
@@ -63,6 +74,14 @@ Deno.serve(async (req: Request) => {
 
     console.log(`discover: probing ${redactUrl(target)}`);
 
+    // Explicit Google News paste: block a non-listed caller up front (before any
+    // fetch) with a clear message. Discovered/synthesized Google News candidates
+    // are handled differently — dropped silently — in respondWithCandidates and
+    // the last-resort fallback below. Unset allowlist → open to all.
+    if (isGoogleNewsFeedUrl(target) && !(await callerAllowsGoogleNews(req))) {
+      return googleNewsBlockedResponse();
+    }
+
     // Reddit short-circuit: derive the .rss form directly (its pages don't
     // reliably advertise the feed).
     const reddit = redditFeedFor(target);
@@ -71,7 +90,7 @@ Deno.serve(async (req: Request) => {
       const { feed } = await tryParse(reddit);
       if (feed) {
         console.log(`discover: Reddit feed validated`);
-        return json({ candidates: [feed] });
+        return await respondWithCandidates(req, [feed]);
       }
     }
 
@@ -84,7 +103,7 @@ Deno.serve(async (req: Request) => {
     const { feed: asFeed } = await tryParse(res.url, body);
     if (asFeed) {
       console.log(`discover: URL is a feed`);
-      return json({ candidates: [asFeed] });
+      return await respondWithCandidates(req, [asFeed]);
     }
 
     // Not a feed itself. If the fetch didn't actually succeed, report WHY
@@ -102,7 +121,7 @@ Deno.serve(async (req: Request) => {
         console.log('discover: Jina returned HTML, probing for feed candidates');
         const result = await probeHtml(jinaHtml, target);
         console.log(`discover: Jina path — ${result.validated.length} candidate(s) validated`);
-        if (result.validated.length > 0) return json({ candidates: result.validated });
+        if (result.validated.length > 0) return await respondWithCandidates(req, result.validated);
         if (result.candidateFail) return feedErrorResponse(result.candidateFail);
         return feedErrorResponse(targetCode);
       }
@@ -144,7 +163,14 @@ Deno.serve(async (req: Request) => {
     // surface that specific reason below instead of silently diverting the reader
     // to a Google News search (SPEC.md "discovery reports *why* a URL yields no
     // feed"). The publisher's own feed always wins.
-    if (result.validated.length === 0 && !result.candidateFail) {
+    // Skip this Google News fallback entirely for non-allowlisted callers (the
+    // feature is gated) — they fall through to the "no feed found" path rather
+    // than a confusing block, since they never asked for Google News.
+    if (
+      result.validated.length === 0 &&
+      !result.candidateFail &&
+      (await callerAllowsGoogleNews(req))
+    ) {
       const gnews = googleNewsFeedFor(res.url);
       if (gnews) {
         console.log(`discover: falling back to Google News for ${redactUrl(res.url)}`);
@@ -161,7 +187,7 @@ Deno.serve(async (req: Request) => {
     if (result.validated.length === 0 && result.candidateFail) {
       return feedErrorResponse(result.candidateFail);
     }
-    return json({ candidates: result.validated });
+    return await respondWithCandidates(req, result.validated);
   } catch (err) {
     // SSRF-blocked (private/loopback address) or any fetch/parse failure: the
     // URL couldn't be reached. Tag it so the client says so. SsrfError is an
@@ -179,6 +205,53 @@ Deno.serve(async (req: Request) => {
     );
   }
 });
+
+/** Whether the caller may receive Google News feeds. True when the allowlist is
+ * disarmed (unset) or the caller's id/email is on it. The identity round-trip
+ * only happens when the gate is armed (callers gate this on a Google News URL
+ * actually being in play), so a normal add never pays for it. Fail-closed: a
+ * transient auth lookup leaves `auth.user` undefined → treated as not allowed,
+ * which here just drops/blocks the Google News candidate (retryable by the user,
+ * nothing cached). */
+async function callerAllowsGoogleNews(req: Request): Promise<boolean> {
+  const allowlist = parseAllowlist(Deno.env.get('READMO_ALLOWLIST'));
+  if (allowlist.size === 0) return true; // disarmed → open to all
+  const userClient = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_ANON_KEY')!,
+    { global: { headers: { Authorization: req.headers.get('Authorization') ?? '' } } },
+  );
+  const { data: auth } = await userClient.auth.getUser();
+  return isAllowed({ id: auth?.user?.id, email: auth?.user?.email }, allowlist);
+}
+
+/** The `blocked` add-feed response for a Google News feed the caller may not add
+ * (an explicit paste of a gated Google News URL). */
+function googleNewsBlockedResponse(): Response {
+  console.log('discover: Google News feed blocked for non-allowlisted caller');
+  return json(
+    { error: "Google News feeds aren't available on this account.", code: 'blocked' },
+    422,
+  );
+}
+
+/** Return the discovered candidates. A non-Google page can advertise (or
+ * redirect to) a news.google.com feed, so re-check candidate feed URLs: when the
+ * caller isn't allowed Google News, DROP those candidates (offer the rest, or
+ * fall through to "no feed found") rather than erroring — the user didn't paste
+ * Google News, so a block here would be confusing. */
+async function respondWithCandidates(
+  req: Request,
+  candidates: Array<{ feedUrl: string }>,
+): Promise<Response> {
+  if (
+    candidates.some((c) => isGoogleNewsFeedUrl(c.feedUrl)) &&
+    !(await callerAllowsGoogleNews(req))
+  ) {
+    return json({ candidates: candidates.filter((c) => !isGoogleNewsFeedUrl(c.feedUrl)) });
+  }
+  return json({ candidates });
+}
 
 /** Discover + validate feed candidates from an HTML string.
  * Shared between the direct path and the Jina fallback. */

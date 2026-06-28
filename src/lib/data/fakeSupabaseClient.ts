@@ -59,6 +59,9 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
       failSelectOnce: Set<string>;
       ignoreNotIn: boolean;
       selectCounts: Map<string, number>;
+      /** Last `select(cols)` projection string requested per table (lets tests
+       * assert which columns a read asks PostgREST for). */
+      selectCols: Map<string, string | undefined>;
       /** Per-table server-side row cap, modeling PostgREST's max-rows ceiling.
        * Applied after range/limit so a `.range()`-paged read still sees each
        * page truncated to the cap, exactly like the real server. */
@@ -68,8 +71,9 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
     this.rows = store[table] ?? [];
   }
 
-  select(_cols?: string, opts?: { count?: string }): this {
+  select(cols?: string, opts?: { count?: string }): this {
     this.mode = 'select';
+    this.control.selectCols.set(this.table, cols);
     if (opts?.count) this.wantCount = true;
     return this;
   }
@@ -464,6 +468,9 @@ export function makeFakeSupabase(tables: FakeTables): {
   /** Number of `select` requests issued against `table` (proves `in (…)`
    * chunking — N batches => N requests). */
   selectCount: (table: string) => number;
+  /** The column projection string from the last `select()` on `table` (proves a
+   * read excludes a sensitive column like `full_content_html`). */
+  lastSelectCols: (table: string) => string | undefined;
   /** Every `.rpc(name, params)` call, in order (for asserting write-through). */
   rpcCalls: Array<{ name: string; params: Record<string, unknown> }>;
 } {
@@ -476,6 +483,7 @@ export function makeFakeSupabase(tables: FakeTables): {
     failSelectOnce: new Set<string>(),
     ignoreNotIn: false,
     selectCounts: new Map<string, number>(),
+    selectCols: new Map<string, string | undefined>(),
     maxRows: new Map<string, number>(),
   };
 
@@ -490,6 +498,7 @@ export function makeFakeSupabase(tables: FakeTables): {
     },
     capRows: (table: string, n: number) => control.maxRows.set(table, n),
     selectCount: (table: string) => control.selectCounts.get(table) ?? 0,
+    lastSelectCols: (table: string) => control.selectCols.get(table),
     client: {
       from: (table: string) => new FakeQuery(table, store, control),
       rpc: (name: string, params?: Record<string, unknown>) => ({

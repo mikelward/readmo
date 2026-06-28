@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 import { SupabaseDataSource } from './SupabaseDataSource';
 import { _resetNetworkStatusForTests, setConnectivityProbeUrl } from '../networkStatus';
 import { makeFakeSupabase, type FakeTables } from './fakeSupabaseClient';
@@ -168,6 +169,15 @@ describe('SupabaseDataSource reads', () => {
 
     const many = await env.ds.getItemsByIds(['i6', 'i1', 'i3']);
     expect(ids(many)).toEqual(['i6', 'i1', 'i3']);
+  });
+
+  it('getItem does not read the gated full_content_html column', async () => {
+    // Reading-mode bodies are served only through the allowlist-gated `fulltext`
+    // function; a direct column read would leak a cached full article to any
+    // subscriber who can see the item, bypassing the gate (PR #231 review).
+    const env = setup();
+    await env.ds.getItem('i3');
+    expect(env.fake.lastSelectCols('items')).not.toContain('full_content_html');
   });
 
   it('getItemsByIds chunks a large id list (no unbounded IN)', async () => {
@@ -890,6 +900,18 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(env.fake.invokeCalls).toContainEqual({ name: 'discover', body: { url: 'x.com' } });
   });
 
+  it('discover maps a `blocked` function error to AddFeedError("blocked")', async () => {
+    const env = setup();
+    const res = new Response(
+      JSON.stringify({ error: "Google News feeds aren't available on this account.", code: 'blocked' }),
+      { status: 422, headers: { 'content-type': 'application/json' } },
+    );
+    env.fake.invokeResult.current = { data: null, error: new FunctionsHttpError(res) };
+    await expect(
+      env.ds.discover('https://news.google.com/rss/search?q=site:example.com'),
+    ).rejects.toMatchObject({ name: 'AddFeedError', kind: 'blocked' });
+  });
+
   it('fetchFullText invokes the fulltext function and returns the extracted body', async () => {
     const env = setup();
     env.fake.invokeResult.current = {
@@ -1200,6 +1222,48 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(env.fake.rpcCalls).toContainEqual({
       name: 'subscribe_to_feed',
       params: { p_url: 'https://new.example.com/feed?a=1&b=2', p_folder: null },
+    });
+  });
+
+  it('importOpml routes a Google News url through discover and skips it when blocked', async () => {
+    const env = setup();
+    const res = new Response(
+      JSON.stringify({ error: "Google News feeds aren't available on this account.", code: 'blocked' }),
+      { status: 422, headers: { 'content-type': 'application/json' } },
+    );
+    env.fake.invokeResult.current = { data: null, error: new FunctionsHttpError(res) };
+    const xml = `<opml><body>
+      <outline type="rss" xmlUrl="https://news.google.com/rss/search?q=x" />
+    </body></opml>`;
+    const result = await env.ds.importOpml(xml);
+    // Blocked by the gate → skipped, and it went through discover, never a
+    // direct subscribe_to_feed (the bypass the gate is meant to close).
+    expect(result).toEqual({ added: 0, skipped: 1 });
+    expect(env.fake.invokeCalls).toContainEqual({
+      name: 'discover',
+      body: { url: 'https://news.google.com/rss/search?q=x' },
+    });
+    expect(env.fake.rpcCalls.some((c) => c.name === 'subscribe_to_feed')).toBe(false);
+  });
+
+  it('importOpml subscribes a Google News url that discover allows', async () => {
+    const env = setup();
+    env.fake.invokeResult.current = {
+      data: {
+        candidates: [
+          { feedUrl: 'https://news.google.com/rss/search?q=x', title: 'G', siteUrl: null, sample: [] },
+        ],
+      },
+      error: null,
+    };
+    const xml = `<opml><body>
+      <outline type="rss" xmlUrl="https://news.google.com/rss/search?q=x" />
+    </body></opml>`;
+    const result = await env.ds.importOpml(xml);
+    expect(result).toEqual({ added: 1, skipped: 0 });
+    expect(env.fake.rpcCalls).toContainEqual({
+      name: 'subscribe_to_feed',
+      params: { p_url: 'https://news.google.com/rss/search?q=x', p_folder: null },
     });
   });
 
