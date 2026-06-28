@@ -1,5 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useIsRestoring, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
+import {
+  useIsRestoring,
+  useQueryClient,
+  type QueryClient,
+} from '@tanstack/react-query';
 import { useStateBucket } from '../hooks/useItemState';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { ItemRows } from '../components/ItemRows';
@@ -29,39 +33,16 @@ export function OfflinePage() {
   const isRestoring = useIsRestoring();
   useDocumentTitle('Offline · readmo');
 
-  // Re-derive on any cache mutation: the offline-cache lock warming a
-  // just-pinned item, or hydration landing the persisted entries, both surface
-  // here. Reading the cache (below) never emits, so this can't loop.
-  const [cacheVersion, setCacheVersion] = useState(0);
-  useEffect(() => {
-    const unsubscribe = queryClient.getQueryCache().subscribe(() => {
-      setCacheVersion((v) => v + 1);
-    });
-    // Recompute once now: an item warmed in the gap between the initial render's
-    // cache read and this subscription would otherwise be missed — a
-    // non-truncated item's warm is a single prefetch that emits no later event,
-    // so without this the page could stay on the empty state with the item
-    // already cached.
-    setCacheVersion((v) => v + 1);
-    return unsubscribe;
-  }, [queryClient]);
-
   // Pinned first, then favorited; both buckets are already newest-first.
   const ids = useMemo(
     () => Array.from(new Set([...pinned, ...favorite])),
     [pinned, favorite],
   );
 
-  const items = useMemo<FeedItem[]>(() => {
-    void cacheVersion; // recompute whenever the cache changes
-    return ids
-      .map(
-        (id) =>
-          queryClient.getQueryData<FeedItem | null>(['item', id]) ??
-          findCachedFeedItem(queryClient, id),
-      )
-      .filter((fi): fi is FeedItem => fi != null);
-  }, [ids, cacheVersion, queryClient]);
+  // Re-derive the saved items from the persisted query cache, re-rendering only
+  // when the *resolved* set actually changes (the offline-cache lock warming a
+  // just-pinned item, or hydration landing persisted entries, both surface here).
+  const items = useOfflineItems(queryClient, ids);
 
   return (
     <ListPage header={<h1 className="page-header__title">Offline</h1>}>
@@ -72,4 +53,59 @@ export function OfflinePage() {
       />
     </ListPage>
   );
+}
+
+/** Read the saved items for `ids` out of the persisted query cache and keep
+ * them current as it changes, without the render↔event feedback loop a naive
+ * `getQueryCache().subscribe(() => bumpState())` causes here.
+ *
+ * Two things make it loop-proof:
+ *  1. We only wake on events that change query *data* (`added`/`removed`/
+ *     `updated`). The cache also fires `observerOptionsUpdated` etc. on every
+ *     render of any descendant query observer (e.g. `ItemRows`' open-original
+ *     lookup re-runs `useQuery` with a fresh options object each render) — and
+ *     reacting to those is exactly what spun forever before, leaking memory
+ *     until the test worker OOMed.
+ *  2. The snapshot is referentially stable while the resolved set is unchanged,
+ *     so `useSyncExternalStore` skips the re-render — a data event that doesn't
+ *     affect our items can't trigger a child re-render and so can't feed back. */
+function useOfflineItems(
+  queryClient: QueryClient,
+  ids: string[],
+): FeedItem[] {
+  // Holds the last snapshot so getSnapshot can return the same reference when
+  // the resolved id list hasn't changed (useSyncExternalStore's stability rule).
+  const last = useRef<{ sig: string; items: FeedItem[] }>({
+    sig: '\0',
+    items: [],
+  });
+
+  const getSnapshot = useCallback((): FeedItem[] => {
+    const items = ids
+      .map(
+        (id) =>
+          queryClient.getQueryData<FeedItem | null>(['item', id]) ??
+          findCachedFeedItem(queryClient, id),
+      )
+      .filter((fi): fi is FeedItem => fi != null);
+    const sig = items.map((fi) => fi.item.id).join(',');
+    if (sig !== last.current.sig) last.current = { sig, items };
+    return last.current.items;
+  }, [queryClient, ids]);
+
+  const subscribe = useCallback(
+    (onStoreChange: () => void) =>
+      queryClient.getQueryCache().subscribe((event) => {
+        if (
+          event.type === 'added' ||
+          event.type === 'removed' ||
+          event.type === 'updated'
+        ) {
+          onStoreChange();
+        }
+      }),
+    [queryClient],
+  );
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
