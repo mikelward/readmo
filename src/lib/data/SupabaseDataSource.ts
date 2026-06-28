@@ -29,6 +29,7 @@ import {
   type DiscoveredFeed,
   type FeedListOptions,
   type Page,
+  type RegisteredUser,
   AddFeedError,
   type AddFeedErrorKind,
 } from './DataSource';
@@ -1396,5 +1397,30 @@ export class SupabaseDataSource implements DataSource {
   async removeFromAllowlist(email: string): Promise<void> {
     const { error } = await this.sb.rpc('remove_from_allowlist', { p_email: email });
     if (error) throw error instanceof Error ? error : new Error(String(error));
+  }
+
+  async listUsers(): Promise<RegisteredUser[]> {
+    const { data, error } = await this.sb.rpc('list_users');
+    if (error) {
+      // Feature-detect a backend that predates the RPC (PostgREST PGRST202) →
+      // empty list, so an old backend just shows no users rather than crashing
+      // (guardrail #11). Other errors propagate so the page shows its retry UI.
+      if ((error as { code?: string }).code === 'PGRST202') return [];
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+    const rows = (data ?? []) as Array<{
+      email: string;
+      created_at: string;
+      last_sign_in_at: string | null;
+      family: boolean;
+      admin: boolean;
+    }>;
+    return rows.map((r) => ({
+      email: r.email,
+      createdAt: r.created_at,
+      lastSignInAt: r.last_sign_in_at ?? null,
+      family: r.family === true,
+      admin: r.admin === true,
+    }));
   }
 }

@@ -22,6 +22,7 @@ import {
   type DiscoveredFeed,
   type FeedListOptions,
   type Page,
+  type RegisteredUser,
 } from './DataSource';
 import {
   SEED_FEEDS,
@@ -582,6 +583,28 @@ export class MockDataSource implements DataSource {
 
   async removeFromAllowlist(email: string): Promise<void> {
     this.allowlist.delete(email.trim().toLowerCase());
+  }
+
+  /** A few seeded registered accounts (distinct signup dates so the sort options
+   * are demoable) so the /admin user list + promote/demote are testable.
+   * `family` reflects current allowlist membership, so toggling it
+   * (add/removeFromAllowlist) shows up on the next refetch. */
+  private readonly registeredUserSeed: ReadonlyArray<{
+    email: string;
+    createdAt: string;
+    lastSignInAt: string | null;
+  }> = [
+    { email: this.selfEmail, createdAt: '2024-01-01T00:00:00.000Z', lastSignInAt: '2024-06-01T00:00:00.000Z' },
+    { email: 'alex@example.com', createdAt: '2024-03-15T00:00:00.000Z', lastSignInAt: '2024-05-20T00:00:00.000Z' },
+    { email: 'sam@example.com', createdAt: '2024-02-10T00:00:00.000Z', lastSignInAt: null },
+  ];
+
+  async listUsers(): Promise<RegisteredUser[]> {
+    return this.registeredUserSeed.map((u) => ({
+      ...u,
+      family: this.allowlist.has(u.email),
+      admin: u.email === this.selfEmail,
+    }));
   }
 }
 

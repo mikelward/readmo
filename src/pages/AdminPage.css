@@ -29,6 +29,89 @@
   font-size: 0.95rem;
 }
 
+/* Sort / group controls above the registered-user list. */
+.admin__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin: 12px 0 4px;
+}
+
+.admin__control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  /* The whole label is the hit area (it wraps the checkbox/select), so give it
+     the 44px touch floor (guardrail #2) even though the checkbox glyph is 18px. */
+  min-height: var(--rm-tap);
+  font-size: 0.85rem;
+  color: var(--rm-meta);
+  cursor: pointer;
+}
+
+.admin__select {
+  min-height: var(--rm-tap);
+  padding: 0 8px;
+  background: var(--rm-bg);
+  border: 1px solid var(--rm-border);
+  border-radius: var(--rm-radius);
+  color: var(--rm-text);
+  font-size: 0.85rem;
+}
+
+.admin__control input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--rm-accent);
+}
+
+/* Status pills next to a registered user's email (Admin / Family). */
+.admin__tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--rm-meta);
+  color: var(--rm-bg);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+}
+
+.admin__tag--family {
+  background: var(--rm-accent);
+}
+
+/* Promote/demote a user to/from family. Accent (not danger) — it's reversible. */
+.admin__family-toggle {
+  flex: 0 0 auto;
+  min-height: var(--rm-tap);
+  padding: 0 14px;
+  background: none;
+  border: 1px solid var(--rm-border);
+  border-radius: var(--rm-radius);
+  color: var(--rm-accent);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.admin__family-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .admin__family-toggle:hover:not(:disabled) {
+    background: var(--rm-bg);
+  }
+}
+
+.admin__family-toggle:active:not(:disabled) {
+  background: var(--rm-bg);
+}
+
 .admin__remove {
   flex: 0 0 auto;
   min-height: var(--rm-tap);

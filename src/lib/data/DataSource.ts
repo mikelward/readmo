@@ -31,6 +31,18 @@ export interface AllowlistEntry {
   createdAt: string;
 }
 
+/** A registered account as shown on the `/admin` users list (admin-only read of
+ * `auth.users`), annotated with its trusted-user and operator status. */
+export interface RegisteredUser {
+  email: string;
+  createdAt: string;
+  lastSignInAt: string | null;
+  /** On the trusted-user allowlist (reading mode + Google News + FAMILY chip). */
+  family: boolean;
+  /** An operator (in `admin_users`; may reach `/admin`). */
+  admin: boolean;
+}
+
 export interface Page<T> {
   items: T[];
   /** Opaque cursor for the next page, or null when exhausted. A non-null
@@ -198,9 +210,14 @@ export interface DataSource {
   /** Admin-only: the current allowlist. Rejects for non-admins (the server is
    * the boundary; the UI also hides `/admin`). */
   listAllowlist(): Promise<AllowlistEntry[]>;
-  /** Admin-only: add / remove an allowlist email. */
+  /** Admin-only: add / remove an allowlist email. Doubles as promote/demote
+   * family for a registered user (the user list calls these by email). */
   addToAllowlist(email: string): Promise<void>;
   removeFromAllowlist(email: string): Promise<void>;
+  /** Admin-only: registered accounts, annotated with family/admin status.
+   * Feature-detects a backend that predates the RPC and returns `[]` so an old
+   * backend just shows an empty list rather than crashing (guardrail #11). */
+  listUsers(): Promise<RegisteredUser[]>;
 }
 
 /** Items already cached on this device (offline view); resolved from the
