@@ -30,6 +30,7 @@ const FEED_ITEM: FeedItem = {
     feedId: 'feed-1',
     guid: 'g1',
     url: 'https://example.com/post',
+    commentsUrl: null,
     title: 'A test headline',
     author: 'Jane Doe',
     publishedAt: Date.now() - 2 * 60 * 60 * 1000,
@@ -185,6 +186,123 @@ describe('ItemRow', () => {
       expect(body).not.toHaveAttribute('target');
       // No safe URL ⇒ no Open-original button either; the Pin button stays.
       expect(screen.queryByTestId('open-original-btn')).not.toBeInTheDocument();
+      expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
+    });
+  });
+
+  describe('open on newshacker', () => {
+    // A Hacker News feed item: guid is the HN discussion link, url the article.
+    const HN_FEED_ITEM: FeedItem = {
+      item: {
+        ...FEED_ITEM.item,
+        guid: 'https://news.ycombinator.com/item?id=42662903',
+        url: 'https://example.com/the-article',
+      },
+      feed: {
+        ...FEED_ITEM.feed,
+        url: 'https://news.ycombinator.com/rss',
+        siteUrl: 'https://news.ycombinator.com',
+        title: 'Hacker News',
+      },
+    };
+
+    it('links the row body to the newshacker discussion in a new tab', () => {
+      renderWithProviders(<ItemRow feedItem={HN_FEED_ITEM} openNewshacker />);
+      const body = screen.getByTestId('item-title');
+      expect(body).toHaveAttribute('href', 'https://newshacker.app/item/42662903');
+      expect(body).toHaveAttribute('target', '_blank');
+      expect(body.getAttribute('rel')).toContain('noopener');
+    });
+
+    it('adds an Open-on-newshacker button (not the open-original one)', () => {
+      renderWithProviders(<ItemRow feedItem={HN_FEED_ITEM} openNewshacker />);
+      const btn = screen.getByTestId('open-newshacker-btn');
+      expect(btn).toHaveAttribute('aria-label', 'Open A test headline on newshacker');
+      expect(screen.queryByTestId('open-original-btn')).not.toBeInTheDocument();
+      expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
+    });
+
+    it('opens the newshacker discussion and marks opened when the button is clicked', async () => {
+      const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+      const user = userEvent.setup();
+      const { source } = renderWithProviders(
+        <ItemRow feedItem={HN_FEED_ITEM} openNewshacker />,
+      );
+      await user.click(screen.getByTestId('open-newshacker-btn'));
+      expect(openSpy).toHaveBeenCalledWith(
+        'https://newshacker.app/item/42662903',
+        '_blank',
+        'noopener,noreferrer',
+      );
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+      expect(source.stateStore.get('item-1').done).toBe(false);
+      openSpy.mockRestore();
+    });
+
+    it('open original wins when both modes are set (a legacy open_original write)', () => {
+      // A current client never sets both (setOpenMode is atomic); the both-true
+      // state only comes from a legacy open_original-only client, so the row
+      // honors that as "open original" rather than letting stale newshacker win.
+      renderWithProviders(
+        <ItemRow feedItem={HN_FEED_ITEM} openOriginal openNewshacker />,
+      );
+      expect(screen.getByTestId('item-title')).toHaveAttribute(
+        'href',
+        'https://example.com/the-article',
+      );
+      expect(screen.getByTestId('open-original-btn')).toBeInTheDocument();
+      expect(screen.queryByTestId('open-newshacker-btn')).not.toBeInTheDocument();
+    });
+
+    it('derives the link from the structured commentsUrl when present', () => {
+      // List rows (feed_items RPC) carry comments_url; article link/guid are not
+      // HN, so commentsUrl is the only structured source.
+      const withComments: FeedItem = {
+        item: {
+          ...HN_FEED_ITEM.item,
+          guid: 'https://example.com/the-article',
+          url: 'https://example.com/the-article',
+          commentsUrl: 'https://news.ycombinator.com/item?id=42662903',
+          contentHtml: '<p>No HN link in the body.</p>',
+        },
+        feed: HN_FEED_ITEM.feed,
+      };
+      renderWithProviders(<ItemRow feedItem={withComments} openNewshacker />);
+      expect(screen.getByTestId('item-title')).toHaveAttribute(
+        'href',
+        'https://newshacker.app/item/42662903',
+      );
+      expect(screen.getByTestId('open-newshacker-btn')).toBeInTheDocument();
+    });
+
+    it('derives the link from the stored description HTML for the official HN feed', () => {
+      // Official news.ycombinator.com/rss shape: link/guid are the article; the
+      // discussion id lives only in the stored description (contentHtml).
+      const officialShape: FeedItem = {
+        item: {
+          ...HN_FEED_ITEM.item,
+          guid: 'https://example.com/the-article',
+          url: 'https://example.com/the-article',
+          contentHtml:
+            '<a href="https://news.ycombinator.com/item?id=44390000">Comments</a>',
+        },
+        feed: HN_FEED_ITEM.feed,
+      };
+      renderWithProviders(<ItemRow feedItem={officialShape} openNewshacker />);
+      expect(screen.getByTestId('item-title')).toHaveAttribute(
+        'href',
+        'https://newshacker.app/item/44390000',
+      );
+      expect(screen.getByTestId('open-newshacker-btn')).toBeInTheDocument();
+    });
+
+    it('falls back to the in-app reader when the item has no Hacker News id', () => {
+      // A non-HN item (plain guid/url) in newshacker mode can't build a link.
+      renderWithProviders(<ItemRow feedItem={FEED_ITEM} openNewshacker />);
+      const body = screen.getByTestId('item-title');
+      expect(body).toHaveAttribute('href', '/item/item-1');
+      expect(body).not.toHaveAttribute('target');
+      expect(screen.queryByTestId('open-newshacker-btn')).not.toBeInTheDocument();
       expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
     });
   });

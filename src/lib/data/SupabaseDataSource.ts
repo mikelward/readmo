@@ -10,6 +10,7 @@ import {
   type ItemId,
   type ItemState,
   type ItemStateField,
+  type OpenMode,
   type Subscription,
 } from '../types';
 import type { FullTextResult, FullTextStatus } from '../fullText';
@@ -67,10 +68,13 @@ const ITEM_COLS =
 // read can't reach it either is folded into the DB-backed allowlist follow-up.
 const ITEM_STATE_COLS =
   'item_id, pinned, pinned_at, favorite, favorite_at, done, done_at, hidden, hidden_at, opened, opened_at';
-// `open_original` (0027) is selected optionally: a client can reach a backend
-// not yet migrated with the column, so loadSubscriptions falls back to
-// SUBSCRIPTION_COLS_LEGACY on an undefined-column error (guardrail #11).
+// `open_original` (0027) and `open_newshacker` (0034) are selected optionally: a
+// client can reach a backend not yet migrated with either column, so
+// loadSubscriptions steps down through these column sets on an undefined-column
+// error (guardrail #11): full → pre-0034 → pre-0027 (legacy).
 const SUBSCRIPTION_COLS =
+  'feed_id, folder, title_override, muted, open_original, open_newshacker, sort';
+const SUBSCRIPTION_COLS_NO_NEWSHACKER =
   'feed_id, folder, title_override, muted, open_original, sort';
 const SUBSCRIPTION_COLS_LEGACY = 'feed_id, folder, title_override, muted, sort';
 
@@ -81,8 +85,9 @@ const SUBSCRIPTION_COLS_LEGACY = 'feed_id, folder, title_override, muted, sort';
  *   - SELECT naming an unknown column → Postgres SQLSTATE `42703`
  *     (undefined_column), surfaced verbatim.
  *   - PATCH/POST body mentioning a column not in the schema cache → PostgREST's
- *     own `PGRST204` (HTTP 400) — what an `update({ open_original })` hits
- *     against a pre-0027 (or stale-schema) backend.
+ *     own `PGRST204` (HTTP 400) — what an `update({ open_original })` or
+ *     `update({ open_newshacker })` hits against a pre-0027/pre-0034 (or
+ *     stale-schema) backend.
  * See https://docs.postgrest.org/en/v12/references/errors.html */
 function isMissingColumnError(err: unknown): boolean {
   const code = (err as { code?: unknown } | null)?.code;
@@ -252,6 +257,14 @@ export class SupabaseDataSource implements DataSource {
   // control until the column ships, so the new client never offers a write the
   // old backend would reject (guardrail #11).
   private openOriginalColumn = true;
+  // Capability flag for the `subscriptions.open_newshacker` column (0034), the
+  // sibling of openOriginalColumn. Starts optimistic and flips false the first
+  // time loadSubscriptions has to step down to the pre-0034 column set — i.e. the
+  // backend predates the migration. The Feeds page reads it
+  // (supportsOpenNewshacker) to hide the "open on newshacker" option until the
+  // column ships, so the new client never offers a write the old backend would
+  // reject (guardrail #11).
+  private openNewshackerColumn = true;
   // Set by the write path when an LWW write lost (the server returned a row that
   // didn't take our value). Consumed by onDrained — *after* the drain clears the
   // entry — to re-pull server truth, so the re-hydrate's pending overlay no longer
@@ -649,20 +662,34 @@ export class SupabaseDataSource implements DataSource {
     // hook layer, so a `['subscriptions']` invalidation (after subscribe/unsub/
     // mute, or to pick up another device's change) must re-hit Supabase here.
     const res = await this.sb.from('subscriptions').select(SUBSCRIPTION_COLS);
-    // Fall back to the legacy column set when the backend predates 0027 (the
-    // `open_original` column doesn't exist yet) — a new client must still read
-    // the subscription list against an un-migrated backend. mapSubscription
-    // defaults the missing field to false, and we record that the column is
-    // absent so the UI hides the write-triggering control until it ships.
+    // Step down through the column sets when the backend predates a migration —
+    // 0034 (`open_newshacker`) then 0027 (`open_original`) — so a new client can
+    // still read the subscription list against an un-migrated backend.
+    // mapSubscription defaults a missing field to false, and we record which
+    // columns are absent so the UI hides the write-triggering controls until they
+    // ship (guardrail #11).
     let subRows: SubscriptionRow[];
-    if (isMissingColumnError(res.error)) {
-      this.openOriginalColumn = false;
-      subRows = this.unwrap<SubscriptionRow[]>(
-        await this.sb.from('subscriptions').select(SUBSCRIPTION_COLS_LEGACY),
-      );
-    } else {
+    if (!isMissingColumnError(res.error)) {
       this.openOriginalColumn = true;
+      this.openNewshackerColumn = true;
       subRows = this.unwrap<SubscriptionRow[]>(res);
+    } else {
+      // The full select failed on an unknown column. `open_newshacker` is the
+      // newest, so drop it first and retry; if that still fails, the backend
+      // predates 0027 too, so fall back to the legacy set.
+      this.openNewshackerColumn = false;
+      const res2 = await this.sb
+        .from('subscriptions')
+        .select(SUBSCRIPTION_COLS_NO_NEWSHACKER);
+      if (!isMissingColumnError(res2.error)) {
+        this.openOriginalColumn = true;
+        subRows = this.unwrap<SubscriptionRow[]>(res2);
+      } else {
+        this.openOriginalColumn = false;
+        subRows = this.unwrap<SubscriptionRow[]>(
+          await this.sb.from('subscriptions').select(SUBSCRIPTION_COLS_LEGACY),
+        );
+      }
     }
     await this.ensureFeeds(subRows.map((s) => s.feed_id));
     const out: Array<{ subscription: Subscription; feed: Feed }> = [];
@@ -1160,6 +1187,57 @@ export class SupabaseDataSource implements DataSource {
     if (isMissingColumnError(error)) {
       this.openOriginalColumn = false;
       return;
+    }
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+
+  supportsOpenNewshacker(): boolean {
+    // False only once a subscriptions read has proven the column absent (a
+    // pre-0034 backend). Optimistic until then; the Feeds page reads this after
+    // the subscriptions query settles, so by the time the rows render the value
+    // is known. Mirrors supportsOpenOriginal.
+    return this.openNewshackerColumn;
+  }
+
+  async setOpenMode(feedId: FeedId, mode: OpenMode): Promise<void> {
+    // Write BOTH display booleans in a single PATCH so the two flags flip
+    // together — a feed is never left with open_original AND open_newshacker both
+    // true (which an old client that only knows open_original would misread).
+    // RLS + the column-scoped UPDATE grants (0027/0034) confine this to the
+    // caller's own row and these two columns.
+    const { error } = await this.sb
+      .from('subscriptions')
+      .update({
+        open_original: mode === 'original',
+        open_newshacker: mode === 'newshacker',
+      })
+      .eq('feed_id', feedId);
+    if (!error) return;
+    // Against a backend predating 0034 the open_newshacker column doesn't exist,
+    // so naming it in the body 400s (PGRST204). Record the column absent so the
+    // option hides on the next render, then:
+    //   - reader/original: retry writing just open_original so the reachable
+    //     modes still persist.
+    //   - newshacker: we CAN'T honor the request, and the option only appeared
+    //     because supportsOpenNewshacker() was still optimistic against a stale
+    //     persisted cache. Writing open_original:false here would silently CLEAR
+    //     an existing "open original" preference and drop the feed to the reader.
+    //     Leave the row unchanged instead (the next live read hides the option).
+    // The client must never *require* the unshipped migration (guardrail #11).
+    if (isMissingColumnError(error)) {
+      this.openNewshackerColumn = false;
+      if (mode === 'newshacker') return;
+      const { error: e2 } = await this.sb
+        .from('subscriptions')
+        .update({ open_original: mode === 'original' })
+        .eq('feed_id', feedId);
+      if (!e2) return;
+      // Even open_original is absent (pre-0027): record it and no-op.
+      if (isMissingColumnError(e2)) {
+        this.openOriginalColumn = false;
+        return;
+      }
+      throw e2 instanceof Error ? e2 : new Error(String(e2));
     }
     throw error instanceof Error ? error : new Error(String(error));
   }

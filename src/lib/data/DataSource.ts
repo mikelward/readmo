@@ -5,6 +5,7 @@ import type {
   Folder,
   Item,
   ItemId,
+  OpenMode,
   Subscription,
 } from '../types';
 import type { FullTextResult } from '../fullText';
@@ -192,6 +193,20 @@ export interface DataSource {
    * migration, so the UI can hide the control rather than offer a write the old
    * backend rejects. Omitted sources are assumed to support it. */
   supportsOpenOriginal?(): boolean;
+  /** Set a feed's open mode — the mutually-exclusive choice of where its article
+   * rows open: the in-app `reader` (default), the `original` source website, or
+   * the item's Hacker News discussion on `newshacker`. Writes the `open_original`
+   * and `open_newshacker` booleans **atomically in one update**, so a feed can
+   * never be left with both set (which an old client that only knows
+   * `open_original` would misread). `newshacker` is offered for Hacker News feeds
+   * only. */
+  setOpenMode(feedId: FeedId, mode: OpenMode): Promise<void>;
+  /** Whether the backend supports the "open on newshacker" preference (the
+   * `open_newshacker` column, 0034, exists). False against a backend that
+   * predates the migration, so the UI hides the newshacker option rather than
+   * offer a write the old backend rejects. Omitted sources are assumed to
+   * support it. */
+  supportsOpenNewshacker?(): boolean;
   setTitleOverride(feedId: FeedId, title: string | null): Promise<void>;
   /** Force an immediate server-side refresh of one feed (or all). */
   refresh(feedId?: FeedId): Promise<void>;

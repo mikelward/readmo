@@ -92,6 +92,11 @@ export interface ItemRow {
   feed_id: string;
   guid: string;
   url: string | null;
+  /** Optional: the `feed_items` RPC returns the whole item row (so list views
+   * carry it), but the ITEM_COLS direct reads (library/search/reader) omit it.
+   * Absent against a backend predating the `comments_url` column (0033).
+   * Defaults to null in {@link mapItem}. */
+  comments_url?: string | null;
   title: string | null;
   author: string | null;
   published_at: string | null;
@@ -127,6 +132,10 @@ export interface SubscriptionRow {
    * `open_original` column (loadSubscriptions falls back to the legacy
    * columns). Defaults to false in {@link mapSubscription}. */
   open_original?: boolean;
+  /** Optional: absent when read from a backend not yet migrated with the
+   * `open_newshacker` column (0034) — loadSubscriptions falls back to the
+   * pre-0034 column set. Defaults to false in {@link mapSubscription}. */
+  open_newshacker?: boolean;
   sort: number;
 }
 
@@ -173,6 +182,7 @@ export function mapItem(row: ItemRow): Item {
     feedId: row.feed_id,
     guid: row.guid,
     url: row.url ?? '',
+    commentsUrl: row.comments_url ?? null,
     title: row.title ?? '(untitled)',
     author: row.author ?? null,
     publishedAt: tsToMs(row.published_at) ?? tsToMs(row.created_at) ?? 0,
@@ -206,6 +216,7 @@ export function mapSubscription(row: SubscriptionRow): Subscription {
     titleOverride: row.title_override,
     muted: row.muted,
     openOriginal: row.open_original ?? false,
+    openNewshacker: row.open_newshacker ?? false,
     sort: row.sort,
   };
 }

@@ -1273,14 +1273,91 @@ describe('SupabaseDataSource dispatch + writes', () => {
     const env = setup();
     // Optimistic before any read has proven the column absent.
     expect(env.ds.supportsOpenOriginal()).toBe(true);
-    // Model an un-migrated backend: the first select(SUBSCRIPTION_COLS) errors
-    // with undefined_column (42703); the data source retries without the column.
-    env.fake.failSelectOnce('subscriptions', { code: '42703' });
+    expect(env.ds.supportsOpenNewshacker()).toBe(true);
+    // Model a pre-0027 backend: any select naming open_original errors with
+    // undefined_column (42703), so both the full and the no-newshacker tiers
+    // fail and the read drops to the legacy column set.
+    env.fake.failSelectWhenColumns('subscriptions', 'open_original', { code: '42703' });
     const subs = await env.ds.getSubscriptions();
     expect(subs.length).toBeGreaterThan(0);
     expect(subs.every((s) => s.subscription.openOriginal === false)).toBe(true);
-    // The fallback marks the feature unsupported so the UI hides the control.
+    expect(subs.every((s) => s.subscription.openNewshacker === false)).toBe(true);
+    // The fallback marks both features unsupported so the UI hides the controls.
     expect(env.ds.supportsOpenOriginal()).toBe(false);
+    expect(env.ds.supportsOpenNewshacker()).toBe(false);
+  });
+
+  it('getSubscriptions falls back to the pre-0034 columns when only open_newshacker is missing', async () => {
+    const env = setup();
+    expect(env.ds.supportsOpenNewshacker()).toBe(true);
+    // Model a backend with 0027 but not 0034: only a projection naming
+    // open_newshacker errors, so the read drops just that column and keeps
+    // open_original.
+    env.fake.failSelectWhenColumns('subscriptions', 'open_newshacker', { code: '42703' });
+    const subs = await env.ds.getSubscriptions();
+    expect(subs.length).toBeGreaterThan(0);
+    expect(subs.every((s) => s.subscription.openNewshacker === false)).toBe(true);
+    // open_original is still supported; only the newshacker option hides.
+    expect(env.ds.supportsOpenOriginal()).toBe(true);
+    expect(env.ds.supportsOpenNewshacker()).toBe(false);
+  });
+
+  it('setOpenMode writes both open-mode columns atomically and reads back', async () => {
+    const env = setup();
+    const subB = async () =>
+      (await env.ds.getSubscriptions()).find(
+        (s) => s.subscription.feedId === 'feed-b',
+      )!.subscription;
+
+    await env.ds.setOpenMode('feed-b', 'newshacker');
+    expect((await subB()).openNewshacker).toBe(true);
+    expect((await subB()).openOriginal).toBe(false);
+
+    // Switching to original clears newshacker in the same update.
+    await env.ds.setOpenMode('feed-b', 'original');
+    expect((await subB()).openOriginal).toBe(true);
+    expect((await subB()).openNewshacker).toBe(false);
+
+    // Untouched feeds stay false on both flags.
+    const a = (await env.ds.getSubscriptions()).find(
+      (s) => s.subscription.feedId === 'feed-a',
+    )!.subscription;
+    expect(a.openOriginal).toBe(false);
+    expect(a.openNewshacker).toBe(false);
+  });
+
+  it('setOpenMode tolerates a pre-0034 backend: retries without open_newshacker', async () => {
+    const env = setup();
+    // The combined write naming open_newshacker 400s on a pre-0034 backend; the
+    // data source retries with just open_original so reader/original still
+    // persist, and records the column absent so the option hides.
+    env.fake.failUpdateOnce('subscriptions', { code: 'PGRST204' });
+    await expect(env.ds.setOpenMode('feed-b', 'original')).resolves.toBeUndefined();
+    expect(env.ds.supportsOpenNewshacker()).toBe(false);
+    const b = (await env.ds.getSubscriptions()).find(
+      (s) => s.subscription.feedId === 'feed-b',
+    )!.subscription;
+    // The open_original half of the intent still landed via the retry.
+    expect(b.openOriginal).toBe(true);
+  });
+
+  it('setOpenMode on a pre-0034 backend does not clobber open_original for a newshacker pick', async () => {
+    const env = setup();
+    const subB = async () =>
+      (await env.ds.getSubscriptions()).find(
+        (s) => s.subscription.feedId === 'feed-b',
+      )!.subscription;
+    // Feed starts in "open original".
+    await env.ds.setOpenMode('feed-b', 'original');
+    expect((await subB()).openOriginal).toBe(true);
+    // The option is still showing (optimistic stale cache), but the backend
+    // lacks open_newshacker: the write 400s. We can't honor newshacker, so the
+    // existing open_original preference must be left intact — NOT cleared.
+    env.fake.failUpdateOnce('subscriptions', { code: 'PGRST204' });
+    await expect(env.ds.setOpenMode('feed-b', 'newshacker')).resolves.toBeUndefined();
+    expect(env.ds.supportsOpenNewshacker()).toBe(false);
+    expect((await subB()).openOriginal).toBe(true);
+    expect((await subB()).openNewshacker).toBe(false);
   });
 
   it('reports open-original support after a normal subscriptions read', async () => {

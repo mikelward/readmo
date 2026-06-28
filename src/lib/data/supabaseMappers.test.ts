@@ -128,6 +128,15 @@ describe('mapItem', () => {
       Date.parse('2026-01-01T00:00:00.000Z'),
     );
   });
+
+  it('maps comments_url, defaulting to null when the column is absent', () => {
+    expect(
+      mapItem({ ...row, comments_url: 'https://news.ycombinator.com/item?id=1' })
+        .commentsUrl,
+    ).toBe('https://news.ycombinator.com/item?id=1');
+    // ITEM_COLS reads / a pre-0033 backend omit the column entirely.
+    expect(mapItem(row).commentsUrl).toBeNull();
+  });
 });
 
 describe('mapItemState', () => {
@@ -170,6 +179,7 @@ describe('mapSubscription', () => {
       title_override: 'My Title',
       muted: true,
       open_original: true,
+      open_newshacker: true,
       sort: 3,
     };
     expect(mapSubscription(row)).toEqual({
@@ -178,11 +188,12 @@ describe('mapSubscription', () => {
       titleOverride: 'My Title',
       muted: true,
       openOriginal: true,
+      openNewshacker: true,
       sort: 3,
     });
   });
 
-  it('defaults openOriginal to false when the column is absent (pre-0027 backend)', () => {
+  it('defaults openOriginal/openNewshacker to false when the columns are absent (pre-migration backend)', () => {
     const row: SubscriptionRow = {
       feed_id: 'feed-1',
       folder: null,
@@ -191,5 +202,6 @@ describe('mapSubscription', () => {
       sort: 0,
     };
     expect(mapSubscription(row).openOriginal).toBe(false);
+    expect(mapSubscription(row).openNewshacker).toBe(false);
   });
 });

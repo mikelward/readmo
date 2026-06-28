@@ -14,7 +14,8 @@ import { useSwipeToDismiss } from '../hooks/useSwipeToDismiss';
 import { useItemState } from '../hooks/useItemState';
 import { ItemRowMenu, type ItemRowMenuItem } from './ItemRowMenu';
 import { TooltipButton } from './TooltipButton';
-import { Check, OpenInNew, PushPinFilled, PushPinOutline } from './icons';
+import { Check, Newshacker, OpenInNew, PushPinFilled, PushPinOutline } from './icons';
+import { newshackerUrlForItem } from '../lib/newshacker';
 import './ItemRow.css';
 
 export interface RightAction {
@@ -39,6 +40,12 @@ interface Props {
    * Ignored when the item URL isn't a safe http(s) URL — falls back to the
    * reader. */
   openOriginal?: boolean;
+  /** When true (the feed's "open on newshacker" preference), the row body links
+   * to the item's Hacker News discussion on newshacker.app in a new tab instead
+   * of the in-app reader. `openOriginal` takes precedence if both are somehow set
+   * (see {@link openModeOf}). Ignored when the item has no derivable Hacker News
+   * id — falls back to the reader. */
+  openNewshacker?: boolean;
   onShare?: (item: FeedItem) => void;
 }
 
@@ -47,6 +54,7 @@ export function ItemRow({
   rightAction,
   enableSwipe = true,
   openOriginal = false,
+  openNewshacker = false,
   onShare,
 }: Props) {
   const { item, feed } = feedItem;
@@ -63,13 +71,25 @@ export function ItemRow({
   const domain = feed.title
     ? articleSourceDomain(item.url, feed.siteUrl ?? feed.url)
     : '';
-  // "Open original" only applies when the item has a safe http(s) URL to open;
-  // otherwise the row falls back to the in-app reader.
-  const openExternal = openOriginal && isSafeHttpUrl(item.url);
-  // A feed-style open-original row (no library inverse action) gets a dedicated
-  // Open-original button to the left of the Done/Pin cluster. Library rows keep
-  // their own right-side action and just open the source on a row-body tap.
-  const openOriginalRow = openExternal && !rightAction;
+  // The feed's per-feed open mode resolves to an external link target for this
+  // row, or null to fall back to the in-app reader. "Open original" wins over
+  // "open on newshacker" if both flags are somehow set — the same precedence as
+  // {@link openModeOf}, since the only both-true source is a legacy client's
+  // explicit open_original write. Each mode falls back to the reader when its
+  // target can't be built (no safe http URL / no Hacker News id).
+  const openOriginalHref =
+    openOriginal && isSafeHttpUrl(item.url) ? item.url : null;
+  const newshackerHref = openNewshacker ? newshackerUrlForItem(item) : null;
+  const externalHref = openOriginalHref ?? newshackerHref;
+  const externalKind: 'newshacker' | 'original' | null = openOriginalHref
+    ? 'original'
+    : newshackerHref
+      ? 'newshacker'
+      : null;
+  // A feed-style external-open row (no library inverse action) gets a dedicated
+  // open button to the left of the Done/Pin cluster. Library rows keep their own
+  // right-side action and just open the target on a row-body tap.
+  const externalRow = externalHref != null && !rightAction;
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
@@ -83,16 +103,16 @@ export function ItemRow({
   const handleMarkUnread = useCallback(() => set('opened', false), [set]);
   const handleShare = useCallback(() => onShare?.(feedItem), [onShare, feedItem]);
   const markOpened = useCallback(() => set('opened', true), [set]);
-  // The Open-original row button opens the source in a new tab and marks the
-  // item opened — same as the reader's Open original and the `o` shortcut.
-  // Done/opened state is left exactly as when the preference is off (we may
-  // iterate on auto-marking done later).
-  const handleOpenOriginal = useCallback(() => {
-    if (isSafeHttpUrl(item.url)) {
-      window.open(item.url, '_blank', 'noopener,noreferrer');
+  // The external-open row button opens the target (source website or the
+  // newshacker discussion) in a new tab and marks the item opened — same as the
+  // in-app reader and the `o` shortcut. Done/opened state is left exactly as when
+  // the preference is off (we may iterate on auto-marking done later).
+  const handleOpenExternal = useCallback(() => {
+    if (externalHref) {
+      window.open(externalHref, '_blank', 'noopener,noreferrer');
     }
     markOpened();
-  }, [item.url, markOpened]);
+  }, [externalHref, markOpened]);
 
   const openMenu = useCallback(() => {
     setMenuAnchor(articleRef.current);
@@ -320,12 +340,13 @@ export function ItemRow({
         {...handlers}
         onContextMenu={handleContextMenu}
       >
-        {openExternal ? (
-          // "Open original": the row body goes straight to the source website in
-          // a new tab (marking the item opened, like the in-app reader and the
-          // `o` shortcut) instead of navigating to the reader.
+        {externalHref ? (
+          // Open mode (original / newshacker): the row body goes straight to the
+          // external target in a new tab (marking the item opened, like the
+          // in-app reader and the `o` shortcut) instead of navigating to the
+          // reader.
           <a
-            href={item.url}
+            href={externalHref}
             target="_blank"
             rel="noopener noreferrer"
             className="item-row__body"
@@ -347,20 +368,29 @@ export function ItemRow({
           </Link>
         )}
 
-        {openOriginalRow ? (
-          // Open-original feed row: a dedicated Open original button (same icon
-          // as the reader) sits to the left of the Done/Pin cluster and opens the
-          // source in a new tab. Pin and Done are unchanged.
+        {externalRow ? (
+          // External-open feed row: a dedicated open button sits to the left of
+          // the Done/Pin cluster and opens the target in a new tab. The
+          // newshacker "n" mark distinguishes the newshacker discussion from the
+          // OpenInNew "open original" source. Pin and Done are unchanged.
           <TooltipButton
             type="button"
             className="pin-btn"
-            data-testid="open-original-btn"
-            aria-label={`Open ${title} on its website`}
-            tooltip="Open original"
-            onClick={handleOpenOriginal}
+            data-testid={
+              externalKind === 'newshacker' ? 'open-newshacker-btn' : 'open-original-btn'
+            }
+            aria-label={
+              externalKind === 'newshacker'
+                ? `Open ${title} on newshacker`
+                : `Open ${title} on its website`
+            }
+            tooltip={
+              externalKind === 'newshacker' ? 'Open on newshacker' : 'Open original'
+            }
+            onClick={handleOpenExternal}
           >
             <span className="pin-btn__icon">
-              <OpenInNew />
+              {externalKind === 'newshacker' ? <Newshacker /> : <OpenInNew />}
             </span>
           </TooltipButton>
         ) : null}

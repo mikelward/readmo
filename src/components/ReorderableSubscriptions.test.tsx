@@ -3,11 +3,11 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { ReorderableSubscriptions, type SubscriptionEntry } from './ReorderableSubscriptions';
 import type { Feed, FeedId } from '../lib/types';
 
-function feed(id: string, title: string): Feed {
+function feed(id: string, title: string, host = `${id}.example.com`): Feed {
   return {
     id,
-    url: `https://${id}.example.com/feed`,
-    siteUrl: `https://${id}.example.com`,
+    url: `https://${host}/feed`,
+    siteUrl: `https://${host}`,
     title,
     faviconUrl: null,
     errorCount: 0,
@@ -30,7 +30,30 @@ function entry(
       titleOverride: null,
       muted: false,
       openOriginal,
+      openNewshacker: false,
       sort,
+    },
+  };
+}
+
+/** A Hacker News feed entry (its open-mode control is the three-way radio). */
+function hnEntry(
+  id: string,
+  title: string,
+  sort: number,
+  overrides: Partial<SubscriptionEntry['subscription']> = {},
+): SubscriptionEntry {
+  return {
+    feed: feed(id, title, 'news.ycombinator.com'),
+    subscription: {
+      feedId: id,
+      folder: null,
+      titleOverride: null,
+      muted: false,
+      openOriginal: false,
+      openNewshacker: false,
+      sort,
+      ...overrides,
     },
   };
 }
@@ -44,6 +67,7 @@ function setup() {
   const onReorder = vi.fn<(ids: FeedId[]) => void>();
   const onMute = vi.fn();
   const onSetOpenOriginal = vi.fn();
+  const onSetOpenMode = vi.fn();
   const onUnsubscribe = vi.fn();
   const onRename = vi.fn<(id: FeedId, title: string | null) => void>();
   render(
@@ -52,11 +76,12 @@ function setup() {
       onReorder={onReorder}
       onMute={onMute}
       onSetOpenOriginal={onSetOpenOriginal}
+      onSetOpenMode={onSetOpenMode}
       onUnsubscribe={onUnsubscribe}
       onRename={onRename}
     />,
   );
-  return { onReorder, onMute, onSetOpenOriginal, onUnsubscribe, onRename };
+  return { onReorder, onMute, onSetOpenOriginal, onSetOpenMode, onUnsubscribe, onRename };
 }
 
 // The persist is debounced (300ms, only-latest-wins), so drive it with fake
@@ -151,6 +176,7 @@ describe('ReorderableSubscriptions', () => {
         onReorder={onReorder}
         onMute={vi.fn()}
         onSetOpenOriginal={vi.fn()}
+        onSetOpenMode={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
       />,
@@ -220,6 +246,7 @@ describe('ReorderableSubscriptions', () => {
         onReorder={vi.fn()}
         onMute={vi.fn()}
         onSetOpenOriginal={onSetOpenOriginal}
+        onSetOpenMode={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
       />,
@@ -238,6 +265,7 @@ describe('ReorderableSubscriptions', () => {
         onReorder={vi.fn()}
         onMute={vi.fn()}
         onSetOpenOriginal={vi.fn()}
+        onSetOpenMode={vi.fn()}
         showOpenOriginal={false}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
@@ -253,6 +281,101 @@ describe('ReorderableSubscriptions', () => {
     expect(within(menu).getByRole('menuitem', { name: 'Unsubscribe' })).toBeInTheDocument();
   });
 
+  // --- Hacker News feeds: the three-way open-mode choice -------------------
+
+  function renderHn(
+    sub: Partial<SubscriptionEntry['subscription']> = {},
+    props: { showOpenOriginal?: boolean; showOpenNewshacker?: boolean } = {},
+  ) {
+    const onSetOpenMode = vi.fn();
+    const onSetOpenOriginal = vi.fn();
+    render(
+      <ReorderableSubscriptions
+        subs={[hnEntry('hn', 'Hacker News', 0, sub)]}
+        onReorder={vi.fn()}
+        onMute={vi.fn()}
+        onSetOpenOriginal={onSetOpenOriginal}
+        onSetOpenMode={onSetOpenMode}
+        onUnsubscribe={vi.fn()}
+        onRename={vi.fn()}
+        {...props}
+      />,
+    );
+    return { onSetOpenMode, onSetOpenOriginal };
+  }
+
+  it('offers a three-way open-mode radio for a Hacker News feed (reader default)', () => {
+    renderHn();
+    openMenu('Hacker News');
+    const menu = screen.getByRole('menu');
+    // No two-state checkbox — the choice is mutually exclusive radios instead.
+    expect(
+      within(menu).queryByRole('menuitemcheckbox', { name: 'Open original' }),
+    ).toBeNull();
+    const reader = within(menu).getByRole('menuitemradio', { name: 'In-app reader' });
+    const original = within(menu).getByRole('menuitemradio', { name: 'Open original' });
+    const newshacker = within(menu).getByRole('menuitemradio', {
+      name: 'Open on newshacker',
+    });
+    expect(reader).toHaveAttribute('aria-checked', 'true');
+    expect(original).toHaveAttribute('aria-checked', 'false');
+    expect(newshacker).toHaveAttribute('aria-checked', 'false');
+  });
+
+  it('selecting "Open on newshacker" sets the newshacker open mode', () => {
+    const { onSetOpenMode } = renderHn();
+    openMenu('Hacker News');
+    fireEvent.click(
+      screen.getByRole('menuitemradio', { name: 'Open on newshacker' }),
+    );
+    expect(onSetOpenMode).toHaveBeenCalledWith('hn', 'newshacker');
+    expect(screen.queryByRole('menu')).toBeNull(); // closes after the choice
+  });
+
+  it('marks the newshacker radio checked when the feed is already in that mode', () => {
+    const { onSetOpenMode } = renderHn({ openNewshacker: true });
+    openMenu('Hacker News');
+    expect(
+      screen.getByRole('menuitemradio', { name: 'Open on newshacker' }),
+    ).toHaveAttribute('aria-checked', 'true');
+    // Re-picking the current mode is a no-op (no redundant write).
+    fireEvent.click(
+      screen.getByRole('menuitemradio', { name: 'Open on newshacker' }),
+    );
+    expect(onSetOpenMode).not.toHaveBeenCalled();
+  });
+
+  it('switching a newshacker feed back to the reader sets the reader mode', () => {
+    const { onSetOpenMode } = renderHn({ openNewshacker: true });
+    openMenu('Hacker News');
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'In-app reader' }));
+    expect(onSetOpenMode).toHaveBeenCalledWith('hn', 'reader');
+  });
+
+  it('falls back to the Open-original checkbox for a Hacker News feed when newshacker is unsupported', () => {
+    renderHn({}, { showOpenNewshacker: false });
+    openMenu('Hacker News');
+    const menu = screen.getByRole('menu');
+    expect(
+      within(menu).queryByRole('menuitemradio', { name: 'Open on newshacker' }),
+    ).toBeNull();
+    expect(
+      within(menu).getByRole('menuitemcheckbox', { name: 'Open original' }),
+    ).toBeInTheDocument();
+  });
+
+  it('does not offer "Open on newshacker" for a non–Hacker News feed', () => {
+    setup();
+    openMenu('Alpha');
+    const menu = screen.getByRole('menu');
+    expect(
+      within(menu).queryByRole('menuitemradio', { name: 'Open on newshacker' }),
+    ).toBeNull();
+    expect(
+      within(menu).getByRole('menuitemcheckbox', { name: 'Open original' }),
+    ).toBeInTheDocument();
+  });
+
   it('shows Unmute when the feed is already muted', () => {
     const subs = [
       { ...entry('a', 'Alpha', 0), subscription: { ...entry('a', 'Alpha', 0).subscription, muted: true } },
@@ -263,6 +386,7 @@ describe('ReorderableSubscriptions', () => {
         onReorder={vi.fn()}
         onMute={vi.fn()}
         onSetOpenOriginal={vi.fn()}
+        onSetOpenMode={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
       />,
@@ -377,6 +501,7 @@ describe('ReorderableSubscriptions', () => {
         onReorder={vi.fn()}
         onMute={vi.fn()}
         onSetOpenOriginal={vi.fn()}
+        onSetOpenMode={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={onRename}
       />,
@@ -430,6 +555,7 @@ describe('ReorderableSubscriptions', () => {
         onReorder={vi.fn()}
         onMute={vi.fn()}
         onSetOpenOriginal={vi.fn()}
+        onSetOpenMode={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={onRename}
       />,

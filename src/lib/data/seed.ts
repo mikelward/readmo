@@ -154,6 +154,7 @@ export const SEED_ITEMS: Item[] = SPECS.map((spec, i) => ({
   // show no domain badge; aggregator-style posts set `url` to an off-site link
   // (e.g. the Reddit "Show" post → github.com) to exercise the source domain.
   url: spec.url ?? `${SITE_BY_FEED.get(spec.feedId) ?? 'https://example.com'}/article/${i + 1}`,
+  commentsUrl: null,
   title: spec.title,
   author: spec.author,
   publishedAt: Date.now() - spec.agoHours * HOUR,
@@ -164,11 +165,11 @@ export const SEED_ITEMS: Item[] = SPECS.map((spec, i) => ({
 }));
 
 export const SEED_SUBSCRIPTIONS: Subscription[] = [
-  { feedId: 'feed-verge', folder: 'News', titleOverride: null, muted: false, openOriginal: false, sort: 0 },
-  { feedId: 'feed-nasa', folder: 'News', titleOverride: null, muted: false, openOriginal: false, sort: 1 },
-  { feedId: 'feed-css', folder: 'Dev', titleOverride: null, muted: false, openOriginal: false, sort: 2 },
-  { feedId: 'feed-reddit-prog', folder: 'Dev', titleOverride: null, muted: false, openOriginal: false, sort: 3 },
-  { feedId: 'feed-park', folder: null, titleOverride: null, muted: false, openOriginal: false, sort: 4 },
+  { feedId: 'feed-verge', folder: 'News', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, sort: 0 },
+  { feedId: 'feed-nasa', folder: 'News', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, sort: 1 },
+  { feedId: 'feed-css', folder: 'Dev', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, sort: 2 },
+  { feedId: 'feed-reddit-prog', folder: 'Dev', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, sort: 3 },
+  { feedId: 'feed-park', folder: null, titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, sort: 4 },
 ];
 
 export const SEED_FOLDERS = [

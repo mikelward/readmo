@@ -8,6 +8,7 @@ import {
   type Item,
   type ItemId,
   type ItemState,
+  type OpenMode,
   type Subscription,
 } from '../types';
 import {
@@ -458,6 +459,7 @@ export class MockDataSource implements DataSource {
           titleOverride: null,
           muted: false,
           openOriginal: false,
+          openNewshacker: false,
           sort: this.subs.size,
         });
       }
@@ -486,6 +488,7 @@ export class MockDataSource implements DataSource {
       titleOverride: null,
       muted: false,
       openOriginal: false,
+      openNewshacker: false,
       sort: this.subs.size,
     });
     return { ...feed };
@@ -506,6 +509,22 @@ export class MockDataSource implements DataSource {
   }
 
   supportsOpenOriginal(): boolean {
+    // The in-memory store always carries the field, so the control is always
+    // available against the mock.
+    return true;
+  }
+
+  async setOpenMode(feedId: FeedId, mode: OpenMode): Promise<void> {
+    const sub = this.subs.get(feedId);
+    if (sub) {
+      // Atomic in-memory equivalent: set both booleans together so they're never
+      // transiently both true.
+      sub.openOriginal = mode === 'original';
+      sub.openNewshacker = mode === 'newshacker';
+    }
+  }
+
+  supportsOpenNewshacker(): boolean {
     // The in-memory store always carries the field, so the control is always
     // available against the mock.
     return true;
