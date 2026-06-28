@@ -29,6 +29,11 @@
   text-decoration: underline;
 }
 
+.about-page__build {
+  color: var(--rm-meta);
+  font-size: 14px;
+}
+
 .about-page__back {
   margin-top: 20px;
   font-size: 14px;

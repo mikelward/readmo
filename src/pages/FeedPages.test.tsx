@@ -60,7 +60,7 @@ describe('HomePage (no-feeds coach)', () => {
     const coach = await screen.findByTestId('home-empty-coach');
     expect(coach).toHaveTextContent('No feeds yet');
     const cta = screen.getByRole('link', { name: /add a feed/i });
-    expect(cta).toHaveAttribute('href', '/settings');
+    expect(cta).toHaveAttribute('href', '/feeds');
     expect(screen.queryByText(/all caught up/i)).not.toBeInTheDocument();
   });
 

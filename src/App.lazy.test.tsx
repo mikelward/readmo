@@ -3,19 +3,19 @@ import { describe, expect, it } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import { renderWithProviders } from './test/renderWithProviders';
 
-/** Mirrors the lazy wrapper in App.tsx. SettingsPage is a *named* export, so the
+/** Mirrors the lazy wrapper in App.tsx. FeedsPage is a *named* export, so the
  * dynamic import has to be adapted to the `{ default }` shape React.lazy expects
  * — this test guards that interop and the Suspense boundary resolving, which is
- * what would silently break the /settings route if the wrapper regressed. */
-const LazySettingsPage = lazy(() =>
-  import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })),
+ * what would silently break the /feeds route if the wrapper regressed. */
+const LazyFeedsPage = lazy(() =>
+  import('./pages/FeedsPage').then((m) => ({ default: m.FeedsPage })),
 );
 
-describe('lazy-loaded SettingsPage', () => {
-  it('resolves the split chunk and renders the settings UI', async () => {
+describe('lazy-loaded FeedsPage', () => {
+  it('resolves the split chunk and renders the feed-management UI', async () => {
     renderWithProviders(
       <Suspense fallback={<div>loading-fallback</div>}>
-        <LazySettingsPage />
+        <LazyFeedsPage />
       </Suspense>,
     );
 

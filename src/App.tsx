@@ -21,17 +21,19 @@ import { ItemPage } from './pages/ItemPage';
 import { SearchPage } from './pages/SearchPage';
 import { OfflinePage } from './pages/OfflinePage';
 import { SignInPage } from './pages/SignInPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { AboutPage } from './pages/AboutPage';
 import { DebugPage } from './pages/DebugPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { LazyRouteBoundary } from './components/LazyRouteBoundary';
 
-/** Settings carries the curated popular-feeds catalog (the app's largest static
- * data blob) and is visited rarely, so it's split into its own chunk loaded on
- * navigation rather than baked into the initial bundle. The service worker
- * precaches the chunk, so it stays available offline after the first load. */
-const SettingsPage = lazy(() =>
-  import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })),
+/** The Feeds page carries the curated popular-feeds catalog (the app's largest
+ * static data blob) and is visited rarely, so it's split into its own chunk
+ * loaded on navigation rather than baked into the initial bundle. The service
+ * worker precaches the chunk, so it stays available offline after the first
+ * load. */
+const FeedsPage = lazy(() =>
+  import('./pages/FeedsPage').then((m) => ({ default: m.FeedsPage })),
 );
 
 /** Signed-in gate. First launch with no session routes to /signin; deep links
@@ -91,11 +93,12 @@ export default function App() {
                     <Route path="/offline" element={<OfflinePage />} />
                     <Route path="/item/:id" element={<ItemPage />} />
                     <Route path="/search" element={<SearchPage />} />
+                    <Route path="/settings" element={<SettingsPage />} />
                     <Route
-                      path="/settings"
+                      path="/feeds"
                       element={
                         <LazyRouteBoundary>
-                          <SettingsPage />
+                          <FeedsPage />
                         </LazyRouteBoundary>
                       }
                     />

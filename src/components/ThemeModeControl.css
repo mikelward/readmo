@@ -1,0 +1,45 @@
+/* Segmented Light/Dark/System mode picker. Shared by Settings and the drawer;
+   spacing around it is left to the consumer so it sits flush in either place. */
+.theme-mode {
+  display: flex;
+  /* Wrap as a safety net on ultra-narrow viewports; the three buttons stay one
+     line at any realistic width. */
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px;
+  background: var(--rm-bg);
+  border: 1px solid var(--rm-border);
+  border-radius: 8px;
+}
+
+.theme-mode__btn {
+  /* min-width holds the 44px tap floor; flex-grow shares the row evenly. */
+  flex: 1 1 var(--rm-tap);
+  min-width: var(--rm-tap);
+  min-height: var(--rm-tap);
+  padding: 8px 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--rm-text);
+  cursor: pointer;
+}
+
+.theme-mode__btn[data-active] {
+  background: var(--rm-bg-card);
+  color: var(--rm-accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.theme-mode__btn:active {
+  background: color-mix(in srgb, var(--rm-accent) 12%, transparent);
+}
+
+@media (hover: hover) {
+  .theme-mode__btn:not([data-active]):hover {
+    background: color-mix(in srgb, var(--rm-accent) 8%, transparent);
+  }
+}

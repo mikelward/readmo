@@ -391,7 +391,10 @@
   justify-content: space-between;
 }
 
-.settings__about-links {
+/* A row holding one or more link/button actions under a section heading (Feeds,
+   About). Flex so the link sits as a block under the heading with consistent
+   spacing instead of collapsing as a bare inline <a>. */
+.settings__actions {
   display: flex;
   align-items: center;
   gap: 8px;

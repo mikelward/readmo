@@ -1,74 +1,15 @@
 import { useEffect } from 'react';
-import type { CSSProperties } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
-import { useHomeFeed } from '../hooks/useHomeFeed';
-import { useTheme } from '../hooks/useTheme';
-import type { FontSize, Theme, Palette } from '../lib/theme';
-import { FONT_SIZE_LABELS, PALETTE_LABELS, PALETTE_SWATCHES } from '../lib/theme';
-import { TooltipButton } from './TooltipButton';
+import { Edit } from './icons';
+import { ThemeModeControl } from './ThemeModeControl';
+import { TextSizeControl } from './TextSizeControl';
 import './AppDrawer.css';
 
 interface Props {
   open: boolean;
   onClose: () => void;
-}
-
-const MS_VIEWBOX = '0 -960 960 960';
-
-function ThemeIcon({ path }: { path: string }) {
-  return (
-    <svg viewBox={MS_VIEWBOX} fill="currentColor" width="22" height="22" aria-hidden="true" focusable="false">
-      <path d={path} />
-    </svg>
-  );
-}
-
-const LIGHT_PATH =
-  'M480-360q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35Zm0 80q-83 0-141.5-58.5T280-480q0-83 58.5-141.5T480-680q83 0 141.5 58.5T680-480q0 83-58.5 141.5T480-280ZM200-440H40v-80h160v80Zm720 0H760v-80h160v80ZM440-760v-160h80v160h-80Zm0 720v-160h80v160h-80ZM256-650l-101-97 57-59 96 100-52 56Zm492 496-97-101 53-55 101 97-57 59Zm-98-550 97-101 59 57-100 96-56-52ZM154-212l101-97 55 53-97 101-59-57Zm326-268Z';
-const DARK_PATH =
-  'M480-120q-150 0-255-105T120-480q0-150 105-255t255-105q14 0 27.5 1t26.5 3q-41 29-65.5 75.5T444-660q0 90 63 153t153 63q55 0 101-24.5t75-65.5q2 13 3 26.5t1 27.5q0 150-105 255T480-120Z';
-const SYSTEM_PATH =
-  'M80-120v-80h240v-80H160q-33 0-56.5-23.5T80-360v-400q0-33 23.5-56.5T160-840h640q33 0 56.5 23.5T880-760v400q0 33-23.5 56.5T800-280H640v80h240v80H80Zm80-240h640v-400H160v400Zm0 0v-400 400Z';
-
-const THEME_OPTIONS: Array<{ value: Theme; label: string; path: string }> = [
-  { value: 'light', label: 'Light', path: LIGHT_PATH },
-  { value: 'dark', label: 'Dark', path: DARK_PATH },
-  { value: 'system', label: 'System', path: SYSTEM_PATH },
-];
-
-const PALETTE_OPTIONS: Array<{ value: Palette; label: string }> = (
-  Object.keys(PALETTE_LABELS) as Palette[]
-).map((value) => ({ value, label: PALETTE_LABELS[value] }));
-
-// The text-size picker renders each option as a capital "A" whose glyph size
-// hints the scale (small / medium / large), echoing the conventional
-// font-size control. The accessible name still comes from the label.
-const FONT_SIZE_OPTIONS: Array<{
-  value: FontSize;
-  label: string;
-  glyph: number;
-}> = [
-  { value: '15', label: FONT_SIZE_LABELS['15'], glyph: 14 },
-  { value: '16', label: FONT_SIZE_LABELS['16'], glyph: 18 },
-  { value: '17', label: FONT_SIZE_LABELS['17'], glyph: 22 },
-];
-
-/** A two-tone disc previewing a palette: paper background + accent, split on
- * the diagonal. Colors come from PALETTE_SWATCHES so the swatch shows each
- * palette's identity regardless of which one is currently applied. */
-function PaletteSwatch({ palette }: { palette: Palette }) {
-  const { bg, accent } = PALETTE_SWATCHES[palette];
-  return (
-    <span
-      className="app-drawer__swatch"
-      style={
-        { '--rm-swatch-bg': bg, '--rm-swatch-accent': accent } as CSSProperties
-      }
-      aria-hidden="true"
-    />
-  );
 }
 
 const LIBRARY_LINKS = [
@@ -79,17 +20,14 @@ const LIBRARY_LINKS = [
   { to: '/offline', label: 'Offline' },
 ];
 
-/** Navigation drawer — Home picker, Library, Folders, Feeds, Appearance, App. */
+/** Navigation drawer — Home, Library, Feeds (with an edit affordance linking to
+ * the Feeds management page), an Appearance section with the Dark/Light mode
+ * and Text size pickers (the most-changed settings, one tap from anywhere), and
+ * an App section with Settings and About. The remaining appearance controls
+ * (color theme, font) live in Settings; Debug is reached from the About page. */
 export function AppDrawer({ open, onClose }: Props) {
   const ds = useDataSource();
-  const { homeFeed, setHomeFeed } = useHomeFeed();
-  const { theme, palette, fontSize, setTheme, setPalette, setFontSize } =
-    useTheme();
 
-  const { data: folders = [] } = useQuery({
-    queryKey: ['folders'],
-    queryFn: () => ds.getFolders(),
-  });
   const { data: subs = [] } = useQuery({
     queryKey: ['subscriptions'],
     queryFn: () => ds.getSubscriptions(),
@@ -122,37 +60,10 @@ export function AppDrawer({ open, onClose }: Props) {
           >
             Home
           </NavLink>
-          <button
-            type="button"
-            className={
-              'app-drawer__link app-drawer__link--button' +
-              (homeFeed.kind === 'all' ? ' app-drawer__link--option-active' : '')
-            }
-            onClick={(e) => {
-              e.stopPropagation();
-              setHomeFeed({ kind: 'all' });
-            }}
-          >
-            All subscriptions
-          </button>
-          {folders.map((f) => (
-            <button
-              key={f.name}
-              type="button"
-              className={
-                'app-drawer__link app-drawer__link--button' +
-                (homeFeed.kind === 'folder' && homeFeed.name === f.name
-                  ? ' app-drawer__link--option-active'
-                  : '')
-              }
-              onClick={(e) => {
-                e.stopPropagation();
-                setHomeFeed({ kind: 'folder', name: f.name });
-              }}
-            >
-              {f.name}
-            </button>
-          ))}
+          {/* TODO: restore the Home feed picker (All subscriptions / per-folder)
+              and a Folders nav section once home-feed switching and folder
+              navigation are designed properly. Dropped from the drawer for now;
+              `/` still renders the All-subscriptions river (useHomeFeed default). */}
         </div>
 
         <div className="app-drawer__section">
@@ -170,23 +81,18 @@ export function AppDrawer({ open, onClose }: Props) {
           ))}
         </div>
 
-        {folders.length > 0 && (
-          <div className="app-drawer__section">
-            <div className="app-drawer__heading">Folders</div>
-            {folders.map((f) => (
-              <NavLink
-                key={f.name}
-                to={`/folder/${encodeURIComponent(f.name)}`}
-                className="app-drawer__link"
-              >
-                {f.name}
-              </NavLink>
-            ))}
-          </div>
-        )}
-
         <div className="app-drawer__section">
-          <div className="app-drawer__heading">Feeds</div>
+          <div className="app-drawer__heading-row">
+            <div className="app-drawer__heading">Feeds</div>
+            <NavLink
+              to="/feeds"
+              className="app-drawer__heading-action"
+              aria-label="Edit feeds"
+              title="Edit feeds"
+            >
+              <Edit width={20} height={20} />
+            </NavLink>
+          </div>
           {subs.map(({ feed, subscription }) => (
             <NavLink
               key={feed.id}
@@ -211,66 +117,9 @@ export function AppDrawer({ open, onClose }: Props) {
 
         <div className="app-drawer__section">
           <div className="app-drawer__heading">Appearance</div>
-          <div className="app-drawer__segmented" role="radiogroup" aria-label="Mode">
-            {THEME_OPTIONS.map((opt) => (
-              <TooltipButton
-                key={opt.value}
-                type="button"
-                role="radio"
-                aria-checked={theme === opt.value}
-                tooltip={opt.label}
-                aria-label={opt.label}
-                className="app-drawer__segmented-btn"
-                data-active={theme === opt.value || undefined}
-                onClick={(e) => { e.stopPropagation(); setTheme(opt.value); }}
-              >
-                <ThemeIcon path={opt.path} />
-              </TooltipButton>
-            ))}
-          </div>
-          <div className="app-drawer__segmented" role="radiogroup" aria-label="Palette">
-            {PALETTE_OPTIONS.map((opt) => (
-              <TooltipButton
-                key={opt.value}
-                type="button"
-                role="radio"
-                aria-checked={palette === opt.value}
-                tooltip={opt.label}
-                aria-label={opt.label}
-                className="app-drawer__segmented-btn"
-                data-active={palette === opt.value || undefined}
-                onClick={(e) => { e.stopPropagation(); setPalette(opt.value); }}
-              >
-                <PaletteSwatch palette={opt.value} />
-              </TooltipButton>
-            ))}
-          </div>
-          <div
-            className="app-drawer__segmented"
-            role="radiogroup"
-            aria-label="Text size"
-          >
-            {FONT_SIZE_OPTIONS.map((opt) => (
-              <TooltipButton
-                key={opt.value}
-                type="button"
-                role="radio"
-                aria-checked={fontSize === opt.value}
-                tooltip={opt.label}
-                aria-label={opt.label}
-                className="app-drawer__segmented-btn"
-                data-active={fontSize === opt.value || undefined}
-                onClick={(e) => { e.stopPropagation(); setFontSize(opt.value); }}
-              >
-                <span
-                  className="app-drawer__size-glyph"
-                  style={{ fontSize: opt.glyph }}
-                  aria-hidden="true"
-                >
-                  A
-                </span>
-              </TooltipButton>
-            ))}
+          <div className="app-drawer__appearance">
+            <ThemeModeControl />
+            <TextSizeControl />
           </div>
         </div>
 
@@ -291,14 +140,6 @@ export function AppDrawer({ open, onClose }: Props) {
             }
           >
             About
-          </NavLink>
-          <NavLink
-            to="/debug"
-            className={({ isActive }) =>
-              'app-drawer__link' + (isActive ? ' app-drawer__link--active' : '')
-            }
-          >
-            Debug
           </NavLink>
         </div>
 

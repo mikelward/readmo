@@ -5,7 +5,7 @@ import './HomeEmptyCoach.css';
 /** First-run coach shown on Home when the signed-in user has *no* subscriptions
  * at all. Distinct from the "You're all caught up." empty state — that one means
  * the user has feeds but nothing unread; this one points a brand-new user at the
- * Add-a-feed input in Settings so an empty Home isn't a dead end. */
+ * Add-a-feed input on the Feeds page so an empty Home isn't a dead end. */
 export function HomeEmptyCoach() {
   return (
     <div className="home-coach" data-testid="home-empty-coach">
@@ -14,7 +14,7 @@ export function HomeEmptyCoach() {
         Subscribe to a blog, news site, or podcast and its latest articles show
         up here. Pin one to read it offline.
       </p>
-      <Link className="home-coach__cta" to="/settings">
+      <Link className="home-coach__cta" to="/feeds">
         <Add className="home-coach__cta-icon" />
         Add a feed
       </Link>

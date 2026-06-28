@@ -8,7 +8,8 @@ import './HeaderAccountMenu.css';
 
 /** Header account chip (far right, every page). Signed out → a "Sign in"
  * link; signed in → a 32px avatar that opens a small popover with the
- * display name, a settings link, and Sign out (SPEC.md *Auth → Account UI*). */
+ * display name, Feeds / Settings / About links, and Sign out (SPEC.md
+ * *Auth → Account UI*). */
 export function HeaderAccountMenu() {
   const { user, signOut } = useAuth();
   const [open, setOpen] = useState(false);
@@ -51,12 +52,28 @@ export function HeaderAccountMenu() {
             <div className="account-menu__email">{user.email}</div>
           </div>
           <Link
+            to="/feeds"
+            role="menuitem"
+            className="account-menu__item"
+            onClick={() => setOpen(false)}
+          >
+            Feeds
+          </Link>
+          <Link
             to="/settings"
             role="menuitem"
             className="account-menu__item"
             onClick={() => setOpen(false)}
           >
             Settings
+          </Link>
+          <Link
+            to="/about"
+            role="menuitem"
+            className="account-menu__item"
+            onClick={() => setOpen(false)}
+          >
+            About
           </Link>
           <button
             type="button"

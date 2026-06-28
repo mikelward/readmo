@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
-import { BrandMark, Menu, Search, Settings } from './icons';
+import { BrandMark, Menu, Search } from './icons';
 import { AppDrawer } from './AppDrawer';
 import { HeaderAccountMenu } from './HeaderAccountMenu';
 import { TooltipButton } from './TooltipButton';
@@ -66,16 +66,6 @@ export function AppHeader() {
             onClick={() => navigate('/search')}
           >
             <Search />
-          </TooltipButton>
-
-          <TooltipButton
-            type="button"
-            className="app-header__icon-btn"
-            tooltip="Settings"
-            aria-label="Settings"
-            onClick={() => navigate('/settings')}
-          >
-            <Settings />
           </TooltipButton>
         </div>
 

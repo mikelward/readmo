@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { buildInfo, summarizeBuildAge } from '../lib/buildInfo';
 import './AboutPage.css';
 
 export function AboutPage() {
@@ -35,6 +36,11 @@ export function AboutPage() {
         to the original article. All posts remain the work and property of their
         respective publishers; Readmo is independent and not affiliated with any
         of them.
+      </p>
+
+      <h2 className="about-page__heading">Version</h2>
+      <p className="about-page__build">
+        {summarizeBuildAge(buildInfo)} &middot; <Link to="/debug">Debug</Link>
       </p>
 
       <p className="about-page__back">
