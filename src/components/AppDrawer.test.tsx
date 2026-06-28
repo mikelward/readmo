@@ -46,7 +46,7 @@ describe('AppDrawer', () => {
     expect(screen.queryByRole('radiogroup', { name: 'Color theme' })).toBeNull();
   });
 
-  it('has an App section linking to Settings and About (Debug lives on About)', () => {
+  it('has an App section linking to Settings, About, and Legal (Debug lives on About)', () => {
     renderDrawer();
     expect(screen.getByText('App')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute(
@@ -56,6 +56,10 @@ describe('AppDrawer', () => {
     expect(screen.getByRole('link', { name: 'About' })).toHaveAttribute(
       'href',
       '/about',
+    );
+    expect(screen.getByRole('link', { name: 'Legal' })).toHaveAttribute(
+      'href',
+      '/legal',
     );
     // Debug is reached from the About page now, not the drawer.
     expect(screen.queryByRole('link', { name: 'Debug' })).toBeNull();

@@ -1555,6 +1555,7 @@ other toolbars in the app. (No Upvote — RSS has no votes.)
 | `/feeds` | feed management: add a feed, subscriptions (reorder/rename/mute/unsubscribe), OPML in/out; reached via the drawer's Feeds edit pencil or the account menu. Code-split. |
 | `/signin` | OAuth sign-in (unauthenticated landing) |
 | `/about` | what Readmo is, credited to its author (mikelward.com); no auth gate, informational only (no user data). Shows the build sequence number and age (e.g. `Build 100 · 2 days ago`) — no SHA — with a link to Debug. Linked from Settings → About. |
+| `/legal` | self-contained legal/DMCA page: third-party content, copyright/DMCA takedown + counter-notice, acceptable use, warranty disclaimer, limitation of liability, a privacy summary, and contact (mikel@mikelward.com). No auth gate, policy text only (no user data). Distinct from the standalone `docs/` Privacy + Terms pages, which Vercel's catch-all rewrite does not serve from readmo.app. Linked from the drawer (App section) and Settings → Legal. |
 | `/debug` | build/runtime/config diagnostics; no auth gate, public/presence info only (no secrets). Headline is `<branch-leaf> <commit-count> (<short-sha>)`, e.g. `main 100 (abcdef)`; the Committed/Built rows use the verbose `2 days ago` age format. Linked from the About page. |
 
 ---
