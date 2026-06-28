@@ -65,6 +65,9 @@ interface SeedSpec {
   author: string | null;
   agoHours: number;
   body: string;
+  /** External link target, for aggregator-style posts that point off-site.
+   * Omitted items default to a link on their own feed's site. */
+  url?: string;
 }
 
 const SPECS: SeedSpec[] = [
@@ -123,6 +126,7 @@ const SPECS: SeedSpec[] = [
     author: 'u/weekendhacker',
     agoHours: 73,
     body: '<p>Offline-first, syncs across devices, no tracking. Feedback welcome.</p>',
+    url: 'https://github.com/weekendhacker/tiny-rss-reader',
   },
   {
     feedId: 'feed-verge',
@@ -140,11 +144,16 @@ const SPECS: SeedSpec[] = [
   },
 ];
 
+const SITE_BY_FEED = new Map(SEED_FEEDS.map((f) => [f.id, f.siteUrl]));
+
 export const SEED_ITEMS: Item[] = SPECS.map((spec, i) => ({
   id: `item-${i + 1}`,
   feedId: spec.feedId,
   guid: `guid-${i + 1}`,
-  url: `https://example.com/article/${i + 1}`,
+  // Default each item to a link on its own feed's site, so single-source blogs
+  // show no domain badge; aggregator-style posts set `url` to an off-site link
+  // (e.g. the Reddit "Show" post → github.com) to exercise the source domain.
+  url: spec.url ?? `${SITE_BY_FEED.get(spec.feedId) ?? 'https://example.com'}/article/${i + 1}`,
   title: spec.title,
   author: spec.author,
   publishedAt: Date.now() - spec.agoHours * HOUR,

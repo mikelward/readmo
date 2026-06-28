@@ -66,6 +66,29 @@ describe('ItemRow', () => {
     expect(meta).toHaveTextContent('2h');
   });
 
+  it('shows the article domain next to the feed name when they differ', () => {
+    const aggregatorItem: FeedItem = {
+      item: { ...FEED_ITEM.item, url: 'https://www.thedrive.com/news/story' },
+      feed: {
+        ...FEED_ITEM.feed,
+        title: 'Hacker News',
+        url: 'https://news.ycombinator.com/rss',
+        siteUrl: 'https://news.ycombinator.com',
+      },
+    };
+    renderWithProviders(<ItemRow feedItem={aggregatorItem} />);
+    const meta = screen.getByTestId('item-meta');
+    expect(meta).toHaveTextContent('Hacker News · thedrive.com');
+  });
+
+  it('does not repeat the feed domain for a same-site feed', () => {
+    renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
+    const meta = screen.getByTestId('item-meta');
+    // example.com article on the example.com feed → no redundant domain.
+    expect(meta).toHaveTextContent('Example Blog');
+    expect(meta).not.toHaveTextContent('example.com');
+  });
+
   it('toggles Pin via the right-side button and reflects aria-pressed', async () => {
     const user = userEvent.setup();
     const { source } = renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);

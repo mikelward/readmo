@@ -44,6 +44,24 @@ export function formatDisplayDomain(url: string | null): string {
   return host;
 }
 
+/** The article's publisher domain, to show next to the feed name — but only
+ * when it differs from the feed's own site. Aggregator feeds (Hacker News,
+ * Reddit, lobste.rs) link out to other sites, so "Hacker News" alone hides
+ * where a row actually goes; surfacing "thedrive.com" next to it fixes that.
+ * A normal blog feed links to itself, so we'd just be repeating the feed's own
+ * domain — return '' in that case (and when the article URL is missing or
+ * unparseable). `feedSiteUrl` should be the feed's home page (`feed.siteUrl`),
+ * falling back to the feed URL when that's absent. */
+export function articleSourceDomain(
+  articleUrl: string | null,
+  feedSiteUrl: string | null,
+): string {
+  const domain = formatDisplayDomain(articleUrl);
+  if (!domain) return '';
+  if (domain === formatDisplayDomain(feedSiteUrl)) return '';
+  return domain;
+}
+
 /** Only http(s) URLs are safe to hand to window.open / render as links. */
 export function isSafeHttpUrl(url: string | null | undefined): url is string {
   if (!url) return false;
@@ -55,15 +73,19 @@ export function isSafeHttpUrl(url: string | null | undefined): url is string {
   }
 }
 
-/** Build the row's display-only meta string: "source · age · author". */
+/** Build the row's display-only meta string: "source · domain · age · author".
+ * `domain` (the article's publisher domain) is shown next to the source feed
+ * name only when supplied; see `articleSourceDomain`. */
 export function formatItemMetaTail(parts: {
   source: string;
+  domain?: string;
   publishedAt: number;
   author: string | null;
   now?: number;
 }): string {
   const segs: string[] = [];
   if (parts.source) segs.push(parts.source);
+  if (parts.domain) segs.push(parts.domain);
   segs.push(formatAge(parts.publishedAt, parts.now));
   if (parts.author) segs.push(parts.author);
   return segs.join(' · ');
