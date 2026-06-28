@@ -8,7 +8,12 @@ import { useItemState } from '../hooks/useItemState';
 import { useWideViewport } from '../hooks/useWideViewport';
 import { useShareItem } from '../hooks/useShareItem';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
-import { formatAge, formatDisplayDomain, isSafeHttpUrl } from '../lib/itemMeta';
+import {
+  articleSourceDomain,
+  formatAge,
+  formatDisplayDomain,
+  isSafeHttpUrl,
+} from '../lib/itemMeta';
 import { fullTextStaleTime, looksTruncated } from '../lib/fullText';
 import type { FullTextResult } from '../lib/fullText';
 import type { Item, ItemState, ItemStateField } from '../lib/types';
@@ -452,6 +457,11 @@ export function ItemPage() {
 
   const { item, feed } = resolved;
   const source = feed.title || formatDisplayDomain(item.url);
+  // Article's publisher domain next to the feed name, for aggregator feeds
+  // (Hacker News, Reddit) whose items link out elsewhere; same rule as the row.
+  const domain = feed.title
+    ? articleSourceDomain(item.url, feed.siteUrl ?? feed.url)
+    : '';
 
   // Resolve the reading-mode body. The RSS body always shows first; the full
   // article (cached, or fetched in the background) is revealed only when the
@@ -508,6 +518,12 @@ export function ItemPage() {
         <Link to={`/feed/${feed.id}`} className="reader__source">
           {source}
         </Link>
+        {domain ? (
+          <span className="reader__domain" data-testid="reader-domain">
+            {' · '}
+            {domain}
+          </span>
+        ) : null}
         {showReading && fullViaFallback ? (
           <span className="reader__via-fallback" data-testid="reader-via-fallback">
             via fallback

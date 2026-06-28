@@ -45,6 +45,22 @@ describe('ItemPage (reader)', () => {
     });
   });
 
+  it('shows the article domain next to the feed name when it links off-site', async () => {
+    // item-8 is the Reddit "Show" post, which links out to github.com.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReader(source, 'item-8');
+    const domain = await screen.findByTestId('reader-domain');
+    expect(domain).toHaveTextContent('github.com');
+  });
+
+  it('omits the domain when the article lives on the feed\'s own site', async () => {
+    // item-1 is a Verge article on theverge.com, the feed's own site.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReader(source, 'item-1');
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.queryByTestId('reader-domain')).not.toBeInTheDocument();
+  });
+
   it('shows the pin-to-load-faster tip while the article is loading', async () => {
     // Hold getItem open so the reader stays in the loading state.
     class HangingSource extends MockDataSource {

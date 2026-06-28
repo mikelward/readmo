@@ -1323,7 +1323,11 @@ Identical to newshacker's *Story row layout*; only the meta content differs
 
 Display-only meta (plain text inside the row link): **source** (feed/site
 name, favicon, trimmed to the registrable domain the way newshacker trims
-domains — `old.reddit.com` → `reddit.com`); **age**; **author** when present.
+domains — `old.reddit.com` → `reddit.com`); **article domain** when it differs
+from the feed's own site, shown right after the source name (so aggregator
+feeds like Hacker News or Reddit surface where a row actually links —
+`Hacker News · thedrive.com`; a normal blog feed that links to itself doesn't
+repeat its own domain); **age**; **author** when present.
 **Opened** titles render `--rm-read`. Not rendered: rank numbers, inline
 source/date links, external-link chevron (the reader's "Open original" owns
 that). (No points/comments/Hot flag/"N new" — those are HN-specific.)
@@ -1348,7 +1352,9 @@ every zone. Matches newshacker's `.story-row` density.
 Replaces newshacker's *Thread* page. No comments, no votes — the rest of the
 page's discipline is unchanged.
 
-- **Header:** source feed (favicon + name, links to `/feed/:feedId`), title
+- **Header:** source feed (favicon + name, links to `/feed/:feedId`) followed
+  by the article's domain when it differs from the feed's own site (same rule as
+  the item row — so an aggregator feed surfaces where the article lives), title
   (links to the original, `target="_blank"`, marks Opened), author, date.
 - **Loading state:** the blank centered **"Loading…"** (with the tip
   **"Tip: 📌 pin an article to make it load faster"** — using the same

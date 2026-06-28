@@ -2,7 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import type { FeedItem } from '../lib/types';
-import { formatDisplayDomain, formatItemMetaTail, isSafeHttpUrl } from '../lib/itemMeta';
+import {
+  articleSourceDomain,
+  formatDisplayDomain,
+  formatItemMetaTail,
+  isSafeHttpUrl,
+} from '../lib/itemMeta';
 import { usePointerDevice } from '../hooks/usePointerDevice';
 import { useWideViewport } from '../hooks/useWideViewport';
 import { useSwipeToDismiss } from '../hooks/useSwipeToDismiss';
@@ -46,6 +51,12 @@ export function ItemRow({
 
   const title = item.title || '[untitled]';
   const source = feed.title || formatDisplayDomain(item.url);
+  // Surface the article's domain next to the feed name on aggregator feeds
+  // (Hacker News, Reddit) whose rows link out elsewhere. Only when there's a
+  // feed name to sit beside — without one, `source` is already the domain.
+  const domain = feed.title
+    ? articleSourceDomain(item.url, feed.siteUrl ?? feed.url)
+    : '';
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
@@ -281,6 +292,7 @@ export function ItemRow({
             ) : null}
             {formatItemMetaTail({
               source,
+              domain,
               publishedAt: item.publishedAt,
               author: item.author,
             })}
