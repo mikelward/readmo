@@ -61,6 +61,8 @@ export class MockDataSource implements DataSource {
    * /admin. Tests override getCapabilities() to exercise the off-list paths. */
   private readonly selfEmail = 'demo@readmo.app';
   private allowlist = new Set<string>([this.selfEmail]);
+  /** Global "allow new sign-ups" switch (mock-only; defaults open). */
+  private signupsEnabled = true;
   private readonly homeWindowMs: number;
   private readonly feedFloor: number;
 
@@ -566,6 +568,7 @@ export class MockDataSource implements DataSource {
       family: armed && this.allowlist.has(this.selfEmail),
       admin: true, // the demo user is the operator in mock/dev
       allowlistArmed: armed,
+      canManageUsers: true, // the mock backend has the 0030 RPCs
     };
   }
 
@@ -585,26 +588,57 @@ export class MockDataSource implements DataSource {
     this.allowlist.delete(email.trim().toLowerCase());
   }
 
-  /** A few seeded registered accounts (distinct signup dates so the sort options
-   * are demoable) so the /admin user list + promote/demote are testable.
-   * `family` reflects current allowlist membership, so toggling it
-   * (add/removeFromAllowlist) shows up on the next refetch. */
-  private readonly registeredUserSeed: ReadonlyArray<{
+  /** A few registered accounts (distinct signup dates so the sort options are
+   * demoable) so the /admin user list + promote/demote + block/delete are
+   * testable. Mutable: deleteUser removes a row, setUserBlocked flips `blocked`.
+   * `family` is derived from current allowlist membership at read time, so a
+   * promote/demote shows up on the next refetch. */
+  private registeredUsers: Array<{
     email: string;
     createdAt: string;
     lastSignInAt: string | null;
+    blocked: boolean;
   }> = [
-    { email: this.selfEmail, createdAt: '2024-01-01T00:00:00.000Z', lastSignInAt: '2024-06-01T00:00:00.000Z' },
-    { email: 'alex@example.com', createdAt: '2024-03-15T00:00:00.000Z', lastSignInAt: '2024-05-20T00:00:00.000Z' },
-    { email: 'sam@example.com', createdAt: '2024-02-10T00:00:00.000Z', lastSignInAt: null },
+    { email: this.selfEmail, createdAt: '2024-01-01T00:00:00.000Z', lastSignInAt: '2024-06-01T00:00:00.000Z', blocked: false },
+    { email: 'alex@example.com', createdAt: '2024-03-15T00:00:00.000Z', lastSignInAt: '2024-05-20T00:00:00.000Z', blocked: false },
+    { email: 'sam@example.com', createdAt: '2024-02-10T00:00:00.000Z', lastSignInAt: null, blocked: false },
   ];
 
   async listUsers(): Promise<RegisteredUser[]> {
-    return this.registeredUserSeed.map((u) => ({
-      ...u,
+    return this.registeredUsers.map((u) => ({
+      email: u.email,
+      createdAt: u.createdAt,
+      lastSignInAt: u.lastSignInAt,
+      blocked: u.blocked,
       family: this.allowlist.has(u.email),
       admin: u.email === this.selfEmail,
     }));
+  }
+
+  async deleteUser(email: string): Promise<void> {
+    const target = email.trim().toLowerCase();
+    if (target === this.selfEmail) {
+      throw new Error("you can't delete your own account");
+    }
+    this.registeredUsers = this.registeredUsers.filter((u) => u.email !== target);
+    this.allowlist.delete(target);
+  }
+
+  async setUserBlocked(email: string, blocked: boolean): Promise<void> {
+    const target = email.trim().toLowerCase();
+    if (target === this.selfEmail) {
+      throw new Error("you can't block your own account");
+    }
+    const user = this.registeredUsers.find((u) => u.email === target);
+    if (user) user.blocked = blocked;
+  }
+
+  async getSignupsEnabled(): Promise<boolean> {
+    return this.signupsEnabled;
+  }
+
+  async setSignupsEnabled(enabled: boolean): Promise<void> {
+    this.signupsEnabled = enabled;
   }
 }
 

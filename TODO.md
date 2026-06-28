@@ -229,25 +229,3 @@ constraint is documented in more detail.
   all. See `supabase/migrations/0028_allowlist_admin.sql` and SPEC *Feed
   discovery*.
 
-## Admin user management
-
-The `/admin` page lists registered users (`list_users()`, migration `0029`) and
-promotes/demotes them to/from family (reusing `add`/`remove_from_allowlist`).
-These per-user operations are deferred because they're destructive auth-admin
-actions that need the **service-role admin API** (not client-reachable, not a
-plain SQL RPC) — the cleanest home is a thin admin-only Edge function that
-verifies the caller is an admin (HN-style round-trip / JWT-email vs `admin_users`)
-and then calls `supabase.auth.admin.*`:
-
-- **Delete user.** Remove the `auth.users` account entirely (cascades their
-  `subscriptions`/`item_state`/`folders`, and drops them from `allowlist`/
-  `admin_users`). Irreversible; confirm in the UI. Use
-  `supabase.auth.admin.deleteUser(id)` from the Edge function, not a SQL
-  `delete from auth.users`.
-- **Block user.** Suspend an account without deleting it — set
-  `auth.users.banned_until` (e.g. far future) via `auth.admin.updateUserById`,
-  with an Unblock that clears it. Keeps their data; stops them signing in.
-- **Disable signups.** A global switch to stop new accounts (turn off the
-  Supabase Auth "Allow new users to sign up" setting, or gate the signup path),
-  with an `/admin` toggle so the operator can close registration without a
-  dashboard trip. Decide whether this is project-config or an app-level gate.

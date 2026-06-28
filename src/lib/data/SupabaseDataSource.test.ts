@@ -944,6 +944,35 @@ describe('SupabaseDataSource dispatch + writes', () => {
     await expect(env.ds.getCapabilities()).rejects.toThrow('service unavailable');
   });
 
+  it('getCapabilities maps can_manage_users, and reads false on a pre-0030 backend', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    // A 0030 backend returns the flag.
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'get_capabilities') {
+        return Promise.resolve({
+          data: [{ family: false, admin: true, allowlist_armed: false, can_manage_users: true }],
+          error: null,
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    expect(await env.ds.getCapabilities()).toMatchObject({ admin: true, canManageUsers: true });
+
+    // A pre-0030 backend's get_capabilities omits the column → false, so /admin
+    // hides the block/delete/sign-up controls whose RPCs aren't deployed yet.
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'get_capabilities') {
+        return Promise.resolve({
+          data: [{ family: false, admin: true, allowlist_armed: false }],
+          error: null,
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    expect(await env.ds.getCapabilities()).toMatchObject({ admin: true, canManageUsers: false });
+  });
+
   it('listUsers maps rows and feature-detects a backend without the RPC', async () => {
     const env = setup();
     const realRpc = env.fake.client.rpc.bind(env.fake.client);
@@ -958,8 +987,10 @@ describe('SupabaseDataSource dispatch + writes', () => {
               last_sign_in_at: '2024-06-01T00:00:00Z',
               family: true,
               admin: false,
+              blocked: true,
             },
             {
+              // No `blocked` field — an old backend (pre-0030) → maps to false.
               email: 'b@example.com',
               created_at: '2024-02-01T00:00:00Z',
               last_sign_in_at: null,
@@ -979,6 +1010,7 @@ describe('SupabaseDataSource dispatch + writes', () => {
         lastSignInAt: '2024-06-01T00:00:00Z',
         family: true,
         admin: false,
+        blocked: true,
       },
       {
         email: 'b@example.com',
@@ -986,6 +1018,7 @@ describe('SupabaseDataSource dispatch + writes', () => {
         lastSignInAt: null,
         family: false,
         admin: true,
+        blocked: false,
       },
     ]);
 
@@ -1000,6 +1033,87 @@ describe('SupabaseDataSource dispatch + writes', () => {
       return realRpc(name, params);
     }) as typeof env.fake.client.rpc;
     expect(await env.ds.listUsers()).toEqual([]);
+  });
+
+  it('deleteUser calls admin_delete_user with the email', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    let captured: Record<string, unknown> | undefined;
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'admin_delete_user') {
+        captured = params;
+        return Promise.resolve({ data: null, error: null });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    await env.ds.deleteUser('gone@example.com');
+    expect(captured).toEqual({ p_email: 'gone@example.com' });
+  });
+
+  it('deleteUser surfaces a server error (e.g. the self-delete guard)', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'admin_delete_user') {
+        return Promise.resolve({
+          data: null,
+          error: { code: '42501', message: "you can't delete your own account" },
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    // The RPC error (42501 self-delete guard) propagates rather than resolving.
+    await expect(env.ds.deleteUser('me@example.com')).rejects.toThrow();
+  });
+
+  it('setUserBlocked calls admin_set_user_blocked with the email and flag', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    let captured: Record<string, unknown> | undefined;
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'admin_set_user_blocked') {
+        captured = params;
+        return Promise.resolve({ data: null, error: null });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    await env.ds.setUserBlocked('spammer@example.com', true);
+    expect(captured).toEqual({ p_email: 'spammer@example.com', p_blocked: true });
+  });
+
+  it('getSignupsEnabled returns the flag, and feature-detects an old backend → true', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    // Backend has the RPC and reports sign-ups OFF.
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'get_signups_enabled') return Promise.resolve({ data: false, error: null });
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    expect(await env.ds.getSignupsEnabled()).toBe(false);
+
+    // Old backend without the RPC (PGRST202) → defaults to open (true), no throw.
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'get_signups_enabled') {
+        return Promise.resolve({ data: null, error: { code: 'PGRST202', message: 'unknown function' } });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    expect(await env.ds.getSignupsEnabled()).toBe(true);
+  });
+
+  it('setSignupsEnabled calls set_signups_enabled with the flag', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    let captured: Record<string, unknown> | undefined;
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'set_signups_enabled') {
+        captured = params;
+        return Promise.resolve({ data: null, error: null });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    await env.ds.setSignupsEnabled(false);
+    expect(captured).toEqual({ p_enabled: false });
   });
 
   it('fetchFullText invokes the fulltext function and returns the extracted body', async () => {
