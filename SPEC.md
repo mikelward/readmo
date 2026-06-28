@@ -488,13 +488,32 @@ folders       (user_id FK, name, sort)
   URL, and category. Matching is case-insensitive substring on the name, the
   feed URL (so a country code like `au`/`uk` finds `.com.au` / `.co.uk`
   outlets), or the category (so a topic like `science` or `sports` surfaces
-  that section); up to 8 suggestions are shown. When the box is focused but
-  **empty**, the dropdown instead shows a short curated set of recommended
+  that section); matches are also made by **acronym/initialism** — the typed
+  letters as a subsequence of the name's word-initials, so `wsj` finds "Wall
+  Street Journal", `nyt` finds "New York Times" (a leading "The" is skipped for
+  free), and `scmp` finds "South China Morning Post" (the matcher lives in
+  `src/lib/feedSearch.ts`; substring hits rank above acronym-only hits, and
+  acronym matching needs a 2+ char query). Up to 8 suggestions are shown. While
+  the box is **empty**, focusing it shows a short curated set of recommended
   starter feeds (`RECOMMENDED_FEEDS` in `src/lib/popularFeeds.ts` — five
-  broadly-appealing, freely-readable feeds with no paywall/login) so a new
-  account with nothing subscribed has a one-tap way in. A line of helper text
-  under the input ("Type a site, a topic, or a country code to see
-  suggestions.") points first-time users at those paths. Selecting a suggestion fills
+  broadly-appealing, freely-readable feeds with no paywall/login) as the top
+  suggestions, so a new account with nothing subscribed has a starting point;
+  typing replaces them with the fuzzy matches above. The input's placeholder
+  and `aria-label` are "Feed name or URL". A line of helper text under the
+  input ("Type a site, a topic, or a country code to see suggestions.") points
+  first-time users at the typed-search path. Because the field accepts a feed
+  **name**, submitting resolves a typed name to its catalog feed and subscribes
+  via the curated path (`resolveFeedByName`), but only when the query *is* a
+  feed's identifier — an **exact name** (so dotted names like `Inc.` or `The
+  A.V. Club` resolve) or an **exact, unique acronym** (`wsj` → "Wall Street
+  Journal", `fcc` → "freeCodeCamp"). Never a substring, URL, category, or
+  partial: real URLs/hosts (`openai.com`), partial names (`guardian`), and broad
+  topic/country-code words the helper invites (`programming`, `health`, `ai`,
+  `au`) are never a feed's exact name/acronym, so they resolve to nothing and
+  are picked from the dropdown instead of auto-subscribing an off-screen hit. So
+  typing `wsj` or `Wall Street Journal` and pressing **Add** works without
+  picking; known shorthands (`r/sub`, `youtube/<handle>`), real URLs and hosts
+  fall through to discovery. Selecting a suggestion fills
   the feed URL directly into the input and bypasses the HTML-discovery step —
   the known feed URL is submitted straight to `subscribe()`. This also avoids
   bot-blocking issues for popular sites whose homepages reject programmatic
