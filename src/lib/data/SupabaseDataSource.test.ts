@@ -944,6 +944,64 @@ describe('SupabaseDataSource dispatch + writes', () => {
     await expect(env.ds.getCapabilities()).rejects.toThrow('service unavailable');
   });
 
+  it('listUsers maps rows and feature-detects a backend without the RPC', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    // First: a backend that has the RPC → mapped rows.
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'list_users') {
+        return Promise.resolve({
+          data: [
+            {
+              email: 'a@example.com',
+              created_at: '2024-01-01T00:00:00Z',
+              last_sign_in_at: '2024-06-01T00:00:00Z',
+              family: true,
+              admin: false,
+            },
+            {
+              email: 'b@example.com',
+              created_at: '2024-02-01T00:00:00Z',
+              last_sign_in_at: null,
+              family: false,
+              admin: true,
+            },
+          ],
+          error: null,
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    expect(await env.ds.listUsers()).toEqual([
+      {
+        email: 'a@example.com',
+        createdAt: '2024-01-01T00:00:00Z',
+        lastSignInAt: '2024-06-01T00:00:00Z',
+        family: true,
+        admin: false,
+      },
+      {
+        email: 'b@example.com',
+        createdAt: '2024-02-01T00:00:00Z',
+        lastSignInAt: null,
+        family: false,
+        admin: true,
+      },
+    ]);
+
+    // Then: an old backend without the RPC (PGRST202) → empty list, no throw.
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'list_users') {
+        return Promise.resolve({
+          data: null,
+          error: { code: 'PGRST202', message: 'unknown function' },
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    expect(await env.ds.listUsers()).toEqual([]);
+  });
+
   it('fetchFullText invokes the fulltext function and returns the extracted body', async () => {
     const env = setup();
     env.fake.invokeResult.current = {

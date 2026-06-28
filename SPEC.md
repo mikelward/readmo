@@ -1305,13 +1305,23 @@ negligible and off every critical path. See the External services table in
       trailing click is swallowed, so dismissing the menu doesn't also activate
       a neighboring row or control.
 
-12. **Admin** — `/admin`: trusted-user **allowlist** management, reached from the
-    **account menu**'s Admin link (shown only to admins). Lists the current
-    allowlist (email, who added it, when) with a per-row **Remove**, and an
-    **add-by-email** form. A non-admin who reaches the route sees a short
-    no-access message and nothing else — the gate is client convenience only; the
-    server re-checks `is_admin()` on every `list/add/remove_allowlist` RPC and
-    fails closed (`42501`). Admin identity lives in the `admin_users` table
+12. **Admin** — `/admin`: operator console, reached from the **account menu**'s
+    Admin link (shown only to admins). Two sections:
+    - **Trusted-user allowlist** — lists the current allowlist (email, who added
+      it, when) with a per-row **Remove**, and an **add-by-email** form (an email
+      can be allowed before that person signs up).
+    - **Registered users** — lists every account (`list_users()`, an admin-only
+      read of `auth.users`) with **Admin**/**Family** status pills, and a per-row
+      **Make family / Remove family** toggle that promotes/demotes by writing the
+      allowlist (so it reuses the same `add`/`remove_from_allowlist` RPCs).
+      Per-user **Delete** / **Block**, and a **disable-signups** switch, are
+      deferred (they need the service-role admin API via an Edge function — see
+      `TODO.md`).
+
+    A non-admin who reaches the route sees a short no-access message and nothing
+    else — the gate is client convenience only; the server re-checks
+    `is_admin()` on every `list_users`/`list/add/remove_allowlist` RPC and fails
+    closed (`42501`). Admin identity lives in the `admin_users` table
     (bootstrapped via SQL — there's no UI to grant admin); the allowlist itself
     gates full-text reading mode and Google News feeds (see *Full-text reading
     mode* and *Feed discovery*). Single-word menu label, no explanatory copy
@@ -1607,7 +1617,7 @@ other toolbars in the app. (No Upvote — RSS has no votes.)
 | `/search` | search over feed + item titles |
 | `/settings` | reading, sort, bottom toolbar, theme/palette/text-size/font, account; reached from the account menu (top-right avatar) |
 | `/feeds` | feed management: add a feed, subscriptions (reorder/rename/mute/unsubscribe), OPML in/out; reached via the drawer's Feeds edit pencil or the account menu. Code-split. |
-| `/admin` | trusted-user allowlist management (list / add / remove emails); admin-only, reached from the account menu's **Admin** link. Non-admins get a short no-access message (the server re-checks on every RPC). See *Admin*. |
+| `/admin` | operator console: trusted-user allowlist (list / add / remove emails) **and** a registered-users list with per-row promote/demote-to-family; admin-only, reached from the account menu's **Admin** link. Non-admins get a short no-access message (the server re-checks on every RPC). See *Admin*. |
 | `/signin` | OAuth sign-in (unauthenticated landing) |
 | `/about` | what Readmo is, credited to its author (mikelward.com); no auth gate, informational only (no user data). Shows the build sequence number and age (e.g. `Build 100 · 2 days ago`) — no SHA — with a link to Debug. Linked from Settings → About. |
 | `/legal` | self-contained legal/DMCA page: third-party content, copyright/DMCA takedown + counter-notice, acceptable use, warranty disclaimer, limitation of liability, a privacy summary, and contact (mikel@mikelward.com). No auth gate, policy text only (no user data). Distinct from the standalone `docs/` legal hub (Privacy, Terms, and Copyright/DMCA pages), which Vercel's catch-all rewrite does not serve from readmo.app. Linked from the drawer (App section) and Settings → Legal. |
