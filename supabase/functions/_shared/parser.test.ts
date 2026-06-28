@@ -75,6 +75,66 @@ describe('parseFeed — Atom', () => {
   });
 });
 
+describe('parseFeed — comments / discussion URL', () => {
+  it('captures the RSS 2.0 <comments> element (e.g. Hacker News)', () => {
+    const xml = `<?xml version="1.0"?><rss version="2.0"><channel>
+      <title>HN</title><link>https://news.ycombinator.com/</link>
+      <item>
+        <title>A linked story</title>
+        <link>https://example.com/the-article</link>
+        <comments>https://news.ycombinator.com/item?id=44390000</comments>
+      </item>
+    </channel></rss>`;
+    const it0 = parseFeed(xml, 'https://news.ycombinator.com/rss').items[0];
+    // url stays the article; commentsUrl is the discussion thread.
+    expect(it0.url).toBe('https://example.com/the-article');
+    expect(it0.commentsUrl).toBe('https://news.ycombinator.com/item?id=44390000');
+  });
+
+  it('absolutizes a relative <comments> URL', () => {
+    const xml = `<?xml version="1.0"?><rss version="2.0"><channel>
+      <title>Blog</title><link>https://blog.example.com/</link>
+      <item><title>Post</title><link>https://blog.example.com/p/1</link>
+        <comments>/p/1#comments</comments></item>
+    </channel></rss>`;
+    expect(parseFeed(xml, 'https://blog.example.com/feed').items[0].commentsUrl).toBe(
+      'https://blog.example.com/p/1#comments',
+    );
+  });
+
+  it('is null when an RSS item has no <comments>', () => {
+    const xml = `<?xml version="1.0"?><rss version="2.0"><channel>
+      <title>Blog</title><link>https://blog.example.com/</link>
+      <item><title>Post</title><link>https://blog.example.com/p/2</link></item>
+    </channel></rss>`;
+    expect(parseFeed(xml, 'https://blog.example.com/feed').items[0].commentsUrl).toBeNull();
+  });
+
+  it('captures the Atom <link rel="replies"> and never the article link', () => {
+    const xml = `<?xml version="1.0"?>
+      <feed xmlns="http://www.w3.org/2005/Atom">
+      <title>Atom</title><link href="https://atom.example.com/"/>
+      <entry>
+        <title>Entry</title>
+        <id>urn:1</id>
+        <link rel="alternate" href="https://atom.example.com/entry/1"/>
+        <link rel="replies" href="https://atom.example.com/entry/1/replies"/>
+      </entry></feed>`;
+    const e0 = parseFeed(xml, 'https://atom.example.com/feed').items[0];
+    expect(e0.url).toBe('https://atom.example.com/entry/1');
+    expect(e0.commentsUrl).toBe('https://atom.example.com/entry/1/replies');
+  });
+
+  it('is null for an Atom entry with only an alternate link (no replies)', () => {
+    const xml = `<?xml version="1.0"?>
+      <feed xmlns="http://www.w3.org/2005/Atom">
+      <title>Atom</title><link href="https://atom.example.com/"/>
+      <entry><title>Entry</title><id>urn:2</id>
+        <link rel="alternate" href="https://atom.example.com/entry/2"/></entry></feed>`;
+    expect(parseFeed(xml, 'https://atom.example.com/feed').items[0].commentsUrl).toBeNull();
+  });
+});
+
 describe('parseFeed — RSS 1.0 / RDF', () => {
   const parsed = parseFeed(fixture('rdf.xml'), 'https://rdf.example.com/feed');
 

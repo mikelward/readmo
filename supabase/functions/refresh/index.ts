@@ -181,6 +181,7 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
     feed_id: feed.id,
     guid: it.guid,
     url: it.url,
+    comments_url: it.commentsUrl,
     title: it.title,
     author: it.author,
     published_at: it.publishedAt,
