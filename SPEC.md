@@ -150,7 +150,7 @@ Everything else about the visual system mirrors newshacker.
   overlaps the Search target); the inner reaches the full column-aligned
   860px once the viewport clears ~1060px. Safe-area
   insets reserve space for landscape-iPhone notches on the edge controls.
-- **Navigation drawer sections:** Home (link to `/`), Library (Pinned / Favorites / Done / Opened / Offline), Feeds (subscription list, with an **edit pencil** beside the heading linking to the Feeds management page at `/feeds`), Appearance (the **Dark/Light mode** and **Text size** pickers — kept here because they're the most-changed settings and the drawer is one tap from anywhere), App (Settings, About). The remaining appearance controls (Color Theme, Font) live in Settings; Debug is reached from the About page (not the drawer). Feeds and Settings are also reachable from the **account menu** (top-right avatar). **Not yet in the drawer (TODO):** the Home feed picker (All subscriptions / per-folder) and a Folders nav section were dropped pending a proper design; `/` still renders the All-subscriptions river by default (`useHomeFeed`). The Dark/Light mode and Text size pickers are shared components (`ThemeModeControl`, `TextSizeControl`), so the drawer and Settings render the identical controls.
+- **Navigation drawer sections:** Home (link to `/`), Library (Pinned / Favorites / Done / Opened / Offline), Feeds (subscription list, with an **edit pencil** beside the heading linking to the Feeds management page at `/feeds`), Appearance (the **Dark/Light mode** and **Text size** pickers — kept here because they're the most-changed settings and the drawer is one tap from anywhere), App (Settings, About). The remaining appearance controls (Color Theme, Font) live in Settings; Debug is reached from the About page (not the drawer). Feeds and Settings are also reachable from the **account menu** (top-right avatar); the menu also shows a **FAMILY** chip beside the signed-in email when the user is on the trusted-user allowlist, and an **Admin** link to `/admin` for admin users (both hidden otherwise — see *Admin* and *Full-text reading mode*). **Not yet in the drawer (TODO):** the Home feed picker (All subscriptions / per-folder) and a Folders nav section were dropped pending a proper design; `/` still renders the All-subscriptions river by default (`useHomeFeed`). The Dark/Light mode and Text size pickers are shared components (`ThemeModeControl`, `TextSizeControl`), so the drawer and Settings render the identical controls.
 - **Dark mode:** full light/dark/system via tokens.
 - **Palette:** two color families selectable in Settings, orthogonal to the
   light/dark/**mode** axis — **Ink** (default, the monochrome ink-on-paper above)
@@ -1305,9 +1305,21 @@ negligible and off every critical path. See the External services table in
       trailing click is swallowed, so dismissing the menu doesn't also activate
       a neighboring row or control.
 
-12. **Keyboard shortcuts** — same letter scheme (see below).
+12. **Admin** — `/admin`: trusted-user **allowlist** management, reached from the
+    **account menu**'s Admin link (shown only to admins). Lists the current
+    allowlist (email, who added it, when) with a per-row **Remove**, and an
+    **add-by-email** form. A non-admin who reaches the route sees a short
+    no-access message and nothing else — the gate is client convenience only; the
+    server re-checks `is_admin()` on every `list/add/remove_allowlist` RPC and
+    fails closed (`42501`). Admin identity lives in the `admin_users` table
+    (bootstrapped via SQL — there's no UI to grant admin); the allowlist itself
+    gates full-text reading mode and Google News feeds (see *Full-text reading
+    mode* and *Feed discovery*). Single-word menu label, no explanatory copy
+    (guardrail #12).
 
-13. **Account UI** — header chip (see *Auth*).
+13. **Keyboard shortcuts** — same letter scheme (see below).
+
+14. **Account UI** — header chip (see *Auth*).
 
 ---
 
@@ -1504,13 +1516,24 @@ page's discipline is unchanged.
     cached or fresh. Matching is on the caller's verified account email
     (case-insensitive). **Empty table → open to all**, so deploying the gate is a
     no-op until the operator seeds the table; a DB read error **fails closed**
-    (retryable `unreachable`, never serves). A blocked caller gets a silent
-    **`empty`** outcome (feed body, no error, no mention of an allowlist) carrying
-    an additive **`retryable: true`** flag: the reader keeps it stale
-    (`fullTextStaleTime`) rather than terminal, so if the operator later adds the
-    caller to the allowlist the next open re-checks the gate instead of staying
-    stuck on a forever-cached denial, and the offline warmer leaves it unwarmed so
-    a reconnect re-prefetches it. The
+    (retryable `unreachable`, never serves). On the **client**, the reader and the
+    offline warmer additionally read the caller's capabilities
+    (`get_capabilities` via `useFullTextAllowed`) and **skip the `fulltext` call
+    entirely** for an off-list user — so an off-list reader shows the feed stub
+    with zero Edge calls and the warmer doesn't re-prefetch a bucketed item on
+    every state-sync. The client gate is **conservative on an unknown state**:
+    while a signed-in user's capabilities are still loading it holds off the call
+    (rather than treating unknown as open), and the `getCapabilities` mapping
+    only treats a *missing* RPC (PostgREST `PGRST202`, an old backend) as
+    "no capabilities" — a transient error is rethrown so React Query retries
+    instead of caching an open gate. It all re-warms automatically when
+    membership flips to family. The server gate stays the boundary; the client
+    check is an optimization. A blocked caller gets a silent **`empty`** outcome (feed body, no
+    error, no mention of an allowlist) carrying an additive **`retryable: true`**
+    flag: the reader keeps it stale (`fullTextStaleTime`) rather than terminal,
+    so if the operator later adds the caller to the allowlist the next open
+    re-checks the gate instead of staying stuck on a forever-cached denial, and
+    the offline warmer leaves it unwarmed so a reconnect re-prefetches it. The
     flag is additive (not a new wire status) so a service-worker-cached older
     client still renders the plain silent `empty` (guardrail #11). A transient
     `auth.getUser()` failure likewise returns the retryable `unreachable`. For
@@ -1584,6 +1607,7 @@ other toolbars in the app. (No Upvote — RSS has no votes.)
 | `/search` | search over feed + item titles |
 | `/settings` | reading, sort, bottom toolbar, theme/palette/text-size/font, account; reached from the account menu (top-right avatar) |
 | `/feeds` | feed management: add a feed, subscriptions (reorder/rename/mute/unsubscribe), OPML in/out; reached via the drawer's Feeds edit pencil or the account menu. Code-split. |
+| `/admin` | trusted-user allowlist management (list / add / remove emails); admin-only, reached from the account menu's **Admin** link. Non-admins get a short no-access message (the server re-checks on every RPC). See *Admin*. |
 | `/signin` | OAuth sign-in (unauthenticated landing) |
 | `/about` | what Readmo is, credited to its author (mikelward.com); no auth gate, informational only (no user data). Shows the build sequence number and age (e.g. `Build 100 · 2 days ago`) — no SHA — with a link to Debug. Linked from Settings → About. |
 | `/legal` | self-contained legal/DMCA page: third-party content, copyright/DMCA takedown + counter-notice, acceptable use, warranty disclaimer, limitation of liability, a privacy summary, and contact (mikel@mikelward.com). No auth gate, policy text only (no user data). Distinct from the standalone `docs/` legal hub (Privacy, Terms, and Copyright/DMCA pages), which Vercel's catch-all rewrite does not serve from readmo.app. Linked from the drawer (App section) and Settings → Legal. |

@@ -10,6 +10,27 @@ import type {
 import type { FullTextResult } from '../fullText';
 import type { ItemStateStore } from './itemState';
 
+/** Per-user capability flags, resolved from the server (`get_capabilities` RPC).
+ * Drives the FAMILY chip, the `/admin` gate, and the reader's "should I even
+ * call the gated full-text function?" short-circuit. */
+export interface Capabilities {
+  /** The caller is explicitly on the trusted-user allowlist — i.e. the allowlist
+   * is armed AND lists them. False for everyone when the allowlist is empty. */
+  family: boolean;
+  /** The caller may reach `/admin` and edit the allowlist. */
+  admin: boolean;
+  /** The allowlist has at least one entry, so the gates are enforced. When
+   * false the gates are open to all; `canUseFullText = !allowlistArmed || family`. */
+  allowlistArmed: boolean;
+}
+
+/** One allowlist entry as shown on `/admin` (admin-only read). */
+export interface AllowlistEntry {
+  email: string;
+  addedBy: string | null;
+  createdAt: string;
+}
+
 export interface Page<T> {
   items: T[];
   /** Opaque cursor for the next page, or null when exhausted. A non-null
@@ -167,6 +188,19 @@ export interface DataSource {
   // --- OPML -----------------------------------------------------------------
   importOpml(xml: string): Promise<{ added: number; skipped: number }>;
   exportOpml(): Promise<string>;
+
+  // --- Capabilities & admin -------------------------------------------------
+  /** The signed-in user's capability flags (FAMILY chip, `/admin` gate, full-text
+   * short-circuit). Implementations **feature-detect** a backend that predates
+   * the RPC and return all-false rather than throwing, so an old backend just
+   * behaves like today (guardrail #11). */
+  getCapabilities(): Promise<Capabilities>;
+  /** Admin-only: the current allowlist. Rejects for non-admins (the server is
+   * the boundary; the UI also hides `/admin`). */
+  listAllowlist(): Promise<AllowlistEntry[]>;
+  /** Admin-only: add / remove an allowlist email. */
+  addToAllowlist(email: string): Promise<void>;
+  removeFromAllowlist(email: string): Promise<void>;
 }
 
 /** Items already cached on this device (offline view); resolved from the

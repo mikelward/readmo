@@ -462,7 +462,9 @@ function runRpc(
       error: null,
     };
   }
-  return { data: null, error: { message: `unknown rpc ${name}` } };
+  // PostgREST reports a call to a function that doesn't exist as PGRST202 — the
+  // code SupabaseDataSource.getCapabilities feature-detects an old backend on.
+  return { data: null, error: { code: 'PGRST202', message: `unknown rpc ${name}` } };
 }
 
 export function makeFakeSupabase(tables: FakeTables): {

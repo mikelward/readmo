@@ -5,6 +5,7 @@ import { DataSourceProvider } from '../lib/data/context';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import { _resetNetworkStatusForTests } from '../lib/networkStatus';
 import { useOfflineCacheLock } from './useOfflineCacheLock';
+import type { Capabilities } from '../lib/data/DataSource';
 
 function setNavigatorOnline(value: boolean) {
   Object.defineProperty(window.navigator, 'onLine', { configurable: true, value });
@@ -13,6 +14,7 @@ function setNavigatorOnline(value: boolean) {
 afterEach(() => {
   setNavigatorOnline(true);
   _resetNetworkStatusForTests();
+  window.localStorage.removeItem('readmo:mock-signed-in');
 });
 
 function Harness() {
@@ -154,6 +156,146 @@ describe('useOfflineCacheLock', () => {
         (qc.getQueryData(['fulltext', 'item-1']) as { status?: string } | undefined)?.status,
       ).toBe('ok'),
     );
+  });
+
+  it('skips the gated fulltext fetch entirely for an off-allowlist user', async () => {
+    // When capabilities say the user can't use full text (allowlist armed, not
+    // family), the warmer must mark the item warmed WITHOUT calling fulltext —
+    // otherwise every item_state emit re-prefetches the same denial (the
+    // request-amplification the reviewer flagged). Churn the store and assert
+    // fetchFullText is never called.
+    class CountingFullText extends MockDataSource {
+      ftCalls = 0;
+      async fetchFullText(id: string) {
+        this.ftCalls += 1;
+        return super.fetchFullText(id);
+      }
+    }
+    const source = new CountingFullText(`test-${Math.random()}`);
+    const qc = setup(source);
+    qc.setQueryData(['capabilities'], {
+      family: false,
+      admin: false,
+      allowlistArmed: true,
+    });
+
+    source.stateStore.set('item-1', 'pinned', true);
+    source.stateStore.set('item-1', 'favorite', true); // a second emit would re-warm
+    source.stateStore.set('item-2', 'pinned', true);
+    await waitFor(() => expect(qc.getQueryData(['item', 'item-2'])).toBeTruthy());
+
+    expect(source.ftCalls).toBe(0);
+    expect(qc.getQueryData(['fulltext', 'item-1'])).toBeUndefined();
+  });
+
+  it('re-warms a capability-gated item once membership flips to family', async () => {
+    // A gate-skip marks the item warmed only to stop the off-list amplification —
+    // NOT as a settled fetch. If the user is later added to the allowlist, the
+    // capabilities query flips and the warmer must un-warm and fetch the body
+    // instead of leaving the offline bucket stuck on the feed stub forever.
+    class CountingFullText extends MockDataSource {
+      ftCalls = 0;
+      async fetchFullText(id: string) {
+        this.ftCalls += 1;
+        return super.fetchFullText(id);
+      }
+    }
+    const source = new CountingFullText(`test-${Math.random()}`);
+    const qc = setup(source);
+    act(() => {
+      qc.setQueryData(['capabilities'], {
+        family: false,
+        admin: false,
+        allowlistArmed: true,
+      });
+    });
+
+    source.stateStore.set('item-1', 'pinned', true);
+    // Detail warms, but the gated full-text call is skipped entirely.
+    await waitFor(() => expect(qc.getQueryData(['item', 'item-1'])).toBeTruthy());
+    expect(source.ftCalls).toBe(0);
+    expect(qc.getQueryData(['fulltext', 'item-1'])).toBeUndefined();
+
+    // Operator adds the caller → capabilities flip to family → re-warm fires.
+    act(() => {
+      qc.setQueryData(['capabilities'], {
+        family: true,
+        admin: false,
+        allowlistArmed: true,
+      });
+    });
+    await waitFor(() => expect(qc.getQueryData(['fulltext', 'item-1'])).toBeTruthy());
+    expect(source.ftCalls).toBeGreaterThan(0);
+  });
+
+  it('holds off the fulltext call while a signed-in user’s capabilities load', async () => {
+    // Cold start: a signed-in user's capabilities haven't resolved yet. The
+    // warmer must NOT fire fulltext on the unknown gate (an armed-allowlist
+    // off-list user would otherwise get one Edge call per pinned item). Once
+    // capabilities resolve to family, the held-off item warms.
+    window.localStorage.setItem('readmo:mock-signed-in', '1');
+    let resolveCaps!: (c: Capabilities) => void;
+    class LoadingCaps extends MockDataSource {
+      ftCalls = 0;
+      getCapabilities(): Promise<Capabilities> {
+        return new Promise<Capabilities>((r) => {
+          resolveCaps = r;
+        });
+      }
+      async fetchFullText(id: string) {
+        this.ftCalls += 1;
+        return super.fetchFullText(id);
+      }
+    }
+    const source = new LoadingCaps(`test-${Math.random()}`);
+    const qc = setup(source);
+
+    source.stateStore.set('item-1', 'pinned', true);
+    // Detail warms, but full text is held off while the gate is unknown.
+    await waitFor(() => expect(qc.getQueryData(['item', 'item-1'])).toBeTruthy());
+    expect(source.ftCalls).toBe(0);
+    expect(qc.getQueryData(['fulltext', 'item-1'])).toBeUndefined();
+
+    // Capabilities resolve to family → the held-off item now fetches its body.
+    await act(async () => {
+      resolveCaps({ family: true, admin: false, allowlistArmed: true });
+    });
+    await waitFor(() => expect(qc.getQueryData(['fulltext', 'item-1'])).toBeTruthy());
+    expect(source.ftCalls).toBeGreaterThan(0);
+  });
+
+  it('holds off the fulltext call when a signed-in user’s capabilities error', async () => {
+    // A `get_capabilities` failure ends with no data and fetchStatus 'idle' — that
+    // must still read as "unknown gate" (held off), not "open", or an off-list
+    // user resumes Edge calls after the error. Keyed on signed-in, not loading.
+    window.localStorage.setItem('readmo:mock-signed-in', '1');
+    class ErroringCaps extends MockDataSource {
+      ftCalls = 0;
+      async getCapabilities(): Promise<never> {
+        throw new Error('capabilities unavailable');
+      }
+      async fetchFullText(id: string) {
+        this.ftCalls += 1;
+        return super.fetchFullText(id);
+      }
+    }
+    const source = new ErroringCaps(`test-${Math.random()}`);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DataSourceProvider source={source}>
+          <Harness />
+        </DataSourceProvider>
+      </QueryClientProvider>,
+    );
+
+    source.stateStore.set('item-1', 'pinned', true);
+    // Detail warms; the gate is unresolved (errored) → no fulltext call.
+    await waitFor(() => expect(queryClient.getQueryData(['item', 'item-1'])).toBeTruthy());
+    expect(source.ftCalls).toBe(0);
+    expect(queryClient.getQueryData(['fulltext', 'item-1'])).toBeUndefined();
   });
 
   it('does not refetch the detail when a cached copy already exists (no boot burst)', async () => {

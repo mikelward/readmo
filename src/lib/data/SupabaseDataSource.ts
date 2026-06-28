@@ -23,6 +23,8 @@ import {
   localStorageOutboxPersistence,
 } from './itemStateOutbox';
 import {
+  type AllowlistEntry,
+  type Capabilities,
   type DataSource,
   type DiscoveredFeed,
   type FeedListOptions,
@@ -1339,5 +1341,60 @@ export class SupabaseDataSource implements DataSource {
       .filter(Boolean)
       .join('\n');
     return `<?xml version="1.0" encoding="UTF-8"?>\n<opml version="2.0">\n  <head><title>Readmo subscriptions</title></head>\n  <body>\n${outlines}\n  </body>\n</opml>\n`;
+  }
+
+  // --- Capabilities & admin -------------------------------------------------
+
+  async getCapabilities(): Promise<Capabilities> {
+    const { data, error } = await this.sb.rpc('get_capabilities');
+    if (error) {
+      // Feature-detect a backend that predates the RPC: PostgREST reports a
+      // missing function as PGRST202. Treat ONLY that as "no capabilities", so an
+      // old backend just behaves like today (no chip, no /admin; the gates are
+      // server-enforced regardless — guardrail #11). Any OTHER error (transient
+      // network / 5xx) is rethrown so React Query retries and keeps the prior
+      // cached value, instead of pinning a permissive all-false for the 5-min
+      // staleTime and letting an off-list user issue `fulltext` calls meanwhile.
+      const err = error as { code?: string; message?: string };
+      if (err.code === 'PGRST202') {
+        return { family: false, admin: false, allowlistArmed: false };
+      }
+      throw error instanceof Error ? error : new Error(err.message ?? String(error));
+    }
+    // `get_capabilities` returns a single-row table → an array of one row.
+    const row = (Array.isArray(data) ? data[0] : data) as
+      | { family?: boolean; admin?: boolean; allowlist_armed?: boolean }
+      | null
+      | undefined;
+    return {
+      family: row?.family === true,
+      admin: row?.admin === true,
+      allowlistArmed: row?.allowlist_armed === true,
+    };
+  }
+
+  async listAllowlist(): Promise<AllowlistEntry[]> {
+    const { data, error } = await this.sb.rpc('list_allowlist');
+    if (error) throw error instanceof Error ? error : new Error(String(error));
+    const rows = (data ?? []) as Array<{
+      email: string;
+      added_by: string | null;
+      created_at: string;
+    }>;
+    return rows.map((r) => ({
+      email: r.email,
+      addedBy: r.added_by ?? null,
+      createdAt: r.created_at,
+    }));
+  }
+
+  async addToAllowlist(email: string): Promise<void> {
+    const { error } = await this.sb.rpc('add_to_allowlist', { p_email: email });
+    if (error) throw error instanceof Error ? error : new Error(String(error));
+  }
+
+  async removeFromAllowlist(email: string): Promise<void> {
+    const { error } = await this.sb.rpc('remove_from_allowlist', { p_email: email });
+    if (error) throw error instanceof Error ? error : new Error(String(error));
   }
 }

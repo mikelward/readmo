@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { useCapabilities } from '../hooks/useCapabilities';
 import { usePopoverDismiss } from '../hooks/usePopoverDismiss';
 import { UserAvatar } from './UserAvatar';
 import { TooltipButton } from './TooltipButton';
@@ -12,6 +13,7 @@ import './HeaderAccountMenu.css';
  * *Auth → Account UI*). */
 export function HeaderAccountMenu() {
   const { user, signOut } = useAuth();
+  const { family, admin } = useCapabilities();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const navigate = useNavigate();
@@ -48,9 +50,24 @@ export function HeaderAccountMenu() {
       {open ? (
         <div className="account-menu__popover" role="menu">
           <div className="account-menu__identity">
-            <div className="account-menu__name">{user.name}</div>
+            <div className="account-menu__name">
+              {user.name}
+              {family ? (
+                <span className="account-menu__badge">FAMILY</span>
+              ) : null}
+            </div>
             <div className="account-menu__email">{user.email}</div>
           </div>
+          {admin ? (
+            <Link
+              to="/admin"
+              role="menuitem"
+              className="account-menu__item"
+              onClick={() => setOpen(false)}
+            >
+              Admin
+            </Link>
+          ) : null}
           <Link
             to="/feeds"
             role="menuitem"

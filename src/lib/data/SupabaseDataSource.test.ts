@@ -912,6 +912,38 @@ describe('SupabaseDataSource dispatch + writes', () => {
     ).rejects.toMatchObject({ name: 'AddFeedError', kind: 'blocked' });
   });
 
+  it('getCapabilities feature-detects a backend without the RPC → all-false', async () => {
+    // The fake returns a PGRST202 ("unknown rpc") error for get_capabilities (an
+    // old backend that predates the migration). getCapabilities must fall back to
+    // no capabilities rather than throwing, so an old backend behaves like
+    // today — no chip, no /admin (guardrail #11).
+    const env = setup();
+    expect(await env.ds.getCapabilities()).toEqual({
+      family: false,
+      admin: false,
+      allowlistArmed: false,
+    });
+  });
+
+  it('getCapabilities rethrows a transient error instead of caching all-false', async () => {
+    // A non-PGRST202 error (network blip / 5xx) must NOT be swallowed into a
+    // permissive all-false: that would pin "gate open" for the 5-min staleTime
+    // and let an off-list user issue fulltext calls. Rethrow so React Query
+    // retries and keeps the prior value.
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'get_capabilities') {
+        return Promise.resolve({
+          data: null,
+          error: { code: '503', message: 'service unavailable' },
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    await expect(env.ds.getCapabilities()).rejects.toThrow('service unavailable');
+  });
+
   it('fetchFullText invokes the fulltext function and returns the extracted body', async () => {
     const env = setup();
     env.fake.invokeResult.current = {

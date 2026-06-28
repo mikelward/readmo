@@ -471,6 +471,29 @@ describe('ItemPage reading mode', () => {
     ).toHaveTextContent('Show feed version');
   });
 
+  it('hides a cached reading body from an off-allowlist user', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    // A reading body cached from before the allowlist was armed (or before the
+    // user was removed).
+    queryClient.setQueryData(['fulltext', 'item-1'], {
+      status: 'ok',
+      contentHtml: '<p>prefetched reading body</p>',
+    });
+    // The caller is now off an armed allowlist → no reading-mode access.
+    queryClient.setQueryData(['capabilities'], {
+      family: false,
+      admin: false,
+      allowlistArmed: true,
+    });
+    renderReader(new MockDataSource(`test-${Math.random()}`), 'item-1', queryClient);
+
+    // The feed body shows; the cached reading body must NOT leak through.
+    expect(await screen.findByText(/visible creases/)).toBeInTheDocument();
+    expect(screen.queryByText(/prefetched reading body/)).not.toBeInTheDocument();
+  });
+
   it('falls back to the feed body and explains when the article needs sign-in', async () => {
     class AuthSource extends MockDataSource {
       async fetchFullText(): Promise<FullTextResult> {

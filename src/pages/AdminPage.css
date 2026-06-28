@@ -1,0 +1,85 @@
+.admin {
+  padding-bottom: 32px;
+}
+
+.admin__denied,
+.admin__empty {
+  padding: 12px;
+  color: var(--rm-meta);
+}
+
+.admin__list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.admin__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--rm-border);
+}
+
+.admin__email {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.95rem;
+}
+
+.admin__remove {
+  flex: 0 0 auto;
+  min-height: var(--rm-tap);
+  padding: 0 14px;
+  background: none;
+  border: 1px solid var(--rm-border);
+  border-radius: var(--rm-radius);
+  /* The button is transparent, so its label uses --rm-danger (the visible red),
+     NOT --rm-danger-fg (the on-danger-background contrast color, which is the
+     page background in dark mode and would make "Remove" invisible). */
+  color: var(--rm-danger, var(--rm-text));
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.admin__remove:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .admin__remove:hover:not(:disabled) {
+    background: var(--rm-bg);
+  }
+}
+
+.admin__remove:active:not(:disabled) {
+  background: var(--rm-bg);
+}
+
+.admin__retry {
+  min-height: var(--rm-tap);
+  padding: 0 14px;
+  background: none;
+  border: 1px solid var(--rm-border);
+  border-radius: var(--rm-radius);
+  color: var(--rm-accent);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .admin__retry:hover {
+    background: var(--rm-bg);
+  }
+}
+
+.admin__retry:active {
+  background: var(--rm-bg);
+}
+
+.admin__back {
+  padding: 16px 12px 0;
+}
