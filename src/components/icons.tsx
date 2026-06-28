@@ -398,11 +398,13 @@ export function OpenInNew(props: IconProps) {
 }
 
 // ---- Newshacker ("n" mark) ------------------------------------------------
-// Monochrome echo of newshacker's app icon — a lowercase "n" over the
-// home-indicator pill that reads as its "mobile-first" cue. Hand-authored on a
-// 0 0 24 24 grid (not Material's), single currentColor fill like the others, so
-// it tints to match whatever button it sits in. Used by the "open on newshacker"
-// row/reader action to distinguish it from "open original" (OpenInNew).
+// newshacker's own app icon (its public/favicon.svg), edited only to suit a
+// monochrome line-icon context: the filled tile becomes an outlined squircle
+// border, and the white "n" + home-indicator underbar become currentColor. The
+// glyph and underbar keep the source's exact coordinates, font, weight and size;
+// the border is the source tile inset by half its stroke so its OUTER edge still
+// lands on the original 0–512 / rx-96 footprint. Used by the "open on
+// newshacker" action to distinguish it from "open original" (OpenInNew).
 
 export function Newshacker({
   width = 24,
@@ -411,7 +413,7 @@ export function Newshacker({
 }: Omit<SVGProps<SVGSVGElement>, 'viewBox' | 'fill' | 'children'>) {
   return (
     <svg
-      viewBox="0 0 24 24"
+      viewBox="0 0 512 512"
       fill="currentColor"
       width={width}
       height={height}
@@ -419,10 +421,32 @@ export function Newshacker({
       focusable="false"
       {...rest}
     >
-      {/* The "n": a rounded top bar bridging two full-height legs. */}
-      <path d="M6 7h9a1 1 0 0 1 1 1v9h-3v-6H8v6H5V8a1 1 0 0 1 1-1Z" />
-      {/* Home-indicator pill. */}
-      <rect x="6.5" y="19" width="11" height="2.2" rx="1.1" />
+      {/* Source tile (0,0,512,512 rx 96) as an outline: inset 18 = strokeWidth/2
+          so the stroke's outer edge matches the original tile footprint. */}
+      <rect
+        x="18"
+        y="18"
+        width="476"
+        height="476"
+        rx="78"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="36"
+      />
+      {/* "n" — verbatim from the source favicon (only the fill changes). */}
+      <text
+        x="256"
+        y="240"
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
+        fontWeight="700"
+        fontSize="320"
+      >
+        n
+      </text>
+      {/* home-indicator underbar — verbatim from the source favicon. */}
+      <rect x="176" y="400" width="160" height="12" rx="6" />
     </svg>
   );
 }
