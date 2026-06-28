@@ -1406,10 +1406,13 @@ every zone. Matches newshacker's `.story-row` density.
 Replaces newshacker's *Thread* page. No comments, no votes — the rest of the
 page's discipline is unchanged.
 
-- **Header:** source feed (favicon + name, links to `/feed/:feedId`) followed
-  by the article's domain when it differs from the feed's own site (same rule as
-  the item row — so an aggregator feed surfaces where the article lives), title
-  (links to the original, `target="_blank"`, marks Opened), author, date.
+- **Header:** the title (links to the original, `target="_blank"`, marks
+  Opened) followed by a **meta line** of author · date, plus the article's
+  **domain** when it differs from the feed's own site (same rule as the item
+  row — so an aggregator feed surfaces where the article lives) and the *via
+  fallback* provenance tag when applicable. The **feed name is not repeated in
+  the header** — it lives on the reader bars next to the leading button (see
+  *Reader action bar*), so the header is just title + meta.
 - **Loading state:** the blank centered **"Loading…"** (with the tip
   **"Tip: 📌 pin an article to make it load faster"** — using the same
   inline `PushPinOutline` glyph as the row pin button (decorative,
@@ -1493,8 +1496,8 @@ page's discipline is unchanged.
     obtained that way is flagged: the function records
     `items.full_content_via_fallback` on the shared row and returns an additive
     **`viaFallback: true`** on the `ok` envelope, and the reader shows a muted
-    **"via fallback"** tag after the source title (`reader__source`) while that
-    body is on screen. The flag is additive (omitted = direct fetch) and rides
+    **"via fallback"** tag in the header meta line (after author · date · domain)
+    while that body is on screen. The flag is additive (omitted = direct fetch) and rides
     **only** through the allowlist-gated `fulltext` function — the column is not
     in any client read (see the reading-mode allowlist below) — so fallback
     content, like all full content, reaches only allowlisted callers.
@@ -1589,12 +1592,14 @@ the overflow. The overflow ⋮ → Pin → Done cluster at the right matches the
 other toolbars in the app. (No Upvote — RSS has no votes.)
 
 - **Feed name** sits immediately right of the leading button (Back on the top
-  bar, Back to top on the bottom bar), linking to `/feed/:feedId` — the same
-  source name and target as the header, repeated on both bars so "which feed is
-  this?" stays answerable while reading (the top bar is sticky) and at the
-  article's foot. It grows to fill the gap before the action cluster and
-  **truncates with an ellipsis** so a long title can't push the actions off the
-  bar. Not a new tap zone on the row — it's reader chrome, not the feed list.
+  bar, Back to top on the bottom bar), linking to `/feed/:feedId`. This is the
+  **only** place the feed name appears (the header shows just title + meta), on
+  both bars so "which feed is this?" stays answerable while reading (the top bar
+  is sticky) and at the article's foot. It grows to fill the gap before the
+  action cluster and **truncates with an ellipsis** so a long title can't push
+  the actions off the bar; it's a full `--rm-tap` (44px) tap target with a
+  pressed `:active` state. Not a new tap zone on the row — it's reader chrome,
+  not the feed list.
 - **Done** also unpins and **navigates back** (the "I'm finished, move on"
   gesture); **Unmark done** does not navigate. Same as newshacker.
 - Bottom bar swaps the primary slot to **Back to top** (neutral, stretched) so

@@ -51,7 +51,8 @@ interface ReaderToolbarProps {
   state: ItemState;
   /** The feed name shown next to the leading button, linking back to the feed
    * — a persistent "which feed is this?" anchor while reading (the top bar is
-   * sticky). Mirrors the header's `reader__source`. */
+   * sticky). This is the only place the feed name appears; the header shows
+   * just the title + meta line. */
   source: string;
   feedId: string;
   wide: boolean;
@@ -550,20 +551,6 @@ export function ItemPage() {
       />
 
       <header className="reader__header">
-        <Link to={`/feed/${feed.id}`} className="reader__source">
-          {source}
-        </Link>
-        {domain ? (
-          <span className="reader__domain" data-testid="reader-domain">
-            {' · '}
-            {domain}
-          </span>
-        ) : null}
-        {showReading && fullViaFallback ? (
-          <span className="reader__via-fallback" data-testid="reader-via-fallback">
-            via fallback
-          </span>
-        ) : null}
         <h1 className="reader__title">
           {isSafeHttpUrl(item.url) ? (
             <a
@@ -578,9 +565,26 @@ export function ItemPage() {
             item.title
           )}
         </h1>
+        {/* Meta line below the title. The feed name now lives only on the
+            reader bars (next to Back), so this carries author · age, plus the
+            article's publisher domain for aggregator feeds whose items link
+            out (Hacker News, Reddit) and the "via fallback" reading-body
+            provenance tag. */}
         <div className="reader__byline">
           {item.author ? `${item.author} · ` : ''}
           {formatAge(item.publishedAt)}
+          {domain ? (
+            <span className="reader__domain" data-testid="reader-domain">
+              {' · '}
+              {domain}
+            </span>
+          ) : null}
+          {showReading && fullViaFallback ? (
+            <span className="reader__via-fallback" data-testid="reader-via-fallback">
+              {' · '}
+              via fallback
+            </span>
+          ) : null}
         </div>
       </header>
 

@@ -56,12 +56,14 @@ describe('ItemPage (reader)', () => {
     expect(bottom).toHaveAttribute('href', '/feed/feed-verge');
   });
 
-  it('shows the article domain next to the feed name when it links off-site', async () => {
+  it('shows the article domain in the meta line below the title when it links off-site', async () => {
     // item-8 is the Reddit "Show" post, which links out to github.com.
     const source = new MockDataSource(`test-${Math.random()}`);
     renderReader(source, 'item-8');
     const domain = await screen.findByTestId('reader-domain');
     expect(domain).toHaveTextContent('github.com');
+    // It lives in the byline meta line under the title, not a header source link.
+    expect(domain.closest('.reader__byline')).not.toBeNull();
   });
 
   it('omits the domain when the article lives on the feed\'s own site', async () => {
@@ -70,6 +72,17 @@ describe('ItemPage (reader)', () => {
     renderReader(source, 'item-1');
     await screen.findByRole('heading', { level: 1 });
     expect(screen.queryByTestId('reader-domain')).not.toBeInTheDocument();
+  });
+
+  it('does not repeat the feed name in the header (it lives on the reader bars now)', async () => {
+    // item-1's feed is "The Verge"; that name should appear only on the bars
+    // (reader-feedname), not in the header, which now shows just title + meta.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReader(source, 'item-1');
+    const heading = await screen.findByRole('heading', { level: 1 });
+    const header = heading.closest('.reader__header');
+    expect(header).not.toBeNull();
+    expect(header).not.toHaveTextContent('The Verge');
   });
 
   it('shows the pin-to-load-faster tip while the article is loading', async () => {
