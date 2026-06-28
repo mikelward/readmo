@@ -1111,6 +1111,15 @@ negligible and off every critical path. See the External services table in
      visible row fixed — and it's **dropped one frame after the swept rows leave
      the DOM**, not held for the whole post-sweep refetch like the height lock,
      so an auto-hide triggered by scrolling mid-refetch still gets anchoring.
+     **Marking a single article Done** (the row's Done action, the `d`
+     shortcut, or a swipe-right — a Sweep of one) takes the same anchor opt-out:
+     it removes one row the reader can currently see, so without it the browser
+     would rewind `scrollY` to keep a row below fixed, moving the scroll
+     position and shifting every row above. With it, the offset holds exactly —
+     the dismissed row's gap closes from below and nothing above moves. It's
+     distinguished from auto-hide (which must keep anchoring) by the removed
+     row's position: an in-viewport Done opts out; a row that left the top does
+     not.
    - **Pin-to-download promo bar** above the first row ("Pin an article to
      download it"), explaining that pinning warms the offline cache (see
      *Prefetch on Pin/Favorite*). Shown only once rows exist; dismissable via a

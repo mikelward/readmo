@@ -220,6 +220,13 @@ export function ItemList({
   // Forward-declared so handleExitTop can read the latest pending-sweep ids
   // without re-subscribing the observer. Populated by handleSweep below.
   const sweepPendingIdsRef = useRef<ItemId[] | null>(null);
+  // The ids of an auto-hide-on-scroll batch for the synchronous window of its
+  // hideMany call. The single-dismiss anchor opt-out (the mutation subscription
+  // far below) keys off a Done flip but must NOT fire for auto-hide — those rows
+  // leave ABOVE the viewport and depend on anchoring staying on. Flagging the
+  // ids here lets that subscription, which runs synchronously inside hideMany,
+  // tell an auto-hide Done flip from a reader's in-view mark-done and skip it.
+  const autoHideInFlightRef = useRef<Set<ItemId> | null>(null);
   const handleExitTop = useCallback(
     (ids: ItemId[]) => {
       // Skip rows that are pinned (shielded) or already Done/Hidden — a
@@ -250,7 +257,13 @@ export function ItemList({
         scrollBatchKey.current = ++scrollBurstSeq;
       }
       lastScrollHideAt.current = now;
+      // Flag the batch so the single-dismiss anchor opt-out below treats these
+      // top-exit removals as the auto-hide case (anchoring stays on) rather than
+      // an in-view mark-done. Cleared right after; the mutation listener runs
+      // synchronously inside hideMany, within this set/clear window.
+      autoHideInFlightRef.current = new Set(toHide);
       ds.stateStore.hideMany(toHide, now, { batchKey: scrollBatchKey.current });
+      autoHideInFlightRef.current = null;
     },
     [ds],
   );
@@ -1372,6 +1385,37 @@ export function ItemList({
     el.style.minHeight = `${el.offsetHeight}px`;
     heightLockedRef.current = true;
   }, []);
+
+  // A single in-viewport mark-done — the row menu's Done, the wide-viewport Done
+  // button, the `d` shortcut, or a swipe-right (all route through `store.hide`)
+  // — flips one row Done, which drops it from `visibleItems` in the very next
+  // commit. Like a Sweep, that row leaving the DOM lets the browser's scroll
+  // anchoring rewind window.scrollY to keep a row *below* it fixed, shifting
+  // everything above and yanking the scroll position out from under the reader.
+  // Take the same anchor opt-out (+ height freeze) the instant the flip lands —
+  // synchronously, while the row is still on screen — so the offset holds
+  // exactly: the dismissed row's gap closes from below and nothing above moves.
+  //
+  // Excluded:
+  //  - Auto-hide-on-scroll removes rows that just left the TOP of the viewport
+  //    and depends on anchoring to keep the first still-visible row fixed; its
+  //    ids are flagged in `autoHideInFlightRef` for the synchronous window of
+  //    their hideMany, so they're skipped here.
+  //  - Sweep already calls lockBodyHeight itself before its hideMany; the second
+  //    idempotent call this triggers is harmless.
+  //  - A Done flip on a row not rendered in this list (another view dismissing on
+  //    the shared store) has no element here, so it's a no-op.
+  // The opt-out is dropped a frame after the removal paints by the existing
+  // post-paint release effect (keyed on visibleItems.length); the height lock
+  // releases when the background refresh settles.
+  useEffect(() => {
+    return ds.stateStore.subscribeMutations((id, changed) => {
+      if (changed.done !== true) return;
+      if (autoHideInFlightRef.current?.has(id)) return;
+      if (!document.querySelector(`[data-item-id="${id}"]`)) return;
+      lockBodyHeight();
+    });
+  }, [ds, lockBodyHeight]);
 
   const commitSweep = useCallback(() => {
     const ids = sweepPendingIdsRef.current;
