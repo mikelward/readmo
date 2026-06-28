@@ -290,6 +290,15 @@ describe('ItemStateStore', () => {
       expect(store.get('b', NOW).done).toBe(false); // only the last batch restored
     });
 
+    it('returns the ids it restored (in batch order), empty when nothing to undo', () => {
+      const store = new ItemStateStore(memoryPersistence());
+      expect(store.undoLast()).toEqual([]); // nothing recorded yet
+      store.hideMany(['a', 'b'], NOW, { batchKey: 1 });
+      store.hideMany(['c'], NOW, { batchKey: 1 }); // same burst
+      expect(store.undoLast()).toEqual(['a', 'b', 'c']);
+      expect(store.undoLast()).toEqual([]); // batch consumed
+    });
+
     it('accumulates same-key dismissals so one Undo restores the whole burst', () => {
       const store = new ItemStateStore(memoryPersistence());
       store.hideMany(['a'], NOW, { batchKey: 1 });

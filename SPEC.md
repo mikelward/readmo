@@ -1120,7 +1120,11 @@ negligible and off every critical path. See the External services table in
    minus the sticky chrome (header + toolbar), tracked by an
    IntersectionObserver whose `rootMargin` shrinks the top by that inset; the
    button disables when nothing unpinned is fully visible. Undo restores the
-   last done / swipe / sweep batch. Same component/behavior as newshacker.
+   last done / swipe / sweep batch, and scrolls the list back up to the topmost
+   restored row **when that row is off-screen above the fold** — so undoing a
+   scroll-past burst returns you to where you were reading, while undoing a
+   swipe/Sweep (whose rows are still on screen) never jerks the viewport. Same
+   component/behavior as newshacker.
    - **Animation.** Every swept row plays a single **200ms slide-right + fade
      to zero** together (matches the swipe-right-to-hide direction and the
      `useSwipeToDismiss` exit, so the broom feels like every row swiped itself
@@ -1153,7 +1157,10 @@ negligible and off every critical path. See the External services table in
      single undo batch (mirrors newshacker's dismiss-batch window), so one tap of
      the toolbar Undo brings back the run you just scrolled past; a gap longer
      than the window starts a fresh batch, so Undo only ever reaches back to the
-     burst you were just looking at.
+     burst you were just looking at. Undo also **scrolls the list back up to the
+     topmost restored row** (the earliest one you'd scrolled past) when it lands
+     above the fold, so the rows it brought back are actually in view rather than
+     left off-screen above you.
 
 7. **Bottom action bar** — Back-to-top + More + Undo + Sweep on feed footers;
    Back-to-top only on library footers. Same slot order. **More lives in the

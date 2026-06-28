@@ -452,10 +452,13 @@ export class ItemStateStore {
     return this.lastUndo !== null;
   }
 
-  /** Restore the most recent hide/sweep batch. */
-  undoLast(now: number = Date.now()): void {
+  /** Restore the most recent hide/sweep batch. Returns the ids it restored
+   * (in batch order), so a caller can react to the restore — e.g. scroll the
+   * list back up to the topmost row that just reappeared. Empty when there was
+   * nothing to undo. */
+  undoLast(now: number = Date.now()): ItemId[] {
     const batch = this.lastUndo;
-    if (!batch) return;
+    if (!batch) return [];
     const next = { ...this.map };
     // Emit the diff from the current (hidden) state back to the restored prior
     // BEFORE reassigning the map — restoring re-sends whatever hiding changed
@@ -480,6 +483,7 @@ export class ItemStateStore {
     this.lastUndoKey = null;
     this.persistence.save(this.map);
     this.emit();
+    return batch.map(([id]) => id);
   }
 
   subscribe(listener: StateListener): () => void {
