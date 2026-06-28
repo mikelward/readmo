@@ -26,6 +26,13 @@ interface Options {
    * Drives the optional auto-hide-on-scroll behavior; omit it for plain Sweep
    * visibility tracking. */
   onExitTop?: (ids: ItemId[]) => void;
+  /** Called with the ids of rows that are now intersecting the viewport again
+   * (fully *or* partially) — i.e. the reader scrolled them back into view. Lets
+   * the auto-hide-on-scroll consumer drop a row it had queued for top-exit
+   * dismissal once it's visible under the finger again. Fires from inside the
+   * IntersectionObserver callback, so it's synchronous with the re-entry (no
+   * dependency on a React render landing first). */
+  onReenter?: (ids: ItemId[]) => void;
 }
 
 export function useInViewIds(opts: Options = {}): {
@@ -42,6 +49,8 @@ export function useInViewIds(opts: Options = {}): {
   // recreates the observer (its effect only depends on the insets).
   const onExitTopRef = useRef(opts.onExitTop);
   onExitTopRef.current = opts.onExitTop;
+  const onReenterRef = useRef(opts.onReenter);
+  onReenterRef.current = opts.onReenter;
   // Latest inViewIds mirrored into a ref so the enable effect can seed from it
   // without subscribing (depending on inViewIds would re-seed on every scroll).
   const inViewIdsRef = useRef(inViewIds);
@@ -70,10 +79,13 @@ export function useInViewIds(opts: Options = {}): {
         const exitedTop: ItemId[] = [];
         const nowVisible: ItemId[] = [];
         const nowHidden: ItemId[] = [];
+        const reentered: ItemId[] = [];
         for (const entry of entries) {
           const el = entry.target as HTMLElement;
           const id = el.dataset.itemId;
           if (!id) continue;
+          // Intersecting at all (fully or partially) = back in the viewport.
+          if (entry.isIntersecting) reentered.push(id);
           if (entry.intersectionRatio >= FULLY_VISIBLE_RATIO) {
             nowVisible.push(id);
             // Only track "seen" while the feature is on (paired with the
@@ -105,6 +117,7 @@ export function useInViewIds(opts: Options = {}): {
           });
         }
         if (exitedTop.length) onExitTopRef.current?.(exitedTop);
+        if (reentered.length) onReenterRef.current?.(reentered);
       },
       {
         threshold: [0, FULLY_VISIBLE_RATIO, 1],
