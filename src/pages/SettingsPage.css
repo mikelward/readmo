@@ -374,11 +374,13 @@
   font-weight: 600;
 }
 
-/* Checkbox-style menu item (Open original): a fixed-width leading slot holds the
-   check so the label stays aligned whether or not it's set. */
+/* Checkbox-style menu item (Open original): the label sits flush-left like every
+   other menu item, with the check pinned to the trailing edge so it never shifts
+   the label whether or not it's set. */
 .settings__sub-menuitem--check {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
 }
 
