@@ -14,8 +14,8 @@
 // publisher's own feed always wins when one exists.
 //
 // Google News RSS feeds (news.google.com/rss/…) are gated on the shared
-// trusted-user allowlist (READMO_ALLOWLIST; see _shared/allowlist.ts) because
-// they are a Google-ToS gray area. Unset → open to all. Once armed: an explicit
+// trusted-user allowlist (the DB `allowlist` table; see _shared/allowlist.ts)
+// because they are a Google-ToS gray area. Empty → open to all. Once armed: an explicit
 // paste of a Google News feed by a non-listed caller is `blocked`, while
 // discovered or synthesized Google News candidates (an advertised alternate or
 // the last-resort search above) are silently dropped for non-listed callers so
@@ -44,7 +44,7 @@ import { parseFeed } from '../_shared/parser.ts';
 import { safeFetch, SsrfError } from '../_shared/ssrf.ts';
 import { corsHeaders, preflight } from '../_shared/cors.ts';
 import { redactUrl } from '../_shared/urlSafety.ts';
-import { parseAllowlist, isAllowed } from '../_shared/allowlist.ts';
+import { loadAllowlistFromDb, parseAllowlist, isAllowed } from '../_shared/allowlist.ts';
 import { isGoogleNewsFeedUrl } from '../_shared/googleNews.ts';
 
 Deno.serve(async (req: Request) => {
@@ -206,15 +206,29 @@ Deno.serve(async (req: Request) => {
   }
 });
 
-/** Whether the caller may receive Google News feeds. True when the allowlist is
- * disarmed (unset) or the caller's id/email is on it. The identity round-trip
- * only happens when the gate is armed (callers gate this on a Google News URL
- * actually being in play), so a normal add never pays for it. Fail-closed: a
- * transient auth lookup leaves `auth.user` undefined → treated as not allowed,
- * which here just drops/blocks the Google News candidate (retryable by the user,
- * nothing cached). */
+/** Whether the caller may receive Google News feeds. True when the allowlist
+ * table is empty (disarmed) or the caller's email is on it. The reads only
+ * happen when a Google News URL is actually in play, so a normal add never pays
+ * for them. Fail-closed: if the allowlist read throws, or auth resolves no user,
+ * the caller is treated as NOT allowed, which here just drops/blocks the Google
+ * News candidate (retryable by the user, nothing cached). */
 async function callerAllowsGoogleNews(req: Request): Promise<boolean> {
-  const allowlist = parseAllowlist(Deno.env.get('READMO_ALLOWLIST'));
+  const service = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    { auth: { autoRefreshToken: false, persistSession: false } },
+  );
+  let allowlist: Set<string>;
+  try {
+    allowlist = await loadAllowlistFromDb(service);
+  } catch (err) {
+    console.error('discover: allowlist read failed — treating as not allowed:', err);
+    return false; // fail closed → drop/block the Google News candidate
+  }
+  // Transitional cutover safety: union with the legacy READMO_ALLOWLIST env var
+  // so an install that armed the old secret stays gated until it seeds the DB
+  // table and unsets the secret. (No-op once unset / never set.)
+  for (const e of parseAllowlist(Deno.env.get('READMO_ALLOWLIST'))) allowlist.add(e);
   if (allowlist.size === 0) return true; // disarmed → open to all
   const userClient = createClient(
     Deno.env.get('SUPABASE_URL')!,

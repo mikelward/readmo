@@ -12,11 +12,11 @@
 //     fetch for an article they aren't entitled to. The service-role client does
 //     the cached write (client item writes are revoked; 0002/0009).
 //   - Reading mode is the highest copyright-exposure surface (it fetches beyond
-//     the feed AND stores a shared copy), so the optional READMO_ALLOWLIST secret
-//     restricts who may use it (the shared trusted-user list; see
-//     _shared/allowlist.ts). Unset → open to all; once armed, a non-listed caller
-//     gets the silent `empty` fallback before any item lookup or cache read, so
-//     they never receive full content.
+//     the feed AND stores a shared copy), so the DB `allowlist` table (the shared
+//     trusted-user list, managed from /admin; see _shared/allowlist.ts) restricts
+//     who may use it. Empty → open to all; once armed, a non-listed caller gets
+//     the silent `empty` fallback before any item lookup or cache read, so they
+//     never receive full content.
 //   - The article fetch is a brand-new publisher fetch of a user-influenced URL,
 //     so it goes through safeFetch (SSRF-hardened: scheme allow-list, resolved-IP
 //     denylist incl. metadata, redirect re-validation, timeout + size cap, no
@@ -63,7 +63,7 @@ import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
 import { looksTokenized, redactUrl } from '../_shared/urlSafety.ts';
 import { corsHeaders, preflight } from '../_shared/cors.ts';
-import { parseAllowlist, isAllowed } from '../_shared/allowlist.ts';
+import { loadAllowlistFromDb, parseAllowlist, isAllowed } from '../_shared/allowlist.ts';
 
 const JINA_MAX_BYTES = 4 * 1024 * 1024; // 4 MiB
 const FETCH_MAX_BYTES = 8 * 1024 * 1024; // 8 MiB — article pages can be large
@@ -112,14 +112,28 @@ async function handle(req: Request): Promise<Response> {
 
   // Reading-mode allowlist (guardrail #6's content-exposure cousin): full text
   // both fetches beyond the feed AND stores a shared copy, so the operator can
-  // restrict it to themselves/family via READMO_ALLOWLIST (the shared trusted-
-  // user list — see _shared/allowlist.ts). Checked BEFORE the item lookup and
-  // the cache-hit return, so a non-allowlisted caller never receives full
-  // content — cached or fresh. An unset secret leaves the feature open to all
-  // (the deploy is a no-op until armed). A blocked caller gets a silent `empty`
-  // flagged `retryable` so a later allowlist change un-sticks them, without a
-  // new wire status old clients can't read (SPEC "Full-text reading mode").
-  const allowlist = parseAllowlist(Deno.env.get('READMO_ALLOWLIST'));
+  // restrict it to themselves/family via the `allowlist` table (the shared
+  // trusted-user list, managed from /admin — see _shared/allowlist.ts). Checked
+  // BEFORE the item lookup and the cache-hit return, so a non-allowlisted caller
+  // never receives full content — cached or fresh. An EMPTY list leaves the
+  // feature open to all. A blocked caller gets a silent `empty` flagged
+  // `retryable` so a later allowlist change un-sticks them, without a new wire
+  // status old clients can't read (SPEC "Full-text reading mode").
+  let allowlist: Set<string>;
+  try {
+    allowlist = await loadAllowlistFromDb(service);
+  } catch (err) {
+    // Fail CLOSED on a DB read error: don't serve full content if we can't
+    // confirm the gate. `unreachable` is retryable and caches nothing, so an
+    // allowlisted caller simply retries rather than being stranded or leaked to.
+    console.error('fulltext: allowlist read failed — retryable unreachable:', err);
+    return json({ status: 'unreachable', contentHtml: null });
+  }
+  // Transitional cutover safety: union with the legacy READMO_ALLOWLIST env var,
+  // so an install that armed the OLD secret stays gated until it seeds the DB
+  // table and unsets the secret — deploying these functions before seeding can't
+  // briefly fling the gate open. (No-op once the secret is unset / never set.)
+  for (const e of parseAllowlist(Deno.env.get('READMO_ALLOWLIST'))) allowlist.add(e);
   if (allowlist.size > 0) {
     const { data: auth, error: authError } = await userClient.auth.getUser();
     if (authError || !auth?.user) {
@@ -134,13 +148,13 @@ async function handle(req: Request): Promise<Response> {
     if (!isAllowed({ id: auth.user.id, email: auth.user.email }, allowlist)) {
       // Confirmed non-allowlisted caller. Report the silent `empty` outcome (the
       // reader shows the feed body, no error) but flag it `retryable` so the
-      // client keeps it stale: if the operator later adds this caller to
-      // READMO_ALLOWLIST, the next open re-checks the gate instead of staying
-      // stuck on a forever-cached denial. `retryable` is an ADDITIVE field, so a
+      // client keeps it stale: if the operator later adds this caller to the
+      // allowlist, the next open re-checks the gate instead of staying stuck on
+      // a forever-cached denial. `retryable` is an ADDITIVE field, so a
       // service-worker-cached older client that only reads `status` still
       // renders the plain silent `empty` (guardrail #11) — no error, no new
       // wire status to choke on.
-      console.log('fulltext: caller not on READMO_ALLOWLIST — feed-stub fallback');
+      console.log('fulltext: caller not on the allowlist — feed-stub fallback');
       return json({ status: 'empty', contentHtml: null, retryable: true });
     }
   }

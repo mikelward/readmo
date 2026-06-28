@@ -498,25 +498,27 @@ folders       (user_id FK, name, sort)
   common fallbacks (`/feed`, `/rss`, `/atom.xml`, `/feed.json`); validate by
   fetching+parsing each candidate before offering it.
 - **Google News feeds (`news.google.com/rss/…`) are gated on the trusted-user
-  allowlist** (`READMO_ALLOWLIST` — the same list as full-text reading mode; see
-  *Full-text reading mode*), because they are a Google-ToS gray area. The check
-  is enforced **server-side in `discover`**, with two behaviors by intent: an
-  **explicit paste** of a `news.google.com` feed by a non-listed caller is
-  rejected with a `blocked` add-feed error (clear message — they asked for it),
-  while a **discovered or synthesized** Google News candidate (an advertised
-  `<link rel="alternate">`, a redirect target, or the *last-resort Google News
-  fallback* below) is **silently dropped** for non-listed callers — offer the
-  other candidates, or fall through to "no feed found" — since the user never
-  asked for Google News and a block there would confuse. Either way a non-listed
-  caller can't end up subscribed to a Google News feed.
-  Paths that skip discover and subscribe directly are closed too: the **curated
-  catalog carries no Google News feed** (a curated pick goes straight to
-  `subscribe()`), and **OPML import routes any Google News URL through
-  `discover`** rather than a direct `subscribe_to_feed`. (A hand-crafted direct
-  `subscribe_to_feed` RPC call is the remaining bypass; closing it needs the
-  allowlist in the DB so the RPC can enforce it — the deferred admin-UI/DB
-  follow-up. Unset/blank allowlist → open to all, so none of this bites until the
-  operator arms the secret.)
+  allowlist** (the DB `allowlist` table — the same list as full-text reading
+  mode, managed from */admin*; see *Full-text reading mode*), because they are a
+  Google-ToS gray area. The check is enforced **server-side in `discover`**, with
+  two behaviors by intent: an **explicit paste** of a `news.google.com` feed by a
+  non-listed caller is rejected with a `blocked` add-feed error (clear message —
+  they asked for it), while a **discovered or synthesized** Google News candidate
+  (an advertised `<link rel="alternate">`, a redirect target, or the *last-resort
+  Google News fallback* below) is **silently dropped** for non-listed callers —
+  offer the other candidates, or fall through to "no feed found" — since the user
+  never asked for Google News and a block there would confuse. Either way a
+  non-listed caller can't end up subscribed to a Google News feed.
+  The normal UI paths that skip discover are closed too: the **curated catalog
+  carries no Google News feed** (a curated pick goes straight to `subscribe()`),
+  and **OPML import routes any Google News URL through `discover`** rather than a
+  direct `subscribe_to_feed`. A **hand-crafted direct `subscribe_to_feed` RPC
+  call** with a Google News URL is the one remaining bypass; closing it correctly
+  needs real `new URL()`/IDNA canonicalization (which a SQL gate can't replicate),
+  so it's **deferred to a follow-up** that does the check in an Edge layer
+  (tracked in `TODO.md`). It's low-risk: `discover` (the authoritative gate) still
+  covers every normal path, and an empty allowlist → open to all, so none of this
+  bites until the operator seeds the table.
 - **When discovery returns more than one feed**, the Feeds page's **Add a feed**
   flow shows a multi-select picker rather than silently subscribing to the
   first candidate — this is how a user follows a specific section of a site
@@ -557,10 +559,10 @@ folders       (user_id FK, name, sort)
   advertise a feed that's gated/dead/unreachable, that specific reason
   (`auth`/`not-found`/`unreachable`, below) is surfaced instead — Google News
   does not override it. **Gated by the trusted-user allowlist** (see *Google News
-  feeds … gated* above): when `READMO_ALLOWLIST` is armed, this fallback is
-  offered only to listed callers; a non-listed caller skips it and just gets "no
-  feed found". (Cost/reliability: see *External services* in CLAUDE.md — free, no
-  API key, unofficial endpoint.)
+  feeds … gated* above): when the `allowlist` table is non-empty, this fallback
+  is offered only to listed callers; a non-listed caller skips it and just gets
+  "no feed found". (Cost/reliability: see *External services* in CLAUDE.md — free,
+  no API key, unofficial endpoint.)
 - Discovery reports *why* a URL yields no feed so the client shows a specific
   message instead of a blanket "no feed found": a `code` of `auth`
   (login-gated — the feed/site returned 401/403), `not-found` (404/410), or
@@ -1467,25 +1469,26 @@ page's discipline is unchanged.
     Latency is +1–3 s on the first open of a truncated item, then cache-instant.
     Works on most normal article sites; SPA/JS-rendered pages and paywalls fall
     back to the feed body + Open original.
-  - **Reading-mode allowlist (`READMO_ALLOWLIST`).** Reading mode is the app's
+  - **Reading-mode allowlist (the `allowlist` table).** Reading mode is the app's
     highest copyright-exposure surface — unlike caching a feed's own syndicated
     body it fetches the article *beyond* the feed and stores the extracted body
-    on the shared `items` row. The optional `READMO_ALLOWLIST` Supabase secret
-    (the shared trusted-user list — it also gates Google News feeds, see *Feed
+    on the shared `items` row. The trusted-user **`allowlist` table** (emails,
+    managed from */admin* — it also gates Google News feeds, see *Feed
     discovery*) lets the operator keep the feature to themselves and family while
     plain feed reading stays open to everyone. Enforced server-side in the
-    `fulltext` function (`supabase/functions/_shared/allowlist.ts`), checked
-    **before** the item lookup and cache-hit return so a non-listed caller never
-    receives full content, cached or fresh. Entries are comma/whitespace-
-    separated `auth.users` UUIDs and/or account emails (case-insensitive).
-    **Unset/blank → open to all**, so deploying the gate is a no-op until the
-    operator arms it (mirrors `MIN_CLIENT_BUILD`); arming it is an operator
-    action. A blocked caller gets a silent **`empty`** outcome (feed body, no
-    error, no mention of an allowlist) carrying an additive **`retryable: true`**
-    flag: the reader keeps it stale (`fullTextStaleTime`) rather than terminal,
-    so if the operator later adds the caller to `READMO_ALLOWLIST` the next open
-    re-checks the gate instead of staying stuck on a forever-cached denial, and
-    the offline warmer leaves it unwarmed so a reconnect re-prefetches it. The
+    `fulltext` function (which reads the table via `loadAllowlistFromDb`,
+    `supabase/functions/_shared/allowlist.ts`), checked **before** the item lookup
+    and cache-hit return so a non-listed caller never receives full content,
+    cached or fresh. Matching is on the caller's verified account email
+    (case-insensitive). **Empty table → open to all**, so deploying the gate is a
+    no-op until the operator seeds the table; a DB read error **fails closed**
+    (retryable `unreachable`, never serves). A blocked caller gets a silent
+    **`empty`** outcome (feed body, no error, no mention of an allowlist) carrying
+    an additive **`retryable: true`** flag: the reader keeps it stale
+    (`fullTextStaleTime`) rather than terminal, so if the operator later adds the
+    caller to the allowlist the next open re-checks the gate instead of staying
+    stuck on a forever-cached denial, and the offline warmer leaves it unwarmed so
+    a reconnect re-prefetches it. The
     flag is additive (not a new wire status) so a service-worker-cached older
     client still renders the plain silent `empty` (guardrail #11). A transient
     `auth.getUser()` failure likewise returns the retryable `unreachable`. For

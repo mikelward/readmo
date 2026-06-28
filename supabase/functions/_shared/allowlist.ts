@@ -1,6 +1,6 @@
 // Trusted-user allowlist for Readmo's higher copyright/ToS-exposure features.
 //
-// Two surfaces are gated on this one list (`READMO_ALLOWLIST`):
+// Two surfaces are gated on this one list:
 //   - Full-text reading mode (the `fulltext` function) — fetches the article
 //     *beyond* the feed and stores a shared copy on `items`.
 //   - Google News RSS feeds (the `discover` function) — adding `news.google.com`
@@ -8,22 +8,21 @@
 // Plain feed reading stays open to everyone; only these two surfaces consult the
 // list, so the operator can keep them to themselves and family.
 //
-// Semantics — arming is a deliberate operator action (mirrors MIN_CLIENT_BUILD):
-//   - UNSET / empty  → OPEN to every authenticated caller. Deploying the gated
-//     functions therefore changes nothing until the secret is set, so the change
-//     is backwards compatible (guardrail #11).
-//   - non-empty      → only callers whose auth user id OR email is listed may use
-//     the gated surfaces; everyone else is turned away (reading mode falls back
-//     silently to the feed body; a Google News add is rejected with a message).
+// The list lives in the Postgres `allowlist` table (emails), managed from the
+// /admin UI; the gate functions read it via {@link loadAllowlistFromDb} with
+// their service-role client. (It used to be the `READMO_ALLOWLIST` env var;
+// `parseAllowlist` is retained for unit tests and any transitional use.)
 //
-// Entries are separated by commas and/or whitespace (newlines included) and may
-// be `auth.users` UUIDs or account emails, mixed freely. Matching trims
-// surrounding space and is case-insensitive.
+// Semantics — arming is a deliberate operator action:
+//   - EMPTY list   → OPEN to every authenticated caller, so an unseeded deploy
+//     changes nothing (backwards compatible, guardrail #11).
+//   - non-empty    → only listed callers may use the gated surfaces; everyone
+//     else is turned away (reading mode falls back silently to the feed body; a
+//     Google News add is rejected). Matching is on email, case-insensitive.
 //
-// Cost/reliability (guardrail #5): negligible — a string split and a Set lookup,
-// no network, no DB. When armed, the gated function pays one extra
-// `auth.getUser()` round-trip to resolve identity; off the happy path and only
-// while armed.
+// Cost/reliability (guardrail #5): negligible — one small indexed read of the
+// `allowlist` table per gated call (the table holds a handful of family emails),
+// plus the existing `auth.getUser()` identity round-trip, only while armed.
 
 /** Parse a `READMO_ALLOWLIST` value into a normalized lookup set. An unset or
  * blank value yields an empty set, which {@link isAllowed} treats as "gate
@@ -62,4 +61,48 @@ export function isAllowed(
   const id = identity.id?.trim().toLowerCase();
   const email = identity.email?.trim().toLowerCase();
   return (!!id && allowlist.has(id)) || (!!email && allowlist.has(email));
+}
+
+/** Minimal shape of the Supabase client the gate functions pass in — just the
+ * `from('allowlist').select('email')` read. Typed structurally so this module
+ * stays free of the supabase-js types (it's shared with vitest unit tests). */
+export interface AllowlistDbClient {
+  from(table: string): {
+    select(columns: string): PromiseLike<{
+      data: Array<{ email: string | null }> | null;
+      error: unknown;
+    }>;
+  };
+}
+
+/**
+ * Load the trusted-user allowlist (emails) from the `allowlist` table, returning
+ * a lowercased Set ready for {@link isAllowed}. An empty Set means "disarmed →
+ * open to all", same as an unset env var used to.
+ *
+ * THROWS on a read error rather than returning an empty Set, so the gate can
+ * fail CLOSED on a transient DB failure (an empty Set would silently open the
+ * gate to everyone). Callers decide the fail-closed response (fulltext →
+ * retryable `unreachable`; discover → treat as not-allowed).
+ */
+export async function loadAllowlistFromDb(
+  client: AllowlistDbClient,
+): Promise<Set<string>> {
+  const { data, error } = await client.from('allowlist').select('email');
+  if (error) {
+    // supabase-js returns a plain `{ message, code, ... }` object, not an Error;
+    // surface its message so a failure is diagnosable in the function log.
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === 'object' && error !== null && 'message' in error
+          ? String((error as { message: unknown }).message)
+          : String(error);
+    throw new Error(message);
+  }
+  return new Set(
+    (data ?? [])
+      .map((row) => (row.email ?? '').trim().toLowerCase())
+      .filter((email) => email.length > 0),
+  );
 }

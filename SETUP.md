@@ -516,3 +516,40 @@ straight to the culprit. The endpoint is read-only and service-role only.
 - **`db-perf` + RPC:** negligible — on-demand only, read-only, self-bounded by a
   3s `statement_timeout`, off every critical path. If down/unconfigured you lose
   attribution convenience, not detection or any user-facing behavior.
+
+## 13. Trusted-user allowlist & admins
+
+Reading-mode full text and Google News feeds are gated on a **trusted-user
+allowlist** that lives in the Postgres `allowlist` table (migration `0027`). It
+supersedes the old `READMO_ALLOWLIST` env var — if you ever set that secret you
+can now unset it (`supabase secrets unset READMO_ALLOWLIST`); the gate functions
+read the table (and, transitionally, still honor the secret until you unset it).
+
+- **An empty `allowlist` table = disarmed** → reading mode + Google News are open
+  to everyone (current behavior). Seeding any email arms the gate; only listed
+  emails pass. So `make migrate` alone changes nothing until you add someone.
+- **Deploy the function changes** so the gates read the DB: `make migrate` then
+  `make deploy` (redeploys `fulltext` + `discover`, which read the `allowlist`
+  table). The direct-RPC `subscribe_to_feed` Google News check is a separate
+  follow-up (real URL canonicalization belongs in an Edge layer, not SQL) — see
+  the migration / SPEC; `discover` already gates every normal subscribe path.
+- **Bootstrap the first admin** (there's no admin before this — do it once, via
+  the SQL editor or `psql`):
+
+  ```sql
+  insert into public.admin_users (email) values ('you@example.com');
+  ```
+
+- **Manage the allowlist.** Until the **`/admin`** UI ships (the client
+  follow-up PR), seed/manage entries directly:
+
+  ```sql
+  insert into public.allowlist (email) values ('family@example.com');
+  ```
+
+  Once `/admin` lands, signing in as an admin shows an **Admin** link and the
+  page adds/removes allowlist emails (the `get_capabilities` / `list_allowlist` /
+  `add_to_allowlist` / `remove_from_allowlist` RPCs this migration creates). Add
+  yourself to the allowlist too if you want the **FAMILY** chip + reading mode
+  for your own account — admin ≠ family. Additional admins are added the same way
+  (SQL); the UI manages the allowlist, not the admin list.
