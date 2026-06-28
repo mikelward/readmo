@@ -1,6 +1,27 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
-import { parseAllowlist, isAllowed } from './allowlist.ts';
+import {
+  parseAllowlist,
+  isAllowed,
+  loadAllowlistFromDb,
+  type AllowlistDbClient,
+} from './allowlist.ts';
+
+/** Build a stub Supabase client whose `from('allowlist').select('email')`
+ * resolves to the given rows (or an error). */
+function stubClient(result: {
+  data?: Array<{ email: string | null }> | null;
+  error?: unknown;
+}): AllowlistDbClient {
+  return {
+    from() {
+      return {
+        select: () =>
+          Promise.resolve({ data: result.data ?? null, error: result.error ?? null }),
+      };
+    },
+  };
+}
 
 describe('parseAllowlist', () => {
   it('treats unset / blank as an empty set', () => {
@@ -68,5 +89,35 @@ describe('isAllowed', () => {
     // accidentally match an "empty" allowlist entry.
     const list = parseAllowlist('me@example.com');
     expect(isAllowed({ id: '', email: '' }, list)).toBe(false);
+  });
+});
+
+describe('loadAllowlistFromDb', () => {
+  it('builds a trimmed, lowercased Set of emails from the table', async () => {
+    const set = await loadAllowlistFromDb(
+      stubClient({ data: [{ email: '  Family@Example.COM ' }, { email: 'b@example.com' }] }),
+    );
+    expect(set.has('family@example.com')).toBe(true);
+    expect(set.has('b@example.com')).toBe(true);
+    expect(set.size).toBe(2);
+  });
+
+  it('returns an empty Set (disarmed → open to all) for no rows', async () => {
+    expect((await loadAllowlistFromDb(stubClient({ data: [] }))).size).toBe(0);
+    expect((await loadAllowlistFromDb(stubClient({ data: null }))).size).toBe(0);
+  });
+
+  it('drops null/blank emails', async () => {
+    const set = await loadAllowlistFromDb(
+      stubClient({ data: [{ email: null }, { email: '   ' }, { email: 'ok@example.com' }] }),
+    );
+    expect(set.size).toBe(1);
+    expect(set.has('ok@example.com')).toBe(true);
+  });
+
+  it('THROWS on a read error so the gate can fail closed (never silently opens)', async () => {
+    await expect(
+      loadAllowlistFromDb(stubClient({ error: { message: 'db down' } })),
+    ).rejects.toThrow('db down');
   });
 });

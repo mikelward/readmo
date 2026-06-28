@@ -25,7 +25,7 @@ export interface FullTextResult {
    * because a server-side condition could flip. The reading-mode allowlist
    * denial sets this on an otherwise-silent `empty` (rendered as the feed body,
    * exactly like a genuine empty), so that if the operator later adds the caller
-   * to `READMO_ALLOWLIST` the next open re-checks the gate instead of staying
+   * to the allowlist the next open re-checks the gate instead of staying
    * stuck on a forever-cached denial. Kept as an additive flag rather than a new
    * `status` value so a service-worker-cached older client — which only knows
    * `ok`/`empty`/`auth`/`unreachable` — still renders it silently as `empty`

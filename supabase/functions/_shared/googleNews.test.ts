@@ -17,6 +17,41 @@ describe('isGoogleNewsFeedUrl', () => {
     expect(isGoogleNewsFeedUrl('HTTPS://NEWS.GOOGLE.COM/RSS/search?q=x')).toBe(true);
   });
 
+  it('canonicalizes WHATWG-normalized scheme/slash variants to the real host', () => {
+    // `discover`'s authoritative gate: `new URL()` folds these cosmetic forms to
+    // host `news.google.com`, so a caller can't dodge the allowlist by writing
+    // the scheme without `//`, with a single slash, with backslashes, or with an
+    // explicit port — nor with control chars, percent-encoded host, or a bad
+    // escape. This is the one place the Google News check has to be right (real
+    // URL parsing), which is exactly why we don't try to replicate it in SQL.
+    expect(isGoogleNewsFeedUrl('https:news.google.com/rss')).toBe(true);
+    expect(isGoogleNewsFeedUrl('https:/news.google.com/rss')).toBe(true);
+    expect(isGoogleNewsFeedUrl('https:\\\\news.google.com\\rss')).toBe(true);
+    expect(isGoogleNewsFeedUrl('https://news.google.com:443/rss/search?q=x')).toBe(true);
+    // ASCII tab / CR / LF are stripped before parsing — even inside the host.
+    expect(isGoogleNewsFeedUrl('https://news.google.com\t/rss/search?q=x')).toBe(true);
+    expect(isGoogleNewsFeedUrl('https://news.\tgoogle.com/rss')).toBe(true);
+    expect(isGoogleNewsFeedUrl('https://news.google.com\n/rss')).toBe(true);
+    // Leading C0 controls (e.g. NUL, SOH) are trimmed before parsing.
+    expect(
+      isGoogleNewsFeedUrl(`${String.fromCharCode(1)}https://news.google.com/rss/search?q=x`),
+    ).toBe(true);
+    expect(
+      isGoogleNewsFeedUrl(`${String.fromCharCode(0)}https://news.google.com/rss`),
+    ).toBe(true);
+    // Percent-encoded host, even alongside an unrelated bad escape (`%ff`) in the
+    // fragment — `new URL()` decodes the host and drops the fragment from the
+    // fetch, so it still resolves to news.google.com.
+    expect(
+      isGoogleNewsFeedUrl('https://%6eews.google.com/rss/search?q=site:example.com#%ff'),
+    ).toBe(true);
+    // A leading control followed by a space (the space only becomes leading once
+    // the control is stripped) — WHATWG trims leading C0-controls-and-space.
+    expect(
+      isGoogleNewsFeedUrl(`${String.fromCharCode(1)} https://news.google.com/rss/search?q=x`),
+    ).toBe(true);
+  });
+
   it('does not match non-RSS Google News pages', () => {
     expect(isGoogleNewsFeedUrl('https://news.google.com/')).toBe(false);
     expect(isGoogleNewsFeedUrl('https://news.google.com/home?hl=en-US')).toBe(false);

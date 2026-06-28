@@ -208,3 +208,23 @@ constraint is documented in more detail.
   Pages previews improve, or to cut the Vercel Pro cost. (Moving the *backend* —
   Postgres / Auth / RLS / Edge Functions — off Supabase is a separate, much
   larger re-platforming and is **not** what this is about.)
+
+## Allowlist / gating
+
+- **Close the direct-RPC Google News bypass.** `discover` is the authoritative
+  Google News gate (real `new URL()` — see `_shared/googleNews.ts`), and it
+  covers every normal subscribe path (Add-a-feed, OPML, curated catalog). The
+  one remaining bypass is a *hand-crafted* direct `subscribe_to_feed(...)` RPC
+  call with a Google News URL by a non-allowlisted caller while the allowlist is
+  armed. An earlier attempt gated this **in SQL** inside `subscribe_to_feed`, but
+  matching "is this Google News" requires real WHATWG/IDNA URL canonicalization
+  (percent-encoding, control/space stripping, slash/backslash, Unicode dots, …)
+  which a Postgres regex can't faithfully replicate — it turned into an unbounded
+  series of normalization edge cases, so the SQL gate was removed. The correct
+  fix is to do the canonical check in an **Edge layer** (where `new URL()`
+  exists): e.g. route subscribes through a thin Edge function that canonicalizes
+  + checks the allowlist before calling the RPC, or have the poller refuse to
+  fetch a Google News feed for a feed with no allowlisted subscriber. Low
+  priority — `discover` already covers the UI, and an empty allowlist is open to
+  all. See `supabase/migrations/0027_allowlist_admin.sql` and SPEC *Feed
+  discovery*.
