@@ -1911,6 +1911,194 @@ describe('ItemList', () => {
       expect(titles()).toContain(titleText);
     });
 
+    it('holds the reader’s scroll position when a held-touch auto-hide batch is flushed on release', async () => {
+      // Regression: with Group by feed + auto-hide-on-scroll, scrolling with a
+      // finger down then lifting flushed the buffered top-exits as one bulk
+      // removal. The browser's scroll anchoring under-compensates for that (and
+      // is suppressed for a beat after a touch), so the first still-visible row
+      // jerked upward — at worst snapping the view to the next feed group. The
+      // flush now pins a surviving row clear of the top sweep zone and restores
+      // it to the same client-top via window.scrollBy as the rows above collapse.
+      //
+      // jsdom has no layout, so model one: each rendered row is ROW px tall,
+      // stacked from document top 0, and getBoundingClientRect().top is
+      // (current DOM index)*ROW - scrollY — so hiding rows above collapses the
+      // ones below (their indices shift) exactly as a browser would, and a
+      // scrollBy that lowers scrollY pushes the surviving rows back down.
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      const ROW = 80;
+      let scrollY = 240; // reader has scrolled three rows past the top
+      const scrollYSpy = vi
+        .spyOn(window, 'scrollY', 'get')
+        .mockImplementation(() => scrollY);
+      const scrollBySpy = vi.fn((_x: number, y: number) => {
+        scrollY += y;
+      });
+      vi.stubGlobal('scrollBy', scrollBySpy);
+      const rectSpy = vi
+        .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+        .mockImplementation(function (this: HTMLElement) {
+          const li = this.matches?.('li[data-item-id]')
+            ? this
+            : this.closest?.('li[data-item-id]');
+          if (li) {
+            const all = [...document.querySelectorAll('li[data-item-id]')];
+            const top = all.indexOf(li) * ROW - scrollY;
+            return {
+              top, bottom: top + ROW, height: ROW, left: 0, right: 0,
+              width: 0, x: 0, y: top, toJSON: () => ({}),
+            } as DOMRect;
+          }
+          return {
+            top: 0, bottom: 0, height: 0, left: 0, right: 0, width: 0,
+            x: 0, y: 0, toJSON: () => ({}),
+          } as DOMRect;
+        });
+
+      try {
+        const source = new MockDataSource(`test-${Math.random()}`);
+        renderWithProviders(
+          <ItemList
+            viewKey={`hold-scroll-${viewKeySeq++}`}
+            fetchPage={(cursor) =>
+              source.getHomeItems({ cursor, groupByFeed: true, limit: 100 })
+            }
+            emptyLabel="All caught up."
+            groupByFeed
+          />,
+          { source },
+        );
+
+        const lis = (await screen.findAllByTestId('item-row')).map(
+          (r) => r.closest('li')!,
+        );
+        // The anchor the flush should pin: the first row clear of the top sweep
+        // zone (chrome 0 + ANCHOR_SAFE_MARGIN_PX 56 → first row with top ≥ 56,
+        // i.e. DOM index 4 at top 4*80 - 240 = 80).
+        const anchorLi = lis[4];
+        expect(anchorLi.getBoundingClientRect().top).toBe(80);
+
+        // Finger down, then the first three rows scroll off the top (buffered).
+        act(() => {
+          document.dispatchEvent(new Event('touchstart'));
+        });
+        act(() => {
+          for (const li of lis.slice(0, 3)) setVisibilityForTest(li, 0);
+        });
+        // Still deferred while held — nothing removed, scroll untouched.
+        expect(scrollBySpy).not.toHaveBeenCalled();
+
+        // The finger lifts → the buffered batch commits and the pin restores the
+        // anchor: the three rows above it leave, so it would jump from top 80 to
+        // top 80 - 3*80 = -160 (delta -240); the pin scrolls back by that delta.
+        await act(async () => {
+          const ev = new Event('touchend');
+          Object.defineProperty(ev, 'touches', { value: [] });
+          document.dispatchEvent(ev);
+        });
+
+        expect(scrollBySpy).toHaveBeenCalledWith(0, -240);
+        // …leaving the anchor row exactly where the reader left it.
+        expect(anchorLi.getBoundingClientRect().top).toBe(80);
+      } finally {
+        rectSpy.mockRestore();
+        scrollYSpy.mockRestore();
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('releases the scroll pin on post-flick momentum scroll, so it does not fight the fling', async () => {
+      // Regression (Codex review on #253): after the release flush arms the pin,
+      // a flick keeps scrolling as momentum/inertia — which fires no touch,
+      // wheel, or keydown, only `scroll`. The pin must let go on a native scroll
+      // it didn't cause (offset differs from the one its own correction left),
+      // or it would keep snapping the viewport back to the anchor and cancel the
+      // fling until the reader taps. Same virtual-layout model as the test above.
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      const ROW = 80;
+      let scrollY = 240;
+      const scrollYSpy = vi
+        .spyOn(window, 'scrollY', 'get')
+        .mockImplementation(() => scrollY);
+      const scrollBySpy = vi.fn((_x: number, y: number) => {
+        scrollY += y;
+      });
+      vi.stubGlobal('scrollBy', scrollBySpy);
+      const rectSpy = vi
+        .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+        .mockImplementation(function (this: HTMLElement) {
+          const li = this.matches?.('li[data-item-id]')
+            ? this
+            : this.closest?.('li[data-item-id]');
+          if (li) {
+            const all = [...document.querySelectorAll('li[data-item-id]')];
+            const top = all.indexOf(li) * ROW - scrollY;
+            return {
+              top, bottom: top + ROW, height: ROW, left: 0, right: 0,
+              width: 0, x: 0, y: top, toJSON: () => ({}),
+            } as DOMRect;
+          }
+          return {
+            top: 0, bottom: 0, height: 0, left: 0, right: 0, width: 0,
+            x: 0, y: 0, toJSON: () => ({}),
+          } as DOMRect;
+        });
+
+      try {
+        const source = new MockDataSource(`test-${Math.random()}`);
+        renderWithProviders(
+          <ItemList
+            viewKey={`momentum-${viewKeySeq++}`}
+            fetchPage={(cursor) =>
+              source.getHomeItems({ cursor, groupByFeed: true, limit: 100 })
+            }
+            emptyLabel="All caught up."
+            groupByFeed
+          />,
+          { source },
+        );
+
+        const lis = (await screen.findAllByTestId('item-row')).map(
+          (r) => r.closest('li')!,
+        );
+
+        // Flick: finger down, three rows scroll off the top, finger lifts → the
+        // flush commits and the pin restores (scrollBy(0, -240), scrollY → 0).
+        act(() => {
+          document.dispatchEvent(new Event('touchstart'));
+        });
+        act(() => {
+          for (const li of lis.slice(0, 3)) setVisibilityForTest(li, 0);
+        });
+        await act(async () => {
+          const ev = new Event('touchend');
+          Object.defineProperty(ev, 'touches', { value: [] });
+          document.dispatchEvent(ev);
+        });
+        expect(scrollBySpy).toHaveBeenCalledTimes(1);
+
+        // Momentum glides the viewport on (no touch/wheel/key) and fires scroll.
+        act(() => {
+          scrollY = 60;
+          document.dispatchEvent(new Event('scroll'));
+        });
+
+        // A further row now scrolls off during the glide. With the pin released
+        // the list just drops it — it must NOT scrollBy to snap back to the old
+        // anchor (which is exactly what fought the fling before the fix).
+        await act(async () => {
+          setVisibilityForTest(lis[3], 0);
+        });
+        expect(scrollBySpy).toHaveBeenCalledTimes(1);
+      } finally {
+        rectSpy.mockRestore();
+        scrollYSpy.mockRestore();
+        vi.unstubAllGlobals();
+      }
+    });
+
     it('shields a pinned row from auto-hide', async () => {
       window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
       resetReadingPrefsCacheForTest();

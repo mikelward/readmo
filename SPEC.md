@@ -1214,9 +1214,16 @@ negligible and off every critical path. See the External services table in
      removing a row above the viewport then shifts the content up under the
      reader — most visibly at the foot of a loaded feed section, where it yanks
      the next feed group into view. Buffering the top-exits and committing them
-     on release lets the anchoring that keeps the first visible row fixed do its
-     job. Flick-scrolling is unaffected (the finger has already lifted, so rows
-     mark Done live during the momentum glide); only a held-finger drag defers. **Undo restores the whole scroll burst, not just the last
+     on release confines that removal to a single moment, and on release the
+     reader's scroll position is **actively held**: the topmost row clear of the
+     sticky chrome is pinned and restored to the same on-screen spot as the rows
+     above it collapse — across the immediate removal, the invalidated refetch
+     that lands a beat later, *and* the follow-on auto-hide of rows the collapse
+     pushes under the chrome — until the reader next touches, wheels, or keys the
+     viewport. (The browser's own anchoring under-compensates for a bulk removal
+     and is suppressed for a beat after a touch, so it can't be relied on here.)
+     Flick-scrolling is unaffected (the finger has already lifted, so rows mark
+     Done live during the momentum glide); only a held-finger drag defers. **Undo restores the whole scroll burst, not just the last
      row:** dismissals within a rolling **2s window** of each other extend a
      single undo batch (mirrors newshacker's dismiss-batch window), so one tap of
      the toolbar Undo brings back the run you just scrolled past; a gap longer
