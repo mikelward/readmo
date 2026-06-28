@@ -27,8 +27,8 @@ if (typeof window.PointerEvent === 'undefined') {
 }
 
 /** Surfaces the router's current path so a click can be asserted to navigate.
- * Search/Settings are icon-only TooltipButtons that navigate via onClick (so
- * they get the long-press/hover tooltip), not <Link>s with an href. */
+ * Search is an icon-only TooltipButton that navigates via onClick (so it gets
+ * the long-press/hover tooltip), not a <Link> with an href. */
 function LocationProbe() {
   return <div data-testid="location">{useLocation().pathname}</div>;
 }
@@ -49,17 +49,6 @@ afterEach(() => {
 });
 
 describe('AppHeader actions', () => {
-  it('exposes a Settings gear that navigates to /settings', () => {
-    renderWithProviders(
-      <>
-        <AppHeader />
-        <LocationProbe />
-      </>,
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-    expect(screen.getByTestId('location')).toHaveTextContent('/settings');
-  });
-
   it('exposes a Search glass that navigates to /search', () => {
     renderWithProviders(
       <>
@@ -69,6 +58,37 @@ describe('AppHeader actions', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/search');
+  });
+
+  it('no longer shows a Settings gear in the header (it moved to the account menu)', () => {
+    renderWithProviders(<AppHeader />);
+    expect(screen.queryByRole('button', { name: 'Settings' })).toBeNull();
+  });
+});
+
+describe('AppHeader account menu', () => {
+  beforeEach(() => {
+    window.localStorage.setItem('readmo:mock-signed-in', '1');
+  });
+  afterEach(() => {
+    window.localStorage.removeItem('readmo:mock-signed-in');
+  });
+
+  it('opens the account menu with Feeds, Settings, and About links', () => {
+    renderWithProviders(<AppHeader />);
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }));
+    expect(screen.getByRole('menuitem', { name: 'Feeds' })).toHaveAttribute(
+      'href',
+      '/feeds',
+    );
+    expect(screen.getByRole('menuitem', { name: 'Settings' })).toHaveAttribute(
+      'href',
+      '/settings',
+    );
+    expect(screen.getByRole('menuitem', { name: 'About' })).toHaveAttribute(
+      'href',
+      '/about',
+    );
   });
 });
 

@@ -26,4 +26,15 @@ describe('<AboutPage>', () => {
       screen.getByRole('link', { name: /back to home/i }),
     ).toHaveAttribute('href', '/');
   });
+
+  it('shows the build version/age and links to Debug', () => {
+    renderWithProviders(<AboutPage />, { route: '/about' });
+    // summarizeBuildAge falls back to this string when build metadata is absent
+    // (the case under test/jsdom with no injected build info).
+    expect(screen.getByText(/build/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /debug/i })).toHaveAttribute(
+      'href',
+      '/debug',
+    );
+  });
 });

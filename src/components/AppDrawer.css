@@ -42,6 +42,37 @@
   padding: 8px 12px 4px;
 }
 
+/* A section heading paired with a right-aligned action (e.g. the Feeds edit
+   pencil). The heading keeps its own padding; the action is a tap-floor-sized
+   target pinned to the trailing edge. */
+.app-drawer__heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: 4px;
+}
+
+.app-drawer__heading-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--rm-tap);
+  min-height: var(--rm-tap);
+  color: var(--rm-meta);
+  border-radius: 8px;
+}
+
+@media (hover: hover) {
+  .app-drawer__heading-action:hover {
+    background: var(--rm-bg);
+    color: var(--rm-text);
+  }
+}
+
+.app-drawer__heading-action:active {
+  background: var(--rm-bg);
+}
+
 .app-drawer__link {
   display: flex;
   align-items: center;
@@ -90,82 +121,14 @@
   white-space: nowrap;
 }
 
-.app-drawer__segmented {
+/* Inset the appearance pickers (Dark/Light mode + Text size) so they line up
+   with the drawer's list items instead of sitting flush against the panel
+   edges, and stack them with a small gap. */
+.app-drawer__appearance {
   display: flex;
-  /* Wrap rather than let buttons squeeze under the 44px tap floor: the mode
-     row (light/dark/system) and the text-size row (S/M/L) each stay one line
-     of three, the palette row (Ink/Grape) one line of two, at any realistic
-     width — with wrapping as a safety net on ultra-narrow viewports. Three is
-     the contributor guide's per-row tap-zone cap, which no row exceeds. */
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 8px;
-  margin: 4px 8px 8px;
-  padding: 4px;
-  background: var(--rm-bg);
-  border: 1px solid var(--rm-border);
-  border-radius: 8px;
-}
-
-.app-drawer__segmented-btn {
-  /* min-width holds the 44px tap floor; flex-grow fills the row on normal
-     widths so the three buttons share it evenly. */
-  flex: 1 1 var(--rm-tap);
-  min-width: var(--rm-tap);
-  min-height: var(--rm-tap);
-  padding: 8px 4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  border-radius: 6px;
-  color: var(--rm-text);
-  cursor: pointer;
-}
-
-/* Two-tone palette preview disc: paper background meets accent on the diagonal.
-   Colors are injected per-button via the --rm-swatch-* custom properties. */
-.app-drawer__swatch {
-  width: 22px;
-  height: 22px;
-  border-radius: 999px;
-  border: 1px solid var(--rm-border-strong);
-  background: linear-gradient(
-    135deg,
-    var(--rm-swatch-bg) 0 50%,
-    var(--rm-swatch-accent) 50% 100%
-  );
-}
-
-.app-drawer__segmented-btn[data-active] {
-  background: var(--rm-bg-card);
-  color: var(--rm-accent);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-}
-
-/* The capital "A" used by the text-size row. Per-button inline font-size sets
-   the scale; line-height: 1 keeps each "A" vertically centered in the shared
-   44px button regardless of glyph size. */
-.app-drawer__size-glyph {
-  font-weight: 700;
-  line-height: 1;
-}
-
-/* Ring the selected palette's swatch so the active choice reads at a glance,
-   not just from the button's subtle background tint. */
-.app-drawer__segmented-btn[data-active] .app-drawer__swatch {
-  outline: 2px solid var(--rm-accent);
-  outline-offset: 1px;
-}
-
-.app-drawer__segmented-btn:active {
-  background: color-mix(in srgb, var(--rm-accent) 12%, transparent);
-}
-
-@media (hover: hover) {
-  .app-drawer__segmented-btn:not([data-active]):hover {
-    background: color-mix(in srgb, var(--rm-accent) 8%, transparent);
-  }
+  padding: 0 8px 4px;
 }
 
 .app-drawer__health {

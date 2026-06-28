@@ -141,18 +141,18 @@ Everything else about the visual system mirrors newshacker.
 - **App header layout:** three slots in a single sticky row. The drawer
   toggle is pinned to the viewport's left edge and the account chip to the
   viewport's right edge so both stay reachable at any width; the centered
-  inner (brand mark + wordmark, Offline pill, Search, Settings) tracks the
+  inner (brand mark + wordmark, Offline pill, Search) tracks the
   article column max-width — 720px, widening toward 860px on roomy screens
   (from ≥960px, the same breakpoint that widens `.app-main`) — so it aligns
   with the list below. Because the inner shares the row with the
   absolutely-positioned edge controls, the desktop widen is clamped to
   reserve ~100px of gutter per side (so the signed-out "Sign in" chip never
-  overlaps the Settings target); the inner reaches the full column-aligned
+  overlaps the Search target); the inner reaches the full column-aligned
   860px once the viewport clears ~1060px. Safe-area
   insets reserve space for landscape-iPhone notches on the edge controls.
-- **Navigation drawer sections:** Home (feed picker — All subscriptions or a folder), Library (Pinned / Favorites / Done / Opened / Offline), Folders (folder nav, hidden when none exist), Feeds (subscription list), Appearance (mode + palette + text-size segmented controls), App (Settings, Debug).
+- **Navigation drawer sections:** Home (link to `/`), Library (Pinned / Favorites / Done / Opened / Offline), Feeds (subscription list, with an **edit pencil** beside the heading linking to the Feeds management page at `/feeds`), Appearance (the **Dark/Light mode** and **Text size** pickers — kept here because they're the most-changed settings and the drawer is one tap from anywhere), App (Settings, About). The remaining appearance controls (Color Theme, Font) live in Settings; Debug is reached from the About page (not the drawer). Feeds and Settings are also reachable from the **account menu** (top-right avatar). **Not yet in the drawer (TODO):** the Home feed picker (All subscriptions / per-folder) and a Folders nav section were dropped pending a proper design; `/` still renders the All-subscriptions river by default (`useHomeFeed`). The Dark/Light mode and Text size pickers are shared components (`ThemeModeControl`, `TextSizeControl`), so the drawer and Settings render the identical controls.
 - **Dark mode:** full light/dark/system via tokens.
-- **Palette:** two color families selectable in the drawer's Appearance section (and also in Settings), orthogonal to the
+- **Palette:** two color families selectable in Settings, orthogonal to the
   light/dark/**mode** axis — **Ink** (default, the monochrome ink-on-paper above)
   and **Grape** (a vivid violet: grape accent
   `--rm-accent: #6d2c91` light / `#cba6ed` dark on faintly grape-tinted paper);
@@ -162,21 +162,18 @@ Everything else about the visual system mirrors newshacker.
   (near-black ink tile by default, deep grape under Grape) via the
   `--rm-brand-tile` / `--rm-brand-fg` tokens; the non-ink palette freezes the
   tile to its deep accent across both modes for recognizability.
-  In the drawer the palette picker renders each option as a two-tone color
-  **swatch** (paper background + accent, split on the diagonal) rather than a
-  text label, with the active palette's swatch ringed, laid out in a single
-  flex row (matching the mode row of three above it, within the per-row
-  tap-zone cap); Settings keeps the text buttons.
+  In Settings the **Color Theme** picker renders each option as a two-tone
+  color **swatch** (paper background + accent, split on the diagonal), with the
+  active palette's swatch ringed.
 - **Text size:** a third orthogonal appearance axis with three steps — Small
-  (15px), Medium (16px, default), Large (17px). Selectable in **two** places:
-  Settings ("Text size" section) as text buttons, and the drawer's
-  **Appearance** section as a segmented row of capital-**A** glyphs sized
-  small/medium/large (the conventional font-size control; accessible name from
-  the button's label). The choice drives the `data-font-size` attribute on
+  (15px), Medium (16px, default), Large (17px). Selectable in Settings
+  ("Text size" section) as a segmented row of capital-**A** glyphs sized
+  small/medium/large (accessible name from each button's label). The choice drives the `data-font-size`
+  attribute on
   `<html>` (Medium = 16px owns the bare `:root`, no attribute), which maps to
   the `--rm-font-size` token; the token sets the **root** (`html`) font-size so
   the `rem`-based type throughout the UI — including the reader article body —
-  scales with it. Both pickers stay at three tap zones, within the per-row cap.
+  scales with it. The picker stays at three tap zones, within the per-row cap.
   Persisted in `localStorage` under `readmo:fontSize`, applied before first
   paint (alongside theme/palette) to avoid a flash, and synced across tabs/hook
   instances via the shared `readmo:themeChanged` event.
@@ -467,9 +464,9 @@ folders       (user_id FK, name, sort)
 
 ### Feed discovery
 
-- **The Settings route is code-split.** It carries the curated popular-feeds
+- **The Feeds route is code-split.** It carries the curated popular-feeds
   catalog (`src/lib/popularFeeds.ts`, the app's largest static data blob) and is
-  visited rarely, so `/settings` is lazy-loaded as its own chunk on navigation
+  visited rarely, so `/feeds` is lazy-loaded as its own chunk on navigation
   rather than baked into the initial bundle; the service worker precaches the
   chunk, so it stays available offline after the first load. If that chunk fails
   to load — a stale content-hashed asset after a deploy, or a network failure
@@ -477,7 +474,7 @@ folders       (user_id FK, name, sort)
   that still fails it shows a centered recovery state: the message "This page
   couldn't be loaded." above a **Reload** button (≥44px touch target) that
   re-attempts a full reload.
-- The Settings **Add a feed** input shows a filtered autocomplete dropdown as
+- The Feeds page's **Add a feed** input shows a filtered autocomplete dropdown as
   the user types. Suggestions come from a curated list of popular feeds
   (`src/lib/popularFeeds.ts`); each entry carries a display name, direct feed
   URL, and category. Matching is case-insensitive substring on either the name
@@ -491,7 +488,7 @@ folders       (user_id FK, name, sort)
   subscription's `title_override` to the curated display name — the brand the
   user picked beats whatever the publisher's `<channel>` happens to say (e.g.
   The Economist's `/latest/rss.xml` is literally titled "Latest Updates"). The
-  override is per-user and editable from Settings → Subscriptions (see below),
+  override is per-user and editable from the Feeds page → Subscriptions (see below),
   so users can revert to the publisher's title or pick their own. The curated
   name is captured at the moment the user submits the form, not later, so a
   concurrent autocomplete interaction can't corrupt the override.
@@ -500,7 +497,7 @@ folders       (user_id FK, name, sort)
   parse `<link rel="alternate" type="application/rss+xml|atom+xml|json">` and
   common fallbacks (`/feed`, `/rss`, `/atom.xml`, `/feed.json`); validate by
   fetching+parsing each candidate before offering it.
-- **When discovery returns more than one feed**, the Settings **Add a feed**
+- **When discovery returns more than one feed**, the Feeds page's **Add a feed**
   flow shows a multi-select picker rather than silently subscribing to the
   first candidate — this is how a user follows a specific section of a site
   (e.g. a news site that advertises Sport and World news feeds alongside its
@@ -710,8 +707,8 @@ negligible and off every critical path. See the External services table in
 - **Account UI = header chip** (mirrors newshacker): one always-visible
   control, far right, 44×44+, every page. Signed out → "Sign in". Signed in →
   32px avatar (OAuth picture, falling back to an initial-on-color disc —
-  deterministic, offline, zero requests); tap → popover with name, link to
-  settings, "Sign out". Not in the drawer. Dismissal is the shared dropdown
+  deterministic, offline, zero requests); tap → popover with name, **Feeds**,
+  **Settings**, and **About** links, and "Sign out". Dismissal is the shared dropdown
   contract (`usePopoverDismiss`, also used by the overflow menu and the feed
   row menu): closes on Escape or an outside press, and **the first press
   outside only dismisses** — its trailing click is swallowed, so it never also
@@ -901,12 +898,14 @@ negligible and off every critical path. See the External services table in
 
 2. **Feed views (the lists)** — the chronological merge of subscription items,
    newest first, with newshacker's rules applied verbatim:
-   - **`/` (Home)** — all non-muted subscriptions merged. A drawer *Home*
-     picker can swap `/` to a chosen folder, persisted per-device (mirrors
-     `useHomeFeed`). URL stays `/`.
+   - **`/` (Home)** — all non-muted subscriptions merged. The per-device
+     `useHomeFeed` preference can swap `/` to a chosen folder (URL stays `/`),
+     but the drawer *Home* picker that set it is **not currently shown** (TODO:
+     restore — see *Navigation drawer sections*); `/` defaults to the
+     All-subscriptions river.
    - **No-feeds coach** — when the account has **zero subscriptions**, Home
      shows a first-run coach ("No feeds yet" + an *Add a feed* button linking to
-     Settings) instead of the "You're all caught up." empty state, which implies
+     the Feeds page) instead of the "You're all caught up." empty state, which implies
      the user had items and read them. An account with only *muted* feeds still
      has subscriptions, so it gets the normal caught-up state, not the coach.
    - **`/folder/:name`** — a folder's merge. **`/feed/:feedId`** — one feed.
@@ -931,7 +930,7 @@ negligible and off every critical path. See the External services table in
      - **Group by feed** (`readmo:group-by-feed`, default **off**) sections Home
        and folder lists by feed instead of one merged river. Sections follow the
        user's **manual feed order** (the `subscriptions.sort` field, set by
-       drag-to-reorder in Settings); within a section the chosen sort order
+       drag-to-reorder on the Feeds page); within a section the chosen sort order
        applies, and that feed's pinned items sit at the top of the section. A
        feed-name header introduces each section, and **stays pinned** (sticky)
        just below the top chrome (app header + top toolbar) while the reader
@@ -1174,29 +1173,13 @@ negligible and off every critical path. See the External services table in
    on titles for MVP; body search deferred). Search-glass in the header
    right-actions group, suppressed on `/search`. Same placement.
 
-10. **Settings** — `/settings`: subscriptions/folders, OPML in/out,
-    **Reading**, **Sort order**, **Bottom toolbar**, palette (Ink/Grape), theme
-    (light/dark/system), text size (Small/Medium/Large), account/sign-out.
-    Theme, palette, and text size are also accessible directly in the drawer's
-    **Appearance** section. A gear icon sits at the right end of the header's
-    inner row (after Search) so settings is one tap away from any page.
-    - **Subscriptions** — the feed list is **drag-to-reorder**: each row stays
-      within the **3-tap-zone cap** as drag handle (left), a non-interactive
-      row body (title + URL), and a right-side **overflow (⋯) button** that
-      opens a per-row menu with **Rename / Mute / Unsubscribe**. The drag
-      handle is both pointer-draggable (mouse + touch) and keyboard-operable
-      (focus it, then ArrowUp/ArrowDown), so reordering isn't mouse-only. The
-      order persists to `subscriptions.sort` (via `reorderSubscriptions`) and
-      drives both the drawer/Settings list order and the *Group by feed*
-      section order. Rename uses an inline input that replaces the title slot:
-      **Enter** commits, **Esc** cancels, **blur** commits, and **leaving the
-      input empty clears the override** so the row falls back to the
-      publisher's title. Rename writes `subscriptions.title_override` and is
-      per-user; an unchanged value is a no-op. The overflow menu dismisses via
-      the shared dropdown contract (`usePopoverDismiss`): Escape or an outside
-      press closes it, and **the first press outside only dismisses** — its
-      trailing click is swallowed, so dismissing the menu doesn't also activate
-      a neighboring row or control.
+10. **Settings** — `/settings`: **Reading**, **Sort order**, **Bottom toolbar**,
+    **Color Theme** (Ink/Grape swatches), **Dark/Light Mode** (light/dark/system
+    icons), **Text size** (Small/Medium/Large A-glyphs) — all symbolic segmented
+    pickers — font, account/sign-out, and an **About** link. Reached
+    from the **account menu** (top-right avatar → Settings). Feed management
+    lives on the Feeds page, not here, but an **Edit feeds** button at the top
+    of Settings links there (see below).
     - **Reading** — per-device toggles: **Hide articles as you scroll past**
       (`readmo:hide-on-scroll`, **off by default**), wiring the auto-hide
       behavior in *List toolbar → Auto-hide on scroll*; and **Group by feed**
@@ -1210,9 +1193,32 @@ negligible and off every critical path. See the External services table in
       default — the relative end-of-list footer) or **Bottom of screen** (pinned
       to the viewport foot). See *Bottom action bar*.
 
-11. **Keyboard shortcuts** — same letter scheme (see below).
+11. **Feeds** — `/feeds`: feed management, reached from the drawer's **Feeds**
+    section edit pencil (also linked from the account menu).
+    Holds **Add a feed** (autocomplete + multi-feed picker — see *Feed
+    discovery*), **Subscriptions**, and **OPML** import/export. Code-split as its
+    own chunk (it carries the popular-feeds catalog — see *Feed discovery*).
+    - **Subscriptions** — the feed list is **drag-to-reorder**: each row stays
+      within the **3-tap-zone cap** as drag handle (left), a non-interactive
+      row body (title + URL), and a right-side **overflow (⋯) button** that
+      opens a per-row menu with **Rename / Mute / Unsubscribe**. The drag
+      handle is both pointer-draggable (mouse + touch) and keyboard-operable
+      (focus it, then ArrowUp/ArrowDown), so reordering isn't mouse-only. The
+      order persists to `subscriptions.sort` (via `reorderSubscriptions`) and
+      drives both the drawer/Feeds list order and the *Group by feed*
+      section order. Rename uses an inline input that replaces the title slot:
+      **Enter** commits, **Esc** cancels, **blur** commits, and **leaving the
+      input empty clears the override** so the row falls back to the
+      publisher's title. Rename writes `subscriptions.title_override` and is
+      per-user; an unchanged value is a no-op. The overflow menu dismisses via
+      the shared dropdown contract (`usePopoverDismiss`): Escape or an outside
+      press closes it, and **the first press outside only dismisses** — its
+      trailing click is swallowed, so dismissing the menu doesn't also activate
+      a neighboring row or control.
 
-12. **Account UI** — header chip (see *Auth*).
+12. **Keyboard shortcuts** — same letter scheme (see below).
+
+13. **Account UI** — header chip (see *Auth*).
 
 ---
 
@@ -1423,7 +1429,7 @@ other toolbars in the app. (No Upvote — RSS has no votes.)
 
 | Path | View |
 |---|---|
-| `/` | aggregate feed of all non-muted subscriptions (drawer Home picker can swap to a folder; URL stays `/`) |
+| `/` | aggregate feed of all non-muted subscriptions (`useHomeFeed` can swap to a folder; URL stays `/`. The drawer Home picker is not currently shown — TODO to restore) |
 | `/folder/:name` | folder aggregate |
 | `/feed/:feedId` | single feed |
 | `/pinned` | pinned items (active reading list) |
@@ -1433,10 +1439,11 @@ other toolbars in the app. (No Upvote — RSS has no votes.)
 | `/offline` | items cached on this device |
 | `/item/:id` | reader view |
 | `/search` | search over feed + item titles |
-| `/settings` | subscriptions, folders, OPML, theme, account |
+| `/settings` | reading, sort, bottom toolbar, theme/palette/text-size/font, account; reached from the account menu (top-right avatar) |
+| `/feeds` | feed management: add a feed, subscriptions (reorder/rename/mute/unsubscribe), OPML in/out; reached via the drawer's Feeds edit pencil or the account menu. Code-split. |
 | `/signin` | OAuth sign-in (unauthenticated landing) |
-| `/about` | what Readmo is, credited to its author (mikelward.com); no auth gate, informational only (no user data). Linked from the drawer's App section and Settings → About. |
-| `/debug` | build/runtime/config diagnostics; no auth gate, public/presence info only (no secrets). Headline is `<branch-leaf> <commit-count> (<short-sha>)`, e.g. `main 100 (abcdef)`; the Committed/Built rows use the verbose `2 days ago` age format. Linked from Settings → About, which shows the build sequence number and age (e.g. `Build 100 · 2 days ago`) — no SHA — next to the About and Debug links. |
+| `/about` | what Readmo is, credited to its author (mikelward.com); no auth gate, informational only (no user data). Shows the build sequence number and age (e.g. `Build 100 · 2 days ago`) — no SHA — with a link to Debug. Linked from Settings → About. |
+| `/debug` | build/runtime/config diagnostics; no auth gate, public/presence info only (no secrets). Headline is `<branch-leaf> <commit-count> (<short-sha>)`, e.g. `main 100 (abcdef)`; the Committed/Built rows use the verbose `2 days ago` age format. Linked from the About page. |
 
 ---
 
