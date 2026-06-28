@@ -49,6 +49,11 @@ interface ReaderToolbarProps {
   placement: 'top' | 'bottom';
   item: Item;
   state: ItemState;
+  /** The feed name shown next to the leading button, linking back to the feed
+   * — a persistent "which feed is this?" anchor while reading (the top bar is
+   * sticky). Mirrors the header's `reader__source`. */
+  source: string;
+  feedId: string;
   wide: boolean;
   onBack: () => void;
   openOriginal: () => void;
@@ -69,6 +74,8 @@ function ReaderToolbar({
   placement,
   item,
   state,
+  source,
+  feedId,
   wide,
   onBack,
   openOriginal,
@@ -106,6 +113,14 @@ function ReaderToolbar({
           <ArrowBack />
         </TooltipButton>
       )}
+
+      <Link
+        to={`/feed/${feedId}`}
+        className="reader__feedname"
+        data-testid={`reader-feedname${sfx}`}
+      >
+        <span className="reader__feedname-text">{source}</span>
+      </Link>
 
       <div className="reader__actions" role="toolbar" aria-label="Article actions">
         <TooltipButton
@@ -507,6 +522,8 @@ export function ItemPage() {
   const toolbarProps = {
     item,
     state,
+    source,
+    feedId: feed.id,
     wide,
     onBack: goBack,
     openOriginal,

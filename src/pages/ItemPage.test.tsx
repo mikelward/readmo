@@ -45,6 +45,17 @@ describe('ItemPage (reader)', () => {
     });
   });
 
+  it('shows the feed name next to the leading button in both toolbars, linking to the feed', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReader(source, 'item-1');
+    const top = await screen.findByTestId('reader-feedname');
+    const bottom = screen.getByTestId('reader-feedname-bottom');
+    expect(top).toHaveTextContent('The Verge');
+    expect(bottom).toHaveTextContent('The Verge');
+    expect(top).toHaveAttribute('href', '/feed/feed-verge');
+    expect(bottom).toHaveAttribute('href', '/feed/feed-verge');
+  });
+
   it('shows the article domain next to the feed name when it links off-site', async () => {
     // item-8 is the Reddit "Show" post, which links out to github.com.
     const source = new MockDataSource(`test-${Math.random()}`);
