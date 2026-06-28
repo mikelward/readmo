@@ -846,7 +846,9 @@ export class SupabaseDataSource implements DataSource {
     // to "unreachable" so the reader simply falls back to the feed body rather
     // than surfacing an error — reading mode is a progressive enhancement.
     if (error) return { status: 'unreachable', contentHtml: null };
-    const rec = data as { status?: string; contentHtml?: string | null } | null;
+    const rec = data as
+      | { status?: string; contentHtml?: string | null; retryable?: boolean }
+      | null;
     const status: FullTextStatus =
       rec?.status === 'ok' ||
       rec?.status === 'empty' ||
@@ -857,6 +859,10 @@ export class SupabaseDataSource implements DataSource {
     return {
       status,
       contentHtml: status === 'ok' ? (rec?.contentHtml ?? null) : null,
+      // Additive flag (e.g. an allowlist denial on an `empty`): keeps the result
+      // retryable so a later server-side change re-checks instead of caching it.
+      // Only present when true, so non-retryable results keep their plain shape.
+      ...(rec?.retryable === true ? { retryable: true } : {}),
     };
   }
 

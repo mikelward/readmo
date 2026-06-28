@@ -123,6 +123,39 @@ describe('useOfflineCacheLock', () => {
     );
   });
 
+  it('re-prefetches a retryable allowlist denial after the gate later opens', async () => {
+    // First pin: caller is off-allowlist → a `retryable` empty (silent denial).
+    // It must NOT be marked warmed, so a later state-sync re-prefetches it once
+    // the operator has added the caller and the function now returns the body.
+    class GatedThenAllowed extends MockDataSource {
+      ftCalls = 0;
+      async fetchFullText(id: string) {
+        this.ftCalls += 1;
+        return this.ftCalls === 1
+          ? ({ status: 'empty', contentHtml: null, retryable: true } as const)
+          : super.fetchFullText(id);
+      }
+    }
+    const source = new GatedThenAllowed(`test-${Math.random()}`);
+    const qc = setup(source);
+
+    source.stateStore.set('item-1', 'pinned', true);
+    await waitFor(() =>
+      expect(
+        (qc.getQueryData(['fulltext', 'item-1']) as { retryable?: boolean } | undefined)
+          ?.retryable,
+      ).toBe(true),
+    );
+
+    // A later sync pass retries the unwarmed id → now extracts the full body.
+    source.stateStore.set('item-1', 'favorite', true);
+    await waitFor(() =>
+      expect(
+        (qc.getQueryData(['fulltext', 'item-1']) as { status?: string } | undefined)?.status,
+      ).toBe('ok'),
+    );
+  });
+
   it('does not refetch the detail when a cached copy already exists (no boot burst)', async () => {
     class CountingSource extends MockDataSource {
       itemCalls: string[] = [];

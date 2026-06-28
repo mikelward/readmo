@@ -932,6 +932,31 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(await env.ds.fetchFullText('i1')).toEqual({ status: 'auth', contentHtml: null });
   });
 
+  it('fetchFullText passes the additive `retryable` flag through on an allowlist denial', async () => {
+    const env = setup();
+    env.fake.invokeResult.current = {
+      data: { status: 'empty', contentHtml: null, retryable: true },
+      error: null,
+    };
+    // Stays a silent `empty` (an old client renders it fine) but carries the
+    // retryable flag so a later allowlist change re-checks it.
+    expect(await env.ds.fetchFullText('i1')).toEqual({
+      status: 'empty',
+      contentHtml: null,
+      retryable: true,
+    });
+  });
+
+  it('fetchFullText omits `retryable` for a plain (non-denial) empty', async () => {
+    const env = setup();
+    env.fake.invokeResult.current = {
+      data: { status: 'empty', contentHtml: null },
+      error: null,
+    };
+    // A genuine empty keeps its plain shape (no retryable key → cached terminal).
+    expect(await env.ds.fetchFullText('i1')).toEqual({ status: 'empty', contentHtml: null });
+  });
+
   it('fetchFullText degrades an invoke error to unreachable', async () => {
     const env = setup();
     env.fake.invokeResult.current = { data: null, error: new Error('boom') };

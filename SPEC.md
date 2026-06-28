@@ -1450,8 +1450,16 @@ page's discipline is unchanged.
     separated `auth.users` UUIDs and/or account emails (case-insensitive).
     **Unset/blank → open to all**, so deploying the gate is a no-op until the
     operator arms it (mirrors `MIN_CLIENT_BUILD`); arming it is an operator
-    action. A blocked caller gets the `empty` outcome, rendered silently as the
-    feed body — no error, no mention of an allowlist. For the gate to actually
+    action. A blocked caller gets a silent **`empty`** outcome (feed body, no
+    error, no mention of an allowlist) carrying an additive **`retryable: true`**
+    flag: the reader keeps it stale (`fullTextStaleTime`) rather than terminal,
+    so if the operator later adds the caller to `READMO_ALLOWLIST` the next open
+    re-checks the gate instead of staying stuck on a forever-cached denial, and
+    the offline warmer leaves it unwarmed so a reconnect re-prefetches it. The
+    flag is additive (not a new wire status) so a service-worker-cached older
+    client still renders the plain silent `empty` (guardrail #11). A transient
+    `auth.getUser()` failure likewise returns the retryable `unreachable`. For
+    the gate to actually
     bind, the cached body **must only reach the client through this function**:
     the reader's `getItem` read deliberately **does not select
     `full_content_html`** (it would otherwise hand any subscriber who can see the

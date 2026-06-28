@@ -28,7 +28,10 @@
 // Outcomes are reported as a 200 { status, contentHtml } envelope so the client
 // can render the right thing without treating "soft" results as hard errors:
 //   ok          — extracted (or cache hit); contentHtml is sanitized HTML
-//   empty       — page fetched but no article-like body found (paywall/teaser)
+//   empty       — page fetched but no article-like body found (paywall/teaser);
+//                 also the reading-mode allowlist denial, then flagged
+//                 `retryable:true` so a later allowlist change un-sticks the
+//                 caller (additive field; old clients still see plain `empty`)
 //   auth        — the publisher gated the page (401/403) and Jina couldn't help
 //   unreachable — the fetch failed (network/SSRF-blocked/non-2xx/oversized)
 // Hard errors keep their HTTP status: 400 (bad request), 401 (no JWT — platform),
@@ -107,9 +110,9 @@ async function handle(req: Request): Promise<Response> {
   // user list — see _shared/allowlist.ts). Checked BEFORE the item lookup and
   // the cache-hit return, so a non-allowlisted caller never receives full
   // content — cached or fresh. An unset secret leaves the feature open to all
-  // (the deploy is a no-op until armed). A blocked caller gets the `empty`
-  // outcome, which the reader renders silently as the feed body (SPEC
-  // "Full-text reading mode").
+  // (the deploy is a no-op until armed). A blocked caller gets a silent `empty`
+  // flagged `retryable` so a later allowlist change un-sticks them, without a
+  // new wire status old clients can't read (SPEC "Full-text reading mode").
   const allowlist = parseAllowlist(Deno.env.get('READMO_ALLOWLIST'));
   if (allowlist.size > 0) {
     const { data: auth, error: authError } = await userClient.auth.getUser();
@@ -123,8 +126,16 @@ async function handle(req: Request): Promise<Response> {
       return json({ status: 'unreachable', contentHtml: null });
     }
     if (!isAllowed({ id: auth.user.id, email: auth.user.email }, allowlist)) {
+      // Confirmed non-allowlisted caller. Report the silent `empty` outcome (the
+      // reader shows the feed body, no error) but flag it `retryable` so the
+      // client keeps it stale: if the operator later adds this caller to
+      // READMO_ALLOWLIST, the next open re-checks the gate instead of staying
+      // stuck on a forever-cached denial. `retryable` is an ADDITIVE field, so a
+      // service-worker-cached older client that only reads `status` still
+      // renders the plain silent `empty` (guardrail #11) — no error, no new
+      // wire status to choke on.
       console.log('fulltext: caller not on READMO_ALLOWLIST — feed-stub fallback');
-      return json({ status: 'empty', contentHtml: null });
+      return json({ status: 'empty', contentHtml: null, retryable: true });
     }
   }
 
