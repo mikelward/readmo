@@ -105,6 +105,22 @@ describe('ItemPage (reader)', () => {
     expect(source.stateStore.get('item-1').pinned).toBe(true);
   });
 
+  it('orders the action bar More-first, then Pin then Done last', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReader(source);
+    const more = await screen.findByTestId('reader-more');
+    const toolbar = more.closest('.reader__actions') as HTMLElement;
+    const order = Array.from(
+      toolbar.querySelectorAll<HTMLElement>('[data-testid]'),
+    ).map((el) => el.getAttribute('data-testid'));
+    // More is the left-most of the right-aligned cluster; Pin is
+    // second-from-right and Done is the right-most, matching the list rows.
+    expect(order[0]).toBe('reader-more');
+    expect(order).toContain('open-original');
+    expect(order.indexOf('reader-pin')).toBeLessThan(order.indexOf('reader-done'));
+    expect(order[order.length - 1]).toBe('reader-done');
+  });
+
   it('Done marks the item done and clears pinned (exclusivity)', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);

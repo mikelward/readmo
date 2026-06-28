@@ -349,7 +349,7 @@ export function ItemRow({
 
         {openOriginalRow ? (
           // Open-original feed row: a dedicated Open original button (same icon
-          // as the reader) sits to the left of the Done/Pin cluster and opens the
+          // as the reader) sits to the left of the Pin/Done cluster and opens the
           // source in a new tab. Pin and Done are unchanged.
           <TooltipButton
             type="button"
@@ -361,22 +361,6 @@ export function ItemRow({
           >
             <span className="pin-btn__icon">
               <OpenInNew />
-            </span>
-          </TooltipButton>
-        ) : null}
-
-        {showDoneButton ? (
-          <TooltipButton
-            type="button"
-            className={'pin-btn' + (done ? ' pin-btn--active' : '')}
-            data-testid="done-btn"
-            aria-pressed={done}
-            aria-label={doneLabel}
-            tooltip={done ? 'Unmark done' : 'Done'}
-            onClick={handleToggleDone}
-          >
-            <span className="pin-btn__icon">
-              <Check />
             </span>
           </TooltipButton>
         ) : null}
@@ -409,6 +393,25 @@ export function ItemRow({
             </span>
           </TooltipButton>
         )}
+
+        {showDoneButton ? (
+          // Done sits to the right of Pin so the far-right action matches the
+          // reader toolbar and the rest of the app (Pin second-from-right,
+          // Done rightmost).
+          <TooltipButton
+            type="button"
+            className={'pin-btn' + (done ? ' pin-btn--active' : '')}
+            data-testid="done-btn"
+            aria-pressed={done}
+            aria-label={doneLabel}
+            tooltip={done ? 'Unmark done' : 'Done'}
+            onClick={handleToggleDone}
+          >
+            <span className="pin-btn__icon">
+              <Check />
+            </span>
+          </TooltipButton>
+        ) : null}
 
         {menuItems.length > 0 ? (
           <ItemRowMenu

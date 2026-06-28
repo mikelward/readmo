@@ -107,6 +107,22 @@ function ReaderToolbar({
       )}
 
       <div className="reader__actions" role="toolbar" aria-label="Article actions">
+        <div className="reader__more">
+          <TooltipButton
+            ref={moreBtnRef}
+            type="button"
+            className="reader__action"
+            tooltip="More"
+            aria-label="More actions"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={() => onOpenMenu(moreBtnRef.current)}
+            data-testid={`reader-more${sfx}`}
+          >
+            <MoreVert />
+          </TooltipButton>
+        </div>
+
         <TooltipButton
           type="button"
           className="reader__action reader__action--primary"
@@ -148,18 +164,6 @@ function ReaderToolbar({
 
         <TooltipButton
           type="button"
-          className={'reader__action' + (state.done ? ' reader__action--active' : '')}
-          tooltip={state.done ? 'Unmark done' : 'Done'}
-          aria-label={state.done ? 'Unmark done' : 'Done'}
-          aria-pressed={state.done}
-          onClick={() => (state.done ? set('done', false) : markDone())}
-          data-testid={`reader-done${sfx}`}
-        >
-          <Check />
-        </TooltipButton>
-
-        <TooltipButton
-          type="button"
           className={'reader__action' + (state.pinned ? ' reader__action--active' : '')}
           tooltip={state.pinned ? 'Unpin' : 'Pin'}
           aria-label={state.pinned ? 'Unpin' : 'Pin'}
@@ -170,21 +174,17 @@ function ReaderToolbar({
           {state.pinned ? <PushPinFilled /> : <PushPinOutline />}
         </TooltipButton>
 
-        <div className="reader__more">
-          <TooltipButton
-            ref={moreBtnRef}
-            type="button"
-            className="reader__action"
-            tooltip="More"
-            aria-label="More actions"
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            onClick={() => onOpenMenu(moreBtnRef.current)}
-            data-testid={`reader-more${sfx}`}
-          >
-            <MoreVert />
-          </TooltipButton>
-        </div>
+        <TooltipButton
+          type="button"
+          className={'reader__action' + (state.done ? ' reader__action--active' : '')}
+          tooltip={state.done ? 'Unmark done' : 'Done'}
+          aria-label={state.done ? 'Unmark done' : 'Done'}
+          aria-pressed={state.done}
+          onClick={() => (state.done ? set('done', false) : markDone())}
+          data-testid={`reader-done${sfx}`}
+        >
+          <Check />
+        </TooltipButton>
       </div>
     </div>
   );

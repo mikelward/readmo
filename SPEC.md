@@ -42,10 +42,11 @@ The following are inherited **verbatim in behavior** — only the data behind
 them changes. Treat newshacker's `SPEC.md` as the normative description and
 copy it:
 
-- **Story/item row layout** — at most three tap zones, two shipped (row body
-  stretched link + right-side icon button), reserved middle slot. Min 44×44px
-  touch targets, ≥8px gaps, 48px+ rows, pressed-state on every zone, metadata
-  display-only.
+- **Story/item row layout** — at most three tap zones: two on phones/library
+  (row body stretched link + right-side icon button), three on wide feed rows
+  where a Done button is appended on the far-right edge (Pin second-from-right,
+  Done right-most). Min 44×44px touch targets, ≥8px gaps, 48px+ rows,
+  pressed-state on every zone, metadata display-only.
 - **Pinned / Favorite / Done — three intents, three buckets**, plus **Hidden**
   and **Opened**, with the same semantics and the same shields. Retention
   diverges: only Pinned/Favorite persist forever, Done/Opened are 30-day views,
@@ -1336,14 +1337,20 @@ Identical to newshacker's *Story row layout*; only the meta content differs
   it's the view's inverse: `/pinned` → Unpin, `/favorites` → Unfavorite
   (`favorite` filled), `/done` → Unmark done (`check_circle` filled),
   `/opened` → Mark unread —
-  filled, accent-colored. Same table as newshacker's *Library views*.
-- **Reserved middle slot** — on **narrow viewports** stays unused (mobile keeps
-  the two-tap-zone shape). On **wide viewports (≥960px) feed rows**, fills with
-  a **Done** icon button (`check`) sitting immediately to the left of Pin —
-  same toggle semantics as the reader's Done action (untoggled → marks done
-  and records an undo point; toggled → unmarks). Library views keep the slot
-  empty (their right-side button already names the row's intent). Same high
-  bar for any further use.
+  filled, accent-colored. Same table as newshacker's *Library views*. It's the
+  row's **right-most** control everywhere except wide feed rows, where it sits
+  **second-from-right** and the Done button (below) takes the far edge.
+- **Reserved third action (outboard of Pin)** — on **narrow viewports** stays
+  unused (mobile keeps the two-tap-zone shape). On **wide viewports (≥960px)
+  feed rows**, a **Done** icon button (`check`) is appended **to the right of
+  Pin** — on the row's far-right edge, not between the body and Pin — so the
+  wide feed row reads row body · Pin · Done (Pin second-from-right, Done
+  right-most), matching the reader action bar's Pin→Done order and the rest of
+  the app. Same toggle semantics as the reader's Done action (untoggled → marks
+  done and records an undo point; toggled → unmarks). Library views keep the row
+  to its single right-side button (their inverse action already names the row's
+  intent). Same high bar for any further
+  use.
 
 Display-only meta (plain text inside the row link): **source** (feed/site
 name, favicon, trimmed to the registrable domain the way newshacker trims
@@ -1539,19 +1546,20 @@ every action throughout the read; the **bottom bar is a relative end-of-article
 footer** you scroll down to — matching newshacker, rather than floating over the
 last lines of text. Left→right:
 
-**Open original** (primary; icon-only with a soft accent-tinted fill — the
-tooltip and aria-label carry the name; marks Opened, fades to neutral once
-opened) → **Done** (✓) → **Pin/Unpin** (📌) → **More ⋮**. On wide viewports (≥960px)
-**Share** and **Favorite** (♥) surface inline between Open original and Done
-(in that order — Share sits next to Open original); below 960px they live in
-the overflow. The overflow ⋮ → Pin → Done cluster at the right matches the
-other toolbars in the app. (No Upvote — RSS has no votes.)
+**More ⋮** (overflow) → **Open original** (primary; icon-only with a soft
+accent-tinted fill — the tooltip and aria-label carry the name; marks Opened,
+fades to neutral once opened) → **Pin/Unpin** (📌) → **Done** (✓). On wide
+viewports (≥960px) **Share** and **Favorite** (♥) surface inline between Open
+original and Pin (in that order — Share sits next to Open original); below 960px
+they live in the overflow. **More is the left-most of the right-aligned cluster,
+Pin is second-from-right, and Done is right-most** — the same Pin→Done order the
+list rows use, so the two views line up. (No Upvote — RSS has no votes.)
 
 - **Done** also unpins and **navigates back** (the "I'm finished, move on"
   gesture); **Unmark done** does not navigate. Same as newshacker.
 - Bottom bar swaps the primary slot to **Back to top** (neutral, stretched) so
-  Done/Pin/⋮ land at the same x-position — handy right where you finish reading,
-  since this bar is the relative footer at the article's end.
+  the ⋮/Pin/Done cluster lands at the same x-position — handy right where you
+  finish reading, since this bar is the relative footer at the article's end.
 - **More ⋮** overflow: Favorite/Share (when not inline), **Open feed**, **Copy
   link**, **Mute feed**. This is the **shared `ItemRowMenu`** component (the same
   one the feed list rows use, and the mirror of newshacker's thread ⋮) — lifted

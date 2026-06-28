@@ -251,12 +251,13 @@ describe('ItemRow', () => {
     const { source } = renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
     const done = screen.getByTestId('done-btn');
     expect(done).toHaveAttribute('aria-pressed', 'false');
-    // Sits before the Pin button in DOM order (left of it visually).
+    // Sits after the Pin button in DOM order (Done is the far-right action,
+    // Pin second-from-right) to match the reader toolbar.
     const buttons = screen.getAllByRole('button');
     const doneIdx = buttons.indexOf(done);
     const pinIdx = buttons.indexOf(screen.getByTestId('pin-btn'));
-    expect(doneIdx).toBeGreaterThanOrEqual(0);
-    expect(doneIdx).toBeLessThan(pinIdx);
+    expect(pinIdx).toBeGreaterThanOrEqual(0);
+    expect(pinIdx).toBeLessThan(doneIdx);
 
     await user.click(done);
     expect(source.stateStore.get('item-1').done).toBe(true);
