@@ -164,11 +164,11 @@ export const SEED_ITEMS: Item[] = SPECS.map((spec, i) => ({
 }));
 
 export const SEED_SUBSCRIPTIONS: Subscription[] = [
-  { feedId: 'feed-verge', folder: 'News', titleOverride: null, muted: false, sort: 0 },
-  { feedId: 'feed-nasa', folder: 'News', titleOverride: null, muted: false, sort: 1 },
-  { feedId: 'feed-css', folder: 'Dev', titleOverride: null, muted: false, sort: 2 },
-  { feedId: 'feed-reddit-prog', folder: 'Dev', titleOverride: null, muted: false, sort: 3 },
-  { feedId: 'feed-park', folder: null, titleOverride: null, muted: false, sort: 4 },
+  { feedId: 'feed-verge', folder: 'News', titleOverride: null, muted: false, openOriginal: false, sort: 0 },
+  { feedId: 'feed-nasa', folder: 'News', titleOverride: null, muted: false, openOriginal: false, sort: 1 },
+  { feedId: 'feed-css', folder: 'Dev', titleOverride: null, muted: false, openOriginal: false, sort: 2 },
+  { feedId: 'feed-reddit-prog', folder: 'Dev', titleOverride: null, muted: false, openOriginal: false, sort: 3 },
+  { feedId: 'feed-park', folder: null, titleOverride: null, muted: false, openOriginal: false, sort: 4 },
 ];
 
 export const SEED_FOLDERS = [

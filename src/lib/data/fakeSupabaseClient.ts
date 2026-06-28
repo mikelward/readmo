@@ -56,7 +56,15 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
     private readonly table: string,
     private readonly store: FakeTables,
     private readonly control: {
-      failSelectOnce: Set<string>;
+      /** Tables whose next select() should error once. The mapped value is the
+       * error object to surface (e.g. `{ code: '42703' }` to model an
+       * undefined-column / pre-migration backend); `undefined` → a default
+       * `{ message }` error. */
+      failSelectOnce: Map<string, unknown>;
+      /** Tables whose next update() should error once. Same shape as
+       * failSelectOnce — used to model an undefined-column write against a
+       * pre-migration backend. */
+      failUpdateOnce: Map<string, unknown>;
       ignoreNotIn: boolean;
       selectCounts: Map<string, number>;
       /** Last `select(cols)` projection string requested per table (lets tests
@@ -199,6 +207,15 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
       return { data: null, count: null, error: null };
     }
     if (this.mode === 'update') {
+      if (this.control.failUpdateOnce.has(this.table)) {
+        const injected = this.control.failUpdateOnce.get(this.table);
+        this.control.failUpdateOnce.delete(this.table);
+        return {
+          data: null,
+          count: null,
+          error: injected ?? { message: `injected update error for ${this.table}` },
+        };
+      }
       for (const r of this.filtered()) Object.assign(r, this.patch);
       return { data: null, count: null, error: null };
     }
@@ -209,11 +226,12 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
     );
     // One-shot injected failure for the next select on this table.
     if (this.control.failSelectOnce.has(this.table)) {
+      const injected = this.control.failSelectOnce.get(this.table);
       this.control.failSelectOnce.delete(this.table);
       return {
         data: null,
         count: null,
-        error: { message: `injected error for ${this.table}` },
+        error: injected ?? { message: `injected error for ${this.table}` },
       };
     }
     const matched = this.filtered();
@@ -457,8 +475,12 @@ export function makeFakeSupabase(tables: FakeTables): {
   invokeCalls: InvokeCall[];
   invokeResult: { current: { data: unknown; error: unknown } };
   /** Make the next `select` on `table` return an error once (transient-failure
-   * simulation). */
-  failSelectOnce: (table: string) => void;
+   * simulation). Pass `error` to control what's surfaced — e.g.
+   * `{ code: '42703' }` to model an undefined-column / pre-migration backend. */
+  failSelectOnce: (table: string, error?: unknown) => void;
+  /** Make the next `update` on `table` return an error once. Pass `error` to
+   * control what's surfaced (e.g. `{ code: '42703' }` for a missing column). */
+  failUpdateOnce: (table: string, error?: unknown) => void;
   /** Make `.not('…','in',…)` a no-op, simulating the server-side exclusion filter
    * being skipped (exclusion set over the cap). */
   ignoreNotInFilter: () => void;
@@ -480,7 +502,8 @@ export function makeFakeSupabase(tables: FakeTables): {
   const rpcCalls: Array<{ name: string; params: Record<string, unknown> }> = [];
   const invokeResult = { current: { data: null as unknown, error: null as unknown } };
   const control = {
-    failSelectOnce: new Set<string>(),
+    failSelectOnce: new Map<string, unknown>(),
+    failUpdateOnce: new Map<string, unknown>(),
     ignoreNotIn: false,
     selectCounts: new Map<string, number>(),
     selectCols: new Map<string, string | undefined>(),
@@ -492,7 +515,10 @@ export function makeFakeSupabase(tables: FakeTables): {
     invokeCalls,
     rpcCalls,
     invokeResult,
-    failSelectOnce: (table: string) => control.failSelectOnce.add(table),
+    failSelectOnce: (table: string, error?: unknown) =>
+      control.failSelectOnce.set(table, error),
+    failUpdateOnce: (table: string, error?: unknown) =>
+      control.failUpdateOnce.set(table, error),
     ignoreNotInFilter: () => {
       control.ignoreNotIn = true;
     },

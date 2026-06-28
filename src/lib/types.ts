@@ -88,6 +88,10 @@ export interface Subscription {
   folder: string | null;
   titleOverride: string | null;
   muted: boolean;
+  /** When true, this feed's article rows open the original article on the source
+   * website directly (new tab) instead of the in-app reader. Per-user, synced
+   * (SPEC.md *Open original*). */
+  openOriginal: boolean;
   sort: number;
 }
 

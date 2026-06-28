@@ -14,7 +14,7 @@ import { useSwipeToDismiss } from '../hooks/useSwipeToDismiss';
 import { useItemState } from '../hooks/useItemState';
 import { ItemRowMenu, type ItemRowMenuItem } from './ItemRowMenu';
 import { TooltipButton } from './TooltipButton';
-import { Check, PushPinFilled, PushPinOutline } from './icons';
+import { Check, OpenInNew, PushPinFilled, PushPinOutline } from './icons';
 import './ItemRow.css';
 
 export interface RightAction {
@@ -34,6 +34,11 @@ interface Props {
   /** Feed views enable swipe (right=Hide, left=Pin). Library views disable
    * it — every row there already holds the state the view represents. */
   enableSwipe?: boolean;
+  /** When true (the feed's "open original" preference), the row body links
+   * straight to the source website in a new tab instead of the in-app reader.
+   * Ignored when the item URL isn't a safe http(s) URL — falls back to the
+   * reader. */
+  openOriginal?: boolean;
   onShare?: (item: FeedItem) => void;
 }
 
@@ -41,6 +46,7 @@ export function ItemRow({
   feedItem,
   rightAction,
   enableSwipe = true,
+  openOriginal = false,
   onShare,
 }: Props) {
   const { item, feed } = feedItem;
@@ -57,6 +63,13 @@ export function ItemRow({
   const domain = feed.title
     ? articleSourceDomain(item.url, feed.siteUrl ?? feed.url)
     : '';
+  // "Open original" only applies when the item has a safe http(s) URL to open;
+  // otherwise the row falls back to the in-app reader.
+  const openExternal = openOriginal && isSafeHttpUrl(item.url);
+  // A feed-style open-original row (no library inverse action) gets a dedicated
+  // Open-original button to the left of the Done/Pin cluster. Library rows keep
+  // their own right-side action and just open the source on a row-body tap.
+  const openOriginalRow = openExternal && !rightAction;
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
@@ -70,6 +83,16 @@ export function ItemRow({
   const handleMarkUnread = useCallback(() => set('opened', false), [set]);
   const handleShare = useCallback(() => onShare?.(feedItem), [onShare, feedItem]);
   const markOpened = useCallback(() => set('opened', true), [set]);
+  // The Open-original row button opens the source in a new tab and marks the
+  // item opened — same as the reader's Open original and the `o` shortcut.
+  // Done/opened state is left exactly as when the preference is off (we may
+  // iterate on auto-marking done later).
+  const handleOpenOriginal = useCallback(() => {
+    if (isSafeHttpUrl(item.url)) {
+      window.open(item.url, '_blank', 'noopener,noreferrer');
+    }
+    markOpened();
+  }, [item.url, markOpened]);
 
   const openMenu = useCallback(() => {
     setMenuAnchor(articleRef.current);
@@ -243,6 +266,32 @@ export function ItemRow({
     else hide();
   }, [done, set, hide]);
 
+  // The row-body label (title + meta), shared by the in-app-reader Link and the
+  // "open original" external anchor so the two only differ in where they go.
+  const bodyContent = (
+    <>
+      <span className="item-row__title-text">{title}</span>
+      <span className="item-row__meta" data-testid="item-meta">
+        {feed.faviconUrl ? (
+          <img
+            className="item-row__favicon"
+            src={feed.faviconUrl}
+            alt=""
+            aria-hidden="true"
+            width={14}
+            height={14}
+          />
+        ) : null}
+        {formatItemMetaTail({
+          source,
+          domain,
+          publishedAt: item.publishedAt,
+          author: item.author,
+        })}
+      </span>
+    </>
+  );
+
   return (
     <>
       {leftHint ? (
@@ -271,33 +320,50 @@ export function ItemRow({
         {...handlers}
         onContextMenu={handleContextMenu}
       >
-        <Link
-          to={`/item/${item.id}`}
-          className="item-row__body"
-          data-testid="item-title"
-          onClick={markOpened}
-          onKeyDown={handleRowKeyDown}
-        >
-          <span className="item-row__title-text">{title}</span>
-          <span className="item-row__meta" data-testid="item-meta">
-            {feed.faviconUrl ? (
-              <img
-                className="item-row__favicon"
-                src={feed.faviconUrl}
-                alt=""
-                aria-hidden="true"
-                width={14}
-                height={14}
-              />
-            ) : null}
-            {formatItemMetaTail({
-              source,
-              domain,
-              publishedAt: item.publishedAt,
-              author: item.author,
-            })}
-          </span>
-        </Link>
+        {openExternal ? (
+          // "Open original": the row body goes straight to the source website in
+          // a new tab (marking the item opened, like the in-app reader and the
+          // `o` shortcut) instead of navigating to the reader.
+          <a
+            href={item.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="item-row__body"
+            data-testid="item-title"
+            onClick={markOpened}
+            onKeyDown={handleRowKeyDown}
+          >
+            {bodyContent}
+          </a>
+        ) : (
+          <Link
+            to={`/item/${item.id}`}
+            className="item-row__body"
+            data-testid="item-title"
+            onClick={markOpened}
+            onKeyDown={handleRowKeyDown}
+          >
+            {bodyContent}
+          </Link>
+        )}
+
+        {openOriginalRow ? (
+          // Open-original feed row: a dedicated Open original button (same icon
+          // as the reader) sits to the left of the Done/Pin cluster and opens the
+          // source in a new tab. Pin and Done are unchanged.
+          <TooltipButton
+            type="button"
+            className="pin-btn"
+            data-testid="open-original-btn"
+            aria-label={`Open ${title} on its website`}
+            tooltip="Open original"
+            onClick={handleOpenOriginal}
+          >
+            <span className="pin-btn__icon">
+              <OpenInNew />
+            </span>
+          </TooltipButton>
+        ) : null}
 
         {showDoneButton ? (
           <TooltipButton

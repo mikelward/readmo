@@ -436,6 +436,7 @@ export class MockDataSource implements DataSource {
           folder,
           titleOverride: null,
           muted: false,
+          openOriginal: false,
           sort: this.subs.size,
         });
       }
@@ -463,6 +464,7 @@ export class MockDataSource implements DataSource {
       folder,
       titleOverride: null,
       muted: false,
+      openOriginal: false,
       sort: this.subs.size,
     });
     return { ...feed };
@@ -475,6 +477,17 @@ export class MockDataSource implements DataSource {
   async setMuted(feedId: FeedId, muted: boolean): Promise<void> {
     const sub = this.subs.get(feedId);
     if (sub) sub.muted = muted;
+  }
+
+  async setOpenOriginal(feedId: FeedId, openOriginal: boolean): Promise<void> {
+    const sub = this.subs.get(feedId);
+    if (sub) sub.openOriginal = openOriginal;
+  }
+
+  supportsOpenOriginal(): boolean {
+    // The in-memory store always carries the field, so the control is always
+    // available against the mock.
+    return true;
   }
 
   async setTitleOverride(feedId: FeedId, title: string | null): Promise<void> {

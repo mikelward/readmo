@@ -23,6 +23,13 @@ interface Props {
    * order (see `schedulePersist`). */
   onReorder: (orderedFeedIds: FeedId[]) => void | Promise<void>;
   onMute: (feedId: FeedId, muted: boolean) => void;
+  /** Toggle the feed's "open original" preference — when on, its article rows
+   * open the source website directly instead of the in-app reader. */
+  onSetOpenOriginal: (feedId: FeedId, openOriginal: boolean) => void;
+  /** Whether to offer the "Open original" menu item. Hidden when the backend
+   * doesn't support the preference yet (pre-migration), so the control never
+   * triggers a write the old backend would reject. Defaults to true. */
+  showOpenOriginal?: boolean;
   onUnsubscribe: (feedId: FeedId) => void;
   /** Set a per-user display name for `feedId`. Pass `null` to clear the
    * override and fall back to the publisher's feed title. */
@@ -43,6 +50,8 @@ export function ReorderableSubscriptions({
   subs,
   onReorder,
   onMute,
+  onSetOpenOriginal,
+  showOpenOriginal = true,
   onUnsubscribe,
   onRename,
 }: Props) {
@@ -406,6 +415,23 @@ export function ReorderableSubscriptions({
                   >
                     {subscription.muted ? 'Unmute' : 'Mute'}
                   </button>
+                  {showOpenOriginal ? (
+                    <button
+                      type="button"
+                      role="menuitemcheckbox"
+                      aria-checked={subscription.openOriginal}
+                      className="settings__sub-menuitem settings__sub-menuitem--check"
+                      onClick={() => {
+                        setMenuFor(null);
+                        onSetOpenOriginal(feed.id, !subscription.openOriginal);
+                      }}
+                    >
+                      <span className="settings__sub-check" aria-hidden="true">
+                        {subscription.openOriginal ? '✓' : ''}
+                      </span>
+                      Open original
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     role="menuitem"

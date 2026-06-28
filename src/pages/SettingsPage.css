@@ -374,6 +374,22 @@
   font-weight: 600;
 }
 
+/* Checkbox-style menu item (Open original): a fixed-width leading slot holds the
+   check so the label stays aligned whether or not it's set. */
+.settings__sub-menuitem--check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings__sub-check {
+  display: inline-block;
+  width: 1em;
+  flex: 0 0 auto;
+  text-align: center;
+  color: var(--rm-accent);
+}
+
 /* Used by the Account → Sign out button. Matches the prior subscription-row
    unsubscribe styling (a min-tap-target danger button) so the sign-out tap
    target stays within guardrail #2's 44×44 floor. */

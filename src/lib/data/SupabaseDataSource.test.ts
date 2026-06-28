@@ -1053,6 +1053,57 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(b.subscription.titleOverride).toBe('Custom');
   });
 
+  it('setOpenOriginal persists the open_original column and reads back', async () => {
+    const env = setup();
+    // Defaults to false (column absent on the seeded fake rows).
+    let subs = await env.ds.getSubscriptions();
+    expect(subs.find((s) => s.subscription.feedId === 'feed-b')!.subscription.openOriginal).toBe(false);
+    await env.ds.setOpenOriginal('feed-b', true);
+    subs = await env.ds.getSubscriptions();
+    expect(subs.find((s) => s.subscription.feedId === 'feed-b')!.subscription.openOriginal).toBe(true);
+    // Untouched feeds stay false.
+    expect(subs.find((s) => s.subscription.feedId === 'feed-a')!.subscription.openOriginal).toBe(false);
+  });
+
+  it('getSubscriptions falls back to the legacy columns when open_original is missing (pre-0027 backend)', async () => {
+    const env = setup();
+    // Optimistic before any read has proven the column absent.
+    expect(env.ds.supportsOpenOriginal()).toBe(true);
+    // Model an un-migrated backend: the first select(SUBSCRIPTION_COLS) errors
+    // with undefined_column (42703); the data source retries without the column.
+    env.fake.failSelectOnce('subscriptions', { code: '42703' });
+    const subs = await env.ds.getSubscriptions();
+    expect(subs.length).toBeGreaterThan(0);
+    expect(subs.every((s) => s.subscription.openOriginal === false)).toBe(true);
+    // The fallback marks the feature unsupported so the UI hides the control.
+    expect(env.ds.supportsOpenOriginal()).toBe(false);
+  });
+
+  it('reports open-original support after a normal subscriptions read', async () => {
+    const env = setup();
+    await env.ds.getSubscriptions();
+    expect(env.ds.supportsOpenOriginal()).toBe(true);
+  });
+
+  it('setOpenOriginal no-ops (no throw) and marks support false when the column is missing', async () => {
+    const env = setup();
+    // A PATCH body naming a column absent from the schema cache returns
+    // PostgREST's own PGRST204 (not the SELECT-path 42703), so the tolerant
+    // write must recognize it. Model that pre-0027 / stale-schema rejection.
+    env.fake.failUpdateOnce('subscriptions', { code: 'PGRST204' });
+    // Must not reject — the client can't *require* the unshipped migration, even
+    // if the control was shown from a cache-served render before a live probe.
+    await expect(env.ds.setOpenOriginal('feed-a', true)).resolves.toBeUndefined();
+    // Capability now reads false, so the Feeds page hides the control next render.
+    expect(env.ds.supportsOpenOriginal()).toBe(false);
+  });
+
+  it('setOpenOriginal still throws on a genuine (non-missing-column) write error', async () => {
+    const env = setup();
+    env.fake.failUpdateOnce('subscriptions', { code: '500', message: 'boom' });
+    await expect(env.ds.setOpenOriginal('feed-a', true)).rejects.toThrow();
+  });
+
   it('threads sort + group options into the feed_items RPC', async () => {
     const env = setup();
     await env.ds.getHomeItems({ sort: 'oldest', groupByFeed: true });
