@@ -50,12 +50,14 @@ const FEED_COLS =
   'id, site_url, title, last_fetched_at, next_fetch_at, fetch_interval_s, error_count, last_error, created_at';
 const ITEM_COLS =
   'id, feed_id, guid, url, title, author, published_at, content_html, summary, enclosures, content_hash, created_at';
-// No client read selects the cached full-article body (`full_content_html`).
-// It is gated on the trusted-user allowlist and served ONLY through the
-// `fulltext` Edge Function, which checks the allowlist and returns the cached
-// body to listed callers (a cache hit) — see fetchFullText / SPEC "Full-text
-// reading mode". A direct column read here would hand the cached full article
-// to any subscriber who can see the item row, bypassing that gate. (List /
+// No client read selects the cached full-article body (`full_content_html`) or
+// its `full_content_via_fallback` provenance flag. Both are gated on the
+// trusted-user allowlist and served ONLY through the `fulltext` Edge Function,
+// which checks the allowlist and returns the cached body (and flag) to listed
+// callers (a cache hit) — see fetchFullText / SPEC "Full-text reading mode". A
+// direct column read here would hand the cached full article — including
+// fallback-sourced content — to any subscriber who can see the item row,
+// bypassing that gate. (List /
 // search / library reads omit it anyway for payload/cache size.) So the reader's
 // single-item detail read uses the same ITEM_COLS as list rows; the full body
 // arrives via fetchFullText. A column-level REVOKE so a hand-crafted PostgREST
@@ -847,7 +849,12 @@ export class SupabaseDataSource implements DataSource {
     // than surfacing an error — reading mode is a progressive enhancement.
     if (error) return { status: 'unreachable', contentHtml: null };
     const rec = data as
-      | { status?: string; contentHtml?: string | null; retryable?: boolean }
+      | {
+          status?: string;
+          contentHtml?: string | null;
+          retryable?: boolean;
+          viaFallback?: boolean;
+        }
       | null;
     const status: FullTextStatus =
       rec?.status === 'ok' ||
@@ -863,6 +870,10 @@ export class SupabaseDataSource implements DataSource {
       // retryable so a later server-side change re-checks instead of caching it.
       // Only present when true, so non-retryable results keep their plain shape.
       ...(rec?.retryable === true ? { retryable: true } : {}),
+      // Provenance: rides along only with an `ok` body that came from the
+      // bot-block fallback fetch, so the reader can label it "via fallback".
+      // Additive (omitted otherwise) — a missing/older backend reads as direct.
+      ...(status === 'ok' && rec?.viaFallback === true ? { viaFallback: true } : {}),
     };
   }
 

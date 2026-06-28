@@ -628,4 +628,31 @@ describe('ItemPage reading mode', () => {
     await user.click(get);
     expect(await screen.findByText(/full article text/)).toBeInTheDocument();
   });
+
+  it('flags a fallback-sourced reading body with "via fallback" after the source', async () => {
+    const user = userEvent.setup();
+    class FallbackSource extends MockDataSource {
+      async fetchFullText(): Promise<FullTextResult> {
+        return { status: 'ok', contentHtml: '<p>fallback full body</p>', viaFallback: true };
+      }
+    }
+    renderReader(new FallbackSource(`test-${Math.random()}`));
+    // The feed body shows first; the provenance tag only appears once the reader
+    // is actually showing the fallback-sourced reading body.
+    const keepReading = await screen.findByTestId('reader-keep-reading');
+    expect(screen.queryByTestId('reader-via-fallback')).toBeNull();
+
+    await user.click(keepReading);
+    expect(await screen.findByText(/fallback full body/)).toBeInTheDocument();
+    expect(screen.getByTestId('reader-via-fallback')).toHaveTextContent('via fallback');
+  });
+
+  it('shows no provenance tag for a directly-fetched reading body', async () => {
+    const user = userEvent.setup();
+    // The default mock omits viaFallback (a direct fetch).
+    renderReader(new MockDataSource(`test-${Math.random()}`));
+    await user.click(await screen.findByTestId('reader-keep-reading'));
+    expect(await screen.findByText(/full article text/)).toBeInTheDocument();
+    expect(screen.queryByTestId('reader-via-fallback')).toBeNull();
+  });
 });

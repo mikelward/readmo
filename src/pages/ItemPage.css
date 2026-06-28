@@ -134,6 +134,16 @@
   text-decoration: none;
 }
 
+/* Provenance tag shown after the source when the reading body came from the
+   bot-block fallback fetch. Muted so it reads as a quiet aside, not a second
+   link competing with the source. */
+.reader__via-fallback {
+  margin-left: 6px;
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--rm-read);
+}
+
 .reader__title {
   font-size: 1.5rem;
   line-height: 1.25;

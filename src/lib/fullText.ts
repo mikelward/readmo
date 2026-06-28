@@ -4,13 +4,22 @@ import type { Item } from './types';
 // can be unit-tested without React or a data source.
 
 /** The outcome of a server full-text extraction. Mirrors the `fulltext` Edge
- * Function's `{ status, contentHtml, retryable? }` envelope. */
+ * Function's `{ status, contentHtml, retryable?, viaFallback? }` envelope. */
 export type FullTextStatus = 'ok' | 'empty' | 'auth' | 'unreachable';
 
 export interface FullTextResult {
   status: FullTextStatus;
   /** Sanitized article HTML when `status === 'ok'`, otherwise null. */
   contentHtml: string | null;
+  /**
+   * True when the `ok` body came from the bot-block fallback fetch (r.jina.ai)
+   * rather than a direct fetch — surfaced as a muted "via fallback" provenance
+   * label in the reader. Additive flag, present only when true (a missing/older
+   * backend simply omits it, reading as a direct fetch). Only ever true for
+   * allowlisted callers, since the `fulltext` Edge Function is allowlist-gated;
+   * a non-listed caller never receives any full body, fallback or not.
+   */
+  viaFallback?: boolean;
   /**
    * A normally-terminal outcome that should nonetheless be re-checked later
    * because a server-side condition could flip. The reading-mode allowlist

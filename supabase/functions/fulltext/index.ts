@@ -27,7 +27,13 @@
 //
 // Outcomes are reported as a 200 { status, contentHtml } envelope so the client
 // can render the right thing without treating "soft" results as hard errors:
-//   ok          — extracted (or cache hit); contentHtml is sanitized HTML
+//   ok          — extracted (or cache hit); contentHtml is sanitized HTML. When
+//                 the body came from the bot-block fallback fetch (r.jina.ai)
+//                 rather than a direct fetch, the envelope also carries
+//                 `viaFallback:true` so the reader can show a "via fallback"
+//                 provenance label. Additive field (omitted = direct fetch);
+//                 only allowlisted callers ever receive an `ok` body, so
+//                 fallback content stays restricted to them.
 //   empty       — page fetched but no article-like body found (paywall/teaser);
 //                 also the reading-mode allowlist denial, then flagged
 //                 `retryable:true` so a later allowlist change un-sticks the
@@ -142,7 +148,7 @@ async function handle(req: Request): Promise<Response> {
   // RLS-scoped lookup: only resolves if the caller may see this item.
   const { data: item, error } = await userClient
     .from('items')
-    .select('id, feed_id, url, title, full_content_html')
+    .select('id, feed_id, url, title, full_content_html, full_content_via_fallback')
     .eq('id', itemId)
     .maybeSingle();
   if (error) {
@@ -154,16 +160,27 @@ async function handle(req: Request): Promise<Response> {
     return json({ error: 'Item not found' }, 404);
   }
 
-  // Cache hit — serve the previously extracted body without re-fetching.
+  // Cache hit — serve the previously extracted body without re-fetching. A
+  // fallback-sourced body carries `viaFallback` so the reader can label it; only
+  // allowlisted callers reach this return (the gate above), so fallback content
+  // never leaves through an open door. Additive (omitted = direct fetch).
   if (item.full_content_html) {
     console.log(`fulltext: item ${itemId} — cache hit`);
-    return json({ status: 'ok', contentHtml: item.full_content_html });
+    return json({
+      status: 'ok',
+      contentHtml: item.full_content_html,
+      ...(item.full_content_via_fallback ? { viaFallback: true } : {}),
+    });
   }
   if (!item.url) return json({ status: 'empty', contentHtml: null });
 
   console.log(`fulltext: fetching item ${itemId} (${redactUrl(item.url)})`);
   let body: string;
   let finalUrl = item.url;
+  // Whether this body came from the bot-block fallback fetch (r.jina.ai) rather
+  // than a direct fetch — recorded on the cached row and surfaced to the reader
+  // as a "via fallback" provenance label.
+  let viaFallback = false;
   try {
     const res = await safeFetch(item.url, {
       timeoutMs: 12_000,
@@ -181,6 +198,7 @@ async function handle(req: Request): Promise<Response> {
       }
       console.log(`fulltext: item ${itemId} — Jina returned HTML`);
       body = jinaHtml;
+      viaFallback = true;
     } else if (res.status >= 400) {
       return json({ status: 'unreachable', contentHtml: null });
     } else {
@@ -218,17 +236,23 @@ async function handle(req: Request): Promise<Response> {
     .update({
       full_content_html: clean,
       full_content_fetched_at: new Date().toISOString(),
+      full_content_via_fallback: viaFallback,
     })
     .eq('id', itemId);
+  const okBody = {
+    status: 'ok',
+    contentHtml: clean,
+    ...(viaFallback ? { viaFallback: true } : {}),
+  };
   if (writeError) {
     // The extraction still succeeded for this caller; surface it even if the
     // cache write failed (next caller just re-extracts). Log so a persistently
     // failing cache write doesn't stay invisible.
     console.error(`fulltext: cache write for item ${itemId} failed:`, writeError);
-    return json({ status: 'ok', contentHtml: clean });
+    return json(okBody);
   }
 
-  return json({ status: 'ok', contentHtml: clean });
+  return json(okBody);
 }
 
 /** Fetch via Jina, but only for URLs we're reasonably sure carry no secret.

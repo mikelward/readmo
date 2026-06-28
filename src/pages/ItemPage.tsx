@@ -282,6 +282,13 @@ export function ItemPage() {
   // back to. The mode bar used to carry this toggle; it's now menu-only.
   const fetched = fullQuery.data;
   const fullHtml = cachedFull ?? (fetched?.status === 'ok' ? fetched.contentHtml : null);
+  // Whether the full body on show came from the bot-block fallback fetch, so the
+  // reader can flag its provenance ("via fallback") next to the source. Only the
+  // fetched body carries this — a `cachedFull` body read off the item has no
+  // provenance client-side (the gated columns aren't read there anyway), so it's
+  // treated as a direct fetch.
+  const fullViaFallback =
+    !cachedFull && fetched?.status === 'ok' && fetched.viaFallback === true;
   const defaultView: 'feed' | 'full' = cachedFull || fullReadyAtOpen ? 'full' : 'feed';
   const view = userView ?? defaultView;
   const showReading = view === 'full' && !!fullHtml;
@@ -501,6 +508,11 @@ export function ItemPage() {
         <Link to={`/feed/${feed.id}`} className="reader__source">
           {source}
         </Link>
+        {showReading && fullViaFallback ? (
+          <span className="reader__via-fallback" data-testid="reader-via-fallback">
+            via fallback
+          </span>
+        ) : null}
         <h1 className="reader__title">
           {isSafeHttpUrl(item.url) ? (
             <a

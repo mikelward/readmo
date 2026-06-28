@@ -957,6 +957,30 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(await env.ds.fetchFullText('i1')).toEqual({ status: 'empty', contentHtml: null });
   });
 
+  it('fetchFullText threads the additive `viaFallback` provenance flag through', async () => {
+    const env = setup();
+    env.fake.invokeResult.current = {
+      data: { status: 'ok', contentHtml: '<p>Full article</p>', viaFallback: true },
+      error: null,
+    };
+    expect(await env.ds.fetchFullText('i1')).toEqual({
+      status: 'ok',
+      contentHtml: '<p>Full article</p>',
+      viaFallback: true,
+    });
+  });
+
+  it('fetchFullText never reports `viaFallback` for a non-ok outcome', async () => {
+    // A backend that (incorrectly) set viaFallback on a non-ok envelope must not
+    // surface a provenance label — there's no body to attribute it to.
+    const env = setup();
+    env.fake.invokeResult.current = {
+      data: { status: 'empty', contentHtml: null, viaFallback: true },
+      error: null,
+    };
+    expect(await env.ds.fetchFullText('i1')).toEqual({ status: 'empty', contentHtml: null });
+  });
+
   it('fetchFullText degrades an invoke error to unreachable', async () => {
     const env = setup();
     env.fake.invokeResult.current = { data: null, error: new Error('boom') };
