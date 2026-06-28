@@ -79,10 +79,14 @@ async function handle(req: Request): Promise<Response> {
   // feeds*, not all feeds ever added.
   // TODO(deploy): move this to a SQL function / view for the subscriber join;
   // sketch shown inline for clarity.
+  // Order by next_fetch_at so the most-overdue feeds poll first and the
+  // feeds_next_fetch_idx btree (0032) serves both the range predicate and the
+  // ordering — a bounded index range scan instead of a full-table scan + sort.
   const { data: feeds, error } = await supabase
     .from('feeds')
     .select('id, url, secret_url, etag, last_modified, fetch_interval_s, error_count')
     .lte('next_fetch_at', new Date().toISOString())
+    .order('next_fetch_at', { ascending: true })
     .limit(BATCH_SIZE);
   if (error) {
     console.error('poll: feed-select query failed:', error);
