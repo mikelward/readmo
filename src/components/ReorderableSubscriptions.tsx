@@ -426,10 +426,10 @@ export function ReorderableSubscriptions({
                         onSetOpenOriginal(feed.id, !subscription.openOriginal);
                       }}
                     >
+                      Open original
                       <span className="settings__sub-check" aria-hidden="true">
                         {subscription.openOriginal ? '✓' : ''}
                       </span>
-                      Open original
                     </button>
                   ) : null}
                   <button
