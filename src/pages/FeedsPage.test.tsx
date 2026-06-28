@@ -6,7 +6,7 @@ import { MockDataSource } from '../lib/data/MockDataSource';
 import { AddFeedError, type DiscoveredFeed } from '../lib/data/DataSource';
 import type { AddFeedErrorKind } from '../lib/data/DataSource';
 import { FeedsPage } from './FeedsPage';
-import { POPULAR_FEEDS } from '../lib/popularFeeds';
+import { POPULAR_FEEDS, RECOMMENDED_FEEDS } from '../lib/popularFeeds';
 
 /** A source whose subscribe() returns a feed with no siteUrl or meaningful
  * title — simulating a silent server-side refresh failure (the edge function
@@ -157,9 +157,66 @@ describe('FeedsPage — popular feed autocomplete', () => {
     expect(screen.getByText('BBC News')).toBeTruthy();
   });
 
-  it('shows no suggestions for empty input', async () => {
+  it('shows no suggestions for empty input until the field is focused', async () => {
     renderWithProviders(<FeedsPage />);
     expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  it('shows the recommended starter feeds when the empty field is focused', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<FeedsPage />);
+    await user.click(screen.getByLabelText('Feed URL'));
+    const listbox = await screen.findByRole('listbox');
+    // Exactly the curated starter set — no more, no less.
+    const options = within(listbox).getAllByRole('option');
+    expect(options).toHaveLength(RECOMMENDED_FEEDS.length);
+    for (const feed of RECOMMENDED_FEEDS) {
+      expect(within(listbox).getByText(feed.name)).toBeTruthy();
+    }
+  });
+
+  it('subscribes directly when a recommended starter feed is picked', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const discoverSpy = vi.spyOn(source, 'discover');
+    renderWithProviders(<FeedsPage />, { source });
+    await user.click(screen.getByLabelText('Feed URL'));
+    const listbox = await screen.findByRole('listbox');
+    await user.click(within(listbox).getByText(RECOMMENDED_FEEDS[0].name));
+    await user.click(screen.getByRole('button', { name: /^Add$/ }));
+    await screen.findByText(`Subscribed to ${RECOMMENDED_FEEDS[0].name}`);
+    // Curated picks bypass discovery, like any other suggestion.
+    expect(discoverSpy).not.toHaveBeenCalled();
+  });
+
+  it('shows the type-a-site/topic/country helper text under the Add-a-feed input', () => {
+    renderWithProviders(<FeedsPage />);
+    expect(
+      screen.getByText('Type a site, a topic, or a country code to see suggestions.'),
+    ).toBeTruthy();
+  });
+
+  it('matches a topic by category', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<FeedsPage />);
+    await user.type(screen.getByLabelText('Feed URL'), 'science');
+    const listbox = await screen.findByRole('listbox');
+    // "science" appears in no Science-category feed's *name*, so a hit proves
+    // the category field is being searched.
+    const scienceFeed = POPULAR_FEEDS.find(
+      (f) => f.category === 'Science' && !f.name.toLowerCase().includes('science'),
+    )!;
+    expect(within(listbox).getByText(scienceFeed.name)).toBeTruthy();
+  });
+
+  it('matches a country code via the feed URL', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<FeedsPage />);
+    await user.type(screen.getByLabelText('Feed URL'), '.com.au');
+    const listbox = await screen.findByRole('listbox');
+    // An Australian outlet whose name doesn't contain the code is found only
+    // because its .com.au feed URL matches.
+    expect(within(listbox).getByText('Brisbane Times')).toBeTruthy();
   });
 
   it('fills the feed URL when a suggestion is clicked', async () => {

@@ -219,3 +219,23 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   { name: 'The Onion', feedUrl: 'https://www.theonion.com/rss', category: 'Fun' },
   { name: 'Saturday Morning Breakfast Cereal', feedUrl: 'https://www.smbc-comics.com/comic/rss', category: 'Fun' },
 ];
+
+// A handful of broadly-appealing, freely-readable feeds surfaced as starter
+// suggestions when the Add-a-feed box is focused but empty, so a new account
+// with nothing subscribed has a one-tap way in. "Open" = no paywall or login:
+// the whole article is readable from the feed, unlike NYT/WSJ/Economist whose
+// RSS only teases headlines behind a subscription. Referenced by name so each
+// URL stays single-sourced in POPULAR_FEEDS above.
+const RECOMMENDED_FEED_NAMES = [
+  'BBC News',
+  'NPR News',
+  'The Guardian',
+  'Ars Technica',
+  'Hacker News',
+] as const;
+
+export const RECOMMENDED_FEEDS: PopularFeed[] = RECOMMENDED_FEED_NAMES.map((name) => {
+  const feed = POPULAR_FEEDS.find((f) => f.name === name);
+  if (!feed) throw new Error(`RECOMMENDED_FEEDS: no POPULAR_FEEDS entry named "${name}"`);
+  return feed;
+});

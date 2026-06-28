@@ -226,6 +226,12 @@
   color: var(--rm-meta);
 }
 
+/* Helper text under the Add-a-feed form: nudge users to paste a site URL or
+   type to see suggestions. Sits below the input row, not above a list. */
+.settings__add-hint {
+  margin: 8px 0 0;
+}
+
 .settings__sub,
 .settings__account {
   display: flex;

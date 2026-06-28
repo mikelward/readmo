@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { POPULAR_FEEDS } from './popularFeeds';
+import { POPULAR_FEEDS, RECOMMENDED_FEEDS } from './popularFeeds';
 
 describe('POPULAR_FEEDS', () => {
   it('has unique display names', () => {
@@ -48,6 +48,20 @@ describe('POPULAR_FEEDS', () => {
       expect(new URL(feed.feedUrl).hostname.replace(/^www\./, '')).not.toBe(
         'news.google.com',
       );
+    }
+  });
+});
+
+describe('RECOMMENDED_FEEDS', () => {
+  it('surfaces a small starter set', () => {
+    expect(RECOMMENDED_FEEDS).toHaveLength(5);
+  });
+
+  it('every recommended feed is a real entry in the popular catalog', () => {
+    // RECOMMENDED_FEEDS references POPULAR_FEEDS by name so the URL is
+    // single-sourced; this guards against a rename drifting the two apart.
+    for (const feed of RECOMMENDED_FEEDS) {
+      expect(POPULAR_FEEDS).toContain(feed);
     }
   });
 });
