@@ -360,8 +360,8 @@ users         (id, oauth_subject, email, created_at, …)               -- Supab
 feeds         (id, url UNIQUE, secret_url, site_url, title, etag,
                last_modified, last_fetched_at, next_fetch_at,
                fetch_interval_s, error_count, last_error)             -- shared across users
-items         (id, feed_id FK, guid, url, title, author, published_at,
-               content_html, summary, full_content_html,
+items         (id, feed_id FK, guid, url, comments_url, title, author,
+               published_at, content_html, summary, full_content_html,
                full_content_fetched_at, full_content_via_fallback,
                enclosures, content_hash, created_at,
                sort_at = coalesce(published_at, created_at))          -- shared; UNIQUE(feed_id, guid), UNIQUE(feed_id, url) WHERE url IS NOT NULL
@@ -446,8 +446,13 @@ folders       (user_id FK, name, sort)
 - Conditional GET with stored `etag`/`last_modified` (`304` is free — bump
   `last_fetched_at`, done).
 - Parse RSS 2.0, Atom, RSS 1.0/RDF, JSON Feed into a normalized item shape
-  `{ guid, url, title, author, publishedAt, contentHtml, summary, enclosures }`
-  (maintained parser, e.g. `fast-xml-parser` + a normalizer).
+  `{ guid, url, commentsUrl, title, author, publishedAt, contentHtml, summary,
+  enclosures }` (maintained parser, e.g. `fast-xml-parser` + a normalizer).
+  `commentsUrl` is the item's discussion page — RSS 2.0 `<comments>` or Atom
+  `<link rel="replies">` (RFC 4685), absolutized, strict (never the article
+  link); null when absent. Stored on `items.comments_url`; distinct from `url`
+  (the article) so aggregator feeds (Hacker News, lobste.rs) keep the thread
+  link separately.
 - **Decode HTML entities in plain-text fields** (`title`, `author`,
   `feedTitle`) before storing. `fast-xml-parser` only resolves the five
   predefined XML entities, so numeric references (`&#8217;`) and HTML named

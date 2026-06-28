@@ -184,6 +184,7 @@ async function pollOne(supabase: any, feed: any): Promise<void> {
     feed_id: feed.id,
     guid: it.guid,
     url: it.url,
+    comments_url: it.commentsUrl,
     title: it.title,
     author: it.author,
     published_at: it.publishedAt,
