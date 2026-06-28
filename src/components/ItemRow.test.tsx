@@ -89,6 +89,106 @@ describe('ItemRow', () => {
     expect(meta).not.toHaveTextContent('example.com');
   });
 
+  it('links the row body to the in-app reader by default', () => {
+    renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
+    const body = screen.getByTestId('item-title');
+    expect(body).toHaveAttribute('href', '/item/item-1');
+    expect(body).not.toHaveAttribute('target');
+  });
+
+  describe('open original', () => {
+    it('links the row body straight to the source website in a new tab', () => {
+      renderWithProviders(<ItemRow feedItem={FEED_ITEM} openOriginal />);
+      const body = screen.getByTestId('item-title');
+      expect(body).toHaveAttribute('href', 'https://example.com/post');
+      expect(body).toHaveAttribute('target', '_blank');
+      expect(body.getAttribute('rel')).toContain('noopener');
+    });
+
+    it('marks the item opened (not done) when the row body is tapped', async () => {
+      const user = userEvent.setup();
+      const { source } = renderWithProviders(
+        <ItemRow feedItem={FEED_ITEM} openOriginal />,
+      );
+      await user.click(screen.getByTestId('item-title'));
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+      expect(source.stateStore.get('item-1').done).toBe(false);
+    });
+
+    it('adds an Open original button to the left of the Pin button', () => {
+      renderWithProviders(<ItemRow feedItem={FEED_ITEM} openOriginal />);
+      // Pin stays; Open original is added.
+      expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
+      const openBtn = screen.getByTestId('open-original-btn');
+      expect(openBtn).toHaveAttribute('aria-label', 'Open A test headline on its website');
+      // Open original sits before Pin in DOM order (to its left).
+      const buttons = screen.getAllByRole('button');
+      expect(buttons.indexOf(openBtn)).toBeLessThan(
+        buttons.indexOf(screen.getByTestId('pin-btn')),
+      );
+    });
+
+    it('opens the source and marks opened when the Open original button is clicked', async () => {
+      const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+      const user = userEvent.setup();
+      const { source } = renderWithProviders(
+        <ItemRow feedItem={FEED_ITEM} openOriginal />,
+      );
+      await user.click(screen.getByTestId('open-original-btn'));
+      expect(openSpy).toHaveBeenCalledWith(
+        'https://example.com/post',
+        '_blank',
+        'noopener,noreferrer',
+      );
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+      expect(source.stateStore.get('item-1').done).toBe(false);
+      openSpy.mockRestore();
+    });
+
+    it('keeps Pin and the wide-viewport Done button alongside Open original', () => {
+      restoreMatchMedia = stubWideViewport(true);
+      renderWithProviders(<ItemRow feedItem={FEED_ITEM} openOriginal />);
+      expect(screen.getByTestId('done-btn')).toBeInTheDocument();
+      expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
+      expect(screen.getByTestId('open-original-btn')).toBeInTheDocument();
+    });
+
+    it('keeps the library inverse action (no Open original button) on library rows', () => {
+      renderWithProviders(
+        <ItemRow
+          feedItem={FEED_ITEM}
+          openOriginal
+          enableSwipe={false}
+          rightAction={{
+            label: 'Unpin',
+            icon: <PushPinFilled />,
+            testId: 'library-action-pinned',
+            onToggle: () => {},
+          }}
+        />,
+      );
+      // The row body still opens the source…
+      expect(screen.getByTestId('item-title')).toHaveAttribute('target', '_blank');
+      // …but the contextual right-side action is preserved, not replaced.
+      expect(screen.getByTestId('library-action-pinned')).toBeInTheDocument();
+      expect(screen.queryByTestId('open-original-btn')).not.toBeInTheDocument();
+    });
+
+    it('falls back to the in-app reader when the item URL is not a safe http URL', () => {
+      const feedItem: FeedItem = {
+        ...FEED_ITEM,
+        item: { ...FEED_ITEM.item, url: 'javascript:alert(1)' },
+      };
+      renderWithProviders(<ItemRow feedItem={feedItem} openOriginal />);
+      const body = screen.getByTestId('item-title');
+      expect(body).toHaveAttribute('href', '/item/item-1');
+      expect(body).not.toHaveAttribute('target');
+      // No safe URL ⇒ no Open-original button either; the Pin button stays.
+      expect(screen.queryByTestId('open-original-btn')).not.toBeInTheDocument();
+      expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
+    });
+  });
+
   it('toggles Pin via the right-side button and reflects aria-pressed', async () => {
     const user = userEvent.setup();
     const { source } = renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);

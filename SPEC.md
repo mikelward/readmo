@@ -360,7 +360,7 @@ items         (id, feed_id FK, guid, url, title, author, published_at,
                enclosures, content_hash, created_at,
                sort_at = coalesce(published_at, created_at))          -- shared; UNIQUE(feed_id, guid), UNIQUE(feed_id, url) WHERE url IS NOT NULL
 subscriptions (user_id FK, feed_id FK, folder, title_override,
-               muted bool, sort, created_at)                         -- user ↔ feed
+               muted bool, open_original bool, sort, created_at)      -- user ↔ feed
 item_state    (user_id FK, item_id FK,
                pinned bool, pinned_at, favorite bool, favorite_at,
                done bool, done_at, hidden bool, hidden_at,
@@ -939,6 +939,15 @@ negligible and off every critical path. See the External services table in
    - **Mute feed** — stays subscribed but excluded from the aggregate feed;
      still reachable on its own page. (This is per-feed; per-item dismissal is
      **Done** (dismiss), unchanged from newshacker.)
+   - **Open original** — per-feed toggle: when on, that feed's article rows open
+     the original article on the source website directly (new tab) instead of the
+     in-app reader (tapping marks the item opened, same as the reader; done/pin
+     state behaves exactly as when the toggle is off). Those rows also gain an
+     **Open original** button (the reader's `OpenInNew` icon) to the **left** of
+     the Pin/Done cluster, which opens the source the same way; Pin and the
+     wide-viewport Done button are unchanged. Per-user, synced (stored on the
+     subscription, like Mute/Rename); off by default. Falls back to the normal
+     in-app-reader row for any item without a safe http(s) URL.
    - **Feed-health badge** when the poller parks a feed, with "retry now".
 
 2. **Feed views (the lists)** — the chronological merge of subscription items,
@@ -1266,7 +1275,8 @@ negligible and off every critical path. See the External services table in
     - **Subscriptions** — the feed list is **drag-to-reorder**: each row stays
       within the **3-tap-zone cap** as drag handle (left), a non-interactive
       row body (title + URL), and a right-side **overflow (⋯) button** that
-      opens a per-row menu with **Rename / Mute / Unsubscribe**. The drag
+      opens a per-row menu with **Rename / Mute / Open original /
+      Unsubscribe**. The drag
       handle is both pointer-draggable (mouse + touch) and keyboard-operable
       (focus it, then ArrowUp/ArrowDown), so reordering isn't mouse-only. The
       order persists to `subscriptions.sort` (via `reorderSubscriptions`) and
@@ -1275,7 +1285,10 @@ negligible and off every critical path. See the External services table in
       **Enter** commits, **Esc** cancels, **blur** commits, and **leaving the
       input empty clears the override** so the row falls back to the
       publisher's title. Rename writes `subscriptions.title_override` and is
-      per-user; an unchanged value is a no-op. The overflow menu dismisses via
+      per-user; an unchanged value is a no-op. **Open original** is a checkbox
+      menu item that writes `subscriptions.open_original` (per-user, synced); when
+      on, that feed's article rows link straight to the source website (new tab)
+      instead of the in-app reader. The overflow menu dismisses via
       the shared dropdown contract (`usePopoverDismiss`): Escape or an outside
       press closes it, and **the first press outside only dismisses** — its
       trailing click is swallowed, so dismissing the menu doesn't also activate

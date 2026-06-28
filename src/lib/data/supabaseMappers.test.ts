@@ -169,6 +169,7 @@ describe('mapSubscription', () => {
       folder: 'Tech',
       title_override: 'My Title',
       muted: true,
+      open_original: true,
       sort: 3,
     };
     expect(mapSubscription(row)).toEqual({
@@ -176,7 +177,19 @@ describe('mapSubscription', () => {
       folder: 'Tech',
       titleOverride: 'My Title',
       muted: true,
+      openOriginal: true,
       sort: 3,
     });
+  });
+
+  it('defaults openOriginal to false when the column is absent (pre-0027 backend)', () => {
+    const row: SubscriptionRow = {
+      feed_id: 'feed-1',
+      folder: null,
+      title_override: null,
+      muted: false,
+      sort: 0,
+    };
+    expect(mapSubscription(row).openOriginal).toBe(false);
   });
 });

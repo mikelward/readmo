@@ -140,6 +140,15 @@ export interface DataSource {
   subscribe(feedUrl: string, folder?: string | null): Promise<Feed>;
   unsubscribe(feedId: FeedId): Promise<void>;
   setMuted(feedId: FeedId, muted: boolean): Promise<void>;
+  /** Per-feed "open original": when true, the feed's article rows open the
+   * original article on the source website directly (new tab) instead of the
+   * in-app reader. */
+  setOpenOriginal(feedId: FeedId, openOriginal: boolean): Promise<void>;
+  /** Whether the backend supports the "open original" preference (the
+   * `open_original` column exists). False against a backend that predates the
+   * migration, so the UI can hide the control rather than offer a write the old
+   * backend rejects. Omitted sources are assumed to support it. */
+  supportsOpenOriginal?(): boolean;
   setTitleOverride(feedId: FeedId, title: string | null): Promise<void>;
   /** Force an immediate server-side refresh of one feed (or all). */
   refresh(feedId?: FeedId): Promise<void>;

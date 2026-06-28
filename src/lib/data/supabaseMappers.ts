@@ -123,6 +123,10 @@ export interface SubscriptionRow {
   folder: string | null;
   title_override: string | null;
   muted: boolean;
+  /** Optional: absent when read from a backend not yet migrated with the
+   * `open_original` column (loadSubscriptions falls back to the legacy
+   * columns). Defaults to false in {@link mapSubscription}. */
+  open_original?: boolean;
   sort: number;
 }
 
@@ -201,6 +205,7 @@ export function mapSubscription(row: SubscriptionRow): Subscription {
     folder: row.folder,
     titleOverride: row.title_override,
     muted: row.muted,
+    openOriginal: row.open_original ?? false,
     sort: row.sort,
   };
 }

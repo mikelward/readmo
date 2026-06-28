@@ -518,6 +518,18 @@ export function FeedsPage() {
             await ds.setMuted(feedId, muted);
             invalidate();
           }}
+          onSetOpenOriginal={async (feedId, openOriginal) => {
+            await ds.setOpenOriginal(feedId, openOriginal);
+            // Re-read subscriptions so useOpenOriginalFeeds (which backs every
+            // article row) picks up the change; the row link target flips on the
+            // next render.
+            invalidate();
+          }}
+          // Hide the toggle until the backend has the open_original column
+          // (post-migration). The subscriptions query above has settled by the
+          // time these rows render, so the capability is known. Defaults to
+          // supported for sources that don't report it (the mock).
+          showOpenOriginal={ds.supportsOpenOriginal?.() ?? true}
           onUnsubscribe={async (feedId) => {
             await ds.unsubscribe(feedId);
             invalidate();

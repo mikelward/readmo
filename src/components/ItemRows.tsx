@@ -1,6 +1,7 @@
 import type { AnimationEventHandler, ReactNode, Ref } from 'react';
 import type { FeedId, FeedItem, ItemId } from '../lib/types';
 import { useShareItem } from '../hooks/useShareItem';
+import { useOpenOriginalFeeds } from '../hooks/useOpenOriginalFeeds';
 import { ItemRow, type RightAction } from './ItemRow';
 import { ChevronRight, Sweep, Undo } from './icons';
 import { TooltipButton } from './TooltipButton';
@@ -133,6 +134,10 @@ export function ItemRows({
   onAnimationEnd,
 }: Props) {
   const share = useShareItem();
+  // Feeds the user set to "open original" — their rows link straight to the
+  // source website instead of the in-app reader. One shared subscriptions read
+  // backs every row, deduped via React Query.
+  const openOriginalFeeds = useOpenOriginalFeeds();
 
   if (isLoading) {
     return (
@@ -169,6 +174,7 @@ export function ItemRows({
       <ItemRow
         feedItem={fi}
         enableSwipe={enableSwipe}
+        openOriginal={openOriginalFeeds.has(fi.item.feedId)}
         onShare={() => share({ title: fi.item.title, url: fi.item.url })}
         rightAction={rightAction?.(fi)}
       />

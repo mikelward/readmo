@@ -16,10 +16,22 @@ function feed(id: string, title: string): Feed {
   };
 }
 
-function entry(id: string, title: string, sort: number): SubscriptionEntry {
+function entry(
+  id: string,
+  title: string,
+  sort: number,
+  openOriginal = false,
+): SubscriptionEntry {
   return {
     feed: feed(id, title),
-    subscription: { feedId: id, folder: null, titleOverride: null, muted: false, sort },
+    subscription: {
+      feedId: id,
+      folder: null,
+      titleOverride: null,
+      muted: false,
+      openOriginal,
+      sort,
+    },
   };
 }
 
@@ -31,6 +43,7 @@ function setup() {
   ];
   const onReorder = vi.fn<(ids: FeedId[]) => void>();
   const onMute = vi.fn();
+  const onSetOpenOriginal = vi.fn();
   const onUnsubscribe = vi.fn();
   const onRename = vi.fn<(id: FeedId, title: string | null) => void>();
   render(
@@ -38,11 +51,12 @@ function setup() {
       subs={subs}
       onReorder={onReorder}
       onMute={onMute}
+      onSetOpenOriginal={onSetOpenOriginal}
       onUnsubscribe={onUnsubscribe}
       onRename={onRename}
     />,
   );
-  return { onReorder, onMute, onUnsubscribe, onRename };
+  return { onReorder, onMute, onSetOpenOriginal, onUnsubscribe, onRename };
 }
 
 // The persist is debounced (300ms, only-latest-wins), so drive it with fake
@@ -68,7 +82,7 @@ describe('ReorderableSubscriptions', () => {
     }
   });
 
-  it('opens the overflow menu with Rename / Mute / Unsubscribe and toggles closed', () => {
+  it('opens the overflow menu with Rename / Mute / Open original / Unsubscribe and toggles closed', () => {
     setup();
     const overflow = screen.getByRole('button', { name: 'Actions for Alpha' });
     expect(overflow).toHaveAttribute('aria-expanded', 'false');
@@ -76,6 +90,11 @@ describe('ReorderableSubscriptions', () => {
     const menu = screen.getByRole('menu');
     expect(within(menu).getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
     expect(within(menu).getByRole('menuitemcheckbox', { name: 'Mute' })).toBeInTheDocument();
+    const openOriginal = within(menu).getByRole('menuitemcheckbox', {
+      name: 'Open original',
+    });
+    expect(openOriginal).toBeInTheDocument();
+    expect(openOriginal).toHaveAttribute('aria-checked', 'false');
     expect(within(menu).getByRole('menuitem', { name: 'Unsubscribe' })).toBeInTheDocument();
     expect(overflow).toHaveAttribute('aria-expanded', 'true');
     // Click again to close.
@@ -131,6 +150,7 @@ describe('ReorderableSubscriptions', () => {
         subs={[entry('a', 'Alpha', 0), entry('b', 'Beta', 1), entry('c', 'Gamma', 2)]}
         onReorder={onReorder}
         onMute={vi.fn()}
+        onSetOpenOriginal={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
       />,
@@ -184,6 +204,55 @@ describe('ReorderableSubscriptions', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
+  it('toggles "Open original" on via the overflow menu', () => {
+    const { onSetOpenOriginal } = setup();
+    openMenu('Beta');
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Open original' }));
+    expect(onSetOpenOriginal).toHaveBeenCalledWith('b', true);
+    expect(screen.queryByRole('menu')).toBeNull(); // closes after action
+  });
+
+  it('marks "Open original" checked and toggles it back off when already set', () => {
+    const onSetOpenOriginal = vi.fn();
+    render(
+      <ReorderableSubscriptions
+        subs={[entry('a', 'Alpha', 0, /* openOriginal */ true)]}
+        onReorder={vi.fn()}
+        onMute={vi.fn()}
+        onSetOpenOriginal={onSetOpenOriginal}
+        onUnsubscribe={vi.fn()}
+        onRename={vi.fn()}
+      />,
+    );
+    openMenu('Alpha');
+    const item = screen.getByRole('menuitemcheckbox', { name: 'Open original' });
+    expect(item).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(item);
+    expect(onSetOpenOriginal).toHaveBeenCalledWith('a', false);
+  });
+
+  it('hides the "Open original" item when the backend does not support it', () => {
+    render(
+      <ReorderableSubscriptions
+        subs={[entry('a', 'Alpha', 0)]}
+        onReorder={vi.fn()}
+        onMute={vi.fn()}
+        onSetOpenOriginal={vi.fn()}
+        showOpenOriginal={false}
+        onUnsubscribe={vi.fn()}
+        onRename={vi.fn()}
+      />,
+    );
+    openMenu('Alpha');
+    const menu = screen.getByRole('menu');
+    expect(
+      within(menu).queryByRole('menuitemcheckbox', { name: 'Open original' }),
+    ).toBeNull();
+    // The rest of the menu is unaffected.
+    expect(within(menu).getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'Unsubscribe' })).toBeInTheDocument();
+  });
+
   it('shows Unmute when the feed is already muted', () => {
     const subs = [
       { ...entry('a', 'Alpha', 0), subscription: { ...entry('a', 'Alpha', 0).subscription, muted: true } },
@@ -193,6 +262,7 @@ describe('ReorderableSubscriptions', () => {
         subs={subs}
         onReorder={vi.fn()}
         onMute={vi.fn()}
+        onSetOpenOriginal={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
       />,
@@ -306,6 +376,7 @@ describe('ReorderableSubscriptions', () => {
         subs={[entry('a', 'Alpha', 0)]}
         onReorder={vi.fn()}
         onMute={vi.fn()}
+        onSetOpenOriginal={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={onRename}
       />,
@@ -358,6 +429,7 @@ describe('ReorderableSubscriptions', () => {
         subs={[entry('a', 'Alpha', 0)]}
         onReorder={vi.fn()}
         onMute={vi.fn()}
+        onSetOpenOriginal={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={onRename}
       />,

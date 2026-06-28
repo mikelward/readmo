@@ -64,7 +64,27 @@ const ITEM_COLS =
 // read can't reach it either is folded into the DB-backed allowlist follow-up.
 const ITEM_STATE_COLS =
   'item_id, pinned, pinned_at, favorite, favorite_at, done, done_at, hidden, hidden_at, opened, opened_at';
-const SUBSCRIPTION_COLS = 'feed_id, folder, title_override, muted, sort';
+// `open_original` (0027) is selected optionally: a client can reach a backend
+// not yet migrated with the column, so loadSubscriptions falls back to
+// SUBSCRIPTION_COLS_LEGACY on an undefined-column error (guardrail #11).
+const SUBSCRIPTION_COLS =
+  'feed_id, folder, title_override, muted, open_original, sort';
+const SUBSCRIPTION_COLS_LEGACY = 'feed_id, folder, title_override, muted, sort';
+
+/** Whether an error means "this column doesn't exist on the backend yet" — the
+ * signal for the pre-0027 fallback (loadSubscriptions) and the tolerant write
+ * (setOpenOriginal). Two codes cover it because PostgREST reports a missing
+ * column differently per verb:
+ *   - SELECT naming an unknown column → Postgres SQLSTATE `42703`
+ *     (undefined_column), surfaced verbatim.
+ *   - PATCH/POST body mentioning a column not in the schema cache → PostgREST's
+ *     own `PGRST204` (HTTP 400) — what an `update({ open_original })` hits
+ *     against a pre-0027 (or stale-schema) backend.
+ * See https://docs.postgrest.org/en/v12/references/errors.html */
+function isMissingColumnError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === '42703' || code === 'PGRST204';
+}
 
 /** Max ids per `in (…)` lookup, so a large library bucket (Done/Hidden/Favorite
  * with hundreds/thousands of ids) is fetched in bounded batches rather than one
@@ -222,6 +242,13 @@ export class SupabaseDataSource implements DataSource {
   private readonly sb: SupabaseClient;
   private readonly feedCache = new Map<FeedId, Feed>();
   private hydration: Promise<void> | null = null;
+  // Capability flag for the `subscriptions.open_original` column (0027). Starts
+  // optimistic (true) and flips false the first time loadSubscriptions has to
+  // fall back to the legacy column set — i.e. the backend predates the migration.
+  // The Feeds page reads it (supportsOpenOriginal) to hide the "Open original"
+  // control until the column ships, so the new client never offers a write the
+  // old backend would reject (guardrail #11).
+  private openOriginalColumn = true;
   // Set by the write path when an LWW write lost (the server returned a row that
   // didn't take our value). Consumed by onDrained — *after* the drain clears the
   // entry — to re-pull server truth, so the re-hydrate's pending overlay no longer
@@ -618,9 +645,22 @@ export class SupabaseDataSource implements DataSource {
     // No per-instance memo: React Query owns subscription-list caching at the
     // hook layer, so a `['subscriptions']` invalidation (after subscribe/unsub/
     // mute, or to pick up another device's change) must re-hit Supabase here.
-    const subRows = this.unwrap<SubscriptionRow[]>(
-      await this.sb.from('subscriptions').select(SUBSCRIPTION_COLS),
-    );
+    const res = await this.sb.from('subscriptions').select(SUBSCRIPTION_COLS);
+    // Fall back to the legacy column set when the backend predates 0027 (the
+    // `open_original` column doesn't exist yet) — a new client must still read
+    // the subscription list against an un-migrated backend. mapSubscription
+    // defaults the missing field to false, and we record that the column is
+    // absent so the UI hides the write-triggering control until it ships.
+    let subRows: SubscriptionRow[];
+    if (isMissingColumnError(res.error)) {
+      this.openOriginalColumn = false;
+      subRows = this.unwrap<SubscriptionRow[]>(
+        await this.sb.from('subscriptions').select(SUBSCRIPTION_COLS_LEGACY),
+      );
+    } else {
+      this.openOriginalColumn = true;
+      subRows = this.unwrap<SubscriptionRow[]>(res);
+    }
     await this.ensureFeeds(subRows.map((s) => s.feed_id));
     const out: Array<{ subscription: Subscription; feed: Feed }> = [];
     for (const row of subRows) {
@@ -1089,6 +1129,36 @@ export class SupabaseDataSource implements DataSource {
       .update({ muted })
       .eq('feed_id', feedId);
     if (error) throw error instanceof Error ? error : new Error(String(error));
+  }
+
+  supportsOpenOriginal(): boolean {
+    // False only once a subscriptions read has proven the column absent (an
+    // un-migrated backend). Optimistic until then; the Feeds page reads this
+    // after the subscriptions query settles, so by the time the rows render the
+    // value is known.
+    return this.openOriginalColumn;
+  }
+
+  async setOpenOriginal(feedId: FeedId, openOriginal: boolean): Promise<void> {
+    // RLS + the column-scoped UPDATE grant (0027) confine this to the caller's
+    // own row and the single display column.
+    const { error } = await this.sb
+      .from('subscriptions')
+      .update({ open_original: openOriginal })
+      .eq('feed_id', feedId);
+    if (!error) return;
+    // Against a backend that predates 0027 the column doesn't exist. The Feeds
+    // page hides the control via supportsOpenOriginal(), but that flag is only
+    // proven after a live subscriptions read — a render served entirely from the
+    // persisted query cache could still surface the control. So tolerate the
+    // undefined-column write here too: record the column as absent (so the
+    // control hides on the next render) and no-op rather than hard-reject. The
+    // client must never *require* the unshipped migration (guardrail #11).
+    if (isMissingColumnError(error)) {
+      this.openOriginalColumn = false;
+      return;
+    }
+    throw error instanceof Error ? error : new Error(String(error));
   }
 
   async setTitleOverride(feedId: FeedId, title: string | null): Promise<void> {
