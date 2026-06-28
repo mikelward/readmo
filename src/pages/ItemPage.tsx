@@ -257,7 +257,7 @@ export function ItemPage() {
   // in the `['fulltext', id]` query by a pinned/favorite prefetch or an earlier
   // open. Such an article opens straight into the reading view (like a body
   // cached on the item itself). Only a body fetched *fresh in the background*
-  // this session waits behind "Keep reading" (so the reader doesn't reflow). The
+  // this session waits behind "Read more" (so the reader doesn't reflow). The
   // lazy init reads the cache synchronously to avoid a one-frame feed flash.
   const [fullReadyAtOpen, setFullReadyAtOpen] = useState(() =>
     cachedFullTextOk(queryClient.getQueryData<FullTextResult>(['fulltext', id])),
@@ -448,7 +448,7 @@ export function ItemPage() {
 
   // Resolve the reading-mode body. The RSS body always shows first; the full
   // article (cached, or fetched in the background) is revealed only when the
-  // user asks for it via "Keep reading" — except a body already cached full
+  // user asks for it via "Read more" — except a body already cached full
   // (pinned/previously read) defaults straight to the reading view. `view` /
   // `showReading` / `fullHtml` are computed above so the overflow menu can
   // offer "Show feed version" while reading.
@@ -545,7 +545,7 @@ export function ItemPage() {
             data-testid="reader-keep-reading"
             onClick={() => setUserView('full')}
           >
-            {truncated ? 'Keep reading' : 'Show reading view'}
+            {truncated ? 'Read more' : 'Show reading view'}
           </button>
         ) : fullFailed ? (
           <>
