@@ -76,6 +76,74 @@ export function discoverFromHtml(html: string, baseUrl: string): FeedCandidate[]
 }
 
 // ---------------------------------------------------------------------------
+// Deep-link & last-resort fallbacks
+// ---------------------------------------------------------------------------
+
+/**
+ * The site home page for a pasted deep link, or null when there's nothing new
+ * to gain by probing it. A pasted article (e.g. `/football/news/123/story`)
+ * usually doesn't advertise the site's feed in its own <head>, but the home
+ * page almost always does — so when the page itself yields no feed we re-probe
+ * the origin root. Returns null when `pageUrl` is already the root (no path, no
+ * query) or isn't an http(s) URL, so the caller skips a redundant fetch.
+ */
+export function homePageUrl(pageUrl: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(pageUrl);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  const path = parsed.pathname.replace(/\/+$/, '');
+  // Already at the root with no query — the page we just probed *is* the home
+  // page, so there's nothing further to discover here.
+  if (path === '' && parsed.search === '') return null;
+  return `${parsed.protocol}//${parsed.host}/`;
+}
+
+/** Locale knobs for the Google News RSS endpoint. US English by default
+ * (US-English-everywhere house rule). */
+export const GOOGLE_NEWS_LOCALE = { hl: 'en-US', gl: 'US', ceid: 'US:en' } as const;
+
+/**
+ * A Google News RSS search feed scoped to the pasted page's domain
+ * (`site:<host>`), or null when the URL isn't usable. This is the last-resort
+ * fallback: when neither the pasted page nor the site home page advertises a
+ * real feed, a `site:` search still gives the reader *something* — a
+ * continuously-updated feed of that publisher's recent articles, assembled by
+ * Google rather than the publisher. The publisher's own feed always wins when
+ * one exists; this only fires when discovery would otherwise come up empty.
+ *
+ * Returns null for non-http(s) URLs, hostless inputs, and Google's own hosts
+ * (so we never aggregate Google News over itself).
+ */
+export function googleNewsFeedFor(
+  pageUrl: string,
+  locale: { hl: string; gl: string; ceid: string } = GOOGLE_NEWS_LOCALE,
+): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(pageUrl);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+  // Need a real registrable domain; bare hostnames (localhost) can't be a
+  // meaningful `site:` filter.
+  if (!host || !host.includes('.')) return null;
+  if (host === 'google.com' || host === 'news.google.com') return null;
+  const params = new URLSearchParams({
+    q: `site:${host}`,
+    hl: locale.hl,
+    gl: locale.gl,
+    ceid: locale.ceid,
+  });
+  return `https://news.google.com/rss/search?${params.toString()}`;
+}
+
+// ---------------------------------------------------------------------------
 // Reddit
 // ---------------------------------------------------------------------------
 

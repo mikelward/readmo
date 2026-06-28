@@ -1,6 +1,11 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
-import { discoverFromHtml, redditFeedFor } from './discover.ts';
+import {
+  discoverFromHtml,
+  googleNewsFeedFor,
+  homePageUrl,
+  redditFeedFor,
+} from './discover.ts';
 
 describe('discoverFromHtml — <link> autodiscovery', () => {
   const html = `
@@ -124,5 +129,72 @@ describe('redditFeedFor', () => {
   it('is exercised by discoverFromHtml for Reddit pages', () => {
     const found = discoverFromHtml('<html></html>', 'https://www.reddit.com/r/programming');
     expect(found[0].url).toBe('https://www.reddit.com/r/programming.rss');
+  });
+});
+
+describe('homePageUrl', () => {
+  it('returns the origin root for a deep article link', () => {
+    expect(
+      homePageUrl(
+        'https://www.skysports.com/football/news/12098/13556636/world-cup-2026-bracket',
+      ),
+    ).toBe('https://www.skysports.com/');
+  });
+
+  it('preserves the host (incl. subdomain) and scheme', () => {
+    expect(homePageUrl('http://blog.example.co.uk/2026/06/post')).toBe(
+      'http://blog.example.co.uk/',
+    );
+  });
+
+  it('returns null when the URL is already the home page', () => {
+    expect(homePageUrl('https://example.com')).toBeNull();
+    expect(homePageUrl('https://example.com/')).toBeNull();
+  });
+
+  it('still probes the home page when only a query string differs', () => {
+    expect(homePageUrl('https://example.com/?ref=twitter')).toBe('https://example.com/');
+  });
+
+  it('returns null for non-http(s) and unparseable URLs', () => {
+    expect(homePageUrl('ftp://example.com/file')).toBeNull();
+    expect(homePageUrl('not a url')).toBeNull();
+  });
+});
+
+describe('googleNewsFeedFor', () => {
+  it('builds a site: search feed for the page domain', () => {
+    const out = googleNewsFeedFor(
+      'https://www.skysports.com/football/news/12098/13556636/world-cup-2026-bracket',
+    );
+    expect(out).not.toBeNull();
+    const u = new URL(out!);
+    expect(u.origin + u.pathname).toBe('https://news.google.com/rss/search');
+    // www. is stripped so the site: filter matches the registrable domain.
+    expect(u.searchParams.get('q')).toBe('site:skysports.com');
+    expect(u.searchParams.get('hl')).toBe('en-US');
+    expect(u.searchParams.get('ceid')).toBe('US:en');
+  });
+
+  it('honors a custom locale', () => {
+    const out = googleNewsFeedFor('https://example.de/artikel', {
+      hl: 'de',
+      gl: 'DE',
+      ceid: 'DE:de',
+    });
+    const u = new URL(out!);
+    expect(u.searchParams.get('hl')).toBe('de');
+    expect(u.searchParams.get('ceid')).toBe('DE:de');
+  });
+
+  it('never aggregates Google News over itself', () => {
+    expect(googleNewsFeedFor('https://news.google.com/foo')).toBeNull();
+    expect(googleNewsFeedFor('https://www.google.com/search?q=x')).toBeNull();
+  });
+
+  it('returns null for hostless, non-http(s), and unparseable URLs', () => {
+    expect(googleNewsFeedFor('http://localhost/page')).toBeNull();
+    expect(googleNewsFeedFor('ftp://example.com/file')).toBeNull();
+    expect(googleNewsFeedFor('not a url')).toBeNull();
   });
 });
