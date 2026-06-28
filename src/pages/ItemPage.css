@@ -167,25 +167,14 @@
   padding: 20px 16px 8px;
 }
 
-.reader__source {
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: var(--rm-accent);
-  text-decoration: none;
-}
-
-/* Provenance tag shown after the source when the reading body came from the
-   bot-block fallback fetch. Muted so it reads as a quiet aside, not a second
-   link competing with the source. */
+/* Provenance tag shown in the meta line when the reading body came from the
+   bot-block fallback fetch. Muted so it reads as a quiet aside. */
 .reader__via-fallback {
-  margin-left: 6px;
-  font-size: 0.85rem;
   font-weight: 400;
   color: var(--rm-read);
 }
 
 .reader__domain {
-  font-size: 0.85rem;
   color: var(--rm-meta);
 }
 
