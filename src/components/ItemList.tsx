@@ -42,6 +42,21 @@ import './ItemList.css';
 // on screen.
 const SCROLL_HIDE_BATCH_WINDOW_MS = 2000;
 
+// How far below the top sticky chrome a release-time scroll anchor must sit so
+// the auto-hide cascade can't sweep the anchor row itself (see
+// captureExitTopAnchor). One row's worth — comfortably past the sweep line and
+// any pinned group header, while still picking a row near the top of what the
+// reader is looking at.
+const ANCHOR_SAFE_MARGIN_PX = 56;
+
+// Toggle the browser's scroll anchoring on the list body while a release-time
+// scroll pin is active (see captureExitTopAnchor / the restore layout effect).
+function setBodyOverflowAnchor(value: '' | 'none'): void {
+  if (typeof document === 'undefined') return;
+  const body = document.querySelector('.item-list__body');
+  if (body instanceof HTMLElement) body.style.overflowAnchor = value;
+}
+
 // Module-level monotonic source of auto-hide burst keys. The store's undo batch
 // key is global (one shared DataSource across every feed view), so a per-mount
 // counter that always starts at 0 would let two ItemList mounts collide — a
@@ -227,8 +242,58 @@ export function ItemList({
   // ids here lets that subscription, which runs synchronously inside hideMany,
   // tell an auto-hide Done flip from a reader's in-view mark-done and skip it.
   const autoHideInFlightRef = useRef<Set<ItemId> | null>(null);
+  // The reader's scroll anchor across a release-time top-exit flush: a row under
+  // their eyes and where it sits on screen, held there until they next act on
+  // the viewport. The browser's own scroll anchoring can't be trusted across
+  // this removal — it's suppressed for a beat right after a touch scroll, and
+  // even once live it under-compensates for a bulk removal, so the first
+  // still-visible row visibly jerks upward, at worst snapping the view to the
+  // next feed group — so we pin the row's on-screen position ourselves. Set by a
+  // preserveScroll commit; consumed by the restore layout effect; cleared on the
+  // next pointer/wheel/key input — or any native scroll we didn't cause (see
+  // below).
+  const exitTopAnchorRef = useRef<{ id: ItemId; top: number } | null>(null);
+  // The scrollY our last correction left behind, so a native `scroll` event can
+  // tell our own restoring scrollBy (matches) from the reader's momentum/inertial
+  // scroll after a flick (differs) — the latter fires no touch/wheel/key, so it
+  // would otherwise keep the pin armed and fight the fling.
+  const pinnedScrollYRef = useRef<number | null>(null);
+  const captureExitTopAnchor = useCallback((hideIds: Set<ItemId>) => {
+    // Clear the top sweep zone by a full row so the chosen anchor can't itself
+    // be auto-hidden as the view settles. The release-time collapse pushes more
+    // rows under the chrome, and the IntersectionObserver auto-hides them a beat
+    // later (the "cascade"); its exit line sits at the *current* sticky-chrome
+    // bottom, which in grouped view a pinned section header occludes further.
+    // measureTopChromeHeight() is the layout-height sum of the always-present top
+    // chrome; adding a row's worth of margin keeps the anchor safely below both
+    // the sweep line and any pinned header, so a single fixed anchor survives the
+    // whole cascade (no drift-prone re-anchoring needed). Anchor to the topmost
+    // such surviving row and hold it at the same client-top — the rows above it
+    // collapse and the view stays put.
+    const safeTop = measureTopChromeHeight() + ANCHOR_SAFE_MARGIN_PX;
+    for (const li of document.querySelectorAll('li[data-item-id]')) {
+      const id = (li as HTMLElement).dataset.itemId;
+      if (!id || hideIds.has(id)) continue;
+      const rect = li.getBoundingClientRect();
+      if (rect.top >= safeTop) {
+        exitTopAnchorRef.current = { id, top: rect.top };
+        // Left null until the first restore records where it parked scrollY, so
+        // a scroll that settles between the flush and that correction (e.g. the
+        // drag's own tail) can't be mistaken for a reader fling.
+        pinnedScrollYRef.current = null;
+        // Suppress the browser's own scroll anchoring for the life of the pin,
+        // so the only thing moving scrollY is our own correction. That keeps the
+        // restore deterministic (we apply the full shift ourselves rather than
+        // racing the browser's partial, delayed adjustment) AND lets the scroll
+        // listener cleanly tell our corrections from a reader fling.
+        setBodyOverflowAnchor('none');
+        return;
+      }
+    }
+    exitTopAnchorRef.current = null;
+  }, []);
   const commitExitTop = useCallback(
-    (ids: ItemId[]) => {
+    (ids: ItemId[], opts?: { preserveScroll?: boolean }) => {
       // Skip rows that are pinned (shielded) or already Done/Hidden — a
       // re-delivered id (e.g. observer recreation on a sticky-inset change
       // before the refetch drops the row) must not re-enter hideMany and
@@ -250,6 +315,11 @@ export function ItemList({
         return !st.pinned && !st.done && !st.hidden;
       });
       if (toHide.length === 0) return;
+      // Capture the anchor only when asked (the touch-release flush), and only
+      // now that a removal is certain — so the restore layout effect, keyed on
+      // the visibleItems shrink this hideMany causes, always fires to consume it
+      // and never strands a stale anchor for an unrelated later render.
+      if (opts?.preserveScroll) captureExitTopAnchor(new Set(toHide));
       const now = Date.now();
       if (now - lastScrollHideAt.current >= SCROLL_HIDE_BATCH_WINDOW_MS) {
         // A gap ends the burst; mint a globally-unique key for the new one so it
@@ -265,7 +335,7 @@ export function ItemList({
       ds.stateStore.hideMany(toHide, now, { batchKey: scrollBatchKey.current });
       autoHideInFlightRef.current = null;
     },
-    [ds],
+    [ds, captureExitTopAnchor],
   );
 
   // Auto-hide-on-scroll must not drop rows out from under a finger that's still
@@ -306,8 +376,36 @@ export function ItemList({
     // The buffer's identity is stable across renders; capture it so the cleanup
     // doesn't read `ref.current` (which the exhaustive-deps lint flags).
     const buffered = bufferedExitTopRef.current;
+    // Any fresh viewport input — a new touch, a wheel/trackpad scroll, or a
+    // keyboard scroll — means the reader is taking control again, so drop any
+    // pending scroll pin and stop re-anchoring to the old row.
+    const releasePin = () => {
+      if (!exitTopAnchorRef.current) return;
+      exitTopAnchorRef.current = null;
+      pinnedScrollYRef.current = null;
+      setBodyOverflowAnchor('');
+    };
+    // Momentum/inertial scroll after a flick fires no touch/wheel/key — only
+    // `scroll`. Release the pin on any scroll the reader (or that inertia) drove,
+    // told apart from our own restoring scrollBy by the scrollY it left behind:
+    // our layout effect always lands scrollY back on pinnedScrollYRef, so a
+    // scroll event whose offset differs is the fling, and we stop fighting it.
+    const onScroll = () => {
+      if (!exitTopAnchorRef.current) return;
+      // Until our first correction has recorded where it left scrollY, the pin
+      // isn't established — ignore scrolls (e.g. the drag's own position settling
+      // right after touchend) rather than release on them.
+      if (pinnedScrollYRef.current === null) return;
+      // With anchoring suppressed (see captureExitTopAnchor) the only scrollY
+      // changes during the settle are our own corrections, which always land back
+      // on pinnedScrollYRef — so a scroll whose offset differs is the reader's
+      // momentum/inertial fling, and we let the pin go.
+      if (Math.round(window.scrollY) === pinnedScrollYRef.current) return;
+      releasePin();
+    };
     const onTouchStart = () => {
       touchActiveRef.current = true;
+      releasePin();
     };
     const flush = (e: TouchEvent) => {
       // Hold off until the *last* finger lifts — a multi-touch gesture that
@@ -319,15 +417,23 @@ export function ItemList({
       // handleReenter, so whatever remains is still scrolled past.
       const ids = [...buffered];
       buffered.clear();
-      commitExitTop(ids);
+      // Pin the reader's scroll position across this release-time bulk removal —
+      // it's the case the browser's anchoring mishandles (see captureExitTopAnchor).
+      commitExitTop(ids, { preserveScroll: true });
     };
     document.addEventListener('touchstart', onTouchStart, { passive: true });
     document.addEventListener('touchend', flush, { passive: true });
     document.addEventListener('touchcancel', flush, { passive: true });
+    document.addEventListener('wheel', releasePin, { passive: true });
+    document.addEventListener('keydown', releasePin);
+    document.addEventListener('scroll', onScroll, { passive: true });
     return () => {
       document.removeEventListener('touchstart', onTouchStart);
       document.removeEventListener('touchend', flush);
       document.removeEventListener('touchcancel', flush);
+      document.removeEventListener('wheel', releasePin);
+      document.removeEventListener('keydown', releasePin);
+      document.removeEventListener('scroll', onScroll);
       // Toggling the feature off mid-gesture must not strand buffered ids.
       touchActiveRef.current = false;
       buffered.clear();
@@ -1139,6 +1245,37 @@ export function ItemList({
     const st = ds.stateStore.get(fi.item.id);
     return !st.done && !st.hidden;
   });
+
+  // Hold the reader's scroll position across a touch-release top-exit flush.
+  // A layout effect (after React commits a render, before paint): reading
+  // getBoundingClientRect first forces the layout that applies whatever the
+  // browser's own anchoring managed, so we correct only the residual shift — to
+  // zero — in the same frame, with no visible flash. The pin re-applies on every
+  // render until the reader next touches/wheels/keys the viewport OR drives a
+  // native scroll we didn't cause (a post-flick momentum glide — see onScroll),
+  // because the flush shifts layout up to three times — the immediate local
+  // removal, the invalidated refetch landing ~100ms later, and the cascade
+  // auto-hide of rows the collapse pushed under the chrome (fired async by the
+  // IntersectionObserver after paint, so no settle heuristic can reliably outlast
+  // it). Re-applying is idempotent (delta is 0 once layout is stable). The ref
+  // gate makes every render without a live pin a no-op.
+  useLayoutEffect(() => {
+    const anchor = exitTopAnchorRef.current;
+    if (!anchor) return;
+    const el = document.querySelector(`[data-item-id="${anchor.id}"]`);
+    if (!(el instanceof HTMLElement)) {
+      // The anchor row itself left the list — nothing left to pin to.
+      exitTopAnchorRef.current = null;
+      pinnedScrollYRef.current = null;
+      setBodyOverflowAnchor('');
+      return;
+    }
+    const delta = el.getBoundingClientRect().top - anchor.top;
+    if (delta !== 0) window.scrollBy(0, delta);
+    // Record where we left scrollY so the `scroll` listener can recognize this
+    // correction as ours and not mistake it for a reader/momentum scroll.
+    pinnedScrollYRef.current = Math.round(window.scrollY);
+  }, [visibleItems]);
 
   // Scroll the list back up to the topmost row an Undo just restored, but only
   // when that row is off-screen above the fold — so undoing a scroll-past burst
