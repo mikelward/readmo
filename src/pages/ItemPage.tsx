@@ -556,8 +556,10 @@ export function ItemPage() {
                 because a short complete entry and a short teaser are
                 indistinguishable by length, we don't try to tell them apart.
                 Either way the feed body stays and the Open-original button below
-                is the escape hatch to the source. `auth`/`unreachable` are real
-                misses that need explaining, so they keep their note. */}
+                is the escape hatch to the source. (A reading-mode allowlist
+                denial is reported as a `retryable` empty, so it's silent here
+                for the same reason.) `auth`/`unreachable` are real misses that
+                need explaining, so they keep their note. */}
             {fetched?.status === 'auth' ? (
               <span className="reader__mode-note" data-testid="fulltext-error">
                 This article needs you to sign in — open the original.

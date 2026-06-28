@@ -6,7 +6,7 @@ import {
 } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useOnlineStatus } from './useOnlineStatus';
-import { fullTextStaleTime, looksTruncated } from '../lib/fullText';
+import { fullTextStaleTime, isFullTextSettled, looksTruncated } from '../lib/fullText';
 import type { FullTextResult } from '../lib/fullText';
 import type { FeedItem } from '../lib/types';
 import { extractProxiedImageUrls } from '../lib/extractProxiedImageUrls';
@@ -110,8 +110,10 @@ export function useOfflineCacheLock(): void {
             return;
           }
           // Truncated feed: also need the extracted reading body. Only mark
-          // warmed on a terminal result — a transient `unreachable` stays
-          // retryable so we don't get stuck on the feed stub.
+          // warmed on a SETTLED result — a transient `unreachable`, or a
+          // retryable allowlist denial that a later allowlist change could flip,
+          // stays unwarmed so a later reconnect/state-sync re-prefetches it
+          // instead of leaving the offline cache stuck on the feed stub.
           await queryClient.prefetchQuery({
             queryKey: ['fulltext', id],
             queryFn: () => ds.fetchFullText(id),
@@ -120,7 +122,7 @@ export function useOfflineCacheLock(): void {
           });
           const ft = queryClient.getQueryData<FullTextResult>(['fulltext', id]);
           if (ft?.contentHtml) prefetchImages(ft.contentHtml);
-          if (ft && ft.status !== 'unreachable') warmed.add(id);
+          if (ft && isFullTextSettled(ft)) warmed.add(id);
         });
     },
     [ds, queryClient, warmed],

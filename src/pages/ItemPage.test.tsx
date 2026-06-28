@@ -507,6 +507,28 @@ describe('ItemPage reading mode', () => {
     openSpy.mockRestore();
   });
 
+  it('stays silent for a retryable allowlist denial (no error note, feed body + open-original)', async () => {
+    // A confirmed non-allowlisted caller gets a `retryable` empty — rendered
+    // exactly like a genuine `empty` (silent feed-stub fallback), never an
+    // alarming note or a "Try again" button (we don't advertise a feature they
+    // can't use).
+    class GatedSource extends MockDataSource {
+      async fetchFullText(): Promise<FullTextResult> {
+        return { status: 'empty', contentHtml: null, retryable: true };
+      }
+    }
+    const source = new GatedSource(`test-${Math.random()}`);
+    renderReader(source);
+
+    await screen.findByText(/visible creases/);
+    await waitFor(() =>
+      expect(screen.queryByTestId('fulltext-loading')).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId('fulltext-error')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('fulltext-retry')).not.toBeInTheDocument();
+    expect(screen.getByTestId('fulltext-open-original')).toBeInTheDocument();
+  });
+
   it('stays silent for a short auto-fetched entry that has no readable version', async () => {
     // The default item-1 body is short, so it reads as truncated and reading
     // mode auto-fetches. A short *complete* entry (e.g. a Reddit link post) is
