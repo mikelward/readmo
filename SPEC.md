@@ -264,16 +264,22 @@ sole age-exempt path. (Revisit the 30-day TTL with real usage data.)
 
 **Feed freshness window + per-feed floor.** Home, folder, and single-feed list
 views serve an item when it is **pinned**, OR **younger than 3 days**
-(`HOME_WINDOW_MS`), OR among **its feed's newest 10 non-dismissed items**
-(`FEED_FLOOR`). The window declutters a busy feed to "recent only"; the floor
-keeps an **infrequently-updated feed from going blank** when nothing it
-published is recent — you always see at least its latest handful. Both are knobs
+(`HOME_WINDOW_MS`), OR among **its feed's newest 10 items by date**
+(`FEED_FLOOR`), with Done/Hidden then filtered from the body. The window
+declutters a busy feed to "recent only"; the floor keeps an
+**infrequently-updated feed from going blank** when nothing it published is
+recent — you always see at least its latest handful. Both are knobs
 (`HOME_WINDOW_MS` / `FEED_FLOOR`); the server `feed_items` RPC applies the same
 3-day interval and a `row_number()`-per-feed floor in its body branch.
 
 - **Pinned items are exempt** from both — a pin keeps an item regardless of age.
-- The floor ranks only **non-dismissed** items, so marking one Done frees its
-  slot for the next.
+- The floor ranks the feed's items **by date, irrespective of read/done state**:
+  a Done item still occupies its recency slot, so dismissing a recent item
+  **shrinks** the feed (and counts the badge down) rather than pulling an older
+  item up to refill the floor. If a feed's newest 10 are all Done, it shows
+  nothing more (pins and in-window items aside) — "don't serve more". (This
+  reverses an earlier decision where the floor ranked only non-dismissed items
+  and so topped a feed back up to 10 unread as you read it.)
 - Nothing about *opening* extends the window/floor: an un-pinned item leaves
   once it's both past 3 days and beyond its feed's newest 10 (open it → it's in
   `/opened` for 30 days; want it kept in the feed → pin it).
@@ -388,10 +394,12 @@ folders       (user_id FK, name, sort)
   missing row as the default state — so new items surface immediately without
   requiring a pre-inserted state row. The body excludes Done/Hidden and serves
   an item when `items.sort_at > now() - interval '3 days'` **or** it's among its
-  feed's newest 10 non-dismissed. To keep that **index-bounded** (never rank a
-  feed's full archive), `feed_items` assembles the body from three candidate
-  sets — a freshness range scan, a per-feed top-10 `LATERAL … ORDER BY sort_at
-  DESC LIMIT 10`, and the pinned partial index — each riding
+  feed's newest 10 by date (Done/Hidden occupy a floor slot but are filtered
+  afterward, so a dismissed recent item isn't backfilled by an older one). To
+  keep that **index-bounded** (never rank a feed's full archive), `feed_items`
+  assembles the body from three candidate sets — a freshness range scan, a
+  per-feed top-10 `LATERAL … ORDER BY sort_at DESC LIMIT 10`, and the pinned
+  partial index — each riding
   `items(feed_id, sort_at desc)`, rather than a `row_number()` over all history.
   Pinned items skip the window/floor;
   the Opened fade reads `COALESCE(is.opened, false)`; Pinned items are

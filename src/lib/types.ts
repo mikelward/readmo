@@ -127,12 +127,15 @@ export const TTL_MS = 30 * DAY_MS;
  * knob; the server `feed_items` RPC applies the same interval. */
 export const HOME_WINDOW_MS = 3 * DAY_MS;
 
-/** Per-feed floor: each feed always contributes at least its newest
- * `FEED_FLOOR` (non-dismissed) items to list views even when they're older than
- * the freshness window, so an infrequently-updated feed still shows something
- * instead of going blank (SPEC.md *Feed freshness window*). The window and the
- * floor are unioned: an item shows if it's pinned, OR younger than the window,
- * OR among its feed's newest `FEED_FLOOR`. Mirrored by the `feed_items` RPC. */
+/** Per-feed floor: each feed always contributes its newest `FEED_FLOOR` items
+ * *by date* to list views even when they're older than the freshness window, so
+ * an infrequently-updated feed still shows something instead of going blank
+ * (SPEC.md *Feed freshness window*). The floor ranks by date irrespective of
+ * state — Done/Hidden still occupy their slot and are filtered afterward — so
+ * dismissing a recent item shrinks the feed rather than backfilling an older
+ * one. The window and the floor are unioned: an item shows if it's pinned, OR
+ * younger than the window, OR among its feed's newest `FEED_FLOOR`. Mirrored by
+ * the `feed_items` RPC. */
 export const FEED_FLOOR = 10;
 
 /** Per-feed window for the group-by-feed view: each feed section opens showing
