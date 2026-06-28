@@ -1801,6 +1801,116 @@ describe('ItemList', () => {
       ).not.toBe('none');
     });
 
+    it('defers an auto-hide while a touch is in progress, committing it on release', async () => {
+      // Removing a row above the viewport while the reader's finger is still
+      // down shifts content up under them (the browser suspends scroll
+      // anchoring mid-touch) — at the foot of the list that yanks the next feed
+      // group into view. The top-exit must be buffered until the finger lifts.
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      const source = new MockDataSource(`test-${Math.random()}`);
+      renderHome(source);
+
+      const firstRow = (await screen.findAllByTestId('item-row'))[0];
+      const titleText = within(firstRow).getByTestId('item-title').textContent;
+      const titles = () =>
+        screen.queryAllByTestId('item-title').map((n) => n.textContent);
+
+      // Finger down, then the row scrolls fully off the top.
+      act(() => {
+        document.dispatchEvent(new Event('touchstart'));
+      });
+      act(() => {
+        setVisibilityForTest(firstRow.closest('li')!, 0);
+      });
+
+      // Deferred: the row is still on screen while the touch is held.
+      await Promise.resolve();
+      expect(titles()).toContain(titleText);
+
+      // The finger lifts (no touches remain) → the buffered hide commits.
+      act(() => {
+        const ev = new Event('touchend');
+        Object.defineProperty(ev, 'touches', { value: [] });
+        document.dispatchEvent(ev);
+      });
+      await waitFor(() => {
+        expect(titles()).not.toContain(titleText);
+      });
+    });
+
+    it.each([
+      ['fully', 1],
+      ['partially', 0.5],
+    ])(
+      'does not commit a deferred auto-hide for a row scrolled %s back into view before release',
+      async (_label, ratio) => {
+        // Reverse-direction race: a held touch scrolls a row off the top (the
+        // hide is buffered, not committed), then the reader scrolls back up so
+        // the same row is visible again — fully OR only partially — before
+        // lifting. Either way the row is under the finger, so the flush must
+        // drop it; marking it Done would make a visible row vanish on release.
+        window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+        resetReadingPrefsCacheForTest();
+        const source = new MockDataSource(`test-${Math.random()}`);
+        renderHome(source);
+
+        const firstRow = (await screen.findAllByTestId('item-row'))[0];
+        const li = firstRow.closest('li')!;
+        const titleText = within(firstRow).getByTestId('item-title').textContent;
+        const titles = () =>
+          screen.queryAllByTestId('item-title').map((n) => n.textContent);
+
+        act(() => {
+          document.dispatchEvent(new Event('touchstart'));
+        });
+        // Off the top (buffered)…
+        act(() => {
+          setVisibilityForTest(li, 0);
+        });
+        // …then reversed back into view (fully or partially) before lift.
+        act(() => {
+          setVisibilityForTest(li, ratio);
+        });
+        act(() => {
+          const ev = new Event('touchend');
+          Object.defineProperty(ev, 'touches', { value: [] });
+          document.dispatchEvent(ev);
+        });
+
+        await Promise.resolve();
+        expect(titles()).toContain(titleText);
+      },
+    );
+
+    it('does not commit a deferred auto-hide until the last finger lifts', async () => {
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      const source = new MockDataSource(`test-${Math.random()}`);
+      renderHome(source);
+
+      const firstRow = (await screen.findAllByTestId('item-row'))[0];
+      const titleText = within(firstRow).getByTestId('item-title').textContent;
+      const titles = () =>
+        screen.queryAllByTestId('item-title').map((n) => n.textContent);
+
+      act(() => {
+        document.dispatchEvent(new Event('touchstart'));
+      });
+      act(() => {
+        setVisibilityForTest(firstRow.closest('li')!, 0);
+      });
+
+      // A touchend that still leaves a finger down must keep the hide deferred.
+      act(() => {
+        const ev = new Event('touchend');
+        Object.defineProperty(ev, 'touches', { value: [{}] });
+        document.dispatchEvent(ev);
+      });
+      await Promise.resolve();
+      expect(titles()).toContain(titleText);
+    });
+
     it('shields a pinned row from auto-hide', async () => {
       window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
       resetReadingPrefsCacheForTest();

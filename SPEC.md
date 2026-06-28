@@ -1208,7 +1208,15 @@ negligible and off every critical path. See the External services table in
      shield (pinned rows are never auto-hidden), and rows still below the fold
      are never auto-hidden — only ones you've actually scrolled past. Rows that
      are already Done/Hidden are skipped, so a re-delivered id can't clobber the
-     undo baseline. **Undo restores the whole scroll burst, not just the last
+     undo baseline. **On touch, a row that scrolls off the top while a finger is
+     still down is held, not dropped, until the finger lifts** (`touchend`/
+     `touchcancel`): the browser suspends scroll anchoring mid-gesture, so
+     removing a row above the viewport then shifts the content up under the
+     reader — most visibly at the foot of a loaded feed section, where it yanks
+     the next feed group into view. Buffering the top-exits and committing them
+     on release lets the anchoring that keeps the first visible row fixed do its
+     job. Flick-scrolling is unaffected (the finger has already lifted, so rows
+     mark Done live during the momentum glide); only a held-finger drag defers. **Undo restores the whole scroll burst, not just the last
      row:** dismissals within a rolling **2s window** of each other extend a
      single undo batch (mirrors newshacker's dismiss-batch window), so one tap of
      the toolbar Undo brings back the run you just scrolled past; a gap longer

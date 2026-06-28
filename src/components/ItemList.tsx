@@ -227,7 +227,7 @@ export function ItemList({
   // ids here lets that subscription, which runs synchronously inside hideMany,
   // tell an auto-hide Done flip from a reader's in-view mark-done and skip it.
   const autoHideInFlightRef = useRef<Set<ItemId> | null>(null);
-  const handleExitTop = useCallback(
+  const commitExitTop = useCallback(
     (ids: ItemId[]) => {
       // Skip rows that are pinned (shielded) or already Done/Hidden — a
       // re-delivered id (e.g. observer recreation on a sticky-inset change
@@ -267,8 +267,76 @@ export function ItemList({
     },
     [ds],
   );
+
+  // Auto-hide-on-scroll must not drop rows out from under a finger that's still
+  // on the screen. While the browser is mid-touch it suspends scroll anchoring,
+  // so removing rows *above* the viewport then shifts everything below up under
+  // the reader instead of holding the first visible row fixed — worst at the
+  // foot of the loaded list (a feed's "More"/the next section's header), where
+  // the shift yanks the next feed group into view. So we buffer top-exits while
+  // a touch is in progress and commit them on release, when anchoring is live
+  // again and absorbs the removal (the same guarantee the non-touch path already
+  // relies on). Pointer events can't gate this: a `pan-y` scroll fires
+  // `pointercancel` the instant the browser claims the gesture, so the finger
+  // looks "up" mid-scroll. Touch events keep firing through the scroll, so we
+  // track the physical contact with them. Non-touch input (wheel/trackpad) never
+  // fires these, so it keeps the original immediate behavior.
+  const touchActiveRef = useRef(false);
+  const bufferedExitTopRef = useRef<Set<ItemId>>(new Set());
+  const handleExitTop = useCallback(
+    (ids: ItemId[]) => {
+      if (touchActiveRef.current) {
+        for (const id of ids) bufferedExitTopRef.current.add(id);
+        return;
+      }
+      commitExitTop(ids);
+    },
+    [commitExitTop],
+  );
+  // A buffered row the reader scrolls back into view (fully or partially) before
+  // lifting is under their eyes again — drop it from the pending batch so the
+  // flush never marks a visible row Done. Fires synchronously from the observer,
+  // so it always wins the race against a touchend that follows the re-entry.
+  const handleReenter = useCallback((ids: ItemId[]) => {
+    if (bufferedExitTopRef.current.size === 0) return;
+    for (const id of ids) bufferedExitTopRef.current.delete(id);
+  }, []);
+  useEffect(() => {
+    if (!hideOnScroll) return;
+    // The buffer's identity is stable across renders; capture it so the cleanup
+    // doesn't read `ref.current` (which the exhaustive-deps lint flags).
+    const buffered = bufferedExitTopRef.current;
+    const onTouchStart = () => {
+      touchActiveRef.current = true;
+    };
+    const flush = (e: TouchEvent) => {
+      // Hold off until the *last* finger lifts — a multi-touch gesture that
+      // releases one finger is still in progress.
+      if (e.touches.length > 0) return;
+      touchActiveRef.current = false;
+      if (buffered.size === 0) return;
+      // Rows scrolled back into view before release were already pruned by
+      // handleReenter, so whatever remains is still scrolled past.
+      const ids = [...buffered];
+      buffered.clear();
+      commitExitTop(ids);
+    };
+    document.addEventListener('touchstart', onTouchStart, { passive: true });
+    document.addEventListener('touchend', flush, { passive: true });
+    document.addEventListener('touchcancel', flush, { passive: true });
+    return () => {
+      document.removeEventListener('touchstart', onTouchStart);
+      document.removeEventListener('touchend', flush);
+      document.removeEventListener('touchcancel', flush);
+      // Toggling the feature off mid-gesture must not strand buffered ids.
+      touchActiveRef.current = false;
+      buffered.clear();
+    };
+  }, [hideOnScroll, commitExitTop]);
+
   const { inViewIds, getRowRef } = useInViewIds({
     onExitTop: hideOnScroll ? handleExitTop : undefined,
+    onReenter: hideOnScroll ? handleReenter : undefined,
   });
 
   // Ids restored by the most recent Undo, awaiting a scroll-into-view once they
