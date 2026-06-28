@@ -11,6 +11,7 @@ function fi(id: string, publishedAt: number, feedId = 'feed-a'): FeedItem {
       feedId,
       guid: id,
       url: `https://example.com/${id}`,
+      commentsUrl: null,
       title: id,
       author: null,
       publishedAt,

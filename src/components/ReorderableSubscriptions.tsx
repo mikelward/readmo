@@ -5,7 +5,9 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import type { Feed, FeedId, Subscription } from '../lib/types';
+import type { Feed, FeedId, OpenMode, Subscription } from '../lib/types';
+import { openModeOf } from '../lib/types';
+import { isHackerNewsFeed } from '../lib/newshacker';
 import { arrayMove, orderForPointer } from '../lib/arrayMove';
 import { usePopoverDismiss } from '../hooks/usePopoverDismiss';
 import { DragHandle } from './icons';
@@ -24,12 +26,22 @@ interface Props {
   onReorder: (orderedFeedIds: FeedId[]) => void | Promise<void>;
   onMute: (feedId: FeedId, muted: boolean) => void;
   /** Toggle the feed's "open original" preference — when on, its article rows
-   * open the source website directly instead of the in-app reader. */
+   * open the source website directly instead of the in-app reader. Used for
+   * non–Hacker News feeds (the simple two-state checkbox). */
   onSetOpenOriginal: (feedId: FeedId, openOriginal: boolean) => void;
+  /** Set the feed's open mode — the mutually-exclusive three-way choice (reader
+   * / original / newshacker) shown for Hacker News feeds. The parent persists it
+   * by clearing the other mode and setting the chosen one. */
+  onSetOpenMode: (feedId: FeedId, mode: OpenMode) => void;
   /** Whether to offer the "Open original" menu item. Hidden when the backend
    * doesn't support the preference yet (pre-migration), so the control never
    * triggers a write the old backend would reject. Defaults to true. */
   showOpenOriginal?: boolean;
+  /** Whether to offer the "Open on newshacker" option (the third state of the
+   * Hacker-News-feed open-mode choice). Hidden when the backend doesn't support
+   * the `open_newshacker` preference yet (pre-0033), so the choice degrades to
+   * the reader/original checkbox. Defaults to true. */
+  showOpenNewshacker?: boolean;
   onUnsubscribe: (feedId: FeedId) => void;
   /** Set a per-user display name for `feedId`. Pass `null` to clear the
    * override and fall back to the publisher's feed title. */
@@ -51,7 +63,9 @@ export function ReorderableSubscriptions({
   onReorder,
   onMute,
   onSetOpenOriginal,
+  onSetOpenMode,
   showOpenOriginal = true,
+  showOpenNewshacker = true,
   onUnsubscribe,
   onRename,
 }: Props) {
@@ -415,7 +429,45 @@ export function ReorderableSubscriptions({
                   >
                     {subscription.muted ? 'Unmute' : 'Mute'}
                   </button>
-                  {showOpenOriginal ? (
+                  {showOpenOriginal &&
+                  isHackerNewsFeed(feed) &&
+                  showOpenNewshacker ? (
+                    // Hacker News feeds get the mutually-exclusive three-way
+                    // choice: open rows in the in-app reader, the original
+                    // source, or the item's newshacker discussion.
+                    <div role="group" aria-label="Open links in">
+                      {(
+                        [
+                          ['reader', 'In-app reader'],
+                          ['original', 'Open original'],
+                          ['newshacker', 'Open on newshacker'],
+                        ] as const
+                      ).map(([mode, label]) => {
+                        const current = openModeOf(subscription);
+                        return (
+                          <button
+                            key={mode}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={current === mode}
+                            className="settings__sub-menuitem settings__sub-menuitem--check"
+                            onClick={() => {
+                              setMenuFor(null);
+                              if (current !== mode) onSetOpenMode(feed.id, mode);
+                            }}
+                          >
+                            {label}
+                            <span
+                              className="settings__sub-check"
+                              aria-hidden="true"
+                            >
+                              {current === mode ? '✓' : ''}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : showOpenOriginal ? (
                     <button
                       type="button"
                       role="menuitemcheckbox"

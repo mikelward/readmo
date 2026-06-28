@@ -397,6 +397,36 @@ export function OpenInNew(props: IconProps) {
   );
 }
 
+// ---- Newshacker ("n" mark) ------------------------------------------------
+// Monochrome echo of newshacker's app icon — a lowercase "n" over the
+// home-indicator pill that reads as its "mobile-first" cue. Hand-authored on a
+// 0 0 24 24 grid (not Material's), single currentColor fill like the others, so
+// it tints to match whatever button it sits in. Used by the "open on newshacker"
+// row/reader action to distinguish it from "open original" (OpenInNew).
+
+export function Newshacker({
+  width = 24,
+  height = 24,
+  ...rest
+}: Omit<SVGProps<SVGSVGElement>, 'viewBox' | 'fill' | 'children'>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      width={width}
+      height={height}
+      aria-hidden="true"
+      focusable="false"
+      {...rest}
+    >
+      {/* The "n": a rounded top bar bridging two full-height legs. */}
+      <path d="M6 7h9a1 1 0 0 1 1 1v9h-3v-6H8v6H5V8a1 1 0 0 1 1-1Z" />
+      {/* Home-indicator pill. */}
+      <rect x="6.5" y="19" width="11" height="2.2" rx="1.1" />
+    </svg>
+  );
+}
+
 // ---- Share ----------------------------------------------------------------
 
 export function Share(props: IconProps) {

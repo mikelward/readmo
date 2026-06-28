@@ -61,6 +61,28 @@ describe('MockDataSource feed reads', () => {
     expect(after.find((s) => s.feed.id === 'feed-nasa')!.subscription.openOriginal).toBe(false);
   });
 
+  it('setOpenMode flips both open-mode flags atomically', async () => {
+    const sub = async (id: string) =>
+      (await ds.getSubscriptions()).find((s) => s.feed.id === id)!.subscription;
+
+    await ds.setOpenMode('feed-verge', 'newshacker');
+    expect((await sub('feed-verge')).openNewshacker).toBe(true);
+    expect((await sub('feed-verge')).openOriginal).toBe(false);
+
+    // Switching to original clears newshacker in the same write.
+    await ds.setOpenMode('feed-verge', 'original');
+    expect((await sub('feed-verge')).openOriginal).toBe(true);
+    expect((await sub('feed-verge')).openNewshacker).toBe(false);
+
+    // Back to the reader clears both.
+    await ds.setOpenMode('feed-verge', 'reader');
+    expect((await sub('feed-verge')).openOriginal).toBe(false);
+    expect((await sub('feed-verge')).openNewshacker).toBe(false);
+
+    // Other feeds untouched.
+    expect((await sub('feed-nasa')).openNewshacker).toBe(false);
+  });
+
   it('paginates with an explicit cursor', async () => {
     const page1 = await ds.getHomeItems({ limit: 3 });
     expect(page1.items).toHaveLength(3);

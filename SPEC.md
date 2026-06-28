@@ -962,15 +962,41 @@ negligible and off every critical path. See the External services table in
    - **Mute feed** — stays subscribed but excluded from the aggregate feed;
      still reachable on its own page. (This is per-feed; per-item dismissal is
      **Done** (dismiss), unchanged from newshacker.)
-   - **Open original** — per-feed toggle: when on, that feed's article rows open
-     the original article on the source website directly (new tab) instead of the
-     in-app reader (tapping marks the item opened, same as the reader; done/pin
-     state behaves exactly as when the toggle is off). Those rows also gain an
-     **Open original** button (the reader's `OpenInNew` icon) to the **left** of
-     the Pin/Done cluster, which opens the source the same way; Pin and the
-     wide-viewport Done button are unchanged. Per-user, synced (stored on the
-     subscription, like Mute/Rename); off by default. Falls back to the normal
-     in-app-reader row for any item without a safe http(s) URL.
+   - **Open original / Open on newshacker** — the per-feed **open mode**: a
+     single mutually-exclusive choice of where that feed's article rows open on
+     tap.
+     - **Reader** (default) — the in-app reader.
+     - **Open original** — the original article on the source website directly
+       (new tab) instead of the in-app reader. Falls back to the reader for any
+       item without a safe http(s) URL.
+     - **Open on newshacker** — offered for **Hacker News feeds only** (the feed
+       host is `news.ycombinator.com` or `hnrss.org`): the item's Hacker News
+       discussion on **newshacker.app** (`newshacker.app/item/<hn-id>`, new tab).
+       The HN id is derived client-side from the item's HN comments link — the
+       structured `commentsUrl` first (the parsed `<comments>` link, carried on
+       list rows), then its `guid` (hnrss feeds), then its `url` (Ask/Show HN),
+       then the stored description HTML (`contentHtml`) as a backfill: the
+       official `news.ycombinator.com/rss` feed carries the discussion link only
+       in the item `<description>`, and ITEM_COLS reads (library/search/reader) or
+       a backend predating the `comments_url` column omit the structured field.
+       Falls back to the reader for any item with no derivable HN id. **$0** — a
+       plain deep link, no API call (see *External services*: none added).
+
+     In any non-reader mode, tapping marks the item opened (same as the reader;
+     done/pin state behaves exactly as in reader mode), and the row gains a
+     dedicated open button to the **left** of the Pin/Done cluster — the reader's
+     `OpenInNew` icon for *open original*, the **newshacker "n" mark** for *open
+     on newshacker* — which opens the same target. Pin and the wide-viewport Done
+     button are unchanged. Per-user, synced (stored on the subscription, like
+     Mute/Rename); reader by default. Stored as two independent booleans
+     (`open_original`, `open_newshacker`) written **atomically** (one update, via
+     `setOpenMode`) so they're never both true from a current client, yet stored
+     separately so an older client that only knows `open_original` still works (it
+     reads the reader for a feed the newer client set to newshacker mode). If both
+     are ever set, ***open original* wins** — the only way to reach that state is a
+     legacy `open_original`-only client writing `open_original=true`, which is an
+     explicit "open original" choice, so honoring it as such (rather than letting
+     the stale `open_newshacker` flag override) preserves that client's intent.
    - **Feed-health badge** when the poller parks a feed, with "retry now".
 
 2. **Feed views (the lists)** — the chronological merge of subscription items,
@@ -1322,8 +1348,8 @@ negligible and off every critical path. See the External services table in
     - **Subscriptions** — the feed list is **drag-to-reorder**: each row stays
       within the **3-tap-zone cap** as drag handle (left), a non-interactive
       row body (title + URL), and a right-side **overflow (⋯) button** that
-      opens a per-row menu with **Rename / Mute / Open original /
-      Unsubscribe**. The drag
+      opens a per-row menu with **Rename / Mute / open mode (Open original /
+      Open on newshacker) / Unsubscribe**. The drag
       handle is both pointer-draggable (mouse + touch) and keyboard-operable
       (focus it, then ArrowUp/ArrowDown), so reordering isn't mouse-only. The
       order persists to `subscriptions.sort` (via `reorderSubscriptions`) and
@@ -1332,10 +1358,17 @@ negligible and off every critical path. See the External services table in
       **Enter** commits, **Esc** cancels, **blur** commits, and **leaving the
       input empty clears the override** so the row falls back to the
       publisher's title. Rename writes `subscriptions.title_override` and is
-      per-user; an unchanged value is a no-op. **Open original** is a checkbox
-      menu item that writes `subscriptions.open_original` (per-user, synced); when
-      on, that feed's article rows link straight to the source website (new tab)
-      instead of the in-app reader. The overflow menu dismisses via
+      per-user; an unchanged value is a no-op. The **open mode** is a checkbox
+      menu item (**Open original**, writing `subscriptions.open_original`) for a
+      normal feed; for a **Hacker News feed** it becomes a three-way
+      `menuitemradio` group — **In-app reader / Open original / Open on
+      newshacker** — that writes `open_original` / `open_newshacker` mutually
+      exclusively (per-user, synced). When *open original* is on, the feed's rows
+      link straight to the source website; when *open on newshacker* is on, they
+      link to the item's Hacker News discussion on `newshacker.app`; both open in
+      a new tab instead of the in-app reader. The newshacker option hides (the
+      control degrades to the *Open original* checkbox) against a backend that
+      predates the `open_newshacker` column. The overflow menu dismisses via
       the shared dropdown contract (`usePopoverDismiss`): Escape or an outside
       press closes it, and **the first press outside only dismisses** — its
       trailing click is swallowed, so dismissing the menu doesn't also activate

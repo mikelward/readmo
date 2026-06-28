@@ -539,11 +539,21 @@ export function FeedsPage() {
             // next render.
             invalidate();
           }}
+          onSetOpenMode={async (feedId, mode) => {
+            // One atomic write of both open-mode booleans (setOpenMode), so the
+            // flags can never be left transiently both-true on a partial failure.
+            await ds.setOpenMode(feedId, mode);
+            invalidate();
+          }}
           // Hide the toggle until the backend has the open_original column
           // (post-migration). The subscriptions query above has settled by the
           // time these rows render, so the capability is known. Defaults to
           // supported for sources that don't report it (the mock).
           showOpenOriginal={ds.supportsOpenOriginal?.() ?? true}
+          // Likewise gate the newshacker option on the open_newshacker column
+          // (0034); a pre-0034 backend degrades the Hacker-News-feed choice to
+          // the reader/original checkbox.
+          showOpenNewshacker={ds.supportsOpenNewshacker?.() ?? true}
           onUnsubscribe={async (feedId) => {
             await ds.unsubscribe(feedId);
             invalidate();

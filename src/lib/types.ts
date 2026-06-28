@@ -37,6 +37,12 @@ export interface Item {
   feedId: FeedId;
   guid: string;
   url: string;
+  /** The item's comments/discussion page (RSS `<comments>` / Atom
+   * `rel="replies"`), or null. Distinct from `url` (the article); for aggregator
+   * feeds (Hacker News) this is the thread. List rows carry it (the `feed_items`
+   * RPC returns the whole item row); ITEM_COLS direct reads (library/search/
+   * reader) omit it, so consumers must tolerate null there. */
+  commentsUrl: string | null;
   title: string;
   author: string | null;
   /** Epoch milliseconds. */
@@ -92,7 +98,38 @@ export interface Subscription {
    * website directly (new tab) instead of the in-app reader. Per-user, synced
    * (SPEC.md *Open original*). */
   openOriginal: boolean;
+  /** When true, this feed's article rows open the item's Hacker News discussion
+   * on newshacker.app instead of the in-app reader. Offered for Hacker News feeds
+   * only; mutually exclusive with `openOriginal` in the UI (see {@link OpenMode}),
+   * but stored independently so an older client that only knows `openOriginal`
+   * still works. Per-user, synced (SPEC.md *Open original / Open on newshacker*). */
+  openNewshacker: boolean;
   sort: number;
+}
+
+/** Where a feed's article rows open on tap — the per-feed "open mode" shown as a
+ * single mutually-exclusive choice in Settings. `reader` (default) is the in-app
+ * reader; `original` opens the source website; `newshacker` opens the item's
+ * Hacker News discussion on newshacker.app (Hacker News feeds only). Derived from
+ * the `openOriginal` / `openNewshacker` booleans on {@link Subscription}. */
+export type OpenMode = 'reader' | 'original' | 'newshacker';
+
+/** The {@link OpenMode} for a subscription. `original` takes precedence over
+ * `newshacker` when both flags are set. A current client never writes that
+ * both-true state (`setOpenMode` flips both columns atomically — newshacker mode
+ * clears `open_original`), so the only way to reach it is a service-worker-cached
+ * **legacy** client that knows only `open_original` writing `open_original=true`
+ * on a feed a newer client had set to newshacker. That write *is* an explicit
+ * "open original" choice, so resolving both-true to `original` honors the legacy
+ * client's intent rather than letting the stale `open_newshacker` flag override
+ * it. Mirrored by the row's open-target precedence in {@link ItemRow}. */
+export function openModeOf(sub: {
+  openOriginal: boolean;
+  openNewshacker: boolean;
+}): OpenMode {
+  if (sub.openOriginal) return 'original';
+  if (sub.openNewshacker) return 'newshacker';
+  return 'reader';
 }
 
 export interface Folder {

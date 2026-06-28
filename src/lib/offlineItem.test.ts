@@ -20,6 +20,7 @@ function feedItem(id: string, contentHtml = `<p>body of ${id}</p>`): FeedItem {
     feedId: 'feed-1',
     guid: id,
     url: `https://example.com/${id}`,
+    commentsUrl: null,
     title: `Title ${id}`,
     author: null,
     publishedAt: 0,
