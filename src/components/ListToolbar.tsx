@@ -15,6 +15,7 @@ import {
   VerticalAlignTop,
 } from './icons';
 import type { ItemSort } from '../lib/data/DataSource';
+import type { ItemId } from '../lib/types';
 import './ListToolbar.css';
 
 function scrollToTop() {
@@ -92,6 +93,11 @@ interface Props {
   /** Feed views pass this to the top bar to render the sort-order toggle.
    * Omitted on the bottom bar. */
   sort?: SortAction;
+  /** Called after Undo restores a batch, with the ids it brought back (in list
+   * order). Feed views use it to scroll back up to the topmost restored row when
+   * it's off-screen above the fold (e.g. after undoing an auto-hide-on-scroll
+   * burst). Omitted where the restore needs no scroll follow-up. */
+  onUndo?: (restoredIds: ItemId[]) => void;
 }
 
 /** Sticky list toolbar: Back to top (bottom bar only) on the left, then
@@ -105,6 +111,7 @@ export function ListToolbar({
   collapse,
   group,
   sort,
+  onUndo,
 }: Props = {}) {
   const ds = useDataSource();
   const store = ds.stateStore;
@@ -232,7 +239,14 @@ export function ListToolbar({
               type="button"
               className="list-toolbar__button"
               data-testid={`undo-btn${placement === 'bottom' ? '-bottom' : ''}`}
-              onClick={canUndo ? () => store.undoLast() : undefined}
+              onClick={
+                canUndo
+                  ? () => {
+                      const restored = store.undoLast();
+                      onUndo?.(restored);
+                    }
+                  : undefined
+              }
               disabled={!canUndo}
               tooltip={canUndo ? 'Undo' : 'Nothing to undo'}
               aria-label={canUndo ? 'Undo' : 'Nothing to undo'}

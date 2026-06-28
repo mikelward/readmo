@@ -1720,6 +1720,210 @@ describe('ItemList', () => {
       ).toContain(titleText);
     });
 
+    it('scrolls back up to the topmost restored row when it is above the fold', async () => {
+      const user = userEvent.setup();
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      const scrollToSpy = vi.fn();
+      vi.stubGlobal('scrollTo', scrollToSpy);
+      // The reader has scrolled well down the page; the restored rows remount
+      // above the fold (negative rect.top), so Undo should pull the viewport
+      // back up to them. target = rect.top + scrollY − topChrome = -500 + 1000.
+      Object.defineProperty(window, 'scrollY', { value: 1000, configurable: true });
+      const rectSpy = vi
+        .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+        .mockReturnValue({
+          top: -500,
+          bottom: 0,
+          left: 0,
+          right: 0,
+          width: 0,
+          height: 0,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        } as DOMRect);
+
+      try {
+        const source = new MockDataSource(`test-${Math.random()}`);
+        renderHome(source);
+        const titles = () =>
+          screen.queryAllByTestId('item-title').map((n) => n.textContent);
+
+        const rows = await screen.findAllByTestId('item-row');
+        const first = within(rows[0]).getByTestId('item-title').textContent;
+        act(() => setVisibilityForTest(rows[0].closest('li')!, 0));
+        await waitFor(() => expect(titles()).not.toContain(first));
+
+        scrollToSpy.mockClear();
+        await user.click(screen.getByTestId('undo-btn'));
+        await waitFor(() => expect(titles()).toContain(first));
+        await waitFor(() =>
+          expect(scrollToSpy).toHaveBeenCalledWith({
+            top: 500,
+            behavior: 'smooth',
+          }),
+        );
+      } finally {
+        rectSpy.mockRestore();
+      }
+    });
+
+    it('does not scroll on Undo when the restored row is already on screen', async () => {
+      const user = userEvent.setup();
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      const scrollToSpy = vi.fn();
+      vi.stubGlobal('scrollTo', scrollToSpy);
+      // Restored row sits below the (zero-height in jsdom) sticky chrome, i.e.
+      // fully on screen — the "only if off-screen" guard must leave it be.
+      const rectSpy = vi
+        .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+        .mockReturnValue({
+          top: 120,
+          bottom: 200,
+          left: 0,
+          right: 0,
+          width: 0,
+          height: 80,
+          x: 0,
+          y: 120,
+          toJSON: () => ({}),
+        } as DOMRect);
+
+      try {
+        const source = new MockDataSource(`test-${Math.random()}`);
+        renderHome(source);
+        const titles = () =>
+          screen.queryAllByTestId('item-title').map((n) => n.textContent);
+
+        const rows = await screen.findAllByTestId('item-row');
+        const first = within(rows[0]).getByTestId('item-title').textContent;
+        act(() => setVisibilityForTest(rows[0].closest('li')!, 0));
+        await waitFor(() => expect(titles()).not.toContain(first));
+
+        scrollToSpy.mockClear();
+        await user.click(screen.getByTestId('undo-btn'));
+        await waitFor(() => expect(titles()).toContain(first));
+        // The restored row was on screen, so no scroll was triggered.
+        expect(scrollToSpy).not.toHaveBeenCalled();
+      } finally {
+        rectSpy.mockRestore();
+      }
+    });
+
+    it('scrolls back on a grouped section-header Undo too, not just the toolbar', async () => {
+      const user = userEvent.setup();
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      const scrollToSpy = vi.fn();
+      vi.stubGlobal('scrollTo', scrollToSpy);
+      Object.defineProperty(window, 'scrollY', { value: 1000, configurable: true });
+      const rectSpy = vi
+        .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+        .mockReturnValue({
+          top: -500,
+          bottom: 0,
+          left: 0,
+          right: 0,
+          width: 0,
+          height: 0,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        } as DOMRect);
+
+      try {
+        const source = new MockDataSource(`test-${Math.random()}`);
+        renderWithProviders(
+          <ItemList
+            viewKey={`gp-${Math.random()}`}
+            fetchPage={(cursor) =>
+              source.getHomeItems({ cursor, groupByFeed: true, limit: 100 })
+            }
+            emptyLabel="All caught up."
+            groupByFeed
+          />,
+          { source },
+        );
+        const rows = await screen.findAllByTestId('item-row');
+        const firstId = rows[0].closest('li')!.getAttribute('data-item-id');
+        act(() => setVisibilityForTest(rows[0].closest('li')!, 0));
+        await waitFor(() =>
+          expect(
+            document.querySelector(`[data-item-id="${firstId}"]`),
+          ).toBeNull(),
+        );
+
+        scrollToSpy.mockClear();
+        // Undo from a section header (the global single-level undo), not the
+        // toolbar — it must scroll back the same way.
+        await user.click(screen.getAllByTestId('group-undo')[0]);
+        await waitFor(() =>
+          expect(
+            document.querySelector(`[data-item-id="${firstId}"]`),
+          ).not.toBeNull(),
+        );
+        await waitFor(() =>
+          expect(scrollToSpy).toHaveBeenCalledWith({
+            top: 500,
+            behavior: 'smooth',
+          }),
+        );
+      } finally {
+        rectSpy.mockRestore();
+      }
+    });
+
+    it('consumes the undo-scroll request so a later render does not re-scroll', async () => {
+      const user = userEvent.setup();
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      const scrollToSpy = vi.fn();
+      vi.stubGlobal('scrollTo', scrollToSpy);
+      Object.defineProperty(window, 'scrollY', { value: 1000, configurable: true });
+      const rectSpy = vi
+        .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+        .mockReturnValue({
+          top: -500,
+          bottom: 0,
+          left: 0,
+          right: 0,
+          width: 0,
+          height: 0,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        } as DOMRect);
+
+      try {
+        const source = new MockDataSource(`test-${Math.random()}`);
+        renderHome(source);
+        const titles = () =>
+          screen.queryAllByTestId('item-title').map((n) => n.textContent);
+
+        const rows = await screen.findAllByTestId('item-row');
+        const first = within(rows[0]).getByTestId('item-title').textContent;
+        act(() => setVisibilityForTest(rows[0].closest('li')!, 0));
+        await waitFor(() => expect(titles()).not.toContain(first));
+
+        await user.click(screen.getByTestId('undo-btn'));
+        await waitFor(() => expect(titles()).toContain(first));
+        await waitFor(() => expect(scrollToSpy).toHaveBeenCalled());
+
+        // The request is one-shot: a later auto-hide (which changes the rendered
+        // list again) must NOT trigger another undo-scroll.
+        scrollToSpy.mockClear();
+        const again = await screen.findAllByTestId('item-row');
+        const againFirst = within(again[0]).getByTestId('item-title').textContent;
+        act(() => setVisibilityForTest(again[0].closest('li')!, 0));
+        await waitFor(() => expect(titles()).not.toContain(againFirst));
+        expect(scrollToSpy).not.toHaveBeenCalled();
+      } finally {
+        rectSpy.mockRestore();
+      }
+    });
+
     it('does not let two feed views share an undo batch (unique burst keys)', async () => {
       const user = userEvent.setup();
       window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');

@@ -258,6 +258,25 @@ export function ItemList({
     onExitTop: hideOnScroll ? handleExitTop : undefined,
   });
 
+  // Ids restored by the most recent Undo, awaiting a scroll-into-view once they
+  // re-render. After undoing an auto-hide-on-scroll burst the restored rows
+  // remount *above* the viewport (they sit earlier in the feed than where the
+  // reader scrolled to), so bring the topmost one back on screen. The scroll
+  // effect below consumes this once the rows are actually back in the list — the
+  // refetch that re-includes them is async, so we can't scroll on the click.
+  const pendingUndoScrollIds = useRef<Set<ItemId> | null>(null);
+  // Whether the undo's feed-query refetch has been observed in flight since the
+  // request was armed. The undo batch is global across feed views, so a restored
+  // burst may belong to a view the reader navigated away from; once that refetch
+  // settles without surfacing the rows here, we drop the request (see the effect
+  // below) so a later unrelated refetch can't scroll this view by surprise.
+  const undoScrollSawFetchRef = useRef(false);
+  const handleUndoScroll = useCallback((restoredIds: ItemId[]) => {
+    pendingUndoScrollIds.current =
+      restoredIds.length > 0 ? new Set(restoredIds) : null;
+    undoScrollSawFetchRef.current = false;
+  }, []);
+
   // When the bottom toolbar is pinned to the viewport foot it's always on
   // screen, so `hasMore` alone (another *page* is fetchable) can't drive "More"
   // — it would flash "No more items" while loaded rows still sit below the fold.
@@ -1040,6 +1059,63 @@ export function ItemList({
     return !st.done && !st.hidden;
   });
 
+  // Scroll the list back up to the topmost row an Undo just restored, but only
+  // when that row is off-screen above the fold — so undoing a scroll-past burst
+  // returns the reader to where they were reading, while undoing a swipe/Sweep
+  // (whose rows are still on screen) never jerks the viewport. We wait until the
+  // restored rows are actually back in the rendered list: an auto-hide burst's
+  // rows were dropped from the cached page by the post-hide refetch, and Undo's
+  // refetch re-includes them asynchronously, so there's nothing to scroll to on
+  // the click itself. Clearing the pending set once they reappear bounds how
+  // long a stale request can linger.
+  useEffect(() => {
+    const pending = pendingUndoScrollIds.current;
+    if (!pending) return;
+    const restoredInList = visibleItems.filter((fi) => pending.has(fi.item.id));
+    if (restoredInList.length === 0) {
+      // Rows aren't in this view (yet). Undo invalidates the feed query, so a
+      // refetch re-includes a same-view burst — wait for it. But once that
+      // refetch has run and settled without surfacing the rows, the batch
+      // belongs to another view the reader navigated from; drop the request so a
+      // later unrelated refetch can't scroll this view (Codex P2 on PR #229).
+      if (isFetching) undoScrollSawFetchRef.current = true;
+      else if (undoScrollSawFetchRef.current) {
+        pendingUndoScrollIds.current = null;
+        undoScrollSawFetchRef.current = false;
+      }
+      return;
+    }
+    pendingUndoScrollIds.current = null;
+    undoScrollSawFetchRef.current = false;
+    let target: HTMLElement | null = null;
+    for (const fi of restoredInList) {
+      const el = document.querySelector(`[data-item-id="${fi.item.id}"]`);
+      if (el instanceof HTMLElement) {
+        target = el;
+        break;
+      }
+    }
+    if (!target) return; // restored rows aren't rendered (e.g. collapsed section)
+    let chrome = measureTopChromeHeight();
+    if (groupByFeed) {
+      // A pinned section header (position: sticky at the chrome offset) paints
+      // over the top of its feed's rows in grouped mode, so extend the inset by
+      // its height — otherwise the restored row lands tucked behind the header,
+      // and the on-screen guard would treat a header-occluded row as visible.
+      // One layout read here, not the per-frame O(sections) scan that
+      // measureStickyInset deliberately avoids (Codex P2 on PR #229).
+      const header = document.querySelector('[data-header-for]');
+      if (header instanceof HTMLElement) chrome += header.offsetHeight;
+    }
+    const top = target.getBoundingClientRect().top;
+    if (top >= chrome) return; // already fully below the sticky chrome — on screen
+    // Browsers honoring prefers-reduced-motion fall back to an instant scroll.
+    window.scrollTo({
+      top: Math.max(0, top + window.scrollY - chrome),
+      behavior: 'smooth',
+    });
+  }, [visibleItems, isFetching, groupByFeed]);
+
   // Which feed sections should show a "More" at their foot, and which are
   // mid-fetch. A feed has more when it already holds extras that aren't
   // exhausted, or — before any expansion — when the base read returned MORE than
@@ -1380,7 +1456,13 @@ export function ItemList({
     () => ds.stateStore.canUndo(),
     () => ds.stateStore.canUndo(),
   );
-  const handleUndo = useCallback(() => ds.stateStore.undoLast(), [ds]);
+  // Grouped section-header Undo. Routes through the same restored-ids scroll
+  // callback as the toolbar Undo so a header Undo after a scroll-past burst also
+  // brings the topmost restored row back on screen (Codex P2 on PR #229).
+  const handleUndo = useCallback(() => {
+    const restored = ds.stateStore.undoLast();
+    handleUndoScroll(restored);
+  }, [ds, handleUndoScroll]);
 
   // The first `animationend` from a swept row drives the commit — every `<li>`
   // animates with the same duration, so one signal is enough. Filter by
@@ -1627,6 +1709,7 @@ export function ItemList({
         collapse={collapseControls}
         group={groupControl}
         sort={sortControl}
+        onUndo={handleUndoScroll}
       />
 
       <PullToRefresh
@@ -1756,6 +1839,7 @@ export function ItemList({
 
       <ListToolbar
         placement="bottom"
+        onUndo={handleUndoScroll}
         // Only offer More once the feed is populated. Until the first page
         // lands (loading skeletons, error/retry, or an empty result) hasMore is
         // false, so an unconditional More would flash a disabled "No more items"
