@@ -73,24 +73,30 @@ function useOfflineItems(
   queryClient: QueryClient,
   ids: string[],
 ): FeedItem[] {
-  // Holds the last snapshot so getSnapshot can return the same reference when
-  // the resolved id list hasn't changed (useSyncExternalStore's stability rule).
-  const last = useRef<{ sig: string; items: FeedItem[] }>({
-    sig: '\0',
-    items: [],
-  });
+  // Holds the last snapshot so getSnapshot can return the same reference while
+  // nothing relevant changed (useSyncExternalStore's stability rule).
+  const last = useRef<FeedItem[]>([]);
 
   const getSnapshot = useCallback((): FeedItem[] => {
-    const items = ids
+    const next = ids
       .map(
         (id) =>
           queryClient.getQueryData<FeedItem | null>(['item', id]) ??
           findCachedFeedItem(queryClient, id),
       )
       .filter((fi): fi is FeedItem => fi != null);
-    const sig = items.map((fi) => fi.item.id).join(',');
-    if (sig !== last.current.sig) last.current = { sig, items };
-    return last.current.items;
+    // Compare by element identity, not just id: React Query's structural
+    // sharing hands back a new object only when the row data actually changed,
+    // so this also re-renders when a row already shown from a cached feed list
+    // is replaced by the warmed (preferred) `['item', id]` copy — while still
+    // returning the stable previous array when nothing changed, so an unrelated
+    // event can't trigger a re-render (and thus can't feed back into a loop).
+    const prev = last.current;
+    if (prev.length === next.length && prev.every((fi, i) => fi === next[i])) {
+      return prev;
+    }
+    last.current = next;
+    return next;
   }, [queryClient, ids]);
 
   const subscribe = useCallback(

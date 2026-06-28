@@ -64,6 +64,46 @@ describe('OfflinePage', () => {
     ).toBeInTheDocument();
   });
 
+  it('switches a row from the cached feed-list copy to the warmed per-item copy', async () => {
+    // The row is first shown from a cached feed list (no ['item', id] detail
+    // yet). When the offline-cache lock later warms ['item', id] — same id, so
+    // the resolved set is unchanged — the page must still re-render onto the
+    // preferred per-item copy, not stay pinned to the stale feed-list object.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    source.stateStore.set('item-1', 'pinned', true);
+
+    const queryClient = cacheClient();
+    const seed = new MockDataSource(`seed-${Math.random()}`);
+    const page = await seed.getHomeItems();
+    queryClient.setQueryData(['feed', 'home-all:test'], {
+      pages: [page],
+      pageParams: [null],
+    });
+
+    renderWithProviders(<OfflinePage />, { route: '/offline', source, queryClient });
+
+    expect(
+      await screen.findByText('A foldable phone that actually folds flat, finally'),
+    ).toBeInTheDocument();
+
+    // Warm a per-item detail with a distinct title; the row should follow it.
+    const warmed = await seed.getItem('item-1');
+    if (!warmed) throw new Error('seed item-1 missing');
+    await act(async () => {
+      queryClient.setQueryData(['item', 'item-1'], {
+        ...warmed,
+        item: { ...warmed.item, title: 'Warmed per-item title' },
+      });
+    });
+
+    expect(
+      await screen.findByText('Warmed per-item title'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('A foldable phone that actually folds flat, finally'),
+    ).not.toBeInTheDocument();
+  });
+
   it('shows the empty copy when nothing is saved', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     renderWithProviders(<OfflinePage />, {
