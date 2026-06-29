@@ -2035,7 +2035,14 @@ content. Closest mirror of newshacker.
   and in view but never navigated/PTR'd (an installed PWA, or a parked desktop
   tab) can sit on a stale build; any update found surfaces through the same
   `controllerchange` toast. Negligible bandwidth — one conditional GET against
-  the tiny `/sw.js` per interval, paused entirely when backgrounded.
+  the tiny `/sw.js` per interval, paused entirely when backgrounded. Finally, a
+  **startup** `registration.update()` ping fires once when the watcher mounts:
+  the browser's own navigation-time check is throttled and a relaunched
+  installed PWA can't rely on its timing, so without this a freshly-opened app
+  could sit on a stale bundle until the 30 min periodic ping. The mount check
+  re-checks `/sw.js` at the moment the user opens the app; any newer SW found
+  surfaces through the same `controllerchange` toast (no forced reload). One
+  conditional GET per launch — negligible bandwidth.
 - A lazy route chunk that 404s after a deploy (stale client referencing a gone
   hash) auto-reloads once via `LazyRouteBoundary` (`src/components/`), guarded by
   a one-shot `readmo:chunk-reload` session flag against a reload loop.
