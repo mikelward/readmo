@@ -1754,7 +1754,11 @@ page's discipline is unchanged.
     article fetch — without it the function falls back to stored content); unset
     `GOOGLE_API_KEY` → the function reports `unavailable` and the reader shows no
     summary card. The prompt asks for a few-sentence Markdown paragraph (light
-    `**bold**` / `*italic*` / `` `code` `` emphasis, no headings/lists), rendered
+    `**bold**` / `*italic*` / `` `code` `` emphasis, no headings/lists), aiming
+    for about three key points and written as a direct assertion in the author's
+    voice with no "The article argues…" meta-framing — mirroring newshacker's
+    article-summary prompt, but kept as a short paragraph rather than
+    newshacker's single sentence (guardrail #9), rendered
     with the inline **`MarkdownText`** component **ported from newshacker**
     (guardrail #9) — it emits `<strong>`/`<em>`/`<code>` React elements, never
     `dangerouslySetInnerHTML`, so there's no markdown-library dependency and no

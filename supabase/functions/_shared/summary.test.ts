@@ -114,6 +114,16 @@ describe('buildSummaryPrompt', () => {
     expect(prompt).toContain('--- END ARTICLE ---');
   });
 
+  it("carries newshacker's author-voice, no-meta-framing, three-points steer", () => {
+    const prompt = buildSummaryPrompt('A Title', 'body');
+    expect(prompt).toContain('about three key points');
+    expect(prompt).toContain('in the voice of the author');
+    expect(prompt).toContain('direct assertion');
+    expect(prompt).toContain('Do not begin with meta-framing');
+    // No URL clause: readmo never passes the article URL to the prompt.
+    expect(prompt).not.toContain('fetched from');
+  });
+
   it('omits the title clause when there is no title', () => {
     const prompt = buildSummaryPrompt(null, 'body');
     expect(prompt).not.toContain('titled');
