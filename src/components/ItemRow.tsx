@@ -46,6 +46,12 @@ interface Props {
    * (see {@link openModeOf}). Ignored when the item has no derivable Hacker News
    * id — falls back to the reader. */
   openNewshacker?: boolean;
+  /** Show the feed's favicon at the start of the meta line. On in non-grouped
+   * views (flat river, library, search, offline), where rows from different
+   * feeds interleave with no section header to attribute them; off in
+   * group-by-feed view, where the section header carries the icon once instead
+   * of repeating it on every row. */
+  showFavicon?: boolean;
   onShare?: (item: FeedItem) => void;
 }
 
@@ -55,6 +61,7 @@ export function ItemRow({
   enableSwipe = true,
   openOriginal = false,
   openNewshacker = false,
+  showFavicon = false,
   onShare,
 }: Props) {
   const { item, feed } = feedItem;
@@ -292,8 +299,24 @@ export function ItemRow({
     <>
       <span className="item-row__title-text">{title}</span>
       <span className="item-row__meta" data-testid="item-meta">
-        {/* No per-row favicon: the site icon lives only on the group-by-feed
-            section header (ItemRows), so it isn't repeated on every article. */}
+        {/* Per-row favicon only in non-grouped views (showFavicon). In
+            group-by-feed view the icon lives on the section header instead, so
+            it isn't repeated on every row. Decorative (alt=""); hides itself on
+            load error so a 404'd /favicon.ico guess leaves no broken glyph. */}
+        {showFavicon && feed.faviconUrl ? (
+          <img
+            className="item-row__favicon"
+            src={feed.faviconUrl}
+            alt=""
+            aria-hidden="true"
+            width={16}
+            height={16}
+            data-testid="item-favicon"
+            onError={(e) => {
+              e.currentTarget.style.display = 'none';
+            }}
+          />
+        ) : null}
         {formatItemMetaTail({
           source,
           domain,

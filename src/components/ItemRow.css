@@ -82,6 +82,17 @@
   text-overflow: ellipsis;
 }
 
+/* Per-row site icon at the start of the meta line (non-grouped views only).
+   Mirrors .item-list__group-favicon so the row and group-header icons match.
+   flex: 0 0 auto keeps it from shrinking when the meta text is long. */
+.item-row__favicon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  object-fit: contain;
+}
+
 /* Right-side icon button (Pin/Unpin, or a library inverse action). */
 .pin-btn {
   flex: 0 0 auto;
