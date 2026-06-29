@@ -857,8 +857,18 @@ negligible and off every critical path. See the External services table in
   on another device syncs in without a manual pull-to-refresh. Overlapping calls
   coalesce (one tab return can fire both `focus` and `visibilitychange`); the
   hydrate path's pending overlay preserves an un-synced local write so the
-  re-pull can't clobber a just-made change. The store emits on change → the
-  feed-invalidation hook refetches and the library pages re-read.
+  re-pull can't clobber a just-made change — **including a write that is made
+  *and* delivered (so it has already left the outbox) entirely while the read is
+  in flight.** The canonical case is unpin-then-sweep during a resync: the read
+  was issued before either write committed, so it carries a still-pinned
+  snapshot, yet neither write is queued at the read's start or end — so the
+  hydrate also overlays the writes made *during* the read, not just the ones
+  pending at its boundaries. It captures the **exclusivity-closed** diff each
+  such write sent the server (a pin carries `done=false`/`hidden=false`), so a
+  write made over a stale mirror can't leave the row in an invalid pinned+done
+  state. Without this, the stale snapshot would resurrect the swept item as
+  pinned. The store emits on change → the feed-invalidation hook refetches and
+  the library pages re-read.
   - **`item_state` reads are `NetworkOnly`** — a dedicated Workbox route
     (`supabaseItemStatePattern`, registered ahead of the NetworkFirst REST route
     — `vite.config.ts`) serves them with no cache fallback, so item-state
