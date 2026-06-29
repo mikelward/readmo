@@ -1,9 +1,28 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen } from '@testing-library/react';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { DebugPage } from './DebugPage';
+import { isSupabaseConfigured, supabaseHealthUrl } from '../lib/supabase/client';
+
+// Mock the config accessors DebugPage/useAuth read so a test can simulate a
+// partial config. Manual (not importOriginal) to avoid re-evaluating client.ts
+// → buildInfo.ts, whose __BUILD_INFO__ define isn't applied inside a mock
+// factory. Defaults mirror the real unconfigured test environment (false /
+// null), so every other test behaves exactly as before.
+vi.mock('../lib/supabase/client', () => ({
+  isSupabaseConfigured: vi.fn(() => false),
+  supabaseHealthUrl: vi.fn(() => null),
+  getSupabase: vi.fn(),
+  AUTH_STORAGE_KEY: 'readmo:sb-auth',
+}));
 
 describe('DebugPage', () => {
+  afterEach(() => {
+    vi.mocked(isSupabaseConfigured).mockReturnValue(false);
+    vi.mocked(supabaseHealthUrl).mockReturnValue(null);
+    vi.unstubAllGlobals();
+  });
+
   it('shows the build summary from the injected build info', () => {
     // vite.config.ts injects TEST_BUILD_INFO under VITEST:
     // branch 'main', 42 commits, sha 'abc1234'.
@@ -32,12 +51,41 @@ describe('DebugPage', () => {
     expect(screen.queryByText('Display mode')).not.toBeInTheDocument();
   });
 
-  it('omits the live Supabase reachability row in mock mode', () => {
-    // Tests run unconfigured (no Supabase env vars), so there's no backend to
-    // probe; the Configuration section already reports "mock data". The
+  it('always shows the Supabase row, neutral when unconfigured (mock mode)', () => {
+    // Tests run unconfigured (no Supabase env vars): the row still appears with
+    // a neutral "not configured" state rather than disappearing. The
     // reachable/latency probe path is unit-tested in supabaseHealth.test.ts.
-    renderWithProviders(<DebugPage />, { route: '/debug' });
+    const { container } = renderWithProviders(<DebugPage />, { route: '/debug' });
+    expect(screen.getByText('Supabase')).toBeInTheDocument();
+    expect(screen.getByText('not configured (mock data)')).toBeInTheDocument();
+    // Neutral badge, not a probe attempt.
     expect(screen.queryByText(/reachable|checking/)).not.toBeInTheDocument();
+    expect(container.querySelector('.debug__badge[data-state="idle"]')).toBeTruthy();
+  });
+
+  it('stays neutral and does not probe when only partially configured', () => {
+    // URL present but anon key missing → isSupabaseConfigured() is false (the app
+    // is on mock data) even though a health URL exists. The probe must NOT fire,
+    // or /debug would falsely report the backend as reachable. Regression for the
+    // partial-config gap left when the Configuration presence row was removed.
+    vi.mocked(supabaseHealthUrl).mockReturnValue('https://proj.supabase.co/auth/v1/health');
+    vi.mocked(isSupabaseConfigured).mockReturnValue(false);
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderWithProviders(<DebugPage />, { route: '/debug' });
+
+    expect(screen.getByText('not configured (mock data)')).toBeInTheDocument();
+    expect(screen.queryByText(/reachable|checking/)).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('renders glanceable status badges for Network and Supabase', () => {
+    const { container } = renderWithProviders(<DebugPage />, { route: '/debug' });
+    // jsdom reports navigator.onLine === true → green "ok" badge on Network.
+    expect(container.querySelector('.debug__badge[data-state="ok"]')).toBeTruthy();
+    // Every row reserves a badge slot for alignment, even status-less ones.
+    expect(container.querySelectorAll('.debug__badge').length).toBeGreaterThan(0);
   });
 
   it('drops the per-device Theme and Palette rows from Account', () => {

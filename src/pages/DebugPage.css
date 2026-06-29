@@ -25,11 +25,39 @@
   display: grid;
   grid-template-columns: minmax(7rem, max-content) 1fr;
   gap: 6px 12px;
+  align-items: baseline;
 }
 
 .debug__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   color: var(--rm-meta);
   font-size: 0.85rem;
+}
+
+/* Glanceable status dot at the start of a row (Network, Service worker,
+   Supabase). Always rendered so labels stay aligned; with no state it's an
+   invisible spacer. Matches newshacker's /debug badges. */
+.debug__badge {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.debug__badge[data-state='ok'] {
+  background: var(--rm-success);
+}
+
+.debug__badge[data-state='down'] {
+  background: var(--rm-danger);
+}
+
+.debug__badge[data-state='idle'] {
+  background: var(--rm-meta);
+  opacity: 0.45;
 }
 
 .debug__value {
