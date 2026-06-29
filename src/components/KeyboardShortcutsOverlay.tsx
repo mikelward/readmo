@@ -36,6 +36,8 @@ const READER_SHORTCUTS: Shortcut[] = [
   { keys: ['p'], description: 'Pin or unpin the item' },
   { keys: ['f'], description: 'Favorite or unfavorite the item' },
   { keys: ['d'], description: 'Mark the item done (and go back)' },
+  { keys: ['u'], description: 'Go up to this item’s feed' },
+  { keys: ['b'], description: 'Go back to the previous page' },
   { keys: ['?'], description: 'Show this help' },
   { keys: ['Esc'], description: 'Close menus or this help' },
 ];

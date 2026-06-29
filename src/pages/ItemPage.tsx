@@ -415,6 +415,15 @@ export function ItemPage() {
 
   const goBack = useCallback(() => navigate(-1), [navigate]);
 
+  // Go up one level in the content hierarchy: an RSS article's parent is the
+  // feed it came from, so `u` jumps to this item's feed page. (newshacker's `u`
+  // goes to the parent comment; RSS items have no comment tree, so the feed is
+  // the analog — same "Open feed" target the overflow menu offers.) No-op until
+  // the item resolves, since the feed id comes from it.
+  const goUp = useCallback(() => {
+    if (resolved) navigate(`/feed/${resolved.feed.id}`);
+  }, [resolved, navigate]);
+
   // The article's comments/discussion destination. Null hides the button.
   //
   // Hacker News feeds open the newshacker thread (not news.ycombinator.com),
@@ -528,7 +537,8 @@ export function ItemPage() {
     showReading,
   ]);
 
-  // Reader keyboard shortcuts: o open original, p pin, f favorite, d done.
+  // Reader keyboard shortcuts: o open original, c comments, p pin, f favorite,
+  // d done, u up to the feed, b back.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -553,11 +563,17 @@ export function ItemPage() {
         case 'd':
           markDone();
           break;
+        case 'u':
+          goUp();
+          break;
+        case 'b':
+          goBack();
+          break;
       }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [openOriginal, openComments, toggle, markDone]);
+  }, [openOriginal, openComments, toggle, markDone, goUp, goBack]);
 
   // Only show the blank "Loading…" when there's nothing cached to paint yet — a
   // cold first open, or while the persisted cache is still hydrating (the
