@@ -53,6 +53,62 @@ export function looksTokenized(url: string): boolean {
   return false;
 }
 
+/** A short non-negative integer (≤4 digits) — the only query VALUE shape a
+ * favicon URL is allowed to carry (`w=150`, `dpr=2`, `q=80`, `crop=1`). */
+const SHORT_INT_VALUE = /^[0-9]{1,4}$/;
+
+/** Image sizing/quality query KEYS a favicon may carry. Paired with the
+ * integer-value rule, this is the leak guard: a `?subscriber_id=1234` or
+ * `?token=1234` has an integer value but a non-image key, so it's rejected —
+ * only a known image param with a numeric value passes. */
+const BENIGN_IMAGE_QUERY_KEYS = new Set([
+  'w', 'h', 'width', 'height', 'maxw', 'maxh', 'size',
+  'dpr', 'dpi', 'scale', 'zoom', 'crop', 'q', 'quality', 'px',
+  'blur', 'sharpen', 'brightness', 'contrast', 'rotate', 'rect', 'pad', 'trim',
+  'v', 'ver', 'version', 'rev', 'cache', 'cachebust', 'cb',
+]);
+
+/**
+ * Like {@link looksTokenized}, but a favicon's query string is allowed when
+ * **every param is a known image key with a short-integer value** (image
+ * sizing/quality params like `?w=150&h=150&crop=1`). Embedded credentials and
+ * tokenized/matrix path segments are still rejected. For favicon URLs:
+ * publishers' advertised icons routinely carry numeric resize params, which are
+ * not secrets, and the favicon is loaded directly by the browser `<img>` rather
+ * than forwarded to a third party. Anything else — a non-image key
+ * (`subscriber_id`, `token`, …) or a non-integer value (token, base64,
+ * timestamp, string param, embedded `key=value`) — is rejected, so no
+ * secret/user-specific query is stored/exposed via `feeds_public`.
+ */
+export function looksTokenizedAllowingQuery(url: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return true; // unparseable → fail closed
+  }
+  if (u.username || u.password) return true; // credentials are always a secret
+  for (const rawSeg of u.pathname.split('/')) {
+    let seg = rawSeg;
+    try {
+      seg = decodeURIComponent(rawSeg);
+    } catch {
+      /* keep the raw segment */
+    }
+    if (!seg) continue;
+    // Matrix params (`/icon.png;jsessionid=abc`) embed a key=value pair in the
+    // path — abnormal for a favicon and a credential-smuggling vector; reject.
+    if (seg.includes(';')) return true;
+    if (segmentLooksTokenized(seg)) return true;
+  }
+  // Favicon query: every param must be a known image key with an integer value.
+  for (const [key, value] of u.searchParams) {
+    if (!BENIGN_IMAGE_QUERY_KEYS.has(key.toLowerCase())) return true;
+    if (!SHORT_INT_VALUE.test(value)) return true;
+  }
+  return false;
+}
+
 /** Long hex run (md5/sha-style) — 20+ hex chars with no break. */
 function isHexBlob(s: string): boolean {
   return s.length >= 20 && /^[0-9a-f]+$/i.test(s);

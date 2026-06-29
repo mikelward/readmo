@@ -1489,8 +1489,15 @@ favicon — the site icon appears **only on the group-by-feed section header**
 repeating on every article. That favicon comes from `feeds.favicon_url`, which
 the poller resolves on each fetch: the feed-advertised icon when present (Atom
 `<icon>`/`<logo>`, RSS `<image>`, JSON Feed `favicon`/`icon`, scheme-checked to
-http(s) and rejected if it looks tokenized), else the site origin's
-`/favicon.ico`. It's decorative (`alt=""`) and the `<img>` hides itself on load
+http(s), fragment-stripped, and rejected if it looks tokenized — embedded
+credentials, a high-entropy/matrix path segment, or a query param that isn't a
+known image-resize/cache key (`w`, `h`, `crop`, `q`, `dpr`, `v`, …) with a
+short-integer value. Numeric image-resize queries are kept
+(`?w=150&h=150&crop=1`), so real CDN icons from Vox / MIT Technology Review
+aren't thrown away, while a credential-named param even with an integer value
+(`?subscriber_id=1234`, `?token=1234`) or any non-integer value (token, base64,
+string param, timestamp) is rejected — so no per-subscriber query leaks into
+`feeds_public`. Else the site origin's `/favicon.ico`. It's decorative (`alt=""`) and the `<img>` hides itself on load
 error, so a guessed `/favicon.ico` that 404s leaves no broken glyph. The URL is
 display-safe metadata (like `title`/`site_url`), so `feeds_public` exposes it;
 the client loads it directly (not via the image proxy).
