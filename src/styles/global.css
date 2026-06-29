@@ -391,3 +391,19 @@ button {
     scroll-behavior: auto !important;
   }
 }
+
+/* Dark-monochrome publisher favicons (e.g. vox.com) are black-on-transparent
+   marks that vanish on the dark page background. Invert them to white in dark
+   mode; light mode leaves them untouched. Inversion is opt-in per domain —
+   see faviconInvert.ts, which tags these <img>s with .favicon--invert-dark.
+   Mirrors the dark-mode selectors above: explicit dark theme, plus system
+   mode (no data-theme) under prefers-color-scheme: dark. Palette-agnostic. */
+:root[data-theme='dark'] .favicon--invert-dark {
+  filter: invert(1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']):not([data-theme='dark']) .favicon--invert-dark {
+    filter: invert(1);
+  }
+}

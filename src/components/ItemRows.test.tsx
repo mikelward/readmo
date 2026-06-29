@@ -137,6 +137,40 @@ describe('ItemRows', () => {
     expect(favicons[0]).toHaveAttribute('aria-hidden', 'true');
   });
 
+  it('tags a dark-monochrome group favicon (vox.com) for dark-mode inversion', async () => {
+    const items = await sampleItems(2);
+    const headers = new Map([
+      [
+        items[0].item.id,
+        {
+          feedId: items[0].item.feedId,
+          title: 'Vox',
+          faviconUrl: 'https://www.vox.com/favicon.ico',
+        },
+      ],
+      // A full-color logo stays untouched — no invert class.
+      [
+        items[1].item.id,
+        {
+          feedId: items[1].item.feedId,
+          title: 'The Verge',
+          faviconUrl: 'https://www.theverge.com/favicon.ico',
+        },
+      ],
+    ]);
+    const { container } = renderWithProviders(
+      <ItemRows items={items} emptyLabel="Nothing here." groupHeaders={headers} />,
+    );
+    const favicons = container.querySelectorAll<HTMLImageElement>(
+      '.item-list__group-favicon',
+    );
+    expect(favicons).toHaveLength(2);
+    const vox = [...favicons].find((f) => f.src.includes('vox.com'))!;
+    const verge = [...favicons].find((f) => f.src.includes('theverge.com'))!;
+    expect(vox).toHaveClass('favicon--invert-dark');
+    expect(verge).not.toHaveClass('favicon--invert-dark');
+  });
+
   it('shows no per-row favicon in the flat view by default (setting off)', async () => {
     const items = withFavicon(await sampleItems(2));
     const { container } = renderWithProviders(
