@@ -108,22 +108,26 @@ export function pickStoredContent(src: SummarySource): StoredPick | null {
 }
 
 /** Prompt for a short-paragraph summary — a few sentences capturing the
- * article's main points, not a single line. We keep the "no meta-framing"
- * steer (no "This article argues…") so it reads as a direct summary, but
- * otherwise let Gemini choose the natural length of a concise paragraph. */
+ * article's main points, not a single line. Mirrors newshacker's
+ * article-summary steer (direct assertion in the author's voice, no
+ * "This article argues…" meta-framing) but keeps readmo's short Markdown
+ * paragraph instead of newshacker's single sentence, and aims for about
+ * three key points. */
 export function buildSummaryPrompt(
   title: string | null | undefined,
   content: string,
 ): string {
   const titleLine = title ? `The article is titled "${title}". ` : '';
   return (
-    `Summarize the article below in a few sentences — a short paragraph that captures its main points. ` +
+    `Summarize the article below in a few sentences — a short paragraph that captures its main points, aiming for about three key points. ` +
     titleLine +
-    `Write it as a direct, neutral summary of what the article says. ` +
+    `Write it as a direct assertion of the article's main points, in the voice of the author — ` +
+    `as if the author (or someone speaking on their behalf) is stating the claims themselves. ` +
     `Format the response as Markdown — you may use **bold**, *italic*, or \`code\` for light emphasis — ` +
     `but keep it as a flowing short paragraph, with no headings or bullet lists. ` +
+    `Do not refer to "the article", "the author", "the piece", "the post", "this story", or similar. ` +
     `Do not begin with meta-framing such as "The article argues", "The author claims", "This piece explains", ` +
-    `or any variant — just state the content. ` +
+    `"The post describes", or any variant. Just state the points. ` +
     `Ignore navigation, boilerplate, and markup; focus on the main body.\n\n` +
     `--- BEGIN ARTICLE ---\n${content}\n--- END ARTICLE ---`
   );
