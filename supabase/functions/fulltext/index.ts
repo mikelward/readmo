@@ -61,6 +61,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { extractArticle } from '../_shared/fulltext.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
+import { robotsAllows } from '../_shared/robots.ts';
 import { looksTokenized, redactUrl } from '../_shared/urlSafety.ts';
 import { corsHeaders, preflight } from '../_shared/cors.ts';
 import { loadAllowlistFromDb, parseAllowlist, isAllowed } from '../_shared/allowlist.ts';
@@ -188,6 +189,17 @@ async function handle(req: Request): Promise<Response> {
   }
   if (!item.url) return json({ status: 'empty', contentHtml: null });
 
+  // Reading mode crawls the article's OWN page (beyond the syndicated feed), so
+  // ask the publisher's robots.txt first. Fail OPEN: a missing/unreachable/
+  // unparseable robots.txt allows the fetch (robotsAllows handles that). Only a
+  // robots.txt that explicitly disallows our crawler blocks it — reported as the
+  // silent `empty` outcome (reader keeps the feed body + Open original), the same
+  // UX as a paywall/teaser, so no new wire status for older clients to choke on.
+  if (!(await robotsAllows(item.url))) {
+    console.log(`fulltext: item ${itemId} (${redactUrl(item.url)}) disallowed by robots.txt`);
+    return json({ status: 'empty', contentHtml: null });
+  }
+
   console.log(`fulltext: fetching item ${itemId} (${redactUrl(item.url)})`);
   let body: string;
   let finalUrl = item.url;
@@ -201,6 +213,19 @@ async function handle(req: Request): Promise<Response> {
       maxBytes: FETCH_MAX_BYTES,
     });
     console.log(`fulltext: item ${itemId} responded HTTP ${res.status}`);
+    // Re-check robots.txt on the FINAL URL after redirects, for EVERY status
+    // branch and BEFORE the Jina fallback. safeFetch follows redirects
+    // internally, so res.url can be a different origin/path than the item.url we
+    // authorized above. This must run before the 401/403 Jina path too: an
+    // allowed short link can redirect to a robots-disallowed bot-wall page, and
+    // Jina would otherwise extract + cache that destination's body. A disallowed
+    // destination drops everything (no Jina, no extract, no cache), reported as
+    // the silent `empty`. (The accepted residual is only that the direct GET to
+    // res.url already happened — we never store or serve it.)
+    if (res.url !== item.url && !(await robotsAllows(res.url))) {
+      console.log(`fulltext: item ${itemId} final URL (${redactUrl(res.url)}) disallowed by robots.txt`);
+      return json({ status: 'empty', contentHtml: null });
+    }
     if (res.status === 401 || res.status === 403) {
       // Login/bot wall. Retry via Jina ONLY for public feeds (no secret_url),
       // so we never forward a possibly-tokenized item URL to a third party.

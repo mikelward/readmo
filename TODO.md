@@ -111,6 +111,36 @@ constraint is documented in more detail.
   selector feeds as the always-available fallback. Revisit when a user
   asks for a no-feed site we care about.
 
+## Fetching / robots.txt
+
+- **Consider honoring robots.txt on the poller and/or discovery fetches.**
+  Today only the full-text reading-mode fetch consults robots.txt
+  (`supabase/functions/_shared/robots.ts`, wired into `fulltext/index.ts`; see
+  SPEC.md §"Full-text reading mode" and PR #271). The poller and `/discover`
+  were deliberately left ungated — a subscribed feed URL is published *for*
+  syndication, and discovery is a one-time, explicitly user-pasted URL — but
+  whether to extend robots honoring to them is worth revisiting. Open
+  questions / tradeoffs:
+  - **Poller:** the recurring automated crawl is the most "crawler-like" path,
+    so it's the strongest candidate for politeness. Risk: a publisher blanket
+    `Disallow: /` (common for unknown bots) would park a feed the user
+    explicitly subscribed to — arguably the wrong call for an opt-in feed
+    reader. Would also want robots cached per-origin (a robots fetch per feed
+    poll is wasteful) and a clear feed-health surface when a feed is parked for
+    robots rather than an error.
+  - **Discover:** user-initiated and one-shot; gating it could block a feed the
+    user is actively trying to add, which is a worse UX than the politeness win.
+  - **Shared seam:** if we do gate either, the clean home is a per-hop
+    authorization hook in `safeFetch` (the shared SSRF funnel) rather than a
+    per-caller re-check — that also closes the redirect-target gap the
+    full-text path accepts as a residual today (one GET to a redirected
+    disallowed URL before discarding; see the open thread on PR #271). Cons of
+    the hook: it touches the shared security module every consumer routes
+    through, must avoid re-entrancy (the robots fetch itself goes through
+    `safeFetch`), and adds a robots fetch per hop without an origin cache.
+  Revisit if a publisher complains, or when we next touch the poller's
+  politeness logic (it already honors `Retry-After`/`ttl`).
+
 ## Server RPCs
 
 - **Authenticated OPML-export RPC.** `feeds_public` exposes only `site_url`
