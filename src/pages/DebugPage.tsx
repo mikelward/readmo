@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { useAuth } from '../hooks/useAuth';
+import { useDataSource } from '../lib/data/context';
 import { buildInfo, buildInfoRows, summarizeBuild } from '../lib/buildInfo';
+import { formatLastSync } from '../lib/lastSync';
 import { isSupabaseConfigured, supabaseHealthUrl } from '../lib/supabase/client';
 import {
   describeSupabase,
@@ -15,7 +17,7 @@ import './PageHeader.css';
 
 type Row = { label: string; value: string; state?: StatusBadge };
 
-function runtimeRows(online: boolean, supabase: Row): Row[] {
+function runtimeRows(online: boolean, supabase: Row, lastSync: Row): Row[] {
   const hasNavigator = typeof navigator !== 'undefined';
   // Badged status rows first, grouped together — the glanceable health signals
   // (Network, Service worker, Supabase) read as one block of dots.
@@ -32,7 +34,9 @@ function runtimeRows(online: boolean, supabase: Row): Row[] {
     rows.push({ label: 'Service worker', value: sw, state: sw === 'active' ? 'ok' : 'idle' });
   }
   rows.push(supabase);
-  // Informational rows (no badge) follow the status group.
+  // Last sync sits just under Supabase — it's the cross-device pull against that
+  // backend — then the informational rows (no badge) follow.
+  rows.push(lastSync);
   if (hasNavigator) {
     rows.push({ label: 'Language', value: navigator.language || 'unknown' });
   }
@@ -80,6 +84,7 @@ function DebugSection({ title, rows }: { title: string; rows: Row[] }) {
 export function DebugPage() {
   const online = useOnlineStatus();
   const { user } = useAuth();
+  const dataSource = useDataSource();
   useDocumentTitle('Debug · readmo');
 
   // Live backend reachability, the readmo analog of newshacker's /debug Services
@@ -111,11 +116,11 @@ export function DebugPage() {
   ];
 
   const supabase = describeSupabase(supabaseState);
-  const runtime = runtimeRows(online, {
-    label: 'Supabase',
-    value: supabase.value,
-    state: supabase.badge,
-  });
+  const runtime = runtimeRows(
+    online,
+    { label: 'Supabase', value: supabase.value, state: supabase.badge },
+    { label: 'Last sync', value: formatLastSync(dataSource.getLastSyncedAt?.()) },
+  );
 
   return (
     <div className="debug">

@@ -88,6 +88,15 @@ describe('DebugPage', () => {
     expect(container.querySelectorAll('.debug__badge').length).toBeGreaterThan(0);
   });
 
+  it('shows the Last sync row (N/A under the mock data source)', () => {
+    // MockDataSource has no server to reconcile against, so it omits
+    // getLastSyncedAt and the row reads N/A. The relative-time formatting for a
+    // real backend is unit-tested in lastSync.test.ts.
+    renderWithProviders(<DebugPage />, { route: '/debug' });
+    expect(screen.getByText('Last sync')).toBeInTheDocument();
+    expect(screen.getByText('n/a (mock data)')).toBeInTheDocument();
+  });
+
   it('groups the badged status rows together at the top of Runtime', () => {
     renderWithProviders(<DebugPage />, { route: '/debug' });
     const runtime = screen

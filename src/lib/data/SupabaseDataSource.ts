@@ -281,6 +281,9 @@ export class SupabaseDataSource implements DataSource {
    * state" (return rows now; refresh hydration in the background) — see
    * `ensureHydratedForRead`. */
   private hydratedOnce = false;
+  /** Epoch ms of the last successful server item_state pull, or null until the
+   * first one lands. Surfaced on `/debug` via {@link getLastSyncedAt}. */
+  private lastSyncedAt: number | null = null;
   private resyncing: Promise<void> | null = null;
   /** A resync was requested while one was already in flight — re-run a fresh one
    * if the in-flight attempt fails, so a recovery (e.g. an `online` event after
@@ -541,6 +544,13 @@ export class SupabaseDataSource implements DataSource {
     // last-good state to overlay, so it never needs to BLOCK on a re-pull (even
     // one that hangs) — see ensureHydratedForRead.
     this.hydratedOnce = true;
+    this.lastSyncedAt = Date.now();
+  }
+
+  /** Epoch ms of the last successful server item_state pull, or null until the
+   * first one lands (see {@link DataSource.getLastSyncedAt}). */
+  getLastSyncedAt(): number | null {
+    return this.lastSyncedAt;
   }
 
   /** Memoized hydration, used by every read: once it has succeeded, reads return
