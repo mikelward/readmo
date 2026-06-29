@@ -52,6 +52,12 @@ import {
 /** The display-safe columns of `feeds_public` (and of `feeds` for clients —
  * never the fetch URLs). */
 const FEED_COLS =
+  'id, site_url, title, favicon_url, last_fetched_at, next_fetch_at, fetch_interval_s, error_count, last_error, created_at';
+// Pre-0036 backend (no `favicon_url` on the view): feed reads step down to this
+// column set on an undefined-column error so the favicon just doesn't show,
+// rather than 400-ing every feed read against an older backend (guardrail #11).
+// See selectFeedRows.
+const FEED_COLS_LEGACY =
   'id, site_url, title, last_fetched_at, next_fetch_at, fetch_interval_s, error_count, last_error, created_at';
 const ITEM_COLS =
   'id, feed_id, guid, url, comments_url, title, author, published_at, content_html, summary, enclosures, content_hash, created_at';
@@ -438,6 +444,25 @@ export class SupabaseDataSource implements DataSource {
     }
   }
 
+  /** Run a `feeds_public` read with the full FEED_COLS, retrying once with the
+   * pre-0036 legacy set (no `favicon_url`) on an undefined-column error — so a
+   * new client just shows no favicon against an older backend instead of
+   * 400-ing every feed read (guardrail #11). Mirrors {@link selectItemRows}. */
+  private async selectFeedRows<T>(
+    build: (cols: string) => PromiseLike<{ data: unknown; error: unknown; status?: number }>,
+  ): Promise<T> {
+    const run = async (cols: string) =>
+      this.unwrap<T>(
+        (await build(cols)) as { data: T | null; error: unknown; status?: number },
+      );
+    try {
+      return await run(FEED_COLS);
+    } catch (err) {
+      if (!isMissingColumnError(err)) throw err;
+      return await run(FEED_COLS_LEGACY);
+    }
+  }
+
   /**
    * Fetch the caller's item_state rows and overlay them onto the store so
    * `stateStore.get()` reflects server truth. A live read is authoritative, so
@@ -661,8 +686,8 @@ export class SupabaseDataSource implements DataSource {
     const [feedBatches, subBatches] = await Promise.all([
       Promise.all(
         chunk(missing, ID_LOOKUP_CHUNK).map(async (c) =>
-          this.unwrap<FeedPublicRow[]>(
-            await this.sb.from('feeds_public').select(FEED_COLS).in('id', c),
+          this.selectFeedRows<FeedPublicRow[]>((cols) =>
+            this.sb.from('feeds_public').select(cols).in('id', c),
           ),
         ),
       ),
@@ -1135,8 +1160,8 @@ export class SupabaseDataSource implements DataSource {
     if (cached) {
       feed = cached;
     } else {
-      const row = this.unwrap<FeedPublicRow | null>(
-        await this.sb.from('feeds_public').select(FEED_COLS).eq('id', feedId).maybeSingle(),
+      const row = await this.selectFeedRows<FeedPublicRow | null>((cols) =>
+        this.sb.from('feeds_public').select(cols).eq('id', feedId).maybeSingle(),
       );
       if (!row) return null;
       feed = mapFeed(row);

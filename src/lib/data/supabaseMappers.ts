@@ -79,6 +79,10 @@ export interface FeedPublicRow {
   id: string;
   site_url: string | null;
   title: string | null;
+  /** Optional: absent when read from a backend predating the `favicon_url`
+   * column + `feeds_public` projection (0036). Defaults to null in
+   * {@link mapFeed} so an older backend just yields no favicon. */
+  favicon_url?: string | null;
   last_fetched_at: string | null;
   next_fetch_at: string | null;
   fetch_interval_s: number | null;
@@ -142,8 +146,8 @@ export interface SubscriptionRow {
 /**
  * `feeds_public` row → `Feed`. The display `url` is sourced from `site_url` —
  * never a fetch URL, which the view doesn't even expose (a per-user token could
- * ride in it; see types.ts `Feed.url` and 0002_rls.sql). `faviconUrl` isn't in
- * the view yet, so null for now.
+ * ride in it; see types.ts `Feed.url` and 0002_rls.sql). `faviconUrl` comes
+ * from the view's `favicon_url` (0036); it's null against a pre-0036 backend.
  */
 export function mapFeed(row: FeedPublicRow): Feed {
   return {
@@ -151,7 +155,7 @@ export function mapFeed(row: FeedPublicRow): Feed {
     url: row.site_url ?? '',
     siteUrl: row.site_url ?? null,
     title: row.title ?? row.site_url ?? 'Untitled feed',
-    faviconUrl: null,
+    faviconUrl: row.favicon_url ?? null,
     errorCount: row.error_count ?? 0,
     lastError: row.last_error ?? null,
     parked: (row.error_count ?? 0) >= PARKED_ERROR_THRESHOLD,

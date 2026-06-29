@@ -83,6 +83,33 @@ describe('ItemRows', () => {
     expect(headerEls).toHaveLength(2);
   });
 
+  it('renders the feed favicon to the left of the name when provided', async () => {
+    const items = await sampleItems(2);
+    const headers = new Map([
+      [
+        items[0].item.id,
+        {
+          feedId: items[0].item.feedId,
+          title: 'Iconned Feed',
+          faviconUrl: 'https://example.com/favicon.ico',
+        },
+      ],
+      // No favicon → no <img> for this section.
+      [items[1].item.id, { feedId: items[1].item.feedId, title: 'Plain Feed' }],
+    ]);
+    const { container } = renderWithProviders(
+      <ItemRows items={items} emptyLabel="Nothing here." groupHeaders={headers} />,
+    );
+    const favicons = container.querySelectorAll<HTMLImageElement>(
+      '.item-list__group-favicon',
+    );
+    expect(favicons).toHaveLength(1);
+    expect(favicons[0]).toHaveAttribute('src', 'https://example.com/favicon.ico');
+    // Decorative: empty alt + aria-hidden so it isn't announced or focusable.
+    expect(favicons[0]).toHaveAttribute('alt', '');
+    expect(favicons[0]).toHaveAttribute('aria-hidden', 'true');
+  });
+
   it('renders a header toggle button and reports clicks (collapsible)', async () => {
     const items = await sampleItems(2);
     const onToggle = vi.fn();

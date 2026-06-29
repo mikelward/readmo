@@ -357,7 +357,7 @@ live.
 
 ```
 users         (id, oauth_subject, email, created_at, …)               -- Supabase auth
-feeds         (id, url UNIQUE, secret_url, site_url, title, etag,
+feeds         (id, url UNIQUE, secret_url, site_url, title, favicon_url, etag,
                last_modified, last_fetched_at, next_fetch_at,
                fetch_interval_s, error_count, last_error)             -- shared across users
 items         (id, feed_id FK, guid, url, comments_url, title, author,
@@ -954,7 +954,7 @@ negligible and off every critical path. See the External services table in
   two devices editing the same item never cross-conflict on independent flags;
   same-field edits resolve to the later action time. Still deferred: an
   **authenticated OPML-export RPC** — the client can't emit real feed fetch URLs
-  (`feeds_public` exposes only `site_url`, never `url`/`secret_url`), so live
+  (`feeds_public` exposes `site_url`, never the fetch URLs `url`/`secret_url`), so live
   `exportOpml` carries homepage URLs until a server-side export exists.
 - **At-least-once delivery, no exactly-once needed.** The outbox can re-send a
   write that committed but whose ack was lost to a crash. Under per-field LWW a
@@ -1074,8 +1074,9 @@ negligible and off every critical path. See the External services table in
        current layout — see *List toolbar*), which writes the same per-device
        preference.
      - **Section header controls** (group-by-feed only). Each feed's header is a
-       small control strip: the **chevron + feed name + unread/to-do count
-       badge** form the collapse tap target (see below), and on the right sit two
+       small control strip: the **chevron + site favicon + feed name +
+       unread/to-do count badge** form the collapse tap target (see below), and
+       on the right sit two
        **44×44px** icon buttons, ≥8px apart — **Undo** and **Sweep this feed**
        (broom), in that left-to-right order to match the top toolbar's
        right-anchored cluster. The **count badge** shows that feed's unread/to-do total (from
@@ -1482,7 +1483,15 @@ domains — `old.reddit.com` → `reddit.com`); **article domain** when it diffe
 from the feed's own site, shown right after the source name (so aggregator
 feeds like Hacker News or Reddit surface where a row actually links —
 `Hacker News · thedrive.com`; a normal blog feed that links to itself doesn't
-repeat its own domain); **age**; **author** when present.
+repeat its own domain); **age**; **author** when present. The **favicon** shown
+beside the source (and beside the feed name in the group-by-feed section
+header) comes from `feeds.favicon_url`, which the poller resolves on each fetch:
+the feed-advertised icon when present (Atom `<icon>`/`<logo>`, RSS `<image>`,
+JSON Feed `favicon`/`icon`, scheme-checked to http(s)), else the site origin's
+`/favicon.ico`. It's decorative (`alt=""`) and the `<img>` hides itself on load
+error, so a guessed `/favicon.ico` that 404s leaves no broken glyph. The URL is
+display-safe metadata (like `title`/`site_url`), so `feeds_public` exposes it;
+the client loads it directly (not via the image proxy).
 **Opened** titles render `--rm-read`. Not rendered: rank numbers, inline
 source/date links, external-link chevron (the reader's "Open original" owns
 that). (No points/comments/Hot flag/"N new" — those are HN-specific.)

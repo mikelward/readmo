@@ -300,6 +300,11 @@ export function ItemRow({
             aria-hidden="true"
             width={14}
             height={14}
+            // Hide on load error so a derived /favicon.ico that 404s leaves no
+            // broken-image glyph (matches the group-header favicon in ItemRows).
+            onError={(e) => {
+              e.currentTarget.style.display = 'none';
+            }}
           />
         ) : null}
         {formatItemMetaTail({

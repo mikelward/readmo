@@ -82,6 +82,18 @@ describe('mapFeed', () => {
     expect(feed.parked).toBe(false);
   });
 
+  it('maps favicon_url when the view provides it', () => {
+    expect(
+      mapFeed({ ...base, favicon_url: 'https://example.com/favicon.ico' }).faviconUrl,
+    ).toBe('https://example.com/favicon.ico');
+  });
+
+  it('defaults faviconUrl to null against a pre-0036 backend (column absent)', () => {
+    // `base` omits favicon_url entirely, mirroring an older feeds_public view.
+    expect(mapFeed(base).faviconUrl).toBeNull();
+    expect(mapFeed({ ...base, favicon_url: null }).faviconUrl).toBeNull();
+  });
+
   it('parks a feed once error_count crosses the threshold', () => {
     expect(mapFeed({ ...base, error_count: PARKED_ERROR_THRESHOLD - 1 }).parked).toBe(false);
     expect(mapFeed({ ...base, error_count: PARKED_ERROR_THRESHOLD }).parked).toBe(true);

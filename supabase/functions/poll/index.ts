@@ -173,6 +173,7 @@ async function pollOne(supabase: any, feed: any): Promise<void> {
     .update({
       title: parsed.feedTitle,
       site_url: parsed.siteUrl,
+      favicon_url: parsed.faviconUrl,
       etag: res.headers.get('etag'),
       last_modified: res.headers.get('last-modified'),
       last_fetched_at: new Date().toISOString(),
