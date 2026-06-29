@@ -132,10 +132,26 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Static (non-interactive) header label keeps the original padding. */
-.item-list__group-header > .item-list__group-title {
-  display: block;
+/* Static (non-interactive) header label keeps the original padding and lays
+   the (optional) favicon out beside the name. */
+.item-list__group-static {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   padding: 0.5rem 1rem 0.25rem;
+}
+
+/* Site favicon to the left of the feed name. Decorative (alt=""), so it never
+   adds a tap zone — it sits inside the toggle button / static label. Fixed box
+   so a non-square source doesn't shift the name; hidden via inline style on
+   load error (a derived /favicon.ico that 404s). */
+.item-list__group-favicon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  object-fit: contain;
 }
 
 /* Tappable header: a full-width 44px row toggling the section. The chevron

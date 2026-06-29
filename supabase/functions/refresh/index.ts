@@ -174,6 +174,7 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
     .update({
       title: parsed.feedTitle,
       site_url: parsed.siteUrl,
+      favicon_url: parsed.faviconUrl,
     })
     .eq('id', feed.id);
   if (metaError) throw new Error(`feed meta update failed: ${metaError.message}`);

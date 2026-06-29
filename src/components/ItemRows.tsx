@@ -12,6 +12,9 @@ import './ItemList.css';
 export interface GroupHeader {
   feedId: FeedId;
   title: string;
+  /** Site favicon shown to the left of the name; null/absent → no icon (the
+   * common case until the poller has resolved one — see Feed.faviconUrl). */
+  faviconUrl?: string | null;
 }
 
 interface Props {
@@ -206,8 +209,24 @@ export function ItemRows({
     title: string,
     headerForId: string,
     phantom: boolean,
+    faviconUrl?: string | null,
   ): ReactNode => {
     const collapsed = collapsedFeeds?.has(feedId) ?? false;
+    // Decorative site icon to the left of the name. Hidden on load error so a
+    // 404'd guess (e.g. a derived /favicon.ico) leaves no broken-image glyph.
+    const favicon = faviconUrl ? (
+      <img
+        className="item-list__group-favicon"
+        src={faviconUrl}
+        alt=""
+        aria-hidden="true"
+        width={16}
+        height={16}
+        onError={(e) => {
+          e.currentTarget.style.display = 'none';
+        }}
+      />
+    ) : null;
     const count =
       !phantom && groupCounts ? (groupCounts[feedId] ?? 0) : 0;
     const showCount = count > 0;
@@ -238,6 +257,7 @@ export function ItemRows({
               width={18}
               height={18}
             />
+            {favicon}
             <span className="item-list__group-label">
               <span className="item-list__group-title">{title}</span>
               {showCount ? (
@@ -251,8 +271,9 @@ export function ItemRows({
             </span>
           </button>
         ) : (
-          <span className="item-list__group-title" aria-hidden="true">
-            {title}
+          <span className="item-list__group-static" aria-hidden="true">
+            {favicon}
+            <span className="item-list__group-title">{title}</span>
           </span>
         )}
         {onUndo || (!phantom && onSweepFeed) ? (
@@ -345,7 +366,13 @@ export function ItemRows({
     return (
       <li className="item-list__section" key={`feed:${feedId}`}>
         {section.header
-          ? renderHeader(feedId, section.header.title, section.headerForId!, false)
+          ? renderHeader(
+              feedId,
+              section.header.title,
+              section.headerForId!,
+              false,
+              section.header.faviconUrl,
+            )
           : null}
         {collapsed ? null : (
           <ul className="item-list__section-rows">

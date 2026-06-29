@@ -222,6 +222,164 @@ describe('parseFeed — relative-URL absolutization', () => {
   });
 });
 
+describe('parseFeed — favicon', () => {
+  it('derives /favicon.ico from the site origin when no icon is advertised', () => {
+    // None of the fixtures advertise an icon, so each falls back to the
+    // well-known /favicon.ico at the resolved site origin.
+    expect(
+      parseFeed(fixture('rss2.xml'), 'https://example.com/feed.xml').faviconUrl,
+    ).toBe('https://example.com/favicon.ico');
+    expect(
+      parseFeed(fixture('atom.xml'), 'https://atom.example.com/feed.xml').faviconUrl,
+    ).toBe('https://atom.example.com/favicon.ico');
+    expect(
+      parseFeed(fixture('rdf.xml'), 'https://rdf.example.com/feed.xml').faviconUrl,
+    ).toBe('https://rdf.example.com/favicon.ico');
+    expect(
+      parseFeed(fixture('jsonfeed.json'), 'https://json.example.com/feed.json').faviconUrl,
+    ).toBe('https://json.example.com/favicon.ico');
+  });
+
+  it('falls back to the FEED origin when there is no site link', () => {
+    const raw =
+      '<?xml version="1.0"?><rss version="2.0"><channel><title>No link</title>' +
+      '<item><title>i</title><guid>g1</guid></item></channel></rss>';
+    expect(parseFeed(raw, 'https://feeds.example.org/path/main.xml').faviconUrl).toBe(
+      'https://feeds.example.org/favicon.ico',
+    );
+  });
+
+  it('prefers an RSS <image><url> over the derived favicon', () => {
+    const raw =
+      '<?xml version="1.0"?><rss version="2.0"><channel><title>T</title>' +
+      '<link>https://ex.com/</link>' +
+      '<image><url>https://cdn.ex.com/logo.png</url></image>' +
+      '<item><title>i</title><guid>g1</guid></item></channel></rss>';
+    expect(parseFeed(raw, 'https://ex.com/feed.xml').faviconUrl).toBe(
+      'https://cdn.ex.com/logo.png',
+    );
+  });
+
+  it('prefers an RDF <image><url> over the derived favicon', () => {
+    const raw =
+      '<?xml version="1.0"?><rdf:RDF ' +
+      'xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" ' +
+      'xmlns="http://purl.org/rss/1.0/">' +
+      '<channel rdf:about="https://rdf.ex.com/"><title>T</title>' +
+      '<link>https://rdf.ex.com/</link></channel>' +
+      '<image rdf:about="https://rdf.ex.com/logo.png">' +
+      '<url>https://rdf.ex.com/logo.png</url></image>' +
+      '<item rdf:about="https://rdf.ex.com/a"><title>A</title>' +
+      '<link>https://rdf.ex.com/a</link></item></rdf:RDF>';
+    expect(parseFeed(raw, 'https://rdf.ex.com/feed.xml').faviconUrl).toBe(
+      'https://rdf.ex.com/logo.png',
+    );
+  });
+
+  it('prefers Atom <icon>, then <logo>, over the derived favicon', () => {
+    const withIcon =
+      '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">' +
+      '<title>T</title><link rel="alternate" href="https://a.ex.com/"/>' +
+      '<icon>https://a.ex.com/icon.png</icon>' +
+      '<logo>https://a.ex.com/logo.png</logo></feed>';
+    expect(parseFeed(withIcon, 'https://a.ex.com/feed.xml').faviconUrl).toBe(
+      'https://a.ex.com/icon.png',
+    );
+    const logoOnly =
+      '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">' +
+      '<title>T</title><link rel="alternate" href="https://a.ex.com/"/>' +
+      '<logo>https://a.ex.com/logo.png</logo></feed>';
+    expect(parseFeed(logoOnly, 'https://a.ex.com/feed.xml').faviconUrl).toBe(
+      'https://a.ex.com/logo.png',
+    );
+  });
+
+  it('prefers JSON Feed `favicon`, then `icon`, over the derived favicon', () => {
+    const base = {
+      version: 'https://jsonfeed.org/version/1.1',
+      title: 'T',
+      home_page_url: 'https://j.ex.com/',
+      items: [{ id: '1', url: 'https://j.ex.com/1' }],
+    };
+    expect(
+      parseFeed(
+        JSON.stringify({
+          ...base,
+          favicon: 'https://j.ex.com/fav.png',
+          icon: 'https://j.ex.com/icon.png',
+        }),
+        'https://j.ex.com/feed.json',
+      ).faviconUrl,
+    ).toBe('https://j.ex.com/fav.png');
+    expect(
+      parseFeed(
+        JSON.stringify({ ...base, icon: 'https://j.ex.com/icon.png' }),
+        'https://j.ex.com/feed.json',
+      ).faviconUrl,
+    ).toBe('https://j.ex.com/icon.png');
+  });
+
+  it('absolutizes a relative advertised icon against the site URL', () => {
+    const raw =
+      '<?xml version="1.0"?><rss version="2.0"><channel><title>T</title>' +
+      '<link>https://ex.com/blog/</link>' +
+      '<image><url>/assets/logo.png</url></image>' +
+      '<item><title>i</title><guid>g1</guid></item></channel></rss>';
+    expect(parseFeed(raw, 'https://ex.com/feed.xml').faviconUrl).toBe(
+      'https://ex.com/assets/logo.png',
+    );
+  });
+
+  it('rejects a non-http(s) advertised icon and derives /favicon.ico instead', () => {
+    const raw =
+      '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">' +
+      '<title>T</title><link rel="alternate" href="https://a.ex.com/"/>' +
+      '<icon>data:image/png;base64,AAAA</icon></feed>';
+    expect(parseFeed(raw, 'https://a.ex.com/feed.xml').faviconUrl).toBe(
+      'https://a.ex.com/favicon.ico',
+    );
+  });
+
+  it('rejects a tokenized advertised icon (query/credentials) and derives instead', () => {
+    // A private feed's advertised icon carrying a secret must not be stored or
+    // exposed via feeds_public; fall back to the credential-free /favicon.ico.
+    const withQueryToken =
+      '<?xml version="1.0"?><rss version="2.0"><channel><title>T</title>' +
+      '<link>https://ex.com/</link>' +
+      '<image><url>https://cdn.ex.com/icon.png?token=abc123secret</url></image>' +
+      '<item><title>i</title><guid>g1</guid></item></channel></rss>';
+    expect(parseFeed(withQueryToken, 'https://ex.com/feed.xml').faviconUrl).toBe(
+      'https://ex.com/favicon.ico',
+    );
+    const withCredentials =
+      '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">' +
+      '<title>T</title><link rel="alternate" href="https://a.ex.com/"/>' +
+      '<icon>https://user:pass@cdn.ex.com/icon.png</icon></feed>';
+    expect(parseFeed(withCredentials, 'https://a.ex.com/feed.xml').faviconUrl).toBe(
+      'https://a.ex.com/favicon.ico',
+    );
+  });
+
+  it('fails closed (no favicon) when the site link is a non-http(s) scheme', () => {
+    // A hierarchical non-http <link> (ftp://…) would otherwise derive
+    // ftp://…/favicon.ico; favicons are contractually http(s)-only.
+    const raw =
+      '<?xml version="1.0"?><rss version="2.0"><channel><title>T</title>' +
+      '<link>ftp://example.com/</link>' +
+      '<item><title>i</title><guid>g1</guid></item></channel></rss>';
+    expect(parseFeed(raw, 'ftp://example.com/feed.xml').faviconUrl).toBeNull();
+  });
+
+  it('fails closed (no favicon) when even the feed origin carries credentials', () => {
+    // No advertised icon → derived /favicon.ico, but the base URL's userinfo
+    // would ride along; screen it out rather than expose a credentialed URL.
+    const raw =
+      '<?xml version="1.0"?><rss version="2.0"><channel><title>T</title>' +
+      '<item><title>i</title><guid>g1</guid></item></channel></rss>';
+    expect(parseFeed(raw, 'https://user:pass@feeds.ex.com/main.xml').faviconUrl).toBeNull();
+  });
+});
+
 describe('entity decoding in plain-text fields', () => {
   // fast-xml-parser only resolves the five predefined XML entities; numeric
   // references and HTML named entities survive into title/author/feedTitle,

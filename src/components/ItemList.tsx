@@ -1782,11 +1782,18 @@ export function ItemList({
   // without their section header until a successful refetch.
   const groupHeaders = useMemo(() => {
     if (!groupByFeed) return undefined;
-    const headers = new Map<ItemId, { feedId: FeedId; title: string }>();
+    const headers = new Map<
+      ItemId,
+      { feedId: FeedId; title: string; faviconUrl: string | null }
+    >();
     let lastFeedId: FeedId | null = null;
     for (const fi of visibleItems) {
       if (fi.item.feedId !== lastFeedId) {
-        headers.set(fi.item.id, { feedId: fi.item.feedId, title: fi.feed.title });
+        headers.set(fi.item.id, {
+          feedId: fi.item.feedId,
+          title: fi.feed.title,
+          faviconUrl: fi.feed.faviconUrl,
+        });
         lastFeedId = fi.item.feedId;
       }
     }
