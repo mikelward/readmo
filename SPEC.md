@@ -996,8 +996,10 @@ negligible and off every critical path. See the External services table in
        list rows), then its `guid` (hnrss feeds), then its `url` (Ask/Show HN),
        then the stored description HTML (`contentHtml`) as a backfill: the
        official `news.ycombinator.com/rss` feed carries the discussion link only
-       in the item `<description>`, and ITEM_COLS reads (library/search/reader) or
-       a backend predating the `comments_url` column omit the structured field.
+       in the item `<description>`, and a backend predating the `comments_url`
+       column (0033) omits the structured field. (`ITEM_COLS` reads
+       — library/search/reader — now select `comments_url`, stepping down to the
+       pre-0033 column set if the backend lacks it.)
        Falls back to the reader for any item with no derivable HN id. **$0** — a
        plain deep link, no API call (see *External services*: none added).
 
@@ -1684,11 +1686,38 @@ last lines of text. Left→right:
 
 **Open original** (primary; icon-only with a soft accent-tinted fill — the
 tooltip and aria-label carry the name; marks Opened, fades to neutral once
-opened) → **Pin/Unpin** (📌) → **Done** (✓) → **More ⋮**. On wide viewports (≥960px)
-**Share** and **Favorite** (♥) surface inline between Open original and Pin
-(in that order — Share sits next to Open original); below 960px they live in
-the overflow. Done sits second from the right, immediately left of the
-overflow ⋮. (No Upvote — RSS has no votes.)
+opened) → **Comments** (💬, conditional — see below) → **Pin/Unpin** (📌) →
+**Done** (✓) → **More ⋮**. On wide viewports (≥960px)
+**Share** and **Favorite** (♥) surface inline between the conditional Comments
+slot and Pin (in that order — Share sits next to Open original / Comments);
+below 960px they live in the overflow. Done sits second from the right,
+immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
+
+- **Comments** (chat-bubble icon) is shown **only when the item has a
+  discussion destination**, and is a **deep link out** to that discussion — not
+  an in-app comment thread (guardrail "No comments, no votes" still holds: we
+  don't render or store comments). Opens in a new tab (`noopener,noreferrer`);
+  the aria-label/tooltip reads "Comments on newshacker" when the destination is
+  newshacker, "Comments" otherwise. Resolution:
+  - On a **Hacker News feed** (`isHackerNewsFeed`) it opens the **newshacker**
+    thread (`newshacker.app/item/<id>`), same as the row's "open on newshacker"
+    mode. The HN id is derived from the comments URL / guid / item url / body
+    (`lib/newshacker.ts`), so it resolves even for the official HN feed (whose
+    discussion link lives only in the description) and when the reader's
+    single-item read omits `comments_url` (a pre-0033 backend).
+  - On **any other feed** it opens the item's structured comments URL (RSS
+    `<comments>` / Atom `rel="replies"`, persisted as `items.comments_url`,
+    which `ITEM_COLS` now selects — stepping down to the pre-0033 column set
+    against a backend without it). If that comments URL *itself* points at an HN
+    thread it is still routed to newshacker. The body/url/guid HN scan is **not**
+    applied here, so a normal article that merely links to an HN thread in its
+    body doesn't sprout a (mislabeled) newshacker button.
+
+  The button is absent — not a fourth always-present action — when there's no
+  discussion to open. On a **narrow** viewport, where a fifth 44px action would
+  break the ≥320px single-row invariant, the Comments button takes the slot and
+  **Pin moves into the ⋮ overflow menu** (like Share/Favorite already do on
+  narrow); with no Comments button — or on a wide viewport — Pin stays inline.
 
 - **Feed name** sits immediately right of the leading button (Back on the top
   bar, Back to top on the bottom bar), linking to `/feed/:feedId`. This is the
@@ -1776,7 +1805,7 @@ Reader page (`/item/:id`):
 | Key | Action |
 |-----|--------|
 | `j` / `k` | Scroll to next/previous section heading (or page top/bottom) |
-| `o` | Open original · `p` Pin · `f` Favorite · `d` Done (navigates back) |
+| `o` | Open original · `c` Comments (when present) · `p` Pin · `f` Favorite · `d` Done (navigates back) |
 | `?` / `Esc` | Help / close |
 
 Same bail-out conditions as newshacker (skip in inputs, open dialog/menu,

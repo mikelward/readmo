@@ -7,7 +7,7 @@ import { IsRestoringProvider, QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import { _resetNetworkStatusForTests, reportFetchFailure } from '../lib/networkStatus';
-import type { FeedItem } from '../lib/types';
+import type { Feed, FeedItem, Item, ItemId } from '../lib/types';
 import type { FullTextResult } from '../lib/fullText';
 import { ItemPage } from './ItemPage';
 
@@ -180,6 +180,193 @@ describe('ItemPage (reader)', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('item-row-menu')).toBeNull();
     });
+  });
+});
+
+describe('ItemPage comments button', () => {
+  // Overlay fields onto the resolved item/feed so the reader sees a comments
+  // link / HN discussion / HN feed the default seed (none are HN) doesn't carry.
+  class CommentsSource extends MockDataSource {
+    constructor(
+      private readonly overrides: { item?: Partial<Item>; feed?: Partial<Feed> },
+      key = `test-${Math.random()}`,
+    ) {
+      super(key);
+    }
+    async getItem(id: ItemId): Promise<FeedItem | null> {
+      const fi = await super.getItem(id);
+      if (!fi) return null;
+      return {
+        ...fi,
+        item: { ...fi.item, ...this.overrides.item },
+        feed: { ...fi.feed, ...this.overrides.feed },
+      };
+    }
+  }
+
+  it('hides the Comments button when the item has no comments URL', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReader(source);
+    await screen.findByTestId('open-original');
+    expect(screen.queryByTestId('reader-comments')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('reader-comments-bottom')).not.toBeInTheDocument();
+  });
+
+  it('opens a non-Hacker-News comments URL directly, on both bars', async () => {
+    const user = userEvent.setup();
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    const source = new CommentsSource({
+      item: { commentsUrl: 'https://example.com/blog/post/comments' },
+    });
+    renderReader(source);
+    const top = await screen.findByTestId('reader-comments');
+    expect(top).toHaveAttribute('aria-label', 'Comments');
+    expect(screen.getByTestId('reader-comments-bottom')).toBeInTheDocument();
+    await user.click(top);
+    expect(openSpy).toHaveBeenCalledWith(
+      'https://example.com/blog/post/comments',
+      '_blank',
+      'noopener,noreferrer',
+    );
+    openSpy.mockRestore();
+  });
+
+  it('routes a comments URL that points at Hacker News to newshacker', async () => {
+    const user = userEvent.setup();
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    // A non-HN feed whose structured <comments> link happens to be an HN thread.
+    const source = new CommentsSource({
+      item: { commentsUrl: 'https://news.ycombinator.com/item?id=42662903' },
+    });
+    renderReader(source);
+    const top = await screen.findByTestId('reader-comments');
+    expect(top).toHaveAttribute('aria-label', 'Comments on newshacker');
+    await user.click(top);
+    expect(openSpy).toHaveBeenCalledWith(
+      'https://newshacker.app/item/42662903',
+      '_blank',
+      'noopener,noreferrer',
+    );
+    openSpy.mockRestore();
+  });
+
+  it('does not label a newshacker.app look-alike host as "Comments on newshacker"', async () => {
+    // Regression for PR #264 review: commentsUrl is publisher-controlled, so a
+    // host that merely starts with the newshacker origin must be matched by
+    // parsed origin, not a string prefix — labeled plain "Comments" and opened
+    // verbatim.
+    const user = userEvent.setup();
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    const source = new CommentsSource({
+      item: { commentsUrl: 'https://newshacker.app.evil.example/thread' },
+    });
+    renderReader(source);
+    const top = await screen.findByTestId('reader-comments');
+    expect(top).toHaveAttribute('aria-label', 'Comments');
+    await user.click(top);
+    expect(openSpy).toHaveBeenCalledWith(
+      'https://newshacker.app.evil.example/thread',
+      '_blank',
+      'noopener,noreferrer',
+    );
+    openSpy.mockRestore();
+  });
+
+  it('derives the newshacker thread from the item body on a Hacker News feed', async () => {
+    const user = userEvent.setup();
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    // Official HN feed: no structured comments URL — the discussion link lives
+    // only in the description body, so the HN derivation must scan it.
+    const source = new CommentsSource({
+      feed: { siteUrl: 'https://news.ycombinator.com/' },
+      item: {
+        commentsUrl: null,
+        contentHtml:
+          '<p>Article. <a href="https://news.ycombinator.com/item?id=42662903">Comments</a></p>',
+      },
+    });
+    renderReader(source);
+    const top = await screen.findByTestId('reader-comments');
+    expect(top).toHaveAttribute('aria-label', 'Comments on newshacker');
+    await user.click(top);
+    expect(openSpy).toHaveBeenCalledWith(
+      'https://newshacker.app/item/42662903',
+      '_blank',
+      'noopener,noreferrer',
+    );
+    openSpy.mockRestore();
+  });
+
+  it('does not show a Comments button on a non-HN feed whose body merely mentions HN', async () => {
+    // Regression for PR #264 review: the HN id derivation scans the body, so a
+    // normal feed article that links to an HN thread (no structured comments
+    // URL of its own) must NOT sprout a newshacker button.
+    const source = new CommentsSource({
+      item: {
+        commentsUrl: null,
+        contentHtml:
+          '<p>See the <a href="https://news.ycombinator.com/item?id=42662903">discussion</a>.</p>',
+      },
+    });
+    renderReader(source);
+    await screen.findByTestId('open-original');
+    expect(screen.queryByTestId('reader-comments')).not.toBeInTheDocument();
+  });
+
+  it('moves Pin into the overflow menu on narrow when the Comments button is present', async () => {
+    const user = userEvent.setup();
+    const source = new CommentsSource({
+      item: { commentsUrl: 'https://example.com/blog/post/comments' },
+    });
+    renderReader(source);
+    const comments = await screen.findByTestId('reader-comments');
+    // Pin is no longer an inline bar button on either bar — it made room for
+    // Comments to keep the ≥320px single-row layout.
+    expect(screen.queryByTestId('reader-pin')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('reader-pin-bottom')).not.toBeInTheDocument();
+    // The narrow inline cluster is open original → comments → done → more.
+    const cluster = comments.closest('.reader__actions');
+    const order = Array.from(cluster!.querySelectorAll('[data-testid]')).map((el) =>
+      el.getAttribute('data-testid'),
+    );
+    expect(order).toEqual([
+      'open-original',
+      'reader-comments',
+      'reader-done',
+      'reader-more',
+    ]);
+    // Pin lives in the shared overflow menu instead, and still pins.
+    await user.click(screen.getByTestId('reader-more'));
+    const pin = await screen.findByTestId('item-row-menu-pin');
+    expect(pin).toHaveTextContent('Pin');
+    await user.click(pin);
+    expect(source.stateStore.get('item-1').pinned).toBe(true);
+  });
+
+  it('keeps Pin inline on narrow when the item has no comments', async () => {
+    // Regression: the Pin demotion is scoped to commented items, so a normal
+    // item keeps Pin on the bar (main's Pin-inline design).
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReader(source);
+    expect(await screen.findByTestId('reader-pin')).toBeInTheDocument();
+    expect(screen.queryByTestId('reader-comments')).not.toBeInTheDocument();
+  });
+
+  it('opens comments with the "c" keyboard shortcut', async () => {
+    const user = userEvent.setup();
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    const source = new CommentsSource({
+      item: { commentsUrl: 'https://example.com/blog/post/comments' },
+    });
+    renderReader(source);
+    await screen.findByTestId('reader-comments');
+    await user.keyboard('c');
+    expect(openSpy).toHaveBeenCalledWith(
+      'https://example.com/blog/post/comments',
+      '_blank',
+      'noopener,noreferrer',
+    );
+    openSpy.mockRestore();
   });
 });
 

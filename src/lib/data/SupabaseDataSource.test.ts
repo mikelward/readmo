@@ -180,6 +180,30 @@ describe('SupabaseDataSource reads', () => {
     expect(env.fake.lastSelectCols('items')).not.toContain('full_content_html');
   });
 
+  it('reads comments_url and maps it onto the item (reader Comments button)', async () => {
+    const tables = seed();
+    tables.items.push({
+      ...mkItem('i-hn', 'feed-a', 7, 'HN story'),
+      comments_url: 'https://news.ycombinator.com/item?id=42662903',
+    });
+    const { ds, fake } = setup(tables);
+    const fi = await ds.getItem('i-hn');
+    expect(fake.lastSelectCols('items')).toContain('comments_url');
+    expect(fi?.item.commentsUrl).toBe('https://news.ycombinator.com/item?id=42662903');
+  });
+
+  it('falls back to the legacy item columns when comments_url is missing (pre-0033 backend)', async () => {
+    const env = setup();
+    // Model a backend predating migration 0033: any select naming comments_url
+    // 400s with undefined_column (42703), so the read drops that column and
+    // retries with the legacy set rather than failing every item read.
+    env.fake.failSelectWhenColumns('items', 'comments_url', { code: '42703' });
+    const fi = await env.ds.getItem('i3');
+    expect(fi?.item.title).toBe('Beta three');
+    expect(fi?.item.commentsUrl).toBeNull();
+    expect(env.fake.lastSelectCols('items')).not.toContain('comments_url');
+  });
+
   it('getItemsByIds chunks a large id list (no unbounded IN)', async () => {
     const tables = seed();
     const big = Array.from({ length: 450 }, (_, i) => {
