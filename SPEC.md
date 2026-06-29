@@ -1684,11 +1684,11 @@ last lines of text. Left→right:
 
 **Open original** (primary; icon-only with a soft accent-tinted fill — the
 tooltip and aria-label carry the name; marks Opened, fades to neutral once
-opened) → **Done** (✓) → **Pin/Unpin** (📌) → **More ⋮**. On wide viewports (≥960px)
-**Share** and **Favorite** (♥) surface inline between Open original and Done
+opened) → **Pin/Unpin** (📌) → **Done** (✓) → **More ⋮**. On wide viewports (≥960px)
+**Share** and **Favorite** (♥) surface inline between Open original and Pin
 (in that order — Share sits next to Open original); below 960px they live in
-the overflow. The overflow ⋮ → Pin → Done cluster at the right matches the
-other toolbars in the app. (No Upvote — RSS has no votes.)
+the overflow. Done sits second from the right, immediately left of the
+overflow ⋮. (No Upvote — RSS has no votes.)
 
 - **Feed name** sits immediately right of the leading button (Back on the top
   bar, Back to top on the bottom bar), linking to `/feed/:feedId`. This is the
@@ -1702,7 +1702,7 @@ other toolbars in the app. (No Upvote — RSS has no votes.)
 - **Done** also unpins and **navigates back** (the "I'm finished, move on"
   gesture); **Unmark done** does not navigate. Same as newshacker.
 - Bottom bar swaps the primary slot to **Back to top** (neutral, stretched) so
-  Done/Pin/⋮ land at the same x-position — handy right where you finish reading,
+  Pin/Done/⋮ land at the same x-position — handy right where you finish reading,
   since this bar is the relative footer at the article's end.
 - **More ⋮** overflow: Favorite/Share (when not inline), **Open feed**, **Copy
   link**, **Mute feed**. This is the **shared `ItemRowMenu`** component (the same

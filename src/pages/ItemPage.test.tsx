@@ -129,6 +129,23 @@ describe('ItemPage (reader)', () => {
     expect(source.stateStore.get('item-1').pinned).toBe(true);
   });
 
+  it('orders the action cluster Pin then Done, with Done second from the right (left of More)', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReader(source);
+    const pin = await screen.findByTestId('reader-pin');
+    const toolbar = pin.closest('.reader__actions');
+    expect(toolbar).not.toBeNull();
+    const actionOrder = Array.from(
+      toolbar!.querySelectorAll('[data-testid]'),
+    ).map((el) => el.getAttribute('data-testid'));
+    expect(actionOrder).toEqual([
+      'open-original',
+      'reader-pin',
+      'reader-done',
+      'reader-more',
+    ]);
+  });
+
   it('Done marks the item done and clears pinned (exclusivity)', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
