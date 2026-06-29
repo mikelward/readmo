@@ -308,7 +308,7 @@ export function ItemRow({
           <img
             className={
               'item-row__favicon' +
-              (faviconNeedsDarkInvert(feed.faviconUrl)
+              (faviconNeedsDarkInvert(feed.faviconUrl, feed.faviconInvertDark)
                 ? ' favicon--invert-dark'
                 : '')
             }

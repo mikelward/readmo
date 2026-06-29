@@ -52,11 +52,15 @@ import {
 /** The display-safe columns of `feeds_public` (and of `feeds` for clients —
  * never the fetch URLs). */
 const FEED_COLS =
+  'id, site_url, title, favicon_url, favicon_invert_dark, last_fetched_at, next_fetch_at, fetch_interval_s, error_count, last_error, created_at';
+// Pre-0037 backend (has `favicon_url` but no `favicon_invert_dark`): step down
+// here so the favicon still shows, it just isn't auto-inverted (the client's
+// manual domain list still applies). See selectFeedRows.
+const FEED_COLS_PRE_0037 =
   'id, site_url, title, favicon_url, last_fetched_at, next_fetch_at, fetch_interval_s, error_count, last_error, created_at';
-// Pre-0036 backend (no `favicon_url` on the view): feed reads step down to this
-// column set on an undefined-column error so the favicon just doesn't show,
-// rather than 400-ing every feed read against an older backend (guardrail #11).
-// See selectFeedRows.
+// Pre-0036 backend (no `favicon_url` on the view): step down again so the
+// favicon just doesn't show, rather than 400-ing every feed read against an
+// older backend (guardrail #11). See selectFeedRows.
 const FEED_COLS_LEGACY =
   'id, site_url, title, last_fetched_at, next_fetch_at, fetch_interval_s, error_count, last_error, created_at';
 const ITEM_COLS =
@@ -444,10 +448,12 @@ export class SupabaseDataSource implements DataSource {
     }
   }
 
-  /** Run a `feeds_public` read with the full FEED_COLS, retrying once with the
-   * pre-0036 legacy set (no `favicon_url`) on an undefined-column error — so a
-   * new client just shows no favicon against an older backend instead of
-   * 400-ing every feed read (guardrail #11). Mirrors {@link selectItemRows}. */
+  /** Run a `feeds_public` read with the full FEED_COLS, stepping down on an
+   * undefined-column error: first to the pre-0037 set (favicon_url but no
+   * `favicon_invert_dark`), then to the pre-0036 legacy set (no favicon at all).
+   * So a new client degrades gracefully against an older backend — losing only
+   * auto-inversion, then the favicon — instead of 400-ing every feed read
+   * (guardrail #11). Mirrors {@link selectItemRows}. */
   private async selectFeedRows<T>(
     build: (cols: string) => PromiseLike<{ data: unknown; error: unknown; status?: number }>,
   ): Promise<T> {
@@ -459,7 +465,12 @@ export class SupabaseDataSource implements DataSource {
       return await run(FEED_COLS);
     } catch (err) {
       if (!isMissingColumnError(err)) throw err;
-      return await run(FEED_COLS_LEGACY);
+      try {
+        return await run(FEED_COLS_PRE_0037);
+      } catch (err2) {
+        if (!isMissingColumnError(err2)) throw err2;
+        return await run(FEED_COLS_LEGACY);
+      }
     }
   }
 

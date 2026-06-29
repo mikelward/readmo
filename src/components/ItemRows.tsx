@@ -17,6 +17,9 @@ export interface GroupHeader {
   /** Site favicon shown to the left of the name; null/absent → no icon (the
    * common case until the poller has resolved one — see Feed.faviconUrl). */
   faviconUrl?: string | null;
+  /** Poller's dark-mode inversion verdict for the favicon (see
+   * Feed.faviconInvertDark); null/absent → fall back to the manual list. */
+  faviconInvertDark?: boolean | null;
 }
 
 interface Props {
@@ -223,6 +226,7 @@ export function ItemRows({
     headerForId: string,
     phantom: boolean,
     faviconUrl?: string | null,
+    faviconInvertDark?: boolean | null,
   ): ReactNode => {
     const collapsed = collapsedFeeds?.has(feedId) ?? false;
     // Decorative site icon to the left of the name. Hidden on load error so a
@@ -231,7 +235,9 @@ export function ItemRows({
       <img
         className={
           'item-list__group-favicon' +
-          (faviconNeedsDarkInvert(faviconUrl) ? ' favicon--invert-dark' : '')
+          (faviconNeedsDarkInvert(faviconUrl, faviconInvertDark)
+            ? ' favicon--invert-dark'
+            : '')
         }
         src={faviconUrl}
         alt=""
@@ -388,6 +394,7 @@ export function ItemRows({
               section.headerForId!,
               false,
               section.header.faviconUrl,
+              section.header.faviconInvertDark,
             )
           : null}
         {collapsed ? null : (

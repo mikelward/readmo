@@ -210,6 +210,30 @@ describe('SupabaseDataSource reads', () => {
     expect(env.fake.lastSelectCols('items')).not.toContain('comments_url');
   });
 
+  it('falls back to the pre-0037 feed columns when favicon_invert_dark is missing', async () => {
+    const env = setup();
+    // Model a backend with 0036 (favicon_url) but not 0037: any select naming
+    // favicon_invert_dark 400s, so the read drops to the pre-0037 tier — which
+    // still carries favicon_url, so the icon shows, it just isn't auto-inverted.
+    env.fake.failSelectWhenColumns('feeds_public', 'favicon_invert_dark', { code: '42703' });
+    const feed = await env.ds.getFeed('feed-a');
+    expect(feed).not.toBeNull();
+    expect(env.fake.lastSelectCols('feeds_public')).toContain('favicon_url');
+    expect(env.fake.lastSelectCols('feeds_public')).not.toContain('favicon_invert_dark');
+    expect(feed?.faviconInvertDark).toBeNull();
+  });
+
+  it('falls back to the legacy feed columns when favicon_url is also missing (pre-0036)', async () => {
+    const env = setup();
+    // Older still: no favicon columns at all → step past both favicon tiers to
+    // the legacy set rather than 400-ing every feed read.
+    env.fake.failSelectWhenColumns('feeds_public', 'favicon_url', { code: '42703' });
+    const feed = await env.ds.getFeed('feed-a');
+    expect(feed).not.toBeNull();
+    expect(env.fake.lastSelectCols('feeds_public')).not.toContain('favicon_url');
+    expect(feed?.faviconUrl).toBeNull();
+  });
+
   it('getItemsByIds chunks a large id list (no unbounded IN)', async () => {
     const tables = seed();
     const big = Array.from({ length: 450 }, (_, i) => {

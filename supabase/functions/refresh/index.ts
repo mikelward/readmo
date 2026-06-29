@@ -140,7 +140,7 @@ async function handle(req: Request): Promise<Response> {
 async function refreshOne(service: any, feedId: string): Promise<boolean> {
   const { data: feed } = await service
     .from('feeds')
-    .select('id, url, secret_url, last_fetched_at, fetch_interval_s')
+    .select('id, url, secret_url, last_fetched_at, fetch_interval_s, favicon_url')
     .eq('id', feedId)
     .single();
   if (!feed) return false;
@@ -175,6 +175,11 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
       title: parsed.feedTitle,
       site_url: parsed.siteUrl,
       favicon_url: parsed.faviconUrl,
+      // Refresh doesn't measure the favicon (that's the cron poller's job, to
+      // keep user-initiated refresh cheap). But if the icon URL changed, the
+      // stored dark-mode verdict is now stale — null it so the next poll
+      // re-measures instead of reusing the old icon's verdict for the new one.
+      ...(parsed.faviconUrl !== feed.favicon_url ? { favicon_invert_dark: null } : {}),
     })
     .eq('id', feed.id);
   if (metaError) throw new Error(`feed meta update failed: ${metaError.message}`);

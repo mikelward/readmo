@@ -94,6 +94,14 @@ describe('mapFeed', () => {
     expect(mapFeed({ ...base, favicon_url: null }).faviconUrl).toBeNull();
   });
 
+  it('maps favicon_invert_dark as a tri-state, defaulting to null pre-0037', () => {
+    expect(mapFeed({ ...base, favicon_invert_dark: true }).faviconInvertDark).toBe(true);
+    expect(mapFeed({ ...base, favicon_invert_dark: false }).faviconInvertDark).toBe(false);
+    // Column absent (pre-0037) or explicit null → null ("not measured").
+    expect(mapFeed(base).faviconInvertDark).toBeNull();
+    expect(mapFeed({ ...base, favicon_invert_dark: null }).faviconInvertDark).toBeNull();
+  });
+
   it('parks a feed once error_count crosses the threshold', () => {
     expect(mapFeed({ ...base, error_count: PARKED_ERROR_THRESHOLD - 1 }).parked).toBe(false);
     expect(mapFeed({ ...base, error_count: PARKED_ERROR_THRESHOLD }).parked).toBe(true);

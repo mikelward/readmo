@@ -1784,7 +1784,12 @@ export function ItemList({
     if (!groupByFeed) return undefined;
     const headers = new Map<
       ItemId,
-      { feedId: FeedId; title: string; faviconUrl: string | null }
+      {
+        feedId: FeedId;
+        title: string;
+        faviconUrl: string | null;
+        faviconInvertDark: boolean | null;
+      }
     >();
     let lastFeedId: FeedId | null = null;
     for (const fi of visibleItems) {
@@ -1793,6 +1798,7 @@ export function ItemList({
           feedId: fi.item.feedId,
           title: fi.feed.title,
           faviconUrl: fi.feed.faviconUrl,
+          faviconInvertDark: fi.feed.faviconInvertDark ?? null,
         });
         lastFeedId = fi.item.feedId;
       }

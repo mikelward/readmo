@@ -18,8 +18,9 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { parseFeedBody } from '../_shared/parser.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
-import { safeFetch } from '../_shared/ssrf.ts';
+import { safeFetch, SsrfError } from '../_shared/ssrf.ts';
 import { redactUrl } from '../_shared/urlSafety.ts';
+import { faviconIsDarkOnTransparent } from '../_shared/faviconDarkness.ts';
 
 const USER_AGENT = 'Readmo/1.0 (+https://readmo.app)';
 const BATCH_SIZE = 25;
@@ -84,7 +85,7 @@ async function handle(req: Request): Promise<Response> {
   // ordering — a bounded index range scan instead of a full-table scan + sort.
   const { data: feeds, error } = await supabase
     .from('feeds')
-    .select('id, url, secret_url, etag, last_modified, fetch_interval_s, error_count')
+    .select('id, url, secret_url, etag, last_modified, fetch_interval_s, error_count, favicon_url, favicon_invert_dark')
     .lte('next_fetch_at', new Date().toISOString())
     .order('next_fetch_at', { ascending: true })
     .limit(BATCH_SIZE);
@@ -98,6 +99,11 @@ async function handle(req: Request): Promise<Response> {
 
   let processed = 0;
   let failed = 0;
+  // Favicon measurement is best-effort and needs a remote icon fetch, so it is
+  // collected here and drained AFTER the article loop (bounded concurrency +
+  // time budget). Keeping it out of the per-feed loop means a slow icon host
+  // can never delay the next feed's article poll within the invocation.
+  const faviconTasks: FaviconTask[] = [];
   for (const feed of feeds ?? []) {
     // TODO(PR2, P2 — subscriber filter): the SELECT above must also require
     // EXISTS (subscriptions for this feed). Without it, feeds keep being polled
@@ -107,7 +113,7 @@ async function handle(req: Request): Promise<Response> {
     // distinct *subscribed* feeds the spec promises. Move the join into the
     // query (or a SQL view) when this goes live. See PR #1 review (codex P2).
     try {
-      await pollOne(supabase, feed);
+      await pollOne(supabase, feed, faviconTasks);
       processed++;
     } catch (err) {
       failed++;
@@ -122,11 +128,18 @@ async function handle(req: Request): Promise<Response> {
     }
   }
 
+  // Drain favicon measurements now that every feed's articles are stored.
+  await runFaviconMeasurements(supabase, faviconTasks);
+
   console.log(`poll: done — processed=${processed} failed=${failed} considered=${considered}`);
   return json({ processed, failed, considered });
 }
 
-async function pollOne(supabase: any, feed: any): Promise<void> {
+async function pollOne(
+  supabase: any,
+  feed: any,
+  faviconTasks: FaviconTask[],
+): Promise<void> {
   // The fetchable URL is secret_url when present (tokenized feeds), else url.
   const fetchUrl: string = feed.secret_url ?? feed.url;
 
@@ -145,6 +158,12 @@ async function pollOne(supabase: any, feed: any): Promise<void> {
   if (res.status === 304) {
     console.log(`poll: feed ${feed.id} not modified (304), skipping`);
     await scheduleNext(supabase, feed, { ok: true, interval: feed.fetch_interval_s });
+    // A steady feed that always 304s never re-parses, so back-measure the
+    // favicon for feeds carrying a favicon_url but no verdict yet (the common
+    // state right after the 0037 migration) — otherwise auto-inversion would
+    // stay off until the publisher next changes the feed body. Queued (not
+    // awaited) so a slow icon host can't delay this or any later feed.
+    enqueueFaviconTask(faviconTasks, feed, feed.favicon_url);
     return;
   }
 
@@ -167,13 +186,20 @@ async function pollOne(supabase: any, feed: any): Promise<void> {
   const parsed = parseFeedBody(body, fetchUrl, ct);
   console.log(`poll: feed ${feed.id} parsed — ${parsed.items.length} item(s)`);
 
-  // Upsert feed-level metadata (title, site_url, new validators).
+  // Upsert feed-level metadata (title, site_url, new validators). The favicon
+  // dark-mode verdict is measured LATER (after items + schedule are persisted),
+  // because that needs a remote icon fetch and must never delay or drop article
+  // ingestion. If the icon URL changed, null the stale verdict now so a crash
+  // before the deferred measure leaves "not measured" (client falls back to the
+  // manual list) rather than the old icon's verdict against the new icon.
+  const faviconChanged = parsed.faviconUrl !== feed.favicon_url;
   await supabase
     .from('feeds')
     .update({
       title: parsed.feedTitle,
       site_url: parsed.siteUrl,
       favicon_url: parsed.faviconUrl,
+      ...(faviconChanged ? { favicon_invert_dark: null } : {}),
       etag: res.headers.get('etag'),
       last_modified: res.headers.get('last-modified'),
       last_fetched_at: new Date().toISOString(),
@@ -216,6 +242,156 @@ async function pollOne(supabase: any, feed: any): Promise<void> {
   }
 
   await scheduleNext(supabase, feed, { ok: true, interval: feed.fetch_interval_s });
+
+  // Articles are stored + the next fetch scheduled; queue the favicon measure to
+  // run after the whole batch so it never delays this or another feed's poll.
+  enqueueFaviconTask(faviconTasks, feed, parsed.faviconUrl);
+}
+
+// Cap on the favicon body we'll fetch+decode. Icons are tiny (a few KB); this
+// just bounds a pathological "favicon" that's really a huge image.
+const FAVICON_MAX_BYTES = 512 * 1024;
+
+/** Decide the dark-mode inversion flag for a feed's favicon.
+ *
+ * Skips the fetch entirely when the icon URL is unchanged AND we already have a
+ * verdict (a steady feed pays nothing per poll). Re-measures when the URL is new
+ * or changed, or when we've never measured it.
+ *
+ * Returns a TERMINAL verdict (true/false) whenever we can reach a conclusion —
+ * including "couldn't decode" cases (a 4xx like 404, or an undecodable format
+ * such as SVG), which resolve to `false`. Persisting `false` there stops the
+ * poller refetching a dead/undecodable icon on every cycle; the client treats
+ * `false` as "defer to the manual host list" anyway, so known dark icons (vox,
+ * abc) still invert via that list. Returns `null` only on a TRANSIENT failure
+ * (timeout, network error, 429, 5xx) so it's retried next poll rather than
+ * cemented. Never throws: a favicon problem must not fail an otherwise-good
+ * poll. */
+async function resolveFaviconInvertDark(
+  feed: any,
+  faviconUrl: string | null,
+): Promise<boolean | null> {
+  if (!faviconUrl) return null;
+  const unchanged = faviconUrl === feed.favicon_url;
+  const alreadyMeasured =
+    feed.favicon_invert_dark === true || feed.favicon_invert_dark === false;
+  if (unchanged && alreadyMeasured) return feed.favicon_invert_dark;
+  try {
+    const res = await safeFetch(faviconUrl, {
+      headers: { 'User-Agent': USER_AGENT, Accept: 'image/*,*/*;q=0.8' },
+      timeoutMs: 8_000,
+      maxBytes: FAVICON_MAX_BYTES,
+    });
+    if (res.status === 429 || res.status >= 500) return null; // transient → retry
+    if (res.status >= 400) return false; // terminal: bad icon URL (404, …)
+    const verdict = await faviconIsDarkOnTransparent(res.body);
+    // Undecodable format (SVG/exotic) is terminal — don't refetch it forever.
+    return verdict === null ? false : verdict;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(
+      `poll: feed ${feed.id} favicon measure skipped (${redactUrl(faviconUrl)}): ${msg}`,
+    );
+    // A non-retryable URL-safety/DNS rejection (blocked/private IP, bad scheme,
+    // missing DNS, oversized body — all SsrfError) won't change on an identical
+    // retry, so persist a terminal false instead of refetching it every poll.
+    // A timeout/abort, or any unknown network error, is transient → leave null.
+    const aborted =
+      (err instanceof Error && err.name === 'AbortError') ||
+      /\babort|timed?\s*out|timeout\b/i.test(msg);
+    if (!aborted && err instanceof SsrfError) return false; // terminal
+    return null; // transient (timeout/abort or unknown error) → retry
+  }
+}
+
+interface FaviconTask {
+  feed: any;
+  faviconUrl: string | null;
+}
+
+// How many favicon probes run at once, and the total wall-clock the favicon
+// phase may consume. The phase runs after all article polls, so even if the
+// budget is hit, only some verdicts are deferred to the next poll — articles are
+// already stored. Bounds keep a batch of slow icon hosts from eating the
+// invocation.
+const FAVICON_CONCURRENCY = 5;
+const FAVICON_PHASE_BUDGET_MS = 30_000;
+
+/** Queue a favicon measurement, but only when one is actually warranted: there
+ * is an icon URL AND it's either new/changed or never measured. The steady
+ * state (unchanged URL with a terminal verdict) enqueues nothing. */
+function enqueueFaviconTask(
+  tasks: FaviconTask[],
+  feed: any,
+  faviconUrl: string | null,
+): void {
+  if (!faviconUrl) return;
+  const unchanged = faviconUrl === feed.favicon_url;
+  const alreadyMeasured =
+    feed.favicon_invert_dark === true || feed.favicon_invert_dark === false;
+  if (unchanged && alreadyMeasured) return;
+  tasks.push({ feed, faviconUrl });
+}
+
+/** Drain queued favicon measurements with bounded concurrency and a total time
+ * budget. Runs after the article loop, so it can never delay ingestion; any
+ * tasks left when the budget is hit simply retry on the next poll. */
+async function runFaviconMeasurements(
+  supabase: any,
+  tasks: FaviconTask[],
+): Promise<void> {
+  if (tasks.length === 0) return;
+  const deadline = Date.now() + FAVICON_PHASE_BUDGET_MS;
+  let next = 0;
+  let done = 0;
+  const worker = async () => {
+    while (next < tasks.length && Date.now() < deadline) {
+      const task = tasks[next++];
+      try {
+        await measureAndStoreFaviconInvertDark(supabase, task.feed, task.faviconUrl);
+        done++;
+      } catch (err) {
+        console.error(`poll: favicon measure failed for feed ${task.feed.id}:`, err);
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(FAVICON_CONCURRENCY, tasks.length) }, worker),
+  );
+  if (done < tasks.length) {
+    console.log(
+      `poll: favicon phase measured ${done}/${tasks.length} (budget/cap hit; rest retry next poll)`,
+    );
+  }
+}
+
+/** Measure the favicon and persist its dark-mode verdict — called AFTER items +
+ * schedule are written, so a slow/dead icon host can't delay article ingestion.
+ * Skips entirely (no fetch, no write) when the icon URL is unchanged and already
+ * has a terminal verdict — the steady-state path costs nothing. Otherwise it
+ * measures and writes the result (true/false terminal, or null = transient,
+ * retried next poll). `faviconUrl` is the freshly-parsed URL on the 200 path, or
+ * the cached `feed.favicon_url` on the 304 path. */
+async function measureAndStoreFaviconInvertDark(
+  supabase: any,
+  feed: any,
+  faviconUrl: string | null,
+): Promise<void> {
+  const unchanged = faviconUrl === feed.favicon_url;
+  const alreadyMeasured =
+    feed.favicon_invert_dark === true || feed.favicon_invert_dark === false;
+  if (unchanged && alreadyMeasured) return; // DB already correct
+  const verdict = await resolveFaviconInvertDark(feed, faviconUrl);
+  // Measurement is deferred, so a refresh or later poll may have changed the
+  // icon URL since this task was queued. Guard the write on favicon_url still
+  // matching what we measured — otherwise we'd stamp the old icon's verdict onto
+  // the new URL. If the URL moved on, this matches no row (no-op) and the next
+  // poll re-measures the current icon.
+  await supabase
+    .from('feeds')
+    .update({ favicon_invert_dark: verdict })
+    .eq('id', feed.id)
+    .eq('favicon_url', faviconUrl);
 }
 
 // --- Scheduling, backoff, circuit breaker ----------------------------------

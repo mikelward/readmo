@@ -83,6 +83,10 @@ export interface FeedPublicRow {
    * column + `feeds_public` projection (0036). Defaults to null in
    * {@link mapFeed} so an older backend just yields no favicon. */
   favicon_url?: string | null;
+  /** Optional: absent against a backend predating the `favicon_invert_dark`
+   * column + `feeds_public` projection (0037). Defaults to null in
+   * {@link mapFeed} so an older backend just yields "not measured". */
+  favicon_invert_dark?: boolean | null;
   last_fetched_at: string | null;
   next_fetch_at: string | null;
   fetch_interval_s: number | null;
@@ -156,6 +160,7 @@ export function mapFeed(row: FeedPublicRow): Feed {
     siteUrl: row.site_url ?? null,
     title: row.title ?? row.site_url ?? 'Untitled feed',
     faviconUrl: row.favicon_url ?? null,
+    faviconInvertDark: row.favicon_invert_dark ?? null,
     errorCount: row.error_count ?? 0,
     lastError: row.last_error ?? null,
     parked: (row.error_count ?? 0) >= PARKED_ERROR_THRESHOLD,

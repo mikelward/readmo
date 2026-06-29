@@ -57,4 +57,37 @@ describe('faviconNeedsDarkInvert', () => {
     expect(faviconNeedsDarkInvert('')).toBe(false);
     expect(faviconNeedsDarkInvert('not a url')).toBe(false);
   });
+
+  describe('with the poller-measured flag', () => {
+    it('inverts when measured true, even for an unlisted host', () => {
+      expect(
+        faviconNeedsDarkInvert('https://www.theverge.com/favicon.ico', true),
+      ).toBe(true);
+    });
+
+    it('falls back to the manual list when measured false', () => {
+      // measured-not-dark, but the manual list is an override that can still
+      // force a known dark icon on.
+      expect(
+        faviconNeedsDarkInvert('https://www.vox.com/favicon.ico', false),
+      ).toBe(true);
+      // measured false + unlisted → not inverted.
+      expect(
+        faviconNeedsDarkInvert('https://www.theverge.com/favicon.ico', false),
+      ).toBe(false);
+    });
+
+    it('falls back to the manual list when not yet measured (null/undefined)', () => {
+      expect(
+        faviconNeedsDarkInvert('https://www.vox.com/favicon.ico', null),
+      ).toBe(true);
+      expect(
+        faviconNeedsDarkInvert('https://www.theverge.com/favicon.ico', null),
+      ).toBe(false);
+    });
+
+    it('inverts on measured true even with no URL', () => {
+      expect(faviconNeedsDarkInvert(null, true)).toBe(true);
+    });
+  });
 });

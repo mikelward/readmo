@@ -1507,12 +1507,21 @@ string param, timestamp) is rejected — so no per-subscriber query leaks into
 `feeds_public`. Else the site origin's `/favicon.ico`. It's decorative (`alt=""`) and the `<img>` hides itself on load
 error, so a guessed `/favicon.ico` that 404s leaves no broken glyph. The URL is
 display-safe metadata (like `title`/`site_url`), so `feeds_public` exposes it;
-the client loads it directly (not via the image proxy). A handful of publishers
+the client loads it directly (not via the image proxy). Some publishers
 ship a **black-on-transparent** favicon (a dark monochrome mark) that vanishes
-on the dark page background; those are inverted to white in dark mode. Inversion
-is **opt-in per registrable domain** (a curated set in `faviconInvert.ts`, e.g.
-`vox.com`) rather than applied to every favicon — blanket inversion would wreck
-full-color logos.
+on the dark page background; those are inverted to white in dark mode. Blanket
+inversion would wreck full-color logos (a blue bird turning orange), so it's
+gated: the **poller measures each favicon** once — decodes it (PNG/ICO; see
+`_shared/faviconDarkness.ts`) and flags it only when it's *mostly transparent +
+dark + low-saturation (monochrome)* — and stores the verdict on
+`feeds.favicon_invert_dark` (tri-state: invert / measured-not-dark / not-measured,
+exposed via `feeds_public`, 0037). The client trusts that flag, falling back to a
+small **manual host list** in `faviconInvert.ts` (`vox.com`/`vox-cdn.com`,
+`abc.net.au`) as an override for icons the poller can't decode (SVG, exotic
+formats), feeds not yet re-polled, or a pre-0037 backend; the manual list can
+only *add* inversions, never remove a measured one. The favicon refetch+measure
+happens only when the icon URL is new/changed (a steady feed pays nothing per
+poll).
 **Opened** titles render `--rm-read`. Not rendered: rank numbers, inline
 source/date links, external-link chevron (the reader's "Open original" owns
 that). (No points/comments/Hot flag/"N new" — those are HN-specific.)

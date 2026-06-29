@@ -24,6 +24,13 @@ export interface Feed {
   siteUrl: string | null;
   title: string;
   faviconUrl: string | null;
+  /** Poller's measured verdict on whether the favicon is a dark monochrome
+   * mark that should be inverted in dark mode (see `lib/faviconInvert.ts` and
+   * the `summary`-style `faviconDarkness` decoder). Tri-state: true = invert,
+   * false = measured-not-dark, null/absent = not yet measured / undecodable
+   * (the client falls back to its manual domain list). Optional: absent against
+   * a pre-0037 backend or the mock source. */
+  faviconInvertDark?: boolean | null;
   /** Consecutive poll failures; surfaced as a feed-health badge. */
   errorCount: number;
   lastError: string | null;
