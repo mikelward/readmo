@@ -1703,6 +1703,107 @@ page's discipline is unchanged.
     direct column read open until then. The provenance bit is strictly less
     sensitive than the body in the same row, so it adds nothing beyond that
     already-tracked gap.)
+- **AI article summaries (allowlisted, on pin).** A short AI summary (a few
+  sentences) of the article, shown **directly below the title/byline, above the
+  reading-mode bar and article body** — when an allowlisted user has **pinned**
+  the article. The
+  **pin is the trigger** (the summary is a feature of the active reading list)
+  and the **`allowlist` table is the boundary** (the same trusted-user list as
+  reading mode / Google News — summaries are a generation-cost surface, one
+  Gemini call per cache miss). Generation is gated on **both**: the reader only
+  calls the `summary` Edge Function for a pinned item *and* only when the caller
+  is allowed (`useFullTextAllowed`, the shared gate — it holds off while a
+  signed-in user's capabilities are still loading, so an off-list user fires no
+  Edge call), and the function re-checks the allowlist server-side regardless.
+  - **Article text comes from Jina (like newshacker), by design.** The summary's
+    input is fetched through **Jina Reader** (`r.jina.ai`), which returns clean
+    **markdown** and transparently handles bot-blocked / paywalled / JS-rendered
+    pages. This is a deliberate split from reading mode: the `fulltext` path
+    **fetches, extracts, and serves** the article itself, so it stays a polite
+    first-party citizen (our `User-Agent` via `safeFetch`; honoring robots is the
+    intended posture there). The AI summary is a transient short gist that
+    is **never stored or served verbatim**, so it routes through Jina — a
+    third-party reader — rather than our own fetcher. **Tokenized / secret-bearing
+    item URLs are screened out before forwarding to Jina** (guardrail #6 — the same
+    `looksTokenized()` + `secret_url` guards the `fulltext` Jina fallback uses), so
+    we never hand a subscriber token to a third party. When Jina is unconfigured,
+    the URL is screened out, or the fetch fails, the function **falls back to the
+    body we already store** (`full_content_html` ?? `content_html`, stripped to
+    text), so summaries still work without a new fetch. There's no
+    stored-content sequencing to race: the summary fetches its own text. When the
+    only content available is a **truncated feed stub** (Jina unavailable/screened
+    *and* no full body cached yet), the function **defers** — it returns a
+    `retryable` `empty` **without spending a Gemini call**, so no low-quality
+    teaser-summary is shown or cached and a later mount re-checks once Jina
+    recovers or a full body is extracted. Only good content (Jina markdown, the
+    extraction, or a non-truncated feed body) is summarized, and that result
+    caches normally on `items.ai_summary`.
+  - **Model:** Google **Gemini `gemini-2.5-flash-lite`** via the
+    `generateContent` REST endpoint (fixed Google host; the article is in the
+    request body, never a URL), `thinkingBudget: 0` to keep latency low. Needs
+    the **`GOOGLE_API_KEY`** Supabase secret (and **`JINA_API_KEY`** for the
+    article fetch — without it the function falls back to stored content); unset
+    `GOOGLE_API_KEY` → the function reports `unavailable` and the reader shows no
+    summary card. The prompt asks for a few-sentence Markdown paragraph (light
+    `**bold**` / `*italic*` / `` `code` `` emphasis, no headings/lists), rendered
+    with the inline **`MarkdownText`** component **ported from newshacker**
+    (guardrail #9) — it emits `<strong>`/`<em>`/`<code>` React elements, never
+    `dangerouslySetInnerHTML`, so there's no markdown-library dependency and no
+    XSS surface (the model's text is React-escaped by construction).
+  - **Model:** Google **Gemini `gemini-2.5-flash-lite`** via the
+    `generateContent` REST endpoint (fixed Google host; the article is in the
+    request body, never a URL), `thinkingBudget: 0` to keep latency low. Needs
+    the **`GOOGLE_API_KEY`** Supabase secret; unset → the function reports
+    `unavailable` and the reader simply shows no summary card.
+  - **Cached on the shared item** (`items.ai_summary`, 0035): one user's
+    generation serves every later pin of the same article, on any device. Like
+    `full_content_html`, the column is **not** in any client item read
+    (`SupabaseDataSource`'s `ITEM_COLUMNS` omits it) **and is nulled in the
+    `feed_items` list RPC** (0035 recreates it to scrub `ai_summary` +
+    `ai_summary_generated_at`, exactly as 0026 scrubs the full-text fields — so a
+    home/folder/feed list never ships a summary to an off-allowlist co-subscriber),
+    so the summary normally reaches the client **only** through the
+    allowlist-gated `summary` function —
+    and the client **display gate** (`useSummary`) drops a cached summary the
+    moment the caller is no longer allowed (e.g. removed from a now-armed
+    allowlist), mirroring how the reader ignores cached full-text when
+    `allowFull` is false. It shares `full_content_html`'s **known direct-read
+    gap**: the 0008 table-level `SELECT` grant plus row-only RLS means a
+    hand-crafted PostgREST read by a caller who can already see the row could
+    reach the column directly; a column-level `REVOKE` is a no-op under that
+    grant, so the real fix is the column-grant restructuring tracked for
+    `full_content_html`. Accepted on the same terms here — a short summary is
+    strictly less sensitive than the full body that already carries the gap, and
+    the allowlist still bounds the only costly part (generating a summary; reading
+    a cached one is free). **Invalidated on content change:** the poller's
+    `upsert_feed_items` (recreated in 0035) nulls `ai_summary` +
+    `ai_summary_generated_at` when a re-published item's `content_html`/`title`
+    changes (always on a same-url re-issue under a new guid), so an edited article
+    is re-summarized rather than served a stale gist. (It compares the real body/
+    title, **not** `content_hash` — the poller sets `content_hash` to the guid, so
+    it never changes on a same-guid edit.)
+  - **Outcomes** (the function returns `{ status, summary, retryable? }`): `ok`
+    (the summary string), `empty` (nothing to summarize, or the silent
+    allowlist denial — flagged `retryable` so a later allowlist change
+    un-sticks it), `unavailable` (Gemini key unset — `retryable`), `unreachable`
+    (a transient allowlist-read / auth / Gemini failure — `retryable`). In every
+    non-`ok` outcome the reader stays **silent** (no card, no error), exactly
+    like reading mode; `summaryStaleTime` caches `ok`/`empty` forever and keeps
+    the retryable/transient ones stale. Additive `retryable` flag (not a new wire
+    status) so a service-worker-cached older client still reads the plain status
+    (guardrail #11).
+  - **Cost & reliability (guardrail #5):** a cache miss makes **two** outbound
+    calls — a Jina fetch (free tier 1M tokens/mo, ~10–100 K tokens per page) and a
+    Gemini Flash-Lite call (~$0.10 / 1M input, ~$0.40 / 1M output). Each article is
+    summarized **once** (shared cache), so at family-only (allowlisted) volume both
+    stay **effectively $0** — well under their free tiers. Unlike the earlier
+    stored-content design this adds a per-article publisher fetch (via Jina), which
+    is the deliberate trade for newshacker-parity and clean bot-blocked/paywalled
+    handling; the fetch is off our polite first-party path. Latency: Jina (~1–5 s) +
+    Gemini (~1–2 s) on the first pin of an article, cache-instant after. Failure
+    modes are all soft (no card): Jina down/blocked → fall back to stored content;
+    Gemini down/unconfigured → no card. The article and reading mode are
+    unaffected.
 - **Reading affordances:** comfortable measure, paper surface, light/dark,
   `prefers-reduced-motion`.
 

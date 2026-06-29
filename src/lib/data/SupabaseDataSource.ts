@@ -14,6 +14,7 @@ import {
   type Subscription,
 } from '../types';
 import type { FullTextResult, FullTextStatus } from '../fullText';
+import type { SummaryResult, SummaryStatus } from '../summary';
 import { getSupabase } from '../supabase/client';
 import { confirmBackendReachable } from '../networkStatus';
 import { OUTBOX_SUFFIX } from '../userCache';
@@ -984,6 +985,49 @@ export class SupabaseDataSource implements DataSource {
       // bot-block fallback fetch, so the reader can label it "via fallback".
       // Additive (omitted otherwise) — a missing/older backend reads as direct.
       ...(status === 'ok' && rec?.viaFallback === true ? { viaFallback: true } : {}),
+    };
+  }
+
+  async getSummary(id: ItemId): Promise<SummaryResult> {
+    const { data, error } = await this.sb.functions.invoke('summary', {
+      body: { itemId: id },
+    });
+    if (error) {
+      // A 404 is TERMINAL, not transient — either the `summary` function isn't
+      // deployed yet (the frontend auto-deploys ahead of the manual Edge Function
+      // deploy; guardrail #11), or the function ran and RLS hid the item. Neither
+      // improves by retrying, so map it to a non-retryable `empty` (terminal in
+      // `summaryStaleTime`) — the reader shows no card and STOPS re-invoking a
+      // capability it can't reach, rather than hammering every pinned-article
+      // mount/refocus until the backend catches up. (Items viewed during the
+      // deploy gap stay cardless until the query cache evicts — an accepted trade
+      // vs. the retry storm; new pins after deploy work normally.)
+      if (error instanceof FunctionsHttpError &&
+          (error.context as Response | undefined)?.status === 404) {
+        return { status: 'empty', summary: null };
+      }
+      // Any other invoke failure (network, 5xx, signed-out) degrades to the
+      // retryable "unreachable" so the reader shows no card but re-checks on the
+      // next mount/reconnect — summaries are a progressive enhancement.
+      return { status: 'unreachable', summary: null };
+    }
+    const rec = data as
+      | { status?: string; summary?: string | null; retryable?: boolean }
+      | null;
+    const status: SummaryStatus =
+      rec?.status === 'ok' ||
+      rec?.status === 'empty' ||
+      rec?.status === 'unavailable' ||
+      rec?.status === 'unreachable'
+        ? rec.status
+        : 'unreachable';
+    return {
+      status,
+      summary: status === 'ok' ? (rec?.summary ?? null) : null,
+      // Additive flag (allowlist denial on `empty`, or not-configured
+      // `unavailable`): keeps the result retryable so a later server-side change
+      // re-checks instead of caching it. Only present when true.
+      ...(rec?.retryable === true ? { retryable: true } : {}),
     };
   }
 

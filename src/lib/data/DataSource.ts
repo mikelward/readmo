@@ -9,6 +9,7 @@ import type {
   Subscription,
 } from '../types';
 import type { FullTextResult } from '../fullText';
+import type { SummaryResult } from '../summary';
 import type { ItemStateStore } from './itemState';
 
 /** Per-user capability flags, resolved from the server (`get_capabilities` RPC).
@@ -170,6 +171,15 @@ export interface DataSource {
    * the shared item. Returns a typed outcome so the reader can render the right
    * thing for a paywall/teaser/unreachable page rather than a hard failure. */
   fetchFullText(id: ItemId): Promise<FullTextResult>;
+  /** Fetch (or return the cached) one-sentence AI summary for an item — shown at
+   * the top of the reader when an allowlisted user pins the article. The server
+   * generates it from the item's already-stored sanitized body (no new publisher
+   * fetch) and caches it on the shared item. Returns a typed outcome so the
+   * reader can stay silent on a soft failure (allowlist denial, not configured,
+   * nothing to summarize) rather than showing a hard error. The pin is the
+   * trigger (the reader only calls this for a pinned item) and the `allowlist`
+   * table is the server-enforced boundary. */
+  getSummary(id: ItemId): Promise<SummaryResult>;
 
   // --- Subscriptions & organization ----------------------------------------
   getSubscriptions(): Promise<Array<{ subscription: Subscription; feed: Feed }>>;

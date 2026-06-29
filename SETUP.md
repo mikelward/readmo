@@ -131,6 +131,7 @@ origins and `http://localhost:5173/**` for local dev).
 | `SUPABASE_SERVICE_ROLE_KEY` | **server only** (Edge Functions / poller) | **Yes — never ship to client** |
 | Google / Discord client secrets | Supabase Auth config | **Yes — server only** |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_TLS` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM` / `SIGNUP_NOTIFY_TO` | **server only** (`notify-signup` function) — `supabase secrets set …`; see §9 | **`SMTP_PASSWORD` yes — never ship to client** |
+| `GOOGLE_API_KEY` | **server only** (`summary` function) — `supabase secrets set …` | **Yes — never ship to client** |
 
 **Client build** (Vite) gets only `SUPABASE_URL` + `SUPABASE_ANON_KEY` as
 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` — copy `.env.example` to
@@ -153,8 +154,17 @@ Env name cannot start with SUPABASE_, skipping: SUPABASE_SERVICE_ROLE_KEY
 ```
 
 That warning is expected — there is nothing to set for deployment. Use
-`supabase secrets set` only for *custom* (non-`SUPABASE_`) names — the
-`SMTP_*` / `SIGNUP_NOTIFY_TO` values for `notify-signup` (§9) are the only ones.
+`supabase secrets set` only for *custom* (non-`SUPABASE_`) names: the
+`SMTP_*` / `SIGNUP_NOTIFY_TO` values for `notify-signup` (§9), and
+**`GOOGLE_API_KEY`** for the `summary` function (the AI article-summary feature —
+a Google AI Studio key; unset → summaries report `unavailable` and the reader
+shows no card, everything else works). The `summary` function also uses
+**`JINA_API_KEY`** (the same Jina secret as reading mode) to fetch the article
+text; unset → it falls back to summarizing the item's stored body:
+
+```
+supabase secrets set GOOGLE_API_KEY=…
+```
 The service-role key is needed by hand in only two places: the **cron poller**
 (§7, passed as a bearer token) and **local** `supabase functions serve`
 (off-platform, so put the three vars in a local, untracked `.env`; see
@@ -185,6 +195,7 @@ make migrate
 supabase functions deploy discover --import-map supabase/functions/import_map.json
 supabase functions deploy refresh  --import-map supabase/functions/import_map.json
 supabase functions deploy fulltext --import-map supabase/functions/import_map.json
+supabase functions deploy summary  --import-map supabase/functions/import_map.json
 supabase functions deploy poll     --import-map supabase/functions/import_map.json --no-verify-jwt
 supabase functions deploy img      --import-map supabase/functions/import_map.json --no-verify-jwt
 supabase functions deploy notify-signup --import-map supabase/functions/import_map.json --no-verify-jwt
@@ -196,7 +207,7 @@ supabase functions deploy notify-signup --import-map supabase/functions/import_m
 > default) every image would 401. It's safe to expose: the function only relays
 > `image/*` through the SSRF-hardened `safeFetch` (no auth-bearing logic, no DB
 > writes). The others keep JWT verification **on** — `discover`/`refresh`/
-> `fulltext` run as the calling user (RLS-scoped), and `poll` checks the
+> `fulltext`/`summary` run as the calling user (RLS-scoped), and `poll` checks the
 > service-role bearer itself.
 
 > If you prefer a project-level config, add the same `imports` map to a
@@ -211,6 +222,7 @@ The functions:
 | `discover` | `POST /functions/v1/discover` | Discover + validate feed candidates from a site/feed URL (incl. Reddit `.rss`). |
 | `refresh` | `POST /functions/v1/refresh` | On-demand fetch for the caller's subscribed feed(s); debounced. |
 | `fulltext` | `POST /functions/v1/fulltext` | Reading mode: fetch + extract (Readability) + sanitize the full article for a truncated item, cache it on the shared row. RLS-scoped to the caller. |
+| `summary` | `POST /functions/v1/summary` | AI article summary: short (few-sentence) Gemini summary of the article text fetched via **Jina** markdown (falls back to the item's stored body), cached on the shared row. Allowlist-gated (same list as `fulltext`); needs `GOOGLE_API_KEY` (and `JINA_API_KEY` for the article fetch). RLS-scoped to the caller. |
 | `img` | `GET /functions/v1/img?url=…` | SSRF-hardened image proxy (offline images + hotlink/reliability; privacy is incidental — see SPEC *Image proxy*). |
 | `notify-signup` | `POST /functions/v1/notify-signup` | Emails the operator over SMTP when a new user signs up. Called server-to-server by the `auth.users` insert trigger (§9); verifies the service-role bearer itself, so deploy with `--no-verify-jwt`. |
 
@@ -519,18 +531,20 @@ straight to the culprit. The endpoint is read-only and service-role only.
 
 ## 13. Trusted-user allowlist & admins
 
-Reading-mode full text and Google News feeds are gated on a **trusted-user
-allowlist** that lives in the Postgres `allowlist` table (migration `0027`). It
+Reading-mode full text, Google News feeds, and AI article summaries are gated on
+a **trusted-user allowlist** that lives in the Postgres `allowlist` table
+(migration `0027`). It
 supersedes the old `READMO_ALLOWLIST` env var — if you ever set that secret you
 can now unset it (`supabase secrets unset READMO_ALLOWLIST`); the gate functions
 read the table (and, transitionally, still honor the secret until you unset it).
 
-- **An empty `allowlist` table = disarmed** → reading mode + Google News are open
-  to everyone (current behavior). Seeding any email arms the gate; only listed
-  emails pass. So `make migrate` alone changes nothing until you add someone.
+- **An empty `allowlist` table = disarmed** → reading mode + Google News + AI
+  summaries are open to everyone (current behavior). Seeding any email arms the
+  gate; only listed emails pass. So `make migrate` alone changes nothing until
+  you add someone.
 - **Deploy the function changes** so the gates read the DB: `make migrate` then
-  `make deploy` (redeploys `fulltext` + `discover`, which read the `allowlist`
-  table). The direct-RPC `subscribe_to_feed` Google News check is a separate
+  `make deploy` (redeploys `fulltext` + `discover` + `summary`, which read the
+  `allowlist` table). The direct-RPC `subscribe_to_feed` Google News check is a separate
   follow-up (real URL canonicalization belongs in an Edge layer, not SQL) — see
   the migration / SPEC; `discover` already gates every normal subscribe path.
 - **Bootstrap the first admin** (there's no admin before this — do it once, via
