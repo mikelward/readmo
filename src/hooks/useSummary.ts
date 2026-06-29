@@ -24,7 +24,11 @@ export interface UseSummary {
  * Fetch (and cache) the AI summary for a pinned article.
  *
  * Gated to match the server: it only issues the call when the item is **pinned**
- * (the pin is the trigger — SPEC "AI article summaries") AND the caller is
+ * (pinned is the gate — SPEC "AI article summaries"; opening the reader is one
+ * trigger, the other being `useSummaryPrewarm`, which warms the summary for any
+ * pinned item — pinned here or synced from another device — both sharing this
+ * query key so the first to run generates and the rest hit cache)
+ * AND the caller is
  * **allowed** by the shared trusted-user allowlist (the same gate as reading
  * mode; `useFullTextAllowed` holds off while a signed-in user's capabilities are
  * still loading, so an off-list user fires no Edge call). When `online` is false

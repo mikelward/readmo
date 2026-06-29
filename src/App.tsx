@@ -8,6 +8,7 @@ import { FeedBarProvider } from './components/FeedBarContext';
 import { useAuth } from './hooks/useAuth';
 import { useUserCacheScope } from './hooks/useUserCacheScope';
 import { useOfflineCacheLock } from './hooks/useOfflineCacheLock';
+import { useSummaryPrewarm } from './hooks/useSummaryPrewarm';
 import { useFeedInvalidation } from './hooks/useFeedInvalidation';
 import { useStateSync } from './hooks/useStateSync';
 import { HomePage, FolderPage, FeedPage } from './pages/FeedPages';
@@ -57,6 +58,11 @@ export default function App() {
   // Keep pinned/favorited items' reader queries cached for offline (lock while
   // bucketed, evict when neither). Mounted once here so it tracks state app-wide.
   useOfflineCacheLock();
+  // Pre-warm the AI summary for every pinned item — pinned here, synced from
+  // another device, or restored on boot — the summary sibling of the offline
+  // lock above (which warms the reader body + full text). Cheap cross-device
+  // because the summary is cached server-side; generates at most once per item.
+  useSummaryPrewarm();
   // Invalidate feed caches on any state change, even while the feed list is
   // unmounted (e.g. user marks Done on the reader page then navigates back).
   useFeedInvalidation();
