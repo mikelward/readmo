@@ -715,11 +715,11 @@ export function ItemPage() {
       </header>
 
       {/* AI summary — directly after the title/byline, above the article. Shows
-          only when an allowlisted user has pinned this item (pinned is the gate;
-          opening here generates it if useSummaryPrewarm hasn't already warmed it
-          from the pin). The gating lives in useSummary, so it's always mounted to
-          keep hook order stable and renders nothing when there's nothing to show. */}
-      <ArticleSummary id={item.id} pinned={state.pinned} online={online} />
+          for any article an allowlisted user opens (generated here on open if
+          useSummaryPrewarm hasn't already warmed it — e.g. from a pin). The
+          gating lives in useSummary, so it's always mounted to keep hook order
+          stable and renders nothing when there's nothing to show. */}
+      <ArticleSummary id={item.id} online={online} />
 
       <div className="reader__modebar">
         {fetchingFull ? (

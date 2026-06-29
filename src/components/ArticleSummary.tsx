@@ -5,24 +5,19 @@ import './ArticleSummary.css';
 
 interface ArticleSummaryProps {
   id: ItemId;
-  /** The summary is a feature of pinned articles: it's generated when an
-   * allowlisted user pins, and shown only while the item stays pinned. */
-  pinned: boolean;
   online: boolean;
 }
 
 /**
  * AI summary card shown at the top of the reader — below the toolbar, above the
- * article — when an allowlisted user has pinned the article. Renders nothing
- * until there's something to show (not pinned, off-allowlist, nothing to
- * summarize, or a soft failure), so it stays silent like reading mode. Always
- * mounted by the reader (hook order stays stable); the gating lives in
- * `useSummary`.
+ * article — for any article an allowlisted user opens. Renders nothing until
+ * there's something to show (off-allowlist, nothing to summarize, or a soft
+ * failure), so it stays silent like reading mode. Always mounted by the reader
+ * (hook order stays stable); the gating lives in `useSummary`.
  */
-export function ArticleSummary({ id, pinned, online }: ArticleSummaryProps) {
-  const { summary, loading } = useSummary(id, { pinned, online });
+export function ArticleSummary({ id, online }: ArticleSummaryProps) {
+  const { summary, loading } = useSummary(id, { online });
 
-  if (!pinned) return null;
   if (loading) {
     return (
       <section

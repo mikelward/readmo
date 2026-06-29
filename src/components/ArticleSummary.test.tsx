@@ -8,14 +8,20 @@ import type { SummaryResult } from '../lib/summary';
 const ITEM_ID = 'item-1';
 
 describe('ArticleSummary', () => {
-  it('shows the AI summary once it resolves when the item is pinned', async () => {
-    renderWithProviders(<ArticleSummary id={ITEM_ID} pinned online />);
+  it('shows the AI summary once it resolves for an opened article', async () => {
+    renderWithProviders(<ArticleSummary id={ITEM_ID} online />);
     const body = await screen.findByTestId('article-summary-body');
     expect(body.textContent).toMatch(/one sentence/i);
     expect(screen.getByText('Summary by Gemini')).toBeInTheDocument();
   });
 
-  it('renders nothing when the item is not pinned (no summary call)', () => {
+  it('shows for an unpinned article — pinning is not required (allowlist-only)', async () => {
+    // The item is never pinned; an allowlisted user still gets the summary.
+    renderWithProviders(<ArticleSummary id={ITEM_ID} online />);
+    expect(await screen.findByTestId('article-summary-body')).toBeInTheDocument();
+  });
+
+  it('does not call the summary endpoint while offline', () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     let called = false;
     const orig = source.getSummary.bind(source);
@@ -23,7 +29,7 @@ describe('ArticleSummary', () => {
       called = true;
       return orig(id);
     };
-    renderWithProviders(<ArticleSummary id={ITEM_ID} pinned={false} online />, {
+    renderWithProviders(<ArticleSummary id={ITEM_ID} online={false} />, {
       source,
     });
     expect(screen.queryByTestId('article-summary')).not.toBeInTheDocument();
@@ -37,7 +43,7 @@ describe('ArticleSummary', () => {
       summary: null,
       retryable: true,
     });
-    renderWithProviders(<ArticleSummary id={ITEM_ID} pinned online />, { source });
+    renderWithProviders(<ArticleSummary id={ITEM_ID} online />, { source });
     // Give the (resolved-empty) query a chance to settle, then assert no card.
     await waitFor(() =>
       expect(screen.queryByTestId('article-summary-body')).not.toBeInTheDocument(),
