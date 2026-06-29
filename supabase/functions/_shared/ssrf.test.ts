@@ -4,6 +4,7 @@ import {
   isBlockedAddress,
   assertSafeUrl,
   isIpLiteral,
+  readmoUserAgent,
   safeFetch,
   SsrfError,
 } from './ssrf.ts';
@@ -288,6 +289,17 @@ describe('safeFetch — with injected resolver/fetch', () => {
     expect(seen?.get('authorization')).toBeNull();
     expect(seen?.get('cookie')).toBeNull();
     expect(seen?.get('x-ok')).toBe('y');
-    expect(seen?.get('user-agent')).toContain('Readmo/1.0');
+    // Versioned with the client's build-number scheme: `Readmo/<n> (+url)`.
+    // `n` is 0 here (READMO_BUILD unset under vitest), matching the client's
+    // commitCount=0 fallback.
+    expect(seen?.get('user-agent')).toMatch(
+      /^Readmo\/\d+ \(\+https:\/\/readmo\.app\)$/,
+    );
+  });
+});
+
+describe('readmoUserAgent', () => {
+  it('uses the client build-number scheme, defaulting to 0 when unset', () => {
+    expect(readmoUserAgent()).toBe('Readmo/0 (+https://readmo.app)');
   });
 });
