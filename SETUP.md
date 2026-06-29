@@ -131,7 +131,7 @@ origins and `http://localhost:5173/**` for local dev).
 | `SUPABASE_SERVICE_ROLE_KEY` | **server only** (Edge Functions / poller) | **Yes — never ship to client** |
 | Google / Discord client secrets | Supabase Auth config | **Yes — server only** |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_TLS` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM` / `SIGNUP_NOTIFY_TO` | **server only** (`notify-signup` function) — `supabase secrets set …`; see §9 | **`SMTP_PASSWORD` yes — never ship to client** |
-| `GOOGLE_API_KEY` | **server only** (`summary` function) — `supabase secrets set …` | **Yes — never ship to client** |
+| `GOOGLE_API_KEY` | **server only** (`summary` function) — `supabase secrets set …`; a Google AI Studio key (see §5a) | **Yes — never ship to client** |
 
 **Client build** (Vite) gets only `SUPABASE_URL` + `SUPABASE_ANON_KEY` as
 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` — copy `.env.example` to
@@ -157,8 +157,9 @@ That warning is expected — there is nothing to set for deployment. Use
 `supabase secrets set` only for *custom* (non-`SUPABASE_`) names: the
 `SMTP_*` / `SIGNUP_NOTIFY_TO` values for `notify-signup` (§9), and
 **`GOOGLE_API_KEY`** for the `summary` function (the AI article-summary feature —
-a Google AI Studio key; unset → summaries report `unavailable` and the reader
-shows no card, everything else works). The `summary` function also uses
+a Google AI Studio key; see **§5a** to create it; unset → summaries report
+`unavailable` and the reader shows no card, everything else works). The
+`summary` function also uses
 **`JINA_API_KEY`** (the same Jina secret as reading mode) to fetch the article
 text; unset → it falls back to summarizing the item's stored body:
 
@@ -175,6 +176,25 @@ The service-role key is needed by hand in only two places: the **cron poller**
 (§7, passed as a bearer token) and **local** `supabase functions serve`
 (off-platform, so put the three vars in a local, untracked `.env`; see
 `supabase/functions/.env.example`).
+
+### 5a. Create the `GOOGLE_API_KEY` for AI summaries
+
+The `summary` function calls the Gemini Developer API with this one key (passed
+as `?key=`); there is no separate service-account variable to set.
+
+1. In [Google AI Studio → API keys](https://aistudio.google.com/apikey), pick a
+   project with the **Generative Language API** enabled and create a key. New
+   keys are auth keys, bound to a service account at creation — accept the
+   binding; nothing else to pass.
+2. Set the secret and redeploy:
+   ```sh
+   supabase secrets set GOOGLE_API_KEY=…
+   make deploy-summary
+   ```
+
+> **Migrating an existing key:** standard (unrestricted) keys stopped working
+> 2026-06-19 and all standard keys stop 2026-09. If AI Studio lists your key's
+> type as **Standard**, create a new (auth) key, swap it in, and delete the old.
 
 ---
 
