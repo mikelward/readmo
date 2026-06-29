@@ -1,6 +1,6 @@
 IMPORT_MAP := supabase/functions/import_map.json
 
-.PHONY: deploy deploy-discover deploy-refresh deploy-poll deploy-img deploy-fulltext deploy-notify-signup deploy-db-perf migrate check-link
+.PHONY: deploy deploy-discover deploy-refresh deploy-poll deploy-img deploy-fulltext deploy-summary deploy-notify-signup deploy-db-perf migrate check-link
 
 # Fail fast unless we're sitting in the linked project. Without a local
 # supabase/config.toml the CLI silently walks up the tree and resolves a
@@ -18,7 +18,7 @@ migrate: check-link
 	supabase db push
 
 ## Deploy all Edge Functions (run migrate first to apply any schema changes)
-deploy: migrate deploy-discover deploy-refresh deploy-poll deploy-img deploy-fulltext deploy-notify-signup deploy-db-perf
+deploy: migrate deploy-discover deploy-refresh deploy-poll deploy-img deploy-fulltext deploy-summary deploy-notify-signup deploy-db-perf
 
 deploy-discover: check-link
 	supabase functions deploy discover --import-map $(IMPORT_MAP)
@@ -34,6 +34,12 @@ deploy-img: check-link
 
 deploy-fulltext: check-link
 	supabase functions deploy fulltext --import-map $(IMPORT_MAP)
+
+# AI article summaries. Browser-invoked with the caller's JWT (verified for the
+# allowlist gate), so deploy WITH jwt verification like fulltext. Needs the
+# GOOGLE_API_KEY secret set (see SETUP.md) to actually generate.
+deploy-summary: check-link
+	supabase functions deploy summary --import-map $(IMPORT_MAP)
 
 # Server-to-server (called by the auth.users trigger, verifies the bearer
 # itself), so deploy with --no-verify-jwt like poll.

@@ -257,3 +257,86 @@ begin
   if n <> 1 then raise exception 'FAIL T12: old-shape write did not apply / stamp now()'; end if;
   raise notice 'PASS T12: compat shim applies an old-shape (base-version, no *_at) write';
 end $$;
+
+-- ===== Test 13: feed_items scrubs ai_summary from list payloads (0035) =======
+-- A cached AI summary on a shared item must NOT ride along in the list RPC, or
+-- an off-allowlist co-subscriber would read it through the normal list API — the
+-- gate lives in the allowlist-gated `summary` Edge Function, not the row.
+-- Mirrors the full-text scrub (0026). Seed a summary + a subscription as the
+-- superuser, then read the list as the subscriber and assert the gated column
+-- comes back null while the row itself is real (so the test isn't vacuous).
+update public.items
+  set ai_summary = 'SECRET GIST', ai_summary_generated_at = now()
+  where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+insert into public.subscriptions(user_id, feed_id)
+  values ('11111111-1111-1111-1111-111111111111',
+          'dddddddd-dddd-dddd-dddd-dddddddddddd')
+  on conflict do nothing;
+do $$
+declare n_total int; n_leaked int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  -- User 1 holds a pin on item E (T12), so it's returned regardless of window.
+  select count(*) into n_total
+    from public.feed_items('feed', null, 'dddddddd-dddd-dddd-dddd-dddddddddddd') fi
+    where (fi.item).id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  if n_total <> 1 then
+    raise exception 'FAIL T13: public item not returned by feed_items (test vacuous)';
+  end if;
+  select count(*) into n_leaked
+    from public.feed_items('feed', null, 'dddddddd-dddd-dddd-dddd-dddddddddddd') fi
+    where (fi.item).id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
+      and (fi.item).ai_summary is not null;
+  if n_leaked <> 0 then
+    raise exception 'FAIL T13: feed_items leaked ai_summary in a list payload';
+  end if;
+  raise notice 'PASS T13: feed_items nulls ai_summary in list payloads';
+end $$;
+
+-- ===== Test 14: upsert_feed_items invalidates ai_summary on content change (0035)
+-- A re-published item with an edited body must drop its cached summary (else the
+-- summary function serves a gist of the OLD content via a cache hit); an
+-- identical re-poll must KEEP the cache. Crucially, `content_hash` is held at the
+-- guid in BOTH re-polls (matching the live poller's `content_hash: it.guid`), so
+-- this proves the invalidation keys off content_html/title — not the stable hash.
+-- Runs as the superuser/service role (the poller path), calling the RPC directly.
+do $$
+declare summary_after_same text; summary_after_change text;
+begin
+  -- Seed item E (guid 'guid-2', feed D) with a known body/title + cached summary.
+  update public.items
+    set content_html = '<p>v1</p>', title = 'Public Article',
+        ai_summary = 'GIST V1', ai_summary_generated_at = now()
+    where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+
+  -- Re-poll with the SAME body+title (content_hash=guid, unchanged) → preserved.
+  perform public.upsert_feed_items(
+    'dddddddd-dddd-dddd-dddd-dddddddddddd',
+    jsonb_build_array(jsonb_build_object(
+      'guid', 'guid-2', 'url', 'https://public.example/article-e',
+      'title', 'Public Article', 'content_html', '<p>v1</p>',
+      'content_hash', 'guid-2'))
+  );
+  select ai_summary into summary_after_same from public.items
+    where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  if summary_after_same is distinct from 'GIST V1' then
+    raise exception 'FAIL T14: ai_summary dropped on an unchanged re-poll (same body/title)';
+  end if;
+
+  -- Re-poll with an EDITED body, SAME guid and SAME content_hash=guid → cleared.
+  -- (This is exactly the case a content_hash comparison would have missed.)
+  perform public.upsert_feed_items(
+    'dddddddd-dddd-dddd-dddd-dddddddddddd',
+    jsonb_build_array(jsonb_build_object(
+      'guid', 'guid-2', 'url', 'https://public.example/article-e',
+      'title', 'Public Article', 'content_html', '<p>v2 EDITED</p>',
+      'content_hash', 'guid-2'))
+  );
+  select ai_summary into summary_after_change from public.items
+    where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  if summary_after_change is not null then
+    raise exception 'FAIL T14: ai_summary not cleared after a content_html edit (same guid/hash)';
+  end if;
+  raise notice 'PASS T14: upsert_feed_items clears ai_summary on a content_html/title change, not content_hash';
+end $$;

@@ -16,6 +16,7 @@ import {
   localStoragePersistence,
 } from './itemState';
 import type { FullTextResult } from '../fullText';
+import type { SummaryResult } from '../summary';
 import {
   type AllowlistEntry,
   type Capabilities,
@@ -62,6 +63,9 @@ export class MockDataSource implements DataSource {
    * /admin. Tests override getCapabilities() to exercise the off-list paths. */
   private readonly selfEmail = 'demo@readmo.app';
   private allowlist = new Set<string>([this.selfEmail]);
+  /** In-memory AI-summary cache, mirroring the shared `items.ai_summary` column
+   * (one generation serves every later pin of the same item). */
+  private summaries = new Map<ItemId, string>();
   /** Global "allow new sign-ups" switch (mock-only; defaults open). */
   private signupsEnabled = true;
   private readonly homeWindowMs: number;
@@ -365,6 +369,23 @@ export class MockDataSource implements DataSource {
       `provided, with the complete body of “${item.title}”.</p>`;
     item.fullContentHtml = full;
     return { status: 'ok', contentHtml: full };
+  }
+
+  async getSummary(id: ItemId): Promise<SummaryResult> {
+    const item = this.items.find((it) => it.id === id);
+    if (!item) return { status: 'unreachable', summary: null };
+    // Mirror the server allowlist gate: when armed and the demo user isn't on
+    // the list, no summary (silent, retryable). Empty/disarmed → open to all.
+    if (this.allowlist.size > 0 && !this.allowlist.has(this.selfEmail)) {
+      return { status: 'empty', summary: null, retryable: true };
+    }
+    // Cache hit — one generation serves every later pin of the same item.
+    const cached = this.summaries.get(id);
+    if (cached) return { status: 'ok', summary: cached };
+    // Simulate generation with a deterministic one-sentence gist of the title.
+    const summary = `${item.title.replace(/[.?!]+$/, '')} — the key takeaway in one sentence.`;
+    this.summaries.set(id, summary);
+    return { status: 'ok', summary };
   }
 
   async search(query: string): Promise<FeedItem[]> {

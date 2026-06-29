@@ -1227,6 +1227,47 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(await env.ds.fetchFullText('i1')).toEqual({ status: 'unreachable', contentHtml: null });
   });
 
+  it('getSummary invokes the summary function and maps an ok result', async () => {
+    const env = setup();
+    env.fake.invokeResult.current = {
+      data: { status: 'ok', summary: 'A gist.' },
+      error: null,
+    };
+    expect(await env.ds.getSummary('i1')).toEqual({ status: 'ok', summary: 'A gist.' });
+    expect(env.fake.invokeCalls).toContainEqual({ name: 'summary', body: { itemId: 'i1' } });
+  });
+
+  it('getSummary passes the additive `retryable` flag through', async () => {
+    const env = setup();
+    env.fake.invokeResult.current = {
+      data: { status: 'empty', summary: null, retryable: true },
+      error: null,
+    };
+    expect(await env.ds.getSummary('i1')).toEqual({
+      status: 'empty',
+      summary: null,
+      retryable: true,
+    });
+  });
+
+  it('getSummary degrades a generic invoke error to unreachable (retryable)', async () => {
+    const env = setup();
+    env.fake.invokeResult.current = { data: null, error: new Error('boom') };
+    expect(await env.ds.getSummary('i1')).toEqual({ status: 'unreachable', summary: null });
+  });
+
+  it('getSummary maps a 404 (function not deployed / item hidden) to a terminal empty', async () => {
+    const env = setup();
+    // Frontend deployed ahead of the manual `summary` Edge Function deploy, or
+    // RLS hid the item: a 404 that retrying can't fix. Must be a NON-retryable
+    // `empty` (terminal in summaryStaleTime) so the reader stops re-invoking.
+    const res = new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
+    env.fake.invokeResult.current = { data: null, error: new FunctionsHttpError(res) };
+    const result = await env.ds.getSummary('i1');
+    expect(result).toEqual({ status: 'empty', summary: null });
+    expect('retryable' in result).toBe(false);
+  });
+
   it('refresh invokes the edge function with the feed id', async () => {
     const env = setup();
     await env.ds.refresh('feed-a');

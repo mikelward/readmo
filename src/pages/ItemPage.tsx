@@ -18,6 +18,7 @@ import {
 import { fullTextStaleTime, looksTruncated } from '../lib/fullText';
 import type { FullTextResult } from '../lib/fullText';
 import type { Item, ItemState, ItemStateField } from '../lib/types';
+import { ArticleSummary } from '../components/ArticleSummary';
 import { TooltipButton } from '../components/TooltipButton';
 import { ItemRowMenu, type ItemRowMenuItem } from '../components/ItemRowMenu';
 import { LoadError } from '../components/LoadError';
@@ -696,6 +697,12 @@ export function ItemPage() {
           ) : null}
         </div>
       </header>
+
+      {/* AI summary — directly after the title/byline, above the article. Shows
+          only when an allowlisted user has pinned this item (the pin is the
+          trigger); the gating lives in useSummary, so it's always mounted to keep
+          hook order stable and renders nothing when there's nothing to show. */}
+      <ArticleSummary id={item.id} pinned={state.pinned} online={online} />
 
       <div className="reader__modebar">
         {fetchingFull ? (
