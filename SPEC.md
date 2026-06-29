@@ -1602,6 +1602,30 @@ page's discipline is unchanged.
     **only** through the allowlist-gated `fulltext` function — the column is not
     in any client read (see the reading-mode allowlist below) — so fallback
     content, like all full content, reaches only allowlisted callers.
+  - **Honors robots.txt.** Reading mode crawls the article's *own* page (beyond
+    the syndicated feed body), so before fetching it consults the publisher's
+    `<origin>/robots.txt` (`supabase/functions/_shared/robots.ts`) for our
+    `Readmo` product token, falling back to the `*` group. A path our crawler is
+    disallowed from is reported as the silent **`empty`** outcome (reader keeps
+    the feed body + **Open original**, the same UX as a paywall/teaser) — no new
+    wire status, so older clients are unaffected. Because the fetch follows
+    redirects internally, the **final URL after redirects** is re-checked too
+    (a short link / canonicalizer can land on a different origin or path than
+    the item URL); a disallowed destination drops the body without extracting or
+    caching it. The robots.txt fetch itself
+    goes through the SSRF-hardened helper (guardrail #6). **Fail open:** a
+    missing (404), unreachable, non-2xx, oversized, or unparseable robots.txt
+    imposes no restriction (the robots convention — absence of rules means
+    allowed — and a publisher's flaky robots.txt must never silently stop a
+    legitimate fetch). The poller and discovery are *not* gated on robots.txt
+    (the feed is published for syndication; discovery is a one-time, explicitly
+    user-pasted URL). Parsing/matching is delegated to the `robots-parser`
+    library (a mature, zero-dependency, spec-tested MIT package; pure JS over the
+    `URL` global, so it runs unchanged under Deno via `npm:` and under vitest) —
+    not a hand-rolled parser — so RFC 9309 group selection, Allow/Disallow
+    precedence, `*`/`$` wildcards, and path normalization are handled by a vetted
+    implementation. Cost/reliability (guardrail #5): negligible — an in-process
+    pure-JS dependency, no new external call beyond the one robots.txt fetch.
   - **Outcomes** (the function returns `{ status, contentHtml, retryable?,
     viaFallback? }`): `ok`,
     `empty` (nothing article-like found), `auth` (publisher gated the page even
@@ -1619,9 +1643,15 @@ page's discipline is unchanged.
     cannot be rendered by any reading mode (the user's session lives only in
     their own browser at the publisher's origin); **Open original** stays the
     tool for those.
-  - **Cost & reliability (guardrail #5):** the only outbound call is the
-    publisher fetch (same class as the poller) plus the existing `r.jina.ai`
-    403-fallback (already documented) — **no new paid service; cost negligible.**
+  - **Cost & reliability (guardrail #5):** the outbound calls are the publisher
+    fetch (same class as the poller), one small `<origin>/robots.txt` fetch
+    before it (capped at 512 KiB, 5 s timeout, fails open), and the existing
+    `r.jina.ai` 403-fallback (already documented) — **no new paid service; cost
+    negligible.** The robots.txt fetch adds one extra request and ~tens-of-ms to
+    hundreds-of-ms on the first open of a truncated item (then cache-instant, as
+    the extracted body is cached and re-opens skip the function entirely); it is
+    not cached separately. Its only new failure mode is a slow/blocked
+    robots.txt, bounded by the timeout and the fail-open default.
     Latency is +1–3 s on the first open of a truncated item, then cache-instant.
     Works on most normal article sites; SPA/JS-rendered pages and paywalls fall
     back to the feed body + Open original.

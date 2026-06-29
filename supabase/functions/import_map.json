@@ -5,6 +5,7 @@
     "entities": "npm:entities@^7.0.1",
     "fast-xml-parser": "npm:fast-xml-parser@^5.0.8",
     "linkedom": "npm:linkedom@^0.18.12",
+    "robots-parser": "npm:robots-parser@^3.0.1",
     "sanitize-html": "npm:sanitize-html@^2.17.4"
   }
 }
