@@ -36,7 +36,6 @@
   margin: 0;
   font-size: 0.85rem;
   word-break: break-word;
-  /* Monospace + tabular so SHAs, counts, and UA strings stay aligned and
-     readable. */
+  /* Monospace + tabular so SHAs and counts stay aligned and readable. */
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }

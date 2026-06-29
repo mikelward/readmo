@@ -47,7 +47,16 @@ const anonKey =
 // even when the DB is overloaded — the case where a slow `feed_items` read would
 // otherwise time out and paint a wrong "Offline" pill. Unconfigured (mock) →
 // no probe, and a timeout falls back to being treated as offline.
-setConnectivityProbeUrl(url ? `${url.replace(/\/$/, '')}/auth/v1/health` : null);
+setConnectivityProbeUrl(supabaseHealthUrl());
+
+/** GoTrue's in-process liveness endpoint for the configured project, or null
+ * when unconfigured (mock mode). Same URL registered above as the connectivity
+ * probe; `/debug` reuses it to show live backend reachability. `/auth/v1/health`
+ * doesn't query Postgres, so a probe reflects "can we reach the backend" without
+ * loading the DB. */
+export function supabaseHealthUrl(): string | null {
+  return url ? `${url.replace(/\/$/, '')}/auth/v1/health` : null;
+}
 
 /** Deterministic localStorage key for the persisted auth session. Fixed (rather
  * than supabase-js's default `sb-<ref>-auth-token`) so the boot path can read

@@ -21,6 +21,32 @@ describe('DebugPage', () => {
     expect(screen.getByRole('heading', { name: 'Account' })).toBeInTheDocument();
   });
 
+  it('keeps the lean runtime rows but not browser-introspection noise', () => {
+    renderWithProviders(<DebugPage />, { route: '/debug' });
+    // Kept: the runtime signals that matter for a PWA reader.
+    expect(screen.getByText('Network')).toBeInTheDocument();
+    expect(screen.getByText('Service worker')).toBeInTheDocument();
+    // Trimmed: User agent, Viewport, and Display mode were removed as noise.
+    expect(screen.queryByText('User agent')).not.toBeInTheDocument();
+    expect(screen.queryByText('Viewport')).not.toBeInTheDocument();
+    expect(screen.queryByText('Display mode')).not.toBeInTheDocument();
+  });
+
+  it('omits the live Supabase reachability row in mock mode', () => {
+    // Tests run unconfigured (no Supabase env vars), so there's no backend to
+    // probe; the Configuration section already reports "mock data". The
+    // reachable/latency probe path is unit-tested in supabaseHealth.test.ts.
+    renderWithProviders(<DebugPage />, { route: '/debug' });
+    expect(screen.queryByText(/reachable|checking/)).not.toBeInTheDocument();
+  });
+
+  it('drops the per-device Theme and Palette rows from Account', () => {
+    renderWithProviders(<DebugPage />, { route: '/debug' });
+    expect(screen.getByText('Status')).toBeInTheDocument();
+    expect(screen.queryByText('Theme')).not.toBeInTheDocument();
+    expect(screen.queryByText('Palette')).not.toBeInTheDocument();
+  });
+
   it('lists the environment and commit from the build info', () => {
     renderWithProviders(<DebugPage />, { route: '/debug' });
     expect(screen.getByText('Environment')).toBeInTheDocument();
