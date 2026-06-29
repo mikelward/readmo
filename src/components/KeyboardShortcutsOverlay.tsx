@@ -26,11 +26,13 @@ const LIST_SHORTCUTS: Shortcut[] = [
 
 // Shortcuts active on the reader page (`/item/:id`). j/k scroll between
 // section headings (or page top/bottom); the letter keys act on the
-// article. RSS items have no comments, so there is no comment navigation.
+// article. RSS items have no in-app comment thread to navigate; `c` is a deep
+// link out to the item's discussion (the source thread, or newshacker for HN).
 const READER_SHORTCUTS: Shortcut[] = [
   { keys: ['j', '↓'], description: 'Next section' },
   { keys: ['k', '↑'], description: 'Previous section' },
   { keys: ['o'], description: 'Open the original article in a new tab' },
+  { keys: ['c'], description: 'Open the discussion (when the item has one)' },
   { keys: ['p'], description: 'Pin or unpin the item' },
   { keys: ['f'], description: 'Favorite or unfavorite the item' },
   { keys: ['d'], description: 'Mark the item done (and go back)' },

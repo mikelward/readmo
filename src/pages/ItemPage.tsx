@@ -25,6 +25,7 @@ import { loadFailureCopy } from '../lib/loadErrorCopy';
 import {
   ArrowBack,
   Check,
+  Comment,
   FavoriteFilled,
   FavoriteOutline,
   MoreVert,
@@ -34,6 +35,12 @@ import {
   Share as ShareIcon,
   VerticalAlignTop,
 } from '../components/icons';
+import {
+  NEWSHACKER_ORIGIN,
+  isHackerNewsFeed,
+  newshackerUrlForCommentsUrl,
+  newshackerUrlForItem,
+} from '../lib/newshacker';
 import './ItemPage.css';
 
 /** True when a cached `['fulltext', id]` result already holds a usable reading
@@ -41,6 +48,19 @@ import './ItemPage.css';
  * a fresh fetch, so the reader can open straight into the reading view. */
 function cachedFullTextOk(ft: FullTextResult | undefined): boolean {
   return ft?.status === 'ok' && !!ft.contentHtml;
+}
+
+/** Whether a URL is on newshacker's own origin. Compares the parsed origin, not
+ * a string prefix: a publisher-controlled `commentsUrl` like
+ * `https://newshacker.app.evil.example/x` or `https://newshacker.app@evil/x`
+ * starts with NEWSHACKER_ORIGIN but resolves to a lookalike host, which must NOT
+ * be labeled "Comments on newshacker" (PR #264 review). */
+function isNewshackerUrl(url: string): boolean {
+  try {
+    return new URL(url).origin === NEWSHACKER_ORIGIN;
+  } catch {
+    return false;
+  }
 }
 
 interface ReaderToolbarProps {
@@ -58,6 +78,14 @@ interface ReaderToolbarProps {
   wide: boolean;
   onBack: () => void;
   openOriginal: () => void;
+  /** The article's comments/discussion destination, or null when it has none —
+   * a Hacker News item's newshacker thread, else the feed's structured comments
+   * URL. Null hides the Comments button. */
+  commentsHref: string | null;
+  /** Whether `commentsHref` points at newshacker (an HN item), so the button can
+   * name the destination ("Comments on newshacker"). */
+  commentsOnNewshacker: boolean;
+  openComments: () => void;
   toggle: (field: ItemStateField) => void;
   set: (field: ItemStateField, value: boolean) => void;
   markDone: () => void;
@@ -80,6 +108,9 @@ function ReaderToolbar({
   wide,
   onBack,
   openOriginal,
+  commentsHref,
+  commentsOnNewshacker,
+  openComments,
   toggle,
   set,
   markDone,
@@ -89,6 +120,12 @@ function ReaderToolbar({
 }: ReaderToolbarProps) {
   const moreBtnRef = useRef<HTMLButtonElement>(null);
   const sfx = placement === 'bottom' ? '-bottom' : '';
+  // The narrow bar can't hold a fifth 44px action without breaking the ≥320px
+  // single-row invariant (SPEC *Reader action bar*). When the conditional
+  // Comments button is present on a narrow viewport, Pin moves into the ⋮
+  // overflow menu (see ItemPage's menuItems) so Comments stays inline; with no
+  // Comments button, or on a wide viewport, Pin stays inline as before.
+  const pinInline = wide || !commentsHref;
 
   return (
     <div className={`reader__${placement}bar`}>
@@ -135,6 +172,19 @@ function ReaderToolbar({
           <OpenInNew />
         </TooltipButton>
 
+        {commentsHref ? (
+          <TooltipButton
+            type="button"
+            className="reader__action"
+            tooltip={commentsOnNewshacker ? 'Comments on newshacker' : 'Comments'}
+            aria-label={commentsOnNewshacker ? 'Comments on newshacker' : 'Comments'}
+            onClick={openComments}
+            data-testid={`reader-comments${sfx}`}
+          >
+            <Comment />
+          </TooltipButton>
+        ) : null}
+
         {wide ? (
           <>
             <TooltipButton
@@ -163,17 +213,19 @@ function ReaderToolbar({
           </>
         ) : null}
 
-        <TooltipButton
-          type="button"
-          className={'reader__action' + (state.pinned ? ' reader__action--active' : '')}
-          tooltip={state.pinned ? 'Unpin' : 'Pin'}
-          aria-label={state.pinned ? 'Unpin' : 'Pin'}
-          aria-pressed={state.pinned}
-          onClick={() => toggle('pinned')}
-          data-testid={`reader-pin${sfx}`}
-        >
-          {state.pinned ? <PushPinFilled /> : <PushPinOutline />}
-        </TooltipButton>
+        {pinInline ? (
+          <TooltipButton
+            type="button"
+            className={'reader__action' + (state.pinned ? ' reader__action--active' : '')}
+            tooltip={state.pinned ? 'Unpin' : 'Pin'}
+            aria-label={state.pinned ? 'Unpin' : 'Pin'}
+            aria-pressed={state.pinned}
+            onClick={() => toggle('pinned')}
+            data-testid={`reader-pin${sfx}`}
+          >
+            {state.pinned ? <PushPinFilled /> : <PushPinOutline />}
+          </TooltipButton>
+        ) : null}
 
         <TooltipButton
           type="button"
@@ -362,6 +414,37 @@ export function ItemPage() {
 
   const goBack = useCallback(() => navigate(-1), [navigate]);
 
+  // The article's comments/discussion destination. Null hides the button.
+  //
+  // Hacker News feeds open the newshacker thread (not news.ycombinator.com),
+  // deriving the HN id from the item's url/guid/body — same as the row's "open
+  // on newshacker" mode, and the only way to find the official HN feed's
+  // discussion link (it lives in the description, not a structured field; it
+  // also covers a pre-0033 backend that omits comments_url). That broad scan is
+  // GATED to HN feeds: on a normal feed a body that merely mentions an HN thread
+  // would otherwise mislabel/redirect the button (PR #264 review).
+  //
+  // Every other feed uses its structured comments URL (RSS <comments> / Atom
+  // rel="replies"); if that link itself points at an HN thread it's still routed
+  // to newshacker ("if it links to Hacker News, go to newshacker instead").
+  const commentsHref = useMemo(() => {
+    if (!resolved) return null;
+    const { item: it, feed } = resolved;
+    if (isHackerNewsFeed(feed)) {
+      return (
+        newshackerUrlForItem(it) ??
+        (isSafeHttpUrl(it.commentsUrl) ? it.commentsUrl : null)
+      );
+    }
+    if (!isSafeHttpUrl(it.commentsUrl)) return null;
+    return newshackerUrlForCommentsUrl(it.commentsUrl) ?? it.commentsUrl;
+  }, [resolved]);
+  const commentsOnNewshacker =
+    commentsHref != null && isNewshackerUrl(commentsHref);
+  const openComments = useCallback(() => {
+    if (commentsHref) window.open(commentsHref, '_blank', 'noopener,noreferrer');
+  }, [commentsHref]);
+
   // Shared overflow menu for the reader's top + bottom bars. Lifted to the
   // page (like newshacker's Thread) so both ⋮ buttons drive one menu
   // instance — the shared ItemRowMenu, which brings anchored-popover
@@ -390,13 +473,23 @@ export function ItemPage() {
   }, []);
   // Favorite/Share live on the bar as inline icons on wide viewports, so
   // they drop out of the menu there to avoid duplicate entry points; below
-  // 960px they stay here. Open feed is always in the menu. "Show feed
+  // 960px they stay here. Pin joins them in the menu only when it's been
+  // pushed off the narrow bar to make room for the Comments button (see
+  // `pinInline` in ReaderToolbar). Open feed is always in the menu. "Show feed
   // version" appears only when the reader is sitting in the extracted
   // reading view AND a feed body exists to swap back to.
+  const pinInMenu = !wide && !!commentsHref;
   const menuItems = useMemo<ItemRowMenuItem[]>(() => {
     if (!resolved) return [];
     const it = resolved.item;
     const items: ItemRowMenuItem[] = [];
+    if (pinInMenu) {
+      items.push({
+        key: 'pin',
+        label: state.pinned ? 'Unpin' : 'Pin',
+        onSelect: () => toggle('pinned'),
+      });
+    }
     if (!wide) {
       items.push({
         key: 'favorite',
@@ -422,7 +515,17 @@ export function ItemPage() {
       onSelect: () => navigate(`/feed/${resolved.feed.id}`),
     });
     return items;
-  }, [resolved, wide, state.favorite, toggle, share, navigate, showReading]);
+  }, [
+    resolved,
+    wide,
+    pinInMenu,
+    state.favorite,
+    state.pinned,
+    toggle,
+    share,
+    navigate,
+    showReading,
+  ]);
 
   // Reader keyboard shortcuts: o open original, p pin, f favorite, d done.
   useEffect(() => {
@@ -437,6 +540,9 @@ export function ItemPage() {
         case 'o':
           openOriginal();
           break;
+        case 'c':
+          openComments();
+          break;
         case 'p':
           toggle('pinned');
           break;
@@ -450,7 +556,7 @@ export function ItemPage() {
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [openOriginal, toggle, markDone]);
+  }, [openOriginal, openComments, toggle, markDone]);
 
   // Only show the blank "Loading…" when there's nothing cached to paint yet — a
   // cold first open, or while the persisted cache is still hydrating (the
@@ -528,6 +634,9 @@ export function ItemPage() {
     wide,
     onBack: goBack,
     openOriginal,
+    commentsHref,
+    commentsOnNewshacker,
+    openComments,
     toggle,
     set,
     markDone,

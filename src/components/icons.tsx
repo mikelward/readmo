@@ -451,6 +451,20 @@ export function Newshacker({
   );
 }
 
+// ---- Comments (chat_bubble outline) ---------------------------------------
+// A single speech bubble for the reader's "Comments" action — the link to the
+// article's discussion page (RSS <comments> / Atom rel="replies"; a Hacker News
+// item's thread opens on newshacker). Outline weight to sit with the other line
+// icons on the reader bar.
+
+export function Comment(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M240-240 80-80v-720q0-33 23.5-56.5T160-880h640q33 0 56.5 23.5T880-800v480q0 33-23.5 56.5T800-240H240Zm-34-80h594v-480H160v525l46-45Zm-46 0v-480 480Z" />
+    </MaterialIcon>
+  );
+}
+
 // ---- Share ----------------------------------------------------------------
 
 export function Share(props: IconProps) {

@@ -3,6 +3,7 @@ import {
   hackerNewsItemId,
   isHackerNewsFeed,
   newshackerItemUrl,
+  newshackerUrlForCommentsUrl,
   newshackerUrlForItem,
 } from './newshacker';
 import type { Feed, Item } from './types';
@@ -196,5 +197,23 @@ describe('newshacker URLs', () => {
     expect(
       newshackerUrlForItem(item({ guid: 'guid-1', url: 'https://example.com/post' })),
     ).toBeNull();
+  });
+
+  it('newshackerUrlForCommentsUrl maps an HN comments link to its thread', () => {
+    expect(
+      newshackerUrlForCommentsUrl('https://news.ycombinator.com/item?id=42662903'),
+    ).toBe('https://newshacker.app/item/42662903');
+  });
+
+  it('newshackerUrlForCommentsUrl returns null for a non-HN or absent link', () => {
+    expect(newshackerUrlForCommentsUrl('https://example.com/comments')).toBeNull();
+    expect(newshackerUrlForCommentsUrl(null)).toBeNull();
+    expect(newshackerUrlForCommentsUrl(undefined)).toBeNull();
+  });
+
+  it('newshackerUrlForCommentsUrl ignores the guid/url/body (only the given link)', () => {
+    // Distinct from newshackerUrlForItem: a non-HN comments link is null even
+    // when the item's other fields would yield an HN id.
+    expect(newshackerUrlForCommentsUrl('https://example.com/discuss')).toBeNull();
   });
 });

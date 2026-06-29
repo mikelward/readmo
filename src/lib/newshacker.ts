@@ -100,3 +100,16 @@ export function newshackerUrlForItem(
   const id = hackerNewsItemId(item);
   return id == null ? null : newshackerItemUrl(id);
 }
+
+/** The newshacker thread URL for a single comments/discussion link, or null
+ * when it isn't a `news.ycombinator.com/item?id=<id>` link. Unlike
+ * {@link newshackerUrlForItem}, this looks at ONLY the given URL — it never
+ * scans the item's guid/url/body — so it's safe to use on a non-Hacker-News
+ * feed whose structured `commentsUrl` happens to point at an HN thread, without
+ * misfiring on a normal item that merely links to HN in its body. */
+export function newshackerUrlForCommentsUrl(
+  commentsUrl: string | null | undefined,
+): string | null {
+  const id = hnIdFromUrl(commentsUrl);
+  return id == null ? null : newshackerItemUrl(id);
+}

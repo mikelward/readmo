@@ -53,6 +53,11 @@ import {
 const FEED_COLS =
   'id, site_url, title, last_fetched_at, next_fetch_at, fetch_interval_s, error_count, last_error, created_at';
 const ITEM_COLS =
+  'id, feed_id, guid, url, comments_url, title, author, published_at, content_html, summary, enclosures, content_hash, created_at';
+// Pre-0033 backend (no `comments_url`): item reads step down to this column set
+// on an undefined-column error so the reader's Comments button degrades to "no
+// button" rather than 400-ing every item read (guardrail #11). See selectItemRows.
+const ITEM_COLS_LEGACY =
   'id, feed_id, guid, url, title, author, published_at, content_html, summary, enclosures, content_hash, created_at';
 // No client read selects the cached full-article body (`full_content_html`) or
 // its `full_content_via_fallback` provenance flag. Both are gated on the
@@ -406,6 +411,29 @@ export class SupabaseDataSource implements DataSource {
     return res.data as T;
   }
 
+  /** Run an `items` read with the full ITEM_COLS, retrying once with the
+   * pre-0033 legacy column set (no `comments_url`) when the backend hasn't got
+   * that column yet — so the reader's Comments button degrades gracefully
+   * instead of 400-ing every item read against an older backend (guardrail #11).
+   * `build(cols)` returns the PostgREST query for a given column projection. */
+  private async selectItemRows<T>(
+    build: (cols: string) => PromiseLike<{ data: unknown; error: unknown; status?: number }>,
+  ): Promise<T> {
+    // A runtime column string makes PostgREST infer GenericStringError for the
+    // row; unwrap<T> casts back to the mapped ItemRow shape (as the explicit
+    // unwrap<ItemRow[]> calls these reads used to).
+    const run = async (cols: string) =>
+      this.unwrap<T>(
+        (await build(cols)) as { data: T | null; error: unknown; status?: number },
+      );
+    try {
+      return await run(ITEM_COLS);
+    } catch (err) {
+      if (!isMissingColumnError(err)) throw err;
+      return await run(ITEM_COLS_LEGACY);
+    }
+  }
+
   /**
    * Fetch the caller's item_state rows and overlay them onto the store so
    * `stateStore.get()` reflects server truth. A live read is authoritative, so
@@ -603,11 +631,13 @@ export class SupabaseDataSource implements DataSource {
     feedIds?: FeedId[],
   ): Promise<ItemRow[]> {
     const batches = await Promise.all(
-      chunk(ids, ID_LOOKUP_CHUNK).map(async (c) => {
-        let q = this.sb.from('items').select(ITEM_COLS).in('id', c);
-        if (feedIds) q = q.in('feed_id', feedIds);
-        return this.unwrap<ItemRow[]>(await q);
-      }),
+      chunk(ids, ID_LOOKUP_CHUNK).map(async (c) =>
+        this.selectItemRows<ItemRow[]>((cols) => {
+          let q = this.sb.from('items').select(cols).in('id', c);
+          if (feedIds) q = q.in('feed_id', feedIds);
+          return q;
+        }),
+      ),
     );
     return batches.flat();
   }
@@ -902,8 +932,8 @@ export class SupabaseDataSource implements DataSource {
   }
 
   async getItem(id: ItemId): Promise<FeedItem | null> {
-    const row = this.unwrap<ItemRow | null>(
-      await this.sb.from('items').select(ITEM_COLS).eq('id', id).maybeSingle(),
+    const row = await this.selectItemRows<ItemRow | null>((cols) =>
+      this.sb.from('items').select(cols).eq('id', id).maybeSingle(),
     );
     if (!row) return null;
     const [fi] = await this.resolveFeedItems([row]);
@@ -970,10 +1000,10 @@ export class SupabaseDataSource implements DataSource {
     const pattern = `%${escapeLike(q.toLowerCase())}%`;
 
     // Item-title matches (RLS-scoped to the caller's visible items).
-    const titleRows = this.unwrap<ItemRow[]>(
-      await this.sb
+    const titleRows = await this.selectItemRows<ItemRow[]>((cols) =>
+      this.sb
         .from('items')
-        .select(ITEM_COLS)
+        .select(cols)
         .ilike('title', pattern)
         .order('sort_at', { ascending: false })
         .limit(50),
@@ -996,10 +1026,10 @@ export class SupabaseDataSource implements DataSource {
       // returns its 50 newest; merge and keep the global 50 newest.
       const batches = await Promise.all(
         chunk(feedIds, ID_LOOKUP_CHUNK).map(async (c) =>
-          this.unwrap<ItemRow[]>(
-            await this.sb
+          this.selectItemRows<ItemRow[]>((cols) =>
+            this.sb
               .from('items')
-              .select(ITEM_COLS)
+              .select(cols)
               .in('feed_id', c)
               .order('sort_at', { ascending: false })
               .limit(50),
