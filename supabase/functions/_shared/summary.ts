@@ -109,10 +109,14 @@ export function pickStoredContent(src: SummarySource): StoredPick | null {
 
 /** Prompt for a short-paragraph summary — a few sentences capturing the
  * article's main points, not a single line. Mirrors newshacker's
- * article-summary steer (direct assertion in the author's voice, no
- * "This article argues…" meta-framing) but keeps readmo's short Markdown
- * paragraph instead of newshacker's single sentence, and aims for about
- * three key points. */
+ * article-summary steer (direct assertion, no "This article argues…"
+ * meta-framing) but keeps readmo's short Markdown paragraph instead of
+ * newshacker's single sentence, and aims for about three key points.
+ *
+ * Deliberately does NOT ask for "the voice of the author": that phrasing made
+ * Gemini adopt the perspective of the article's *subject* (e.g. summarizing a
+ * profile or interview in that person's voice). The explicit no-meta-framing
+ * instruction below already delivers the direct-assertion steer on its own. */
 export function buildSummaryPrompt(
   title: string | null | undefined,
   content: string,
@@ -121,8 +125,7 @@ export function buildSummaryPrompt(
   return (
     `Summarize the article below in a few sentences — a short paragraph that captures its main points, aiming for about three key points. ` +
     titleLine +
-    `Write it as a direct assertion of the article's main points, in the voice of the author — ` +
-    `as if the author (or someone speaking on their behalf) is stating the claims themselves. ` +
+    `Write it as a direct assertion of the article's main points. ` +
     `Format the response as Markdown — you may use **bold**, *italic*, or \`code\` for light emphasis — ` +
     `but keep it as a flowing short paragraph, with no headings or bullet lists. ` +
     `Do not refer to "the article", "the author", "the piece", "the post", "this story", or similar. ` +
