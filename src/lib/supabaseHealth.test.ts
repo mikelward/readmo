@@ -1,9 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  formatSupabaseStatus,
-  probeSupabaseHealth,
-} from './supabaseHealth';
+import { describeSupabase, probeSupabaseHealth } from './supabaseHealth';
 
 describe('probeSupabaseHealth', () => {
   afterEach(() => {
@@ -36,17 +33,27 @@ describe('probeSupabaseHealth', () => {
   });
 });
 
-describe('formatSupabaseStatus', () => {
-  it('shows a pending probe as checking', () => {
-    expect(formatSupabaseStatus({ status: 'checking' })).toBe('checking…');
+describe('describeSupabase', () => {
+  it('reports an unconfigured (mock) backend with a neutral badge', () => {
+    expect(describeSupabase(null)).toEqual({
+      value: 'not configured (mock data)',
+      badge: 'idle',
+    });
   });
 
-  it('shows reachability and latency for a settled probe', () => {
+  it('reports a pending probe as a neutral "checking" badge', () => {
+    expect(describeSupabase({ status: 'checking' })).toEqual({
+      value: 'checking…',
+      badge: 'idle',
+    });
+  });
+
+  it('reports reachability and latency with an ok/down badge', () => {
     expect(
-      formatSupabaseStatus({ status: 'done', health: { reachable: true, latencyMs: 87 } }),
-    ).toBe('reachable · 87 ms');
+      describeSupabase({ status: 'done', health: { reachable: true, latencyMs: 87 } }),
+    ).toEqual({ value: 'reachable · 87 ms', badge: 'ok' });
     expect(
-      formatSupabaseStatus({ status: 'done', health: { reachable: false, latencyMs: 12 } }),
-    ).toBe('unreachable');
+      describeSupabase({ status: 'done', health: { reachable: false, latencyMs: 12 } }),
+    ).toEqual({ value: 'unreachable', badge: 'down' });
   });
 });

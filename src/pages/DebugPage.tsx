@@ -5,17 +5,20 @@ import { useAuth } from '../hooks/useAuth';
 import { buildInfo, buildInfoRows, summarizeBuild } from '../lib/buildInfo';
 import { isSupabaseConfigured, supabaseHealthUrl } from '../lib/supabase/client';
 import {
-  formatSupabaseStatus,
+  describeSupabase,
   probeSupabaseHealth,
+  type StatusBadge,
   type SupabaseProbeState,
 } from '../lib/supabaseHealth';
 import './DebugPage.css';
 import './PageHeader.css';
 
-type Row = { label: string; value: string };
+type Row = { label: string; value: string; state?: StatusBadge };
 
 function runtimeRows(online: boolean): Row[] {
-  const rows: Row[] = [{ label: 'Network', value: online ? 'online' : 'offline' }];
+  const rows: Row[] = [
+    { label: 'Network', value: online ? 'online' : 'offline', state: online ? 'ok' : 'down' },
+  ];
   if (typeof navigator !== 'undefined') {
     const sw =
       'serviceWorker' in navigator
@@ -23,7 +26,7 @@ function runtimeRows(online: boolean): Row[] {
           ? 'active'
           : 'registered/none'
         : 'unsupported';
-    rows.push({ label: 'Service worker', value: sw });
+    rows.push({ label: 'Service worker', value: sw, state: sw === 'active' ? 'ok' : 'idle' });
     rows.push({ label: 'Language', value: navigator.language || 'unknown' });
   }
   try {
@@ -38,19 +41,10 @@ function runtimeRows(online: boolean): Row[] {
 }
 
 function configRows(): Row[] {
-  const env = import.meta.env;
-  // Presence only — never render the actual key, and the URL is public but we
-  // still only confirm it's wired so the page is safe to leave open.
-  const supabaseConfigured = Boolean(
-    (env.VITE_SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL) &&
-      (env.VITE_SUPABASE_ANON_KEY ||
-        env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-        env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY),
-  );
-  return [
-    { label: 'Mode', value: env.MODE },
-    { label: 'Supabase', value: supabaseConfigured ? 'configured' : 'not configured (mock data)' },
-  ];
+  // Supabase presence now lives in the Runtime section as a live-reachability
+  // status row (badge + reachable/unreachable/not-configured), so it isn't
+  // duplicated here.
+  return [{ label: 'Mode', value: import.meta.env.MODE }];
 }
 
 function DebugSection({ title, rows }: { title: string; rows: Row[] }) {
@@ -60,7 +54,12 @@ function DebugSection({ title, rows }: { title: string; rows: Row[] }) {
       <dl className="debug__rows">
         {rows.map((row) => (
           <div key={row.label} style={{ display: 'contents' }}>
-            <dt className="debug__label">{row.label}</dt>
+            <dt className="debug__label">
+              {/* Decorative: the row value carries the same status as text, so
+                  the badge isn't the only signal (WCAG 1.4.1). */}
+              <span className="debug__badge" data-state={row.state} aria-hidden="true" />
+              {row.label}
+            </dt>
             <dd className="debug__value">{row.value}</dd>
           </div>
         ))}
@@ -77,13 +76,17 @@ export function DebugPage() {
   useDocumentTitle('Debug · readmo');
 
   // Live backend reachability, the readmo analog of newshacker's /debug Services
-  // line. Only meaningful when there's a real backend to reach — in mock mode the
-  // Configuration section already reports "mock data", so we skip the probe and
-  // the row entirely rather than show a misleading "unreachable".
+  // line. `null` means unconfigured (mock mode) — the row still shows, with a
+  // neutral badge, rather than probing a backend that isn't there.
   const [supabaseState, setSupabaseState] = useState<SupabaseProbeState | null>(
     isSupabaseConfigured() ? { status: 'checking' } : null,
   );
   useEffect(() => {
+    // Gate on full configuration, not just a URL: with the URL set but the anon
+    // key missing the app still runs on mock data (isSupabaseConfigured() is
+    // false), yet supabaseHealthUrl() returns a URL. Probing anyway would flip
+    // the row to a misleading "reachable" for a backend the app isn't using.
+    if (!isSupabaseConfigured()) return;
     const healthUrl = supabaseHealthUrl();
     if (!healthUrl) return;
     let cancelled = false;
@@ -100,13 +103,9 @@ export function DebugPage() {
     ...(user ? [{ label: 'Email', value: user.email }] : []),
   ];
 
+  const supabase = describeSupabase(supabaseState);
   const runtime = runtimeRows(online);
-  if (supabaseState) {
-    runtime.push({
-      label: 'Supabase',
-      value: formatSupabaseStatus(supabaseState),
-    });
-  }
+  runtime.push({ label: 'Supabase', value: supabase.value, state: supabase.badge });
 
   return (
     <div className="debug">

@@ -46,9 +46,24 @@ export type SupabaseProbeState =
   | { status: 'checking' }
   | { status: 'done'; health: SupabaseHealth };
 
-/** The `/debug` row value for the current probe state. */
-export function formatSupabaseStatus(state: SupabaseProbeState): string {
-  if (state.status === 'checking') return 'checking…';
+/** Glanceable status-badge color for a `/debug` row: `ok` (green), `down`
+ * (red), or `idle` (neutral gray, for "no opinion" states like checking or
+ * not-configured). Mirrors newshacker's badge states. */
+export type StatusBadge = 'ok' | 'down' | 'idle';
+
+/**
+ * The `/debug` Supabase row: its detail text and status badge. `null` means the
+ * project isn't configured (mock mode) — the row still shows, with a neutral
+ * badge, rather than disappearing, so the backend's state is always glanceable.
+ */
+export function describeSupabase(state: SupabaseProbeState | null): {
+  value: string;
+  badge: StatusBadge;
+} {
+  if (state === null) return { value: 'not configured (mock data)', badge: 'idle' };
+  if (state.status === 'checking') return { value: 'checking…', badge: 'idle' };
   const { reachable, latencyMs } = state.health;
-  return reachable ? `reachable · ${latencyMs} ms` : 'unreachable';
+  return reachable
+    ? { value: `reachable · ${latencyMs} ms`, badge: 'ok' }
+    : { value: 'unreachable', badge: 'down' };
 }
