@@ -16,7 +16,7 @@
 
 import { XMLParser } from 'fast-xml-parser';
 import { decodeHTML } from 'entities';
-import { looksTokenized } from './urlSafety.ts';
+import { looksTokenizedAllowingQuery } from './urlSafety.ts';
 
 /** A single normalized feed entry. All string fields are trimmed; absent
  * optional fields are `null` rather than `undefined` so callers (and the DB
@@ -150,12 +150,14 @@ const MAX_FAVICON_URL_LEN = 2048;
 
 /** Normalize a favicon candidate to an absolute, reasonably-sized http(s) URL,
  * or null. Rejects non-http(s) schemes (data:, javascript:, …) AND anything
- * that looks tokenized — embedded credentials, a `?token=…` query, or a
- * high-entropy path segment (same screen `urlSafety` applies before forwarding
- * URLs to third parties). A favicon is STORED in `feeds.favicon_url` and exposed
- * to EVERY subscriber via `feeds_public`, so a private/tokenized feed's
- * advertised icon must not leak its secret; failing closed here makes the caller
- * fall back to the credential-free derived /favicon.ico. */
+ * that looks tokenized — embedded credentials, a high-entropy/matrix path
+ * segment, or a query value that isn't a short integer. Numeric image-resize
+ * queries ARE allowed (`looksTokenizedAllowingQuery`): publishers' advertised
+ * icons routinely carry params like `…/icon.png?w=150&h=150&crop=1`, which we
+ * must not throw away. A favicon is STORED in `feeds.favicon_url` and exposed to EVERY
+ * subscriber via `feeds_public`, so a genuinely secret-bearing icon URL must not
+ * leak; failing closed here makes the caller fall back to the derived
+ * /favicon.ico. */
 function cleanFaviconUrl(href: string | null): string | null {
   if (!href) return null;
   let u: URL;
@@ -165,9 +167,13 @@ function cleanFaviconUrl(href: string | null): string | null {
     return null;
   }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+  // A fragment is never meaningful on a stored favicon (an <img> never sends
+  // it), but it would still be persisted/exposed via feeds_public — and could
+  // carry a per-subscriber token (`…?w=150#access_token=…`). Strip it.
+  u.hash = '';
   const s = u.toString();
   if (s.length > MAX_FAVICON_URL_LEN) return null;
-  if (looksTokenized(s)) return null;
+  if (looksTokenizedAllowingQuery(s)) return null;
   return s;
 }
 

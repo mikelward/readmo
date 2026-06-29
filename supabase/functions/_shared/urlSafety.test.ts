@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { looksTokenized, redactUrl } from './urlSafety.ts';
+import { looksTokenized, looksTokenizedAllowingQuery, redactUrl } from './urlSafety.ts';
 
 describe('looksTokenized — ordinary article URLs pass (false)', () => {
   it.each([
@@ -32,6 +32,43 @@ describe('looksTokenized — token-bearing URLs are skipped (true)', () => {
     expect(
       looksTokenized('https://example.com/a/9f86d081884c7d659a2feaa0c55ad015-thumb'),
     ).toBe(true);
+  });
+});
+
+describe('looksTokenizedAllowingQuery — short-integer query values allowed (false)', () => {
+  it.each([
+    'https://cdn.vox-cdn.com/uploads/icon.png?w=150&h=150&crop=1', // image resize params
+    'https://example.com/favicon.png?v=3', // cache-buster
+    'https://example.com/icon.png', // no query
+    'https://example.com/assets/site-logo.svg?width=64',
+    'https://images.example.com/i.png?w=2048&h=1536&q=80&dpr=2', // all numeric
+  ])('%s', (url) => {
+    expect(looksTokenizedAllowingQuery(url)).toBe(false);
+  });
+});
+
+describe('looksTokenizedAllowingQuery — non-integer query values rejected (true)', () => {
+  it.each([
+    'https://cdn.example.com/i.png?token=abc123', // credential key, non-int value
+    'https://cdn.example.com/i.png?token=1234', // integer value, but credential key
+    'https://cdn.example.com/i.png?subscriber_id=1234', // integer value, per-user key
+    'https://cdn.example.com/i.png?uid=42&w=150', // one non-image key
+    'https://cdn.example.com/i.png?key=mysecret',
+    'https://cdn.example.com/i.png?apikey=x&w=100', // one non-int value
+    'https://cdn.example.com/i.png?sessionid=abc123',
+    'https://cdn.example.com/i.png?accesskey=abc123',
+    'https://cdn.example.com/i.png?fit=crop', // benign-looking string value, still rejected
+    'https://cdn.example.com/i.png?v=0123456789abcdef0123456789abcdef', // hex token value
+    'https://cdn.example.com/i.png?v=AbCdEfGhIjKlMnOpQrSt123456%2F%2B', // standard-base64 value
+    'https://cdn.example.com/i.png?w=150;token=abc123', // embedded ; token (value not integer)
+    'https://cdn.example.com/i.png?w=150%3Btoken%3Dabc123', // encoded ; equivalent
+    'https://cdn.example.com/i.png?cb=1719600000000', // 13-digit timestamp (too long)
+    'https://user:pass@cdn.example.com/i.png', // credentials
+    'https://example.com/s/9f86d081884c7d659a2feaa0c55ad015/icon.png', // tokenized path segment
+    'https://cdn.example.com/icon.png;jsessionid=abc123?w=150', // matrix-param in path
+    'not a url',
+  ])('%s', (url) => {
+    expect(looksTokenizedAllowingQuery(url)).toBe(true);
   });
 });
 
