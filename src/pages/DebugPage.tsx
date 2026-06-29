@@ -15,11 +15,14 @@ import './PageHeader.css';
 
 type Row = { label: string; value: string; state?: StatusBadge };
 
-function runtimeRows(online: boolean): Row[] {
+function runtimeRows(online: boolean, supabase: Row): Row[] {
+  const hasNavigator = typeof navigator !== 'undefined';
+  // Badged status rows first, grouped together — the glanceable health signals
+  // (Network, Service worker, Supabase) read as one block of dots.
   const rows: Row[] = [
     { label: 'Network', value: online ? 'online' : 'offline', state: online ? 'ok' : 'down' },
   ];
-  if (typeof navigator !== 'undefined') {
+  if (hasNavigator) {
     const sw =
       'serviceWorker' in navigator
         ? navigator.serviceWorker.controller
@@ -27,6 +30,10 @@ function runtimeRows(online: boolean): Row[] {
           : 'registered/none'
         : 'unsupported';
     rows.push({ label: 'Service worker', value: sw, state: sw === 'active' ? 'ok' : 'idle' });
+  }
+  rows.push(supabase);
+  // Informational rows (no badge) follow the status group.
+  if (hasNavigator) {
     rows.push({ label: 'Language', value: navigator.language || 'unknown' });
   }
   try {
@@ -104,8 +111,11 @@ export function DebugPage() {
   ];
 
   const supabase = describeSupabase(supabaseState);
-  const runtime = runtimeRows(online);
-  runtime.push({ label: 'Supabase', value: supabase.value, state: supabase.badge });
+  const runtime = runtimeRows(online, {
+    label: 'Supabase',
+    value: supabase.value,
+    state: supabase.badge,
+  });
 
   return (
     <div className="debug">

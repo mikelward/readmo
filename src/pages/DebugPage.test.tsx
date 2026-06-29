@@ -88,6 +88,20 @@ describe('DebugPage', () => {
     expect(container.querySelectorAll('.debug__badge').length).toBeGreaterThan(0);
   });
 
+  it('groups the badged status rows together at the top of Runtime', () => {
+    renderWithProviders(<DebugPage />, { route: '/debug' });
+    const runtime = screen
+      .getByRole('heading', { name: 'Runtime' })
+      .closest('.debug__section') as HTMLElement;
+    const labels = Array.from(
+      runtime.querySelectorAll('.debug__label'),
+    ).map((dt) => dt.textContent?.trim());
+    // The three badged status rows are contiguous, ahead of the informational
+    // rows (Language / Time zone).
+    expect(labels.slice(0, 3)).toEqual(['Network', 'Service worker', 'Supabase']);
+    expect(labels.indexOf('Language')).toBeGreaterThan(labels.indexOf('Supabase'));
+  });
+
   it('drops the per-device Theme and Palette rows from Account', () => {
     renderWithProviders(<DebugPage />, { route: '/debug' });
     expect(screen.getByText('Status')).toBeInTheDocument();
