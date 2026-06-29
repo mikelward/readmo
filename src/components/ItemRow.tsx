@@ -292,21 +292,8 @@ export function ItemRow({
     <>
       <span className="item-row__title-text">{title}</span>
       <span className="item-row__meta" data-testid="item-meta">
-        {feed.faviconUrl ? (
-          <img
-            className="item-row__favicon"
-            src={feed.faviconUrl}
-            alt=""
-            aria-hidden="true"
-            width={14}
-            height={14}
-            // Hide on load error so a derived /favicon.ico that 404s leaves no
-            // broken-image glyph (matches the group-header favicon in ItemRows).
-            onError={(e) => {
-              e.currentTarget.style.display = 'none';
-            }}
-          />
-        ) : null}
+        {/* No per-row favicon: the site icon lives only on the group-by-feed
+            section header (ItemRows), so it isn't repeated on every article. */}
         {formatItemMetaTail({
           source,
           domain,

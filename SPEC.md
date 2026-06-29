@@ -1478,16 +1478,18 @@ Identical to newshacker's *Story row layout*; only the meta content differs
   bar for any further use.
 
 Display-only meta (plain text inside the row link): **source** (feed/site
-name, favicon, trimmed to the registrable domain the way newshacker trims
+name, trimmed to the registrable domain the way newshacker trims
 domains — `old.reddit.com` → `reddit.com`); **article domain** when it differs
 from the feed's own site, shown right after the source name (so aggregator
 feeds like Hacker News or Reddit surface where a row actually links —
 `Hacker News · thedrive.com`; a normal blog feed that links to itself doesn't
-repeat its own domain); **age**; **author** when present. The **favicon** shown
-beside the source (and beside the feed name in the group-by-feed section
-header) comes from `feeds.favicon_url`, which the poller resolves on each fetch:
-the feed-advertised icon when present (Atom `<icon>`/`<logo>`, RSS `<image>`,
-JSON Feed `favicon`/`icon`, scheme-checked to http(s)), else the site origin's
+repeat its own domain); **age**; **author** when present. Article rows carry no
+favicon — the site icon appears **only on the group-by-feed section header**
+(beside the feed name), so it identifies a feed's run of rows once rather than
+repeating on every article. That favicon comes from `feeds.favicon_url`, which
+the poller resolves on each fetch: the feed-advertised icon when present (Atom
+`<icon>`/`<logo>`, RSS `<image>`, JSON Feed `favicon`/`icon`, scheme-checked to
+http(s) and rejected if it looks tokenized), else the site origin's
 `/favicon.ico`. It's decorative (`alt=""`) and the `<img>` hides itself on load
 error, so a guessed `/favicon.ico` that 404s leaves no broken glyph. The URL is
 display-safe metadata (like `title`/`site_url`), so `feeds_public` exposes it;

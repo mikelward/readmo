@@ -82,11 +82,6 @@
   text-overflow: ellipsis;
 }
 
-.item-row__favicon {
-  border-radius: 3px;
-  flex: 0 0 auto;
-}
-
 /* Right-side icon button (Pin/Unpin, or a library inverse action). */
 .pin-btn {
   flex: 0 0 auto;
