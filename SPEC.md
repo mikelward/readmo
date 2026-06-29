@@ -1728,34 +1728,38 @@ page's discipline is unchanged.
     direct column read open until then. The provenance bit is strictly less
     sensitive than the body in the same row, so it adds nothing beyond that
     already-tracked gap.)
-- **AI article summaries (allowlisted, on pin).** A short AI summary (a few
+- **AI article summaries (allowlisted).** A short AI summary (a few
   sentences) of the article, shown **directly below the title/byline, above the
-  reading-mode bar and article body** — when an allowlisted user has **pinned**
-  the article. The
-  **pin is the trigger** (the summary is a feature of the active reading list)
-  and the **`allowlist` table is the boundary** (the same trusted-user list as
+  reading-mode bar and article body** — for **any article an allowlisted user
+  opens**. The
+  **`allowlist` table is the only boundary** (the same trusted-user list as
   reading mode / Google News — summaries are a generation-cost surface, one
-  Gemini call per cache miss). Generation is gated on **both**: the `summary`
-  Edge Function is called only for a pinned item *and* only when the caller is
-  allowed (`useFullTextAllowed`, the shared gate — it holds off while a
-  signed-in user's capabilities are still loading, so an off-list user fires no
-  Edge call), and the function re-checks the allowlist server-side regardless.
-  - **Warm on pin (incl. cross-device), generate-once.** `useSummaryPrewarm`
-    pre-warms the summary for **every pinned item** — pinned on this device,
-    synced from another device, or restored on boot — the summary sibling of
-    `useOfflineCacheLock`, which already warms each pinned item's reader body +
-    full text the same way. The reader's `useSummary` still generates on open;
-    both share the `['summary', id]` React Query key and the result caches on
+  Gemini call per cache miss). **Pinning is not required**: the summary is a
+  feature of every article an allowlisted user reads, not just the reading list.
+  Generation is gated solely on the allowlist (`useFullTextAllowed`, the shared
+  gate — it holds off while a signed-in user's capabilities are still loading,
+  so an off-list user fires no Edge call), and the `summary` Edge Function
+  re-checks the allowlist server-side regardless. The reader's `useSummary`
+  generates the summary for the article being opened.
+  - **Pin is a prefetch signal (incl. cross-device), generate-once.**
+    `useSummaryPrewarm` pre-warms the summary for **every pinned item** — pinned
+    on this device, synced from another device, or restored on boot — the summary
+    sibling of `useOfflineCacheLock`, which already warms each pinned item's
+    reader body + full text the same way. Pinning doesn't gate the feature; it
+    just signals an item is likely to be read, so we warm it ahead of the open.
+    Both the pre-warm and the reader's on-open `useSummary` share the
+    `['summary', id]` React Query key and the result caches on
     `items.ai_summary`, so whichever fires first generates and the rest are plain
-    cache hits — **never a second Gemini call**. So an article is usually already
-    summarized (no spinner) by the time it's opened, on whatever device. **Cross-
-    device warming is cheap because the summary is cached server-side**: a warm of
-    an already-generated summary is a *server cache hit* (the `summary` Edge
-    Function short-circuits on `items.ai_summary` — no Jina, no Gemini), and a
-    never-summarized pin generates exactly **once**, shared across every device
+    cache hits — **never a second Gemini call**. So a pinned article is usually
+    already summarized (no spinner) by the time it's opened, on whatever device.
+    **Cross-device warming is cheap because the summary is cached server-side**: a
+    warm of an already-generated summary is a *server cache hit* (the `summary`
+    Edge Function short-circuits on `items.ai_summary` — no Jina, no Gemini), and
+    a never-summarized item generates exactly **once**, shared across every device
     and user. A warm is marked done only on a **settled** result, so a transient
     `unreachable`/`unavailable` retries on reconnect or once the allowlist gate
-    resolves.
+    resolves. The pre-warm subscriber warms only newly-pinned items, so an
+    unrelated state change doesn't re-fetch unsettled summaries during an outage.
   - **Article text comes from Jina (like newshacker), by design.** The summary's
     input is fetched through **Jina Reader** (`r.jina.ai`), which returns clean
     **markdown** and transparently handles bot-blocked / paywalled / JS-rendered
@@ -1801,7 +1805,8 @@ page's discipline is unchanged.
     the **`GOOGLE_API_KEY`** Supabase secret; unset → the function reports
     `unavailable` and the reader simply shows no summary card.
   - **Cached on the shared item** (`items.ai_summary`, 0035): one user's
-    generation serves every later pin of the same article, on any device. Like
+    generation serves every later open (or pin pre-warm) of the same article, on
+    any device and for any allowlisted reader. Like
     `full_content_html`, the column is **not** in any client item read
     (`SupabaseDataSource`'s `ITEM_COLUMNS` omits it) **and is nulled in the
     `feed_items` list RPC** (0035 recreates it to scrub `ai_summary` +
@@ -1840,12 +1845,17 @@ page's discipline is unchanged.
   - **Cost & reliability (guardrail #5):** a cache miss makes **two** outbound
     calls — a Jina fetch (free tier 1M tokens/mo, ~10–100 K tokens per page) and a
     Gemini Flash-Lite call (~$0.10 / 1M input, ~$0.40 / 1M output). Each article is
-    summarized **once** (shared cache), so at family-only (allowlisted) volume both
-    stay **effectively $0** — well under their free tiers. Unlike the earlier
+    summarized **once** (shared cache), so even though a summary is now generated
+    for **every article an allowlisted user opens** (not just pinned ones), the
+    miss volume is bounded by *distinct articles read* across the allowlisted
+    (family) set — still **effectively $0**, well under both free tiers. A pin
+    pre-warms the cache ahead of the open, so a pinned article is usually a hit;
+    an unpinned article generates on its first open. Unlike the earlier
     stored-content design this adds a per-article publisher fetch (via Jina), which
     is the deliberate trade for newshacker-parity and clean bot-blocked/paywalled
     handling; the fetch is off our polite first-party path. Latency: Jina (~1–5 s) +
-    Gemini (~1–2 s) on the first pin of an article, cache-instant after. Failure
+    Gemini (~1–2 s) on the first open (or pin pre-warm) of an article,
+    cache-instant after. Failure
     modes are all soft (no card): Jina down/blocked → fall back to stored content;
     Gemini down/unconfigured → no card. The article and reading mode are
     unaffected.

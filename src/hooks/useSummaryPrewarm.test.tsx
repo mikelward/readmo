@@ -10,6 +10,7 @@ import { MockDataSource } from '../lib/data/MockDataSource';
 import { _resetNetworkStatusForTests } from '../lib/networkStatus';
 import { useSummaryPrewarm } from './useSummaryPrewarm';
 import { summaryQueryKey } from './useSummary';
+import type { SummaryResult } from '../lib/summary';
 
 function setNavigatorOnline(value: boolean) {
   Object.defineProperty(window.navigator, 'onLine', { configurable: true, value });
@@ -128,6 +129,30 @@ describe('useSummaryPrewarm', () => {
     await waitFor(() =>
       expect(queryClient.getQueryData(summaryQueryKey(ID))).toMatchObject({ status: 'ok' }),
     );
+  });
+
+  it('does not refetch an unsettled summary on unrelated state emits', async () => {
+    // A summary stuck on a transient `unreachable` is intentionally left
+    // unwarmed; an unrelated emit (favoriting a different item) must not retry
+    // it — only reconnect / gate-resolve should. Guards against per-emit
+    // amplification during a Gemini/Jina outage.
+    class FlakySummary extends MockDataSource {
+      summaryCalls = 0;
+      async getSummary(): Promise<SummaryResult> {
+        this.summaryCalls += 1;
+        return { status: 'unreachable', summary: null };
+      }
+    }
+    const source = new FlakySummary(`test-${Math.random()}`);
+    setup(source);
+
+    source.stateStore.set(ID, 'pinned', true);
+    await waitFor(() => expect(source.summaryCalls).toBe(1));
+
+    source.stateStore.set('item-2', 'favorite', true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(source.summaryCalls).toBe(1);
   });
 
   it('does not re-call once a terminal summary is cached (generate-once)', async () => {
