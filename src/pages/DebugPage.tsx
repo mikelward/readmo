@@ -1,28 +1,22 @@
+import { useEffect, useState } from 'react';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { useAuth } from '../hooks/useAuth';
-import { useTheme } from '../hooks/useTheme';
 import { buildInfo, buildInfoRows, summarizeBuild } from '../lib/buildInfo';
+import { isSupabaseConfigured, supabaseHealthUrl } from '../lib/supabase/client';
+import {
+  formatSupabaseStatus,
+  probeSupabaseHealth,
+  type SupabaseProbeState,
+} from '../lib/supabaseHealth';
 import './DebugPage.css';
 import './PageHeader.css';
 
 type Row = { label: string; value: string };
 
-/** Whether the app is running as an installed PWA (standalone display mode).
- * `navigator.standalone` covers iOS Safari, which doesn't report the media
- * query. Guarded so it's safe under jsdom, where matchMedia may be absent. */
-function isStandalone(): boolean {
-  if (typeof window === 'undefined') return false;
-  const mql = window.matchMedia?.('(display-mode: standalone)');
-  const iosStandalone =
-    (navigator as Navigator & { standalone?: boolean }).standalone === true;
-  return Boolean(mql?.matches) || iosStandalone;
-}
-
 function runtimeRows(online: boolean): Row[] {
   const rows: Row[] = [{ label: 'Network', value: online ? 'online' : 'offline' }];
   if (typeof navigator !== 'undefined') {
-    rows.push({ label: 'Display mode', value: isStandalone() ? 'standalone (installed)' : 'browser' });
     const sw =
       'serviceWorker' in navigator
         ? navigator.serviceWorker.controller
@@ -31,13 +25,6 @@ function runtimeRows(online: boolean): Row[] {
         : 'unsupported';
     rows.push({ label: 'Service worker', value: sw });
     rows.push({ label: 'Language', value: navigator.language || 'unknown' });
-    rows.push({ label: 'User agent', value: navigator.userAgent });
-  }
-  if (typeof window !== 'undefined') {
-    rows.push({
-      label: 'Viewport',
-      value: `${window.innerWidth}×${window.innerHeight} @${window.devicePixelRatio || 1}x`,
-    });
   }
   try {
     rows.push({
@@ -87,15 +74,39 @@ function DebugSection({ title, rows }: { title: string; rows: Row[] }) {
 export function DebugPage() {
   const online = useOnlineStatus();
   const { user } = useAuth();
-  const { theme, palette } = useTheme();
   useDocumentTitle('Debug · readmo');
+
+  // Live backend reachability, the readmo analog of newshacker's /debug Services
+  // line. Only meaningful when there's a real backend to reach — in mock mode the
+  // Configuration section already reports "mock data", so we skip the probe and
+  // the row entirely rather than show a misleading "unreachable".
+  const [supabaseState, setSupabaseState] = useState<SupabaseProbeState | null>(
+    isSupabaseConfigured() ? { status: 'checking' } : null,
+  );
+  useEffect(() => {
+    const healthUrl = supabaseHealthUrl();
+    if (!healthUrl) return;
+    let cancelled = false;
+    void probeSupabaseHealth(healthUrl).then((health) => {
+      if (!cancelled) setSupabaseState({ status: 'done', health });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const accountRows: Row[] = [
     { label: 'Status', value: user ? 'signed in' : 'signed out' },
     ...(user ? [{ label: 'Email', value: user.email }] : []),
-    { label: 'Theme', value: theme },
-    { label: 'Palette', value: palette },
   ];
+
+  const runtime = runtimeRows(online);
+  if (supabaseState) {
+    runtime.push({
+      label: 'Supabase',
+      value: formatSupabaseStatus(supabaseState),
+    });
+  }
 
   return (
     <div className="debug">
@@ -105,7 +116,7 @@ export function DebugPage() {
       <p className="debug__summary">{summarizeBuild(buildInfo)}</p>
 
       <DebugSection title="Build" rows={buildInfoRows(buildInfo)} />
-      <DebugSection title="Runtime" rows={runtimeRows(online)} />
+      <DebugSection title="Runtime" rows={runtime} />
       <DebugSection title="Configuration" rows={configRows()} />
       <DebugSection title="Account" rows={accountRows} />
     </div>
