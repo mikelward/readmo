@@ -984,7 +984,7 @@ negligible and off every critical path. See the External services table in
    - **Open original / Open on newshacker** — the per-feed **open mode**: a
      single mutually-exclusive choice of where that feed's article rows open on
      tap.
-     - **Reader** (default) — the in-app reader.
+     - **Open in readmo** (default) — the in-app reader.
      - **Open original** — the original article on the source website directly
        (new tab) instead of the in-app reader. Falls back to the reader for any
        item without a safe http(s) URL.
@@ -1382,7 +1382,7 @@ negligible and off every critical path. See the External services table in
       per-user; an unchanged value is a no-op. The **open mode** is a checkbox
       menu item (**Open original**, writing `subscriptions.open_original`) for a
       normal feed; for a **Hacker News feed** it becomes a three-way
-      `menuitemradio` group — **In-app reader / Open original / Open on
+      `menuitemradio` group — **Open in readmo / Open original / Open on
       newshacker** — that writes `open_original` / `open_newshacker` mutually
       exclusively (per-user, synced). When *open original* is on, the feed's rows
       link straight to the source website; when *open on newshacker* is on, they

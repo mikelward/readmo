@@ -438,7 +438,7 @@ export function ReorderableSubscriptions({
                     <div role="group" aria-label="Open links in">
                       {(
                         [
-                          ['reader', 'In-app reader'],
+                          ['reader', 'Open in readmo'],
                           ['original', 'Open original'],
                           ['newshacker', 'Open on newshacker'],
                         ] as const

@@ -312,7 +312,7 @@ describe('ReorderableSubscriptions', () => {
     expect(
       within(menu).queryByRole('menuitemcheckbox', { name: 'Open original' }),
     ).toBeNull();
-    const reader = within(menu).getByRole('menuitemradio', { name: 'In-app reader' });
+    const reader = within(menu).getByRole('menuitemradio', { name: 'Open in readmo' });
     const original = within(menu).getByRole('menuitemradio', { name: 'Open original' });
     const newshacker = within(menu).getByRole('menuitemradio', {
       name: 'Open on newshacker',
@@ -348,7 +348,7 @@ describe('ReorderableSubscriptions', () => {
   it('switching a newshacker feed back to the reader sets the reader mode', () => {
     const { onSetOpenMode } = renderHn({ openNewshacker: true });
     openMenu('Hacker News');
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'In-app reader' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Open in readmo' }));
     expect(onSetOpenMode).toHaveBeenCalledWith('hn', 'reader');
   });
 
