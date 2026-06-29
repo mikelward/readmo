@@ -67,23 +67,16 @@ describe('ItemRow', () => {
     expect(meta).toHaveTextContent('2h');
   });
 
-  it('renders the feed favicon in the row meta when present, with onError hiding', () => {
+  it('never renders a favicon on the row, even when the feed has one', () => {
+    // The site icon lives only on the group-by-feed section header, so it's
+    // never repeated on individual article rows.
     const withIcon: FeedItem = {
       item: FEED_ITEM.item,
       feed: { ...FEED_ITEM.feed, faviconUrl: 'https://example.com/favicon.ico' },
     };
     const { container } = renderWithProviders(<ItemRow feedItem={withIcon} />);
-    const favicon = container.querySelector<HTMLImageElement>('.item-row__favicon');
-    expect(favicon).not.toBeNull();
-    expect(favicon).toHaveAttribute('src', 'https://example.com/favicon.ico');
-    // A 404'd derived /favicon.ico must not leave a broken-image glyph.
-    favicon!.dispatchEvent(new Event('error'));
-    expect(favicon!.style.display).toBe('none');
-  });
-
-  it('renders no favicon when the feed has none', () => {
-    const { container } = renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
     expect(container.querySelector('.item-row__favicon')).toBeNull();
+    expect(container.querySelector('img')).toBeNull();
   });
 
   it('shows the article domain next to the feed name when they differ', () => {
