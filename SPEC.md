@@ -357,9 +357,9 @@ live.
 
 ```
 users         (id, oauth_subject, email, created_at, …)               -- Supabase auth
-feeds         (id, url UNIQUE, secret_url, site_url, title, favicon_url, etag,
-               last_modified, last_fetched_at, next_fetch_at,
-               fetch_interval_s, error_count, last_error)             -- shared across users
+feeds         (id, url UNIQUE, secret_url, site_url, title, favicon_url,
+               favicon_checked_at, etag, last_modified, last_fetched_at,
+               next_fetch_at, fetch_interval_s, error_count, last_error)  -- shared across users
 items         (id, feed_id FK, guid, url, comments_url, title, author,
                published_at, content_html, summary, full_content_html,
                full_content_fetched_at, full_content_via_fallback,
@@ -1486,14 +1486,33 @@ feeds like Hacker News or Reddit surface where a row actually links —
 repeat its own domain); **age**; **author** when present. Article rows carry no
 favicon — the site icon appears **only on the group-by-feed section header**
 (beside the feed name), so it identifies a feed's run of rows once rather than
-repeating on every article. That favicon comes from `feeds.favicon_url`, which
-the poller resolves on each fetch: the feed-advertised icon when present (Atom
-`<icon>`/`<logo>`, RSS `<image>`, JSON Feed `favicon`/`icon`, scheme-checked to
-http(s) and rejected if it looks tokenized), else the site origin's
-`/favicon.ico`. It's decorative (`alt=""`) and the `<img>` hides itself on load
-error, so a guessed `/favicon.ico` that 404s leaves no broken glyph. The URL is
-display-safe metadata (like `title`/`site_url`), so `feeds_public` exposes it;
-the client loads it directly (not via the image proxy).
+repeating on every article. That favicon comes from `feeds.favicon_url`,
+resolved on each fetch in order:
+1. the **feed-advertised icon** when present (Atom `<icon>`/`<logo>`, RSS
+   `<image>`, JSON Feed `favicon`/`icon`);
+2. else, if the feed advertises none, the icon **declared in the site's HTML**
+   `<link rel="icon">` / `shortcut icon` / `apple-touch-icon` — `site_url` is
+   fetched through the SSRF-hardened `safeFetch` and the `<head>` parsed (this
+   covers sites like The Economist that keep no root `/favicon.ico` and declare
+   their icon only in HTML). Both the cron poller and on-demand `refresh` do
+   this, but it's **gated on `feeds.favicon_checked_at`**: the lookup runs only
+   when that's null (never checked) or older than the recheck window (~30 days),
+   and the timestamp is stamped whenever it runs — so the result, *including a
+   negative one* (no usable icon), is cached and the homepage isn't re-fetched
+   every poll. A real icon already in `favicon_url` (≠ the derived guess) is
+   kept without any fetch. The cron poller caps these homepage lookups per run
+   (a small per-run budget), so a backfill of many icon-less feeds spreads over
+   a few runs instead of stalling one; deferred feeds stay un-stamped and are
+   picked up next time;
+3. else the site origin's **`/favicon.ico`** guess.
+
+Every candidate (advertised or HTML-declared) is scheme-checked to http(s) and
+rejected if it looks tokenized (embedded credentials / `?token=…` / high-entropy
+path), failing closed to the next step. It's decorative (`alt=""`) and the
+`<img>` hides itself on load error, so a `/favicon.ico` guess that 404s leaves
+no broken glyph. The URL is display-safe metadata (like `title`/`site_url`), so
+`feeds_public` exposes it; the client loads it directly (not via the image
+proxy).
 **Opened** titles render `--rm-read`. Not rendered: rank numbers, inline
 source/date links, external-link chevron (the reader's "Open original" owns
 that). (No points/comments/Hot flag/"N new" — those are HN-specific.)

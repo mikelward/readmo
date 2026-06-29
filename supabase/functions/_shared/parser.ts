@@ -60,6 +60,11 @@ export interface ParsedFeed {
    * /favicon.ico. Display-only; the client <img> loads it directly and hides
    * it on error, so a guessed /favicon.ico that 404s costs nothing. */
   faviconUrl: string | null;
+  /** Whether {@link faviconUrl} came from an icon the FEED itself advertised
+   * (true) versus the derived `/favicon.ico` fallback (false). The poller reads
+   * this to decide whether to upgrade the favicon from the site's HTML
+   * `<link rel="icon">` before keeping the `/favicon.ico` guess. */
+  faviconFromFeed: boolean;
   items: NormalizedItem[];
 }
 
@@ -148,56 +153,55 @@ export function absolutizeUrl(
  * huge data: URI (or other junk) into the feeds row. */
 const MAX_FAVICON_URL_LEN = 2048;
 
-/** Normalize a favicon candidate to an absolute, reasonably-sized http(s) URL,
- * or null. Rejects non-http(s) schemes (data:, javascript:, …) AND anything
- * that looks tokenized — embedded credentials, a `?token=…` query, or a
- * high-entropy path segment (same screen `urlSafety` applies before forwarding
- * URLs to third parties). A favicon is STORED in `feeds.favicon_url` and exposed
- * to EVERY subscriber via `feeds_public`, so a private/tokenized feed's
- * advertised icon must not leak its secret; failing closed here makes the caller
- * fall back to the credential-free derived /favicon.ico. */
-function cleanFaviconUrl(href: string | null): string | null {
-  if (!href) return null;
+/** Screen a favicon candidate: absolutize against `base`, then require http(s),
+ * a bounded length, and that it does NOT look tokenized — embedded credentials,
+ * a `?token=…` query, or a high-entropy path segment (the same screen
+ * `urlSafety` applies before forwarding URLs to third parties). Returns the
+ * clean absolute URL or null. A favicon is STORED in `feeds.favicon_url` and
+ * exposed to EVERY subscriber via `feeds_public`, so a private/tokenized feed's
+ * advertised (or site-HTML-declared) icon must not leak its secret; failing
+ * closed makes the caller fall back to the credential-free derived /favicon.ico.
+ * Exported so site-HTML icon discovery (`siteIcon.ts`) screens identically. */
+export function sanitizeFaviconUrl(
+  href: string | null | undefined,
+  base: string | null | undefined,
+): string | null {
+  const abs = absolutizeUrl(href, base);
+  if (!abs) return null;
+  if (abs.length > MAX_FAVICON_URL_LEN) return null;
   let u: URL;
   try {
-    u = new URL(href);
+    u = new URL(abs);
   } catch {
     return null;
   }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
-  const s = u.toString();
-  if (s.length > MAX_FAVICON_URL_LEN) return null;
-  if (looksTokenized(s)) return null;
-  return s;
+  if (looksTokenized(abs)) return null;
+  return abs;
 }
 
 /** Last-resort favicon: the well-known `/favicon.ico` at the site (or, lacking
  * a site URL, the feed) origin. Pure URL construction — no extra server fetch;
  * the client <img> loads it and hides it via onError if the host serves none.
- * The `/favicon.ico` path drops any query/fragment, but `new URL` keeps the
- * base's scheme and userinfo — so run the result through the SAME
- * {@link cleanFaviconUrl} screen, which fails closed on a non-http(s) base
+ * Screened like any other candidate, so it fails closed on a non-http(s) base
  * (e.g. `ftp://…`) or one carrying credentials. */
 function deriveFavicon(siteUrl: string | null, feedUrl: string): string | null {
-  try {
-    return cleanFaviconUrl(new URL('/favicon.ico', siteUrl ?? feedUrl).toString());
-  } catch {
-    return null;
-  }
+  return sanitizeFaviconUrl('/favicon.ico', siteUrl ?? feedUrl);
 }
 
-/** Resolve a feed's favicon: prefer the feed-advertised icon (absolutized,
- * scheme-checked) since it's intentional and won't 404, else fall back to the
- * derived `/favicon.ico`. */
+/** Resolve a feed's favicon from its own body: the feed-advertised icon when
+ * present (intentional, won't 404), else the derived `/favicon.ico`. The
+ * `fromFeed` flag tells the caller whether the feed actually advertised an icon
+ * — the poller uses it to decide whether to look the icon up in the site's HTML
+ * (`<link rel="icon">`) before settling for the `/favicon.ico` guess. */
 function resolveFavicon(
   explicit: string | null,
   siteUrl: string | null,
   feedUrl: string,
-): string | null {
-  return (
-    cleanFaviconUrl(absolutizeUrl(explicit, siteUrl ?? feedUrl)) ??
-    deriveFavicon(siteUrl, feedUrl)
-  );
+): { url: string | null; fromFeed: boolean } {
+  const advertised = sanitizeFaviconUrl(explicit, siteUrl ?? feedUrl);
+  if (advertised) return { url: advertised, fromFeed: true };
+  return { url: deriveFavicon(siteUrl, feedUrl), fromFeed: false };
 }
 
 /** Parse a date into an ISO string, tolerating RFC 822 (RSS) and RFC 3339
@@ -283,7 +287,7 @@ function parseRss2(rss: Record<string, unknown>, feedUrl: string): ParsedFeed {
   const siteUrl = absolutizeUrl(text(channel.link), feedUrl);
   // RSS 2.0 channel logo: <image><url>.
   const channelImage = (channel.image as Record<string, unknown>) ?? {};
-  const faviconUrl = resolveFavicon(text(channelImage.url), siteUrl, feedUrl);
+  const favicon = resolveFavicon(text(channelImage.url), siteUrl, feedUrl);
   const rawItems = (channel.item as Record<string, unknown>[]) ?? [];
 
   const items = rawItems.map((it) => {
@@ -315,7 +319,13 @@ function parseRss2(rss: Record<string, unknown>, feedUrl: string): ParsedFeed {
     });
   });
 
-  return { feedTitle: decodeText(text(channel.title)), siteUrl, faviconUrl, items };
+  return {
+    feedTitle: decodeText(text(channel.title)),
+    siteUrl,
+    faviconUrl: favicon.url,
+    faviconFromFeed: favicon.fromFeed,
+    items,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -327,7 +337,7 @@ function parseRdf(rdf: Record<string, unknown>, feedUrl: string): ParsedFeed {
   const siteUrl = absolutizeUrl(text(channel.link), feedUrl);
   // RDF <image> is a sibling of <channel> under the RDF root, with a <url>.
   const rdfImage = (rdf.image as Record<string, unknown>) ?? {};
-  const faviconUrl = resolveFavicon(text(rdfImage.url), siteUrl, feedUrl);
+  const favicon = resolveFavicon(text(rdfImage.url), siteUrl, feedUrl);
   // In RDF, <item> elements are siblings of <channel> under the RDF root.
   const rawItems = (rdf.item as Record<string, unknown>[]) ?? [];
 
@@ -356,7 +366,13 @@ function parseRdf(rdf: Record<string, unknown>, feedUrl: string): ParsedFeed {
     });
   });
 
-  return { feedTitle: decodeText(text(channel.title)), siteUrl, faviconUrl, items };
+  return {
+    feedTitle: decodeText(text(channel.title)),
+    siteUrl,
+    faviconUrl: favicon.url,
+    faviconFromFeed: favicon.fromFeed,
+    items,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -366,7 +382,7 @@ function parseRdf(rdf: Record<string, unknown>, feedUrl: string): ParsedFeed {
 function parseAtom(feed: Record<string, unknown>, feedUrl: string): ParsedFeed {
   const siteUrl = pickAtomLink(feed.link, feedUrl, ['alternate', '']);
   // Atom <icon> is a square site icon (ideal favicon); <logo> a wider banner.
-  const faviconUrl = resolveFavicon(
+  const favicon = resolveFavicon(
     firstOf(text(feed.icon), text(feed.logo)),
     siteUrl,
     feedUrl,
@@ -395,7 +411,13 @@ function parseAtom(feed: Record<string, unknown>, feedUrl: string): ParsedFeed {
     });
   });
 
-  return { feedTitle: decodeText(atomText(feed.title)), siteUrl, faviconUrl, items };
+  return {
+    feedTitle: decodeText(atomText(feed.title)),
+    siteUrl,
+    faviconUrl: favicon.url,
+    faviconFromFeed: favicon.fromFeed,
+    items,
+  };
 }
 
 /** Atom <title>/<summary> can be {@_type, #text} or carry inline markup. */
@@ -502,7 +524,7 @@ function parseJsonFeed(json: unknown, feedUrl: string): ParsedFeed {
 
   const siteUrl = absolutizeUrl(asStr(feed.home_page_url), feedUrl);
   // JSON Feed `favicon` is the small square icon; `icon` the larger image.
-  const faviconUrl = resolveFavicon(
+  const favicon = resolveFavicon(
     firstOf(asStr(feed.favicon), asStr(feed.icon)),
     siteUrl,
     feedUrl,
@@ -525,7 +547,13 @@ function parseJsonFeed(json: unknown, feedUrl: string): ParsedFeed {
     });
   });
 
-  return { feedTitle: decodeText(asStr(feed.title)), siteUrl, faviconUrl, items };
+  return {
+    feedTitle: decodeText(asStr(feed.title)),
+    siteUrl,
+    faviconUrl: favicon.url,
+    faviconFromFeed: favicon.fromFeed,
+    items,
+  };
 }
 
 function jsonAuthor(node: unknown): string | null {

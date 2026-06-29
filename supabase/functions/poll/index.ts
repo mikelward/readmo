@@ -17,12 +17,18 @@
 // it imports ARE type-checked + unit-tested.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { parseFeedBody } from '../_shared/parser.ts';
+import { faviconLookupDue, resolveFeedFavicon, siteOriginChanged } from '../_shared/siteIcon.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
 import { redactUrl } from '../_shared/urlSafety.ts';
 
 const USER_AGENT = 'Readmo/1.0 (+https://readmo.app)';
 const BATCH_SIZE = 25;
+// Cap site-HTML favicon lookups per cron run so a backfill / 30-day recheck of
+// many icon-less feeds can't spend minutes on sequential homepage fetches (each
+// up to 8s) and overrun the cron cadence. Feeds past the budget aren't stamped,
+// so they stay due and get picked up over the next few runs.
+const MAX_ICON_LOOKUPS_PER_RUN = 4;
 // Adaptive interval bounds (seconds).
 const MIN_INTERVAL_S = 15 * 60; //  15 min — politeness floor for healthy feeds
 const MAX_INTERVAL_S = 6 * 60 * 60; // 6 h — backoff ceiling (SPEC.md)
@@ -84,7 +90,7 @@ async function handle(req: Request): Promise<Response> {
   // ordering — a bounded index range scan instead of a full-table scan + sort.
   const { data: feeds, error } = await supabase
     .from('feeds')
-    .select('id, url, secret_url, etag, last_modified, fetch_interval_s, error_count')
+    .select('id, url, secret_url, site_url, etag, last_modified, fetch_interval_s, error_count, favicon_url, favicon_checked_at')
     .lte('next_fetch_at', new Date().toISOString())
     .order('next_fetch_at', { ascending: true })
     .limit(BATCH_SIZE);
@@ -98,6 +104,9 @@ async function handle(req: Request): Promise<Response> {
 
   let processed = 0;
   let failed = 0;
+  // Shared across the sequential batch so the per-run icon-lookup budget holds
+  // for the whole run, not per feed.
+  const iconBudget = { used: 0, max: MAX_ICON_LOOKUPS_PER_RUN };
   for (const feed of feeds ?? []) {
     // TODO(PR2, P2 — subscriber filter): the SELECT above must also require
     // EXISTS (subscriptions for this feed). Without it, feeds keep being polled
@@ -107,7 +116,7 @@ async function handle(req: Request): Promise<Response> {
     // distinct *subscribed* feeds the spec promises. Move the join into the
     // query (or a SQL view) when this goes live. See PR #1 review (codex P2).
     try {
-      await pollOne(supabase, feed);
+      await pollOne(supabase, feed, iconBudget);
       processed++;
     } catch (err) {
       failed++;
@@ -126,17 +135,32 @@ async function handle(req: Request): Promise<Response> {
   return json({ processed, failed, considered });
 }
 
-async function pollOne(supabase: any, feed: any): Promise<void> {
+async function pollOne(
+  supabase: any,
+  feed: any,
+  iconBudget: { used: number; max: number },
+): Promise<void> {
   // The fetchable URL is secret_url when present (tokenized feeds), else url.
   const fetchUrl: string = feed.secret_url ?? feed.url;
+  const nowMs = Date.now();
 
-  // Conditional GET: a 304 is free — bump last_fetched_at and stop.
+  // Will we (try to) look up this feed's icon in its HTML this run? Only when a
+  // lookup is still due AND the per-run budget has room. Used both to gate the
+  // homepage fetch below and to decide whether to suppress conditional-GET
+  // validators: a feed that always 304s would otherwise return before the
+  // favicon step and never get backfilled, so when we intend to look up we skip
+  // the validators to force a 200 and run the full parse → favicon path. Once
+  // that stamps favicon_checked_at, the lookup is no longer due and conditional
+  // GETs resume.
+  const allowIconLookup =
+    iconBudget.used < iconBudget.max &&
+    faviconLookupDue(feed.favicon_url, feed.favicon_checked_at, feed.site_url, nowMs);
   const headers: Record<string, string> = {
     'User-Agent': USER_AGENT,
     'Accept': 'application/rss+xml, application/atom+xml, application/feed+json, application/json, application/rdf+xml, application/xml, text/xml, */*;q=0.8',
   };
-  if (feed.etag) headers['If-None-Match'] = feed.etag;
-  if (feed.last_modified) headers['If-Modified-Since'] = feed.last_modified;
+  if (feed.etag && !allowIconLookup) headers['If-None-Match'] = feed.etag;
+  if (feed.last_modified && !allowIconLookup) headers['If-Modified-Since'] = feed.last_modified;
 
   console.log(`poll: fetching feed ${feed.id} (${redactUrl(fetchUrl)})`);
   const res = await safeFetch(fetchUrl, { headers, timeoutMs: 10_000 });
@@ -167,13 +191,38 @@ async function pollOne(supabase: any, feed: any): Promise<void> {
   const parsed = parseFeedBody(body, fetchUrl, ct);
   console.log(`poll: feed ${feed.id} parsed — ${parsed.items.length} item(s)`);
 
-  // Upsert feed-level metadata (title, site_url, new validators).
+  // Favicon: advertised icon → already-cached icon → site HTML <link rel="icon">
+  // → /favicon.ico. The HTML lookup runs only when due (favicon_checked_at null
+  // or past the recheck window) AND within this run's budget; `stampCheckedAt`
+  // records that a lookup ran so the (possibly negative) result is cached, and
+  // a real lookup consumes a budget slot.
+  // If the feed migrated to a new site origin, drop the cached icon/stamp so it
+  // re-resolves for the new site instead of keeping the old publisher's icon.
+  const siteChanged = siteOriginChanged(feed.site_url, parsed.siteUrl);
+  const fav = await resolveFeedFavicon(
+    parsed,
+    siteChanged ? null : feed.favicon_url,
+    siteChanged ? null : feed.favicon_checked_at,
+    nowMs,
+    allowIconLookup,
+  );
+  if (fav.stampCheckedAt) iconBudget.used++;
+  // Clear the stamp on a site change we didn't (re)look-up this run, so the next
+  // run re-checks the new site rather than honoring the old site's window.
+  const faviconCheckedAt = fav.stampCheckedAt
+    ? new Date(nowMs).toISOString()
+    : siteChanged
+      ? null
+      : feed.favicon_checked_at;
+
+  // Upsert feed-level metadata (title, site_url, favicon, new validators).
   await supabase
     .from('feeds')
     .update({
       title: parsed.feedTitle,
       site_url: parsed.siteUrl,
-      favicon_url: parsed.faviconUrl,
+      favicon_url: fav.url,
+      favicon_checked_at: faviconCheckedAt,
       etag: res.headers.get('etag'),
       last_modified: res.headers.get('last-modified'),
       last_fetched_at: new Date().toISOString(),

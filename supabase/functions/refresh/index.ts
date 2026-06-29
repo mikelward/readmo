@@ -11,6 +11,7 @@
 // @ts-nocheck — runs under Deno, not node/tsc.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { parseFeedBody } from '../_shared/parser.ts';
+import { resolveFeedFavicon, siteOriginChanged } from '../_shared/siteIcon.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
 import { corsHeaders, preflight } from '../_shared/cors.ts';
@@ -140,7 +141,7 @@ async function handle(req: Request): Promise<Response> {
 async function refreshOne(service: any, feedId: string): Promise<boolean> {
   const { data: feed } = await service
     .from('feeds')
-    .select('id, url, secret_url, last_fetched_at, fetch_interval_s')
+    .select('id, url, secret_url, site_url, last_fetched_at, fetch_interval_s, favicon_url, favicon_checked_at')
     .eq('id', feedId)
     .single();
   if (!feed) return false;
@@ -169,12 +170,31 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
   const ct = res.headers.get('content-type') ?? '';
   const parsed = parseFeedBody(new TextDecoder().decode(res.body), feed.url, ct);
   console.log(`refresh: feed ${feedId} parsed — ${parsed.items.length} item(s)`);
+  // Favicon: advertised icon → already-cached icon → site HTML <link rel="icon">
+  // → /favicon.ico, gated on favicon_checked_at so we don't re-fetch the
+  // homepage on every refresh. allowHtmlLookup is always true here: refresh is
+  // user-initiated and debounced (no batch budget like the cron poller). On a
+  // site-origin change, drop the cached icon/stamp so it re-resolves.
+  const nowMs = Date.now();
+  const siteChanged = siteOriginChanged(feed.site_url, parsed.siteUrl);
+  const fav = await resolveFeedFavicon(
+    parsed,
+    siteChanged ? null : feed.favicon_url,
+    siteChanged ? null : feed.favicon_checked_at,
+    nowMs,
+    true,
+  );
   const { error: metaError } = await service
     .from('feeds')
     .update({
       title: parsed.feedTitle,
       site_url: parsed.siteUrl,
-      favicon_url: parsed.faviconUrl,
+      favicon_url: fav.url,
+      favicon_checked_at: fav.stampCheckedAt
+        ? new Date(nowMs).toISOString()
+        : siteChanged
+          ? null
+          : feed.favicon_checked_at,
     })
     .eq('id', feed.id);
   if (metaError) throw new Error(`feed meta update failed: ${metaError.message}`);

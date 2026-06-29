@@ -255,9 +255,16 @@ describe('parseFeed — favicon', () => {
       '<link>https://ex.com/</link>' +
       '<image><url>https://cdn.ex.com/logo.png</url></image>' +
       '<item><title>i</title><guid>g1</guid></item></channel></rss>';
-    expect(parseFeed(raw, 'https://ex.com/feed.xml').faviconUrl).toBe(
-      'https://cdn.ex.com/logo.png',
-    );
+    const parsed = parseFeed(raw, 'https://ex.com/feed.xml');
+    expect(parsed.faviconUrl).toBe('https://cdn.ex.com/logo.png');
+    // Advertised → flagged so the poller won't bother with the site HTML.
+    expect(parsed.faviconFromFeed).toBe(true);
+  });
+
+  it('flags faviconFromFeed=false when it falls back to the derived favicon', () => {
+    const parsed = parseFeed(fixture('rss2.xml'), 'https://example.com/feed.xml');
+    expect(parsed.faviconUrl).toBe('https://example.com/favicon.ico');
+    expect(parsed.faviconFromFeed).toBe(false);
   });
 
   it('prefers an RDF <image><url> over the derived favicon', () => {
