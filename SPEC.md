@@ -1003,12 +1003,16 @@ negligible and off every critical path. See the External services table in
        Falls back to the reader for any item with no derivable HN id. **$0** — a
        plain deep link, no API call (see *External services*: none added).
 
-     In any non-reader mode, tapping marks the item opened (same as the reader;
-     done/pin state behaves exactly as in reader mode), and the row gains a
-     dedicated open button to the **left** of the Pin/Done cluster — the reader's
-     `OpenInNew` icon for *open original*, the **newshacker "n" mark** for *open
-     on newshacker* — which opens the same target. Pin and the wide-viewport Done
-     button are unchanged. Per-user, synced (stored on the subscription, like
+     In any non-reader mode, tapping the row body marks the item opened (same as
+     the reader; done/pin state behaves exactly as in reader mode), and the row
+     gains a dedicated **Open in reader** button to the **left** of the Pin/Done
+     cluster — an `Article` glyph, the same in both external modes — that
+     navigates to the in-app reader and marks the item opened. Because the row
+     body already opens the source/newshacker target, this button is the row's
+     one remaining path to the reader, so an external-open feed still reaches the
+     reader's pin/favorite/summary/full-text surface in one tap. (It replaces an
+     earlier redundant button that merely re-opened the same external target the
+     row body already did.) Pin and the wide-viewport Done button are unchanged. Per-user, synced (stored on the subscription, like
      Mute/Rename); reader by default. Stored as two independent booleans
      (`open_original`, `open_newshacker`) written **atomically** (one update, via
      `setOpenMode`) so they're never both true from a current client, yet stored

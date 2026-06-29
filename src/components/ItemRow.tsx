@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import type { FeedItem } from '../lib/types';
 import {
   articleSourceDomain,
@@ -15,7 +15,7 @@ import { useSwipeToDismiss } from '../hooks/useSwipeToDismiss';
 import { useItemState } from '../hooks/useItemState';
 import { ItemRowMenu, type ItemRowMenuItem } from './ItemRowMenu';
 import { TooltipButton } from './TooltipButton';
-import { Check, Newshacker, OpenInNew, PushPinFilled, PushPinOutline } from './icons';
+import { Article, Check, PushPinFilled, PushPinOutline } from './icons';
 import { newshackerUrlForItem } from '../lib/newshacker';
 import './ItemRow.css';
 
@@ -89,14 +89,11 @@ export function ItemRow({
     openOriginal && isSafeHttpUrl(item.url) ? item.url : null;
   const newshackerHref = openNewshacker ? newshackerUrlForItem(item) : null;
   const externalHref = openOriginalHref ?? newshackerHref;
-  const externalKind: 'newshacker' | 'original' | null = openOriginalHref
-    ? 'original'
-    : newshackerHref
-      ? 'newshacker'
-      : null;
   // A feed-style external-open row (no library inverse action) gets a dedicated
-  // open button to the left of the Done/Pin cluster. Library rows keep their own
-  // right-side action and just open the target on a row-body tap.
+  // "Open in reader" button to the left of the Done/Pin cluster — since the row
+  // body now opens the source/newshacker target, that button is the row's one
+  // remaining path to the in-app reader. Library rows keep their own right-side
+  // action and just open the external target on a row-body tap.
   const externalRow = externalHref != null && !rightAction;
 
   const [menuOpen, setMenuOpen] = useState(false);
@@ -104,6 +101,7 @@ export function ItemRow({
   const articleRef = useRef<HTMLElement>(null);
   const pointerDevice = usePointerDevice();
   const wide = useWideViewport();
+  const navigate = useNavigate();
 
   const handleHide = useCallback(() => hide(), [hide]);
   const handlePin = useCallback(() => set('pinned', true), [set]);
@@ -111,16 +109,14 @@ export function ItemRow({
   const handleMarkUnread = useCallback(() => set('opened', false), [set]);
   const handleShare = useCallback(() => onShare?.(feedItem), [onShare, feedItem]);
   const markOpened = useCallback(() => set('opened', true), [set]);
-  // The external-open row button opens the target (source website or the
-  // newshacker discussion) in a new tab and marks the item opened — same as the
-  // in-app reader and the `o` shortcut. Done/opened state is left exactly as when
-  // the preference is off (we may iterate on auto-marking done later).
-  const handleOpenExternal = useCallback(() => {
-    if (externalHref) {
-      window.open(externalHref, '_blank', 'noopener,noreferrer');
-    }
+  // On an external-open row the body itself goes to the source/newshacker target,
+  // so the dedicated row button is the one remaining path to the in-app reader:
+  // it navigates to the reader and marks the item opened (same as a reader-mode
+  // row-body tap), giving the row both destinations.
+  const handleOpenReader = useCallback(() => {
     markOpened();
-  }, [externalHref, markOpened]);
+    navigate(`/item/${item.id}`);
+  }, [markOpened, navigate, item.id]);
 
   const openMenu = useCallback(() => {
     setMenuAnchor(articleRef.current);
@@ -390,28 +386,21 @@ export function ItemRow({
         )}
 
         {externalRow ? (
-          // External-open feed row: a dedicated open button sits to the left of
-          // the Done/Pin cluster and opens the target in a new tab. The
-          // newshacker "n" mark distinguishes the newshacker discussion from the
-          // OpenInNew "open original" source. Pin and Done are unchanged.
+          // External-open feed row: the row body opens the source/newshacker
+          // target, so this dedicated button — to the left of the Done/Pin
+          // cluster — is the row's path to the in-app reader. The `Article` glyph
+          // reads as "open in reader" regardless of which external mode the feed
+          // is in. Pin and Done are unchanged.
           <TooltipButton
             type="button"
             className="pin-btn"
-            data-testid={
-              externalKind === 'newshacker' ? 'open-newshacker-btn' : 'open-original-btn'
-            }
-            aria-label={
-              externalKind === 'newshacker'
-                ? `Open ${title} on newshacker`
-                : `Open ${title} on its website`
-            }
-            tooltip={
-              externalKind === 'newshacker' ? 'Open on newshacker' : 'Open original'
-            }
-            onClick={handleOpenExternal}
+            data-testid="open-reader-btn"
+            aria-label={`Open ${title} in reader`}
+            tooltip="Open in reader"
+            onClick={handleOpenReader}
           >
             <span className="pin-btn__icon">
-              {externalKind === 'newshacker' ? <Newshacker /> : <OpenInNew />}
+              <Article />
             </span>
           </TooltipButton>
         ) : null}
