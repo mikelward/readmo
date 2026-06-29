@@ -1,10 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { ItemRows } from './ItemRows';
 import { MarkUnread } from './icons';
 import { MockDataSource } from '../lib/data/MockDataSource';
+import {
+  SHOW_ROW_FAVICON_KEY,
+  resetReadingPrefsCacheForTest,
+} from '../hooks/useReadingPrefs';
 import type { FeedItem } from '../lib/types';
 
 async function sampleItems(n = 3): Promise<FeedItem[]> {
@@ -13,7 +17,30 @@ async function sampleItems(n = 3): Promise<FeedItem[]> {
   return page.items.slice(0, n);
 }
 
+/** Turn the off-by-default "show feed icons on articles" setting on for a test
+ * before rendering, so non-grouped rows render their favicon. */
+function enableRowFavicons(): void {
+  window.localStorage.setItem(SHOW_ROW_FAVICON_KEY, '1');
+  resetReadingPrefsCacheForTest();
+}
+
+function withFavicon(items: FeedItem[]): FeedItem[] {
+  return items.map((fi) => ({
+    ...fi,
+    feed: { ...fi.feed, faviconUrl: 'https://example.com/favicon.ico' },
+  }));
+}
+
 describe('ItemRows', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+
   it('shows skeletons while loading and no rows or empty state', () => {
     const { container } = renderWithProviders(
       <ItemRows items={[]} isLoading emptyLabel="Nothing here." />,
@@ -108,6 +135,49 @@ describe('ItemRows', () => {
     // Decorative: empty alt + aria-hidden so it isn't announced or focusable.
     expect(favicons[0]).toHaveAttribute('alt', '');
     expect(favicons[0]).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('shows no per-row favicon in the flat view by default (setting off)', async () => {
+    const items = withFavicon(await sampleItems(2));
+    const { container } = renderWithProviders(
+      <ItemRows items={items} emptyLabel="Nothing here." />,
+    );
+    expect(container.querySelectorAll('.item-row__favicon')).toHaveLength(0);
+  });
+
+  it('shows a per-row favicon in the flat view when the setting is on', async () => {
+    enableRowFavicons();
+    const items = withFavicon(await sampleItems(2));
+    const { container } = renderWithProviders(
+      <ItemRows items={items} emptyLabel="Nothing here." />,
+    );
+    const favicons = container.querySelectorAll<HTMLImageElement>('.item-row__favicon');
+    expect(favicons).toHaveLength(2);
+    expect(favicons[0]).toHaveAttribute('src', 'https://example.com/favicon.ico');
+    expect(favicons[0]).toHaveAttribute('alt', '');
+    expect(favicons[0]).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('omits per-row favicons in group-by-feed view even with the setting on — the header carries the icon', async () => {
+    enableRowFavicons();
+    const items = withFavicon(await sampleItems(2));
+    const headers = new Map([
+      [
+        items[0].item.id,
+        {
+          feedId: items[0].item.feedId,
+          title: 'Grouped Feed',
+          faviconUrl: 'https://example.com/favicon.ico',
+        },
+      ],
+    ]);
+    const { container } = renderWithProviders(
+      <ItemRows items={items} emptyLabel="Nothing here." groupHeaders={headers} />,
+    );
+    expect(container.querySelectorAll('.item-row__favicon')).toHaveLength(0);
+    expect(
+      container.querySelectorAll('.item-list__group-favicon').length,
+    ).toBeGreaterThan(0);
   });
 
   it('renders a header toggle button and reports clicks (collapsible)', async () => {

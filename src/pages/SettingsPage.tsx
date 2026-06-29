@@ -5,6 +5,7 @@ import {
   useBottomBarPosition,
   useItemSort,
   useGroupByFeed,
+  useShowRowFavicon,
   type BottomBarPosition,
 } from '../hooks/useReadingPrefs';
 import type { ItemSort } from '../lib/data/DataSource';
@@ -27,6 +28,7 @@ export function SettingsPage() {
   const { bottomBarPosition, setBottomBarPosition } = useBottomBarPosition();
   const { itemSort, setItemSort } = useItemSort();
   const { groupByFeed, setGroupByFeed } = useGroupByFeed();
+  const { showRowFavicon, setShowRowFavicon } = useShowRowFavicon();
   const { user, signOut } = useAuth();
   useDocumentTitle('Settings · readmo');
 
@@ -103,6 +105,21 @@ export function SettingsPage() {
                 <span className="settings__toggle-desc">
                   Section Home and folder lists by feed, in the order your feeds
                   are arranged on the Feeds page, instead of one merged stream.
+                </span>
+              </span>
+            </label>
+          </li>
+          <li className="settings__toggle">
+            <label className="settings__toggle-label">
+              <input
+                type="checkbox"
+                className="settings__toggle-check"
+                checked={showRowFavicon}
+                onChange={(e) => setShowRowFavicon(e.target.checked)}
+              />
+              <span className="settings__toggle-text">
+                <span className="settings__toggle-title">
+                  Show feed icons on articles
                 </span>
               </span>
             </label>

@@ -19,11 +19,15 @@ import { usePersistentStore } from './usePersistentStore';
 //    newest-first or oldest-first (see DataSource.ItemSort).
 //  - group-by-feed (default off): section the body by feed instead of one flat
 //    river (see ItemList / ItemRows).
+//  - show-row-favicon (default off): show each feed's favicon on its rows in
+//    the non-grouped views (flat river, library, search, offline). Group-by-feed
+//    carries the icon on the section header regardless (see ItemRows / ItemRow).
 
 export const HIDE_ON_SCROLL_KEY = 'readmo:hide-on-scroll';
 export const BOTTOM_BAR_KEY = 'readmo:bottom-bar';
 export const ITEM_SORT_KEY = 'readmo:item-sort';
 export const GROUP_BY_FEED_KEY = 'readmo:group-by-feed';
+export const SHOW_ROW_FAVICON_KEY = 'readmo:show-row-favicon';
 
 /** Where the bottom action bar sits. 'list' = relative footer at the end of the
  * list (the default); 'screen' = pinned to the bottom of the viewport. */
@@ -48,6 +52,7 @@ function boolStore(storageKey: string): PersistentStore<boolean> {
 
 const hideOnScrollStore = boolStore(HIDE_ON_SCROLL_KEY);
 const groupByFeedStore = boolStore(GROUP_BY_FEED_KEY);
+const showRowFaviconStore = boolStore(SHOW_ROW_FAVICON_KEY);
 
 const bottomBarStore = createPersistentStore<BottomBarPosition>({
   storageKey: BOTTOM_BAR_KEY,
@@ -118,11 +123,27 @@ export function useGroupByFeed(): {
   return { groupByFeed, setGroupByFeed };
 }
 
+/** Whether non-grouped views (flat river, library, search, offline) show each
+ * feed's favicon on its rows. Off by default; group-by-feed carries the icon on
+ * the section header regardless. Per-device. */
+export function useShowRowFavicon(): {
+  showRowFavicon: boolean;
+  setShowRowFavicon: (next: boolean) => void;
+} {
+  const showRowFavicon = usePersistentStore(showRowFaviconStore);
+  const setShowRowFavicon = useCallback(
+    (next: boolean) => showRowFaviconStore.set(next),
+    [],
+  );
+  return { showRowFavicon, setShowRowFavicon };
+}
+
 /** Test-only: drop the stores' parse memos so `localStorage.clear()` alone
  * resets state between cases. */
 export function resetReadingPrefsCacheForTest(): void {
   hideOnScrollStore.resetForTest();
   groupByFeedStore.resetForTest();
+  showRowFaviconStore.resetForTest();
   bottomBarStore.resetForTest();
   itemSortStore.resetForTest();
 }

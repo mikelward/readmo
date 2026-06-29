@@ -5,11 +5,13 @@ import {
   GROUP_BY_FEED_KEY,
   HIDE_ON_SCROLL_KEY,
   ITEM_SORT_KEY,
+  SHOW_ROW_FAVICON_KEY,
   resetReadingPrefsCacheForTest,
   useBottomBarPosition,
   useGroupByFeed,
   useHideOnScroll,
   useItemSort,
+  useShowRowFavicon,
 } from './useReadingPrefs';
 
 function HideOnScrollProbe() {
@@ -143,6 +145,36 @@ describe('useReadingPrefs', () => {
       act(() => screen.getByRole('button').click());
       expect(screen.getByRole('button')).toHaveTextContent('grouped');
       expect(window.localStorage.getItem(GROUP_BY_FEED_KEY)).toBe('1');
+    });
+  });
+
+  describe('show row favicon', () => {
+    function FaviconProbe() {
+      const { showRowFavicon, setShowRowFavicon } = useShowRowFavicon();
+      return (
+        <button type="button" onClick={() => setShowRowFavicon(!showRowFavicon)}>
+          {showRowFavicon ? 'on' : 'off'}
+        </button>
+      );
+    }
+
+    it('defaults to off', () => {
+      render(<FaviconProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent('off');
+    });
+
+    it('reads a persisted flag on mount', () => {
+      window.localStorage.setItem(SHOW_ROW_FAVICON_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      render(<FaviconProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent('on');
+    });
+
+    it('persists a toggle to localStorage', () => {
+      render(<FaviconProbe />);
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('on');
+      expect(window.localStorage.getItem(SHOW_ROW_FAVICON_KEY)).toBe('1');
     });
   });
 

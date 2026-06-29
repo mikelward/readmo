@@ -1483,10 +1483,17 @@ domains — `old.reddit.com` → `reddit.com`); **article domain** when it diffe
 from the feed's own site, shown right after the source name (so aggregator
 feeds like Hacker News or Reddit surface where a row actually links —
 `Hacker News · thedrive.com`; a normal blog feed that links to itself doesn't
-repeat its own domain); **age**; **author** when present. Article rows carry no
-favicon — the site icon appears **only on the group-by-feed section header**
-(beside the feed name), so it identifies a feed's run of rows once rather than
-repeating on every article. That favicon comes from `feeds.favicon_url`, which
+repeat its own domain); **age**; **author** when present. The feed's **site
+favicon** sits at the start of the meta line — but where it appears depends on
+grouping. In **group-by-feed** view it's on the **section header** only (beside
+the feed name), identifying a feed's run of rows once rather than repeating on
+every article. In **non-grouped** views (the flat river, library, search,
+offline), where rows from different feeds interleave with no section header to
+attribute them, each row *can* show its own feed's favicon just before the
+source name — gated on the **Show feed icons on articles** setting (Settings →
+Reading; `readmo:show-row-favicon`, **off by default**, per-device). The
+group-by-feed header always carries its icon regardless of the setting. That
+favicon comes from `feeds.favicon_url`, which
 the poller resolves on each fetch: the feed-advertised icon when present (Atom
 `<icon>`/`<logo>`, RSS `<image>`, JSON Feed `favicon`/`icon`, scheme-checked to
 http(s), fragment-stripped, and rejected if it looks tokenized — embedded

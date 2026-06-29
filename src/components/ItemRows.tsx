@@ -3,6 +3,7 @@ import type { FeedId, FeedItem, ItemId } from '../lib/types';
 import { useShareItem } from '../hooks/useShareItem';
 import { useOpenOriginalFeeds } from '../hooks/useOpenOriginalFeeds';
 import { useOpenNewshackerFeeds } from '../hooks/useOpenNewshackerFeeds';
+import { useShowRowFavicon } from '../hooks/useReadingPrefs';
 import { ItemRow, type RightAction } from './ItemRow';
 import { ChevronRight, Sweep, Undo } from './icons';
 import { TooltipButton } from './TooltipButton';
@@ -145,6 +146,9 @@ export function ItemRows({
   // Feeds the user set to "open on newshacker" — their rows link to the item's
   // Hacker News discussion on newshacker.app instead of the in-app reader.
   const openNewshackerFeeds = useOpenNewshackerFeeds();
+  // Off-by-default per-device setting (Settings → Reading). Only consulted in
+  // the non-grouped path below; group-by-feed shows the icon on its header.
+  const { showRowFavicon: showRowFaviconPref } = useShowRowFavicon();
 
   if (isLoading) {
     return (
@@ -168,6 +172,13 @@ export function ItemRows({
     );
   }
 
+  // Grouped view (groupHeaders present) attributes each feed run with a section
+  // header that carries the favicon, so rows omit it. Non-grouped views (flat
+  // river, library, search, offline) have no header, so each row *can* show its
+  // feed's favicon to attribute the interleaved sources — gated on the
+  // off-by-default `show-row-favicon` setting.
+  const showRowFavicon = showRowFaviconPref && !groupHeaders;
+
   const renderRow = (fi: FeedItem) => (
     <li
       key={fi.item.id}
@@ -183,6 +194,7 @@ export function ItemRows({
         enableSwipe={enableSwipe}
         openOriginal={openOriginalFeeds.has(fi.item.feedId)}
         openNewshacker={openNewshackerFeeds.has(fi.item.feedId)}
+        showFavicon={showRowFavicon}
         onShare={() => share({ title: fi.item.title, url: fi.item.url })}
         rightAction={rightAction?.(fi)}
       />

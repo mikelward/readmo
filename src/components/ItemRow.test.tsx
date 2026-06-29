@@ -67,16 +67,39 @@ describe('ItemRow', () => {
     expect(meta).toHaveTextContent('2h');
   });
 
-  it('never renders a favicon on the row, even when the feed has one', () => {
-    // The site icon lives only on the group-by-feed section header, so it's
-    // never repeated on individual article rows.
+  it('does not render a row favicon by default (group-by-feed: header carries it)', () => {
+    // Default showFavicon=false models the group-by-feed view, where the icon
+    // lives on the section header so it isn't repeated on every row.
     const withIcon: FeedItem = {
       item: FEED_ITEM.item,
       feed: { ...FEED_ITEM.feed, faviconUrl: 'https://example.com/favicon.ico' },
     };
     const { container } = renderWithProviders(<ItemRow feedItem={withIcon} />);
     expect(container.querySelector('.item-row__favicon')).toBeNull();
-    expect(container.querySelector('img')).toBeNull();
+  });
+
+  it('renders the feed favicon on the row when showFavicon is set (non-grouped views)', () => {
+    const withIcon: FeedItem = {
+      item: FEED_ITEM.item,
+      feed: { ...FEED_ITEM.feed, faviconUrl: 'https://example.com/favicon.ico' },
+    };
+    renderWithProviders(<ItemRow feedItem={withIcon} showFavicon />);
+    const favicon = screen.getByTestId('item-favicon');
+    expect(favicon).toHaveAttribute('src', 'https://example.com/favicon.ico');
+    // Decorative: empty alt + aria-hidden so it adds no accessible name.
+    expect(favicon).toHaveAttribute('alt', '');
+    expect(favicon).toHaveAttribute('aria-hidden', 'true');
+    // It sits inside the meta line, before the source text.
+    expect(screen.getByTestId('item-meta')).toContainElement(favicon);
+  });
+
+  it('renders no row favicon when showFavicon is set but the feed has none', () => {
+    // faviconUrl null (poller hasn't resolved one) → nothing to show, no
+    // broken-image glyph.
+    const { container } = renderWithProviders(
+      <ItemRow feedItem={FEED_ITEM} showFavicon />,
+    );
+    expect(container.querySelector('.item-row__favicon')).toBeNull();
   });
 
   it('shows the article domain next to the feed name when they differ', () => {

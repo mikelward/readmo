@@ -7,6 +7,7 @@ import {
   GROUP_BY_FEED_KEY,
   HIDE_ON_SCROLL_KEY,
   ITEM_SORT_KEY,
+  SHOW_ROW_FAVICON_KEY,
   resetReadingPrefsCacheForTest,
 } from '../hooks/useReadingPrefs';
 import { SettingsPage } from './SettingsPage';
@@ -132,6 +133,18 @@ describe('SettingsPage — Reading & Bottom toolbar', () => {
     await user.click(toggle);
     expect(toggle).toBeChecked();
     expect(window.localStorage.getItem(GROUP_BY_FEED_KEY)).toBe('1');
+  });
+
+  it('toggles "Show feed icons on articles" and persists it', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    const toggle = screen.getByRole('checkbox', {
+      name: /show feed icons on articles/i,
+    });
+    expect(toggle).not.toBeChecked();
+    await user.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(window.localStorage.getItem(SHOW_ROW_FAVICON_KEY)).toBe('1');
   });
 
   it('defaults sort order to "Newest first" and switches to "Oldest first"', async () => {
