@@ -1735,11 +1735,27 @@ page's discipline is unchanged.
   **pin is the trigger** (the summary is a feature of the active reading list)
   and the **`allowlist` table is the boundary** (the same trusted-user list as
   reading mode / Google News — summaries are a generation-cost surface, one
-  Gemini call per cache miss). Generation is gated on **both**: the reader only
-  calls the `summary` Edge Function for a pinned item *and* only when the caller
-  is allowed (`useFullTextAllowed`, the shared gate — it holds off while a
+  Gemini call per cache miss). Generation is gated on **both**: the `summary`
+  Edge Function is called only for a pinned item *and* only when the caller is
+  allowed (`useFullTextAllowed`, the shared gate — it holds off while a
   signed-in user's capabilities are still loading, so an off-list user fires no
   Edge call), and the function re-checks the allowlist server-side regardless.
+  - **Warm on pin (incl. cross-device), generate-once.** `useSummaryPrewarm`
+    pre-warms the summary for **every pinned item** — pinned on this device,
+    synced from another device, or restored on boot — the summary sibling of
+    `useOfflineCacheLock`, which already warms each pinned item's reader body +
+    full text the same way. The reader's `useSummary` still generates on open;
+    both share the `['summary', id]` React Query key and the result caches on
+    `items.ai_summary`, so whichever fires first generates and the rest are plain
+    cache hits — **never a second Gemini call**. So an article is usually already
+    summarized (no spinner) by the time it's opened, on whatever device. **Cross-
+    device warming is cheap because the summary is cached server-side**: a warm of
+    an already-generated summary is a *server cache hit* (the `summary` Edge
+    Function short-circuits on `items.ai_summary` — no Jina, no Gemini), and a
+    never-summarized pin generates exactly **once**, shared across every device
+    and user. A warm is marked done only on a **settled** result, so a transient
+    `unreachable`/`unavailable` retries on reconnect or once the allowlist gate
+    resolves.
   - **Article text comes from Jina (like newshacker), by design.** The summary's
     input is fetched through **Jina Reader** (`r.jina.ai`), which returns clean
     **markdown** and transparently handles bot-blocked / paywalled / JS-rendered

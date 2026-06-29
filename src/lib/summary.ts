@@ -20,6 +20,15 @@ export interface SummaryResult {
   retryable?: boolean;
 }
 
+/** Whether a summary result is terminal — safe to treat as the final answer and
+ * stop retrying. A transient `unreachable`/`unavailable`, or any result flagged
+ * {@link SummaryResult.retryable} (e.g. an allowlist denial a later change could
+ * flip), is NOT settled, so a reconnect / gate-resolve should re-check it. */
+export function isSummarySettled(data: SummaryResult): boolean {
+  if (data.status === 'unreachable' || data.status === 'unavailable') return false;
+  return !data.retryable;
+}
+
 /** staleTime policy for the `['summary', id]` query: terminal outcomes (`ok`,
  * `empty`) are cached forever, but a transient `unreachable`/`unavailable` — or
  * any result flagged {@link SummaryResult.retryable} (e.g. an allowlist denial a
@@ -29,6 +38,5 @@ export function summaryStaleTime(query: {
 }): number {
   const data = query.state.data;
   if (!data) return 0;
-  if (data.status === 'unreachable' || data.status === 'unavailable') return 0;
-  return data.retryable ? 0 : Infinity;
+  return isSummarySettled(data) ? Infinity : 0;
 }
