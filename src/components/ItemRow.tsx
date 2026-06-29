@@ -8,6 +8,7 @@ import {
   formatItemMetaTail,
   isSafeHttpUrl,
 } from '../lib/itemMeta';
+import { faviconNeedsDarkInvert } from '../lib/faviconInvert';
 import { usePointerDevice } from '../hooks/usePointerDevice';
 import { useWideViewport } from '../hooks/useWideViewport';
 import { useSwipeToDismiss } from '../hooks/useSwipeToDismiss';
@@ -305,7 +306,12 @@ export function ItemRow({
             load error so a 404'd /favicon.ico guess leaves no broken glyph. */}
         {showFavicon && feed.faviconUrl ? (
           <img
-            className="item-row__favicon"
+            className={
+              'item-row__favicon' +
+              (faviconNeedsDarkInvert(feed.faviconUrl)
+                ? ' favicon--invert-dark'
+                : '')
+            }
             src={feed.faviconUrl}
             alt=""
             aria-hidden="true"

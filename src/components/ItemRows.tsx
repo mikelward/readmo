@@ -4,6 +4,7 @@ import { useShareItem } from '../hooks/useShareItem';
 import { useOpenOriginalFeeds } from '../hooks/useOpenOriginalFeeds';
 import { useOpenNewshackerFeeds } from '../hooks/useOpenNewshackerFeeds';
 import { useShowRowFavicon } from '../hooks/useReadingPrefs';
+import { faviconNeedsDarkInvert } from '../lib/faviconInvert';
 import { ItemRow, type RightAction } from './ItemRow';
 import { ChevronRight, Sweep, Undo } from './icons';
 import { TooltipButton } from './TooltipButton';
@@ -228,7 +229,10 @@ export function ItemRows({
     // 404'd guess (e.g. a derived /favicon.ico) leaves no broken-image glyph.
     const favicon = faviconUrl ? (
       <img
-        className="item-list__group-favicon"
+        className={
+          'item-list__group-favicon' +
+          (faviconNeedsDarkInvert(faviconUrl) ? ' favicon--invert-dark' : '')
+        }
         src={faviconUrl}
         alt=""
         aria-hidden="true"

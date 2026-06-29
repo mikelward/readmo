@@ -1507,7 +1507,12 @@ string param, timestamp) is rejected — so no per-subscriber query leaks into
 `feeds_public`. Else the site origin's `/favicon.ico`. It's decorative (`alt=""`) and the `<img>` hides itself on load
 error, so a guessed `/favicon.ico` that 404s leaves no broken glyph. The URL is
 display-safe metadata (like `title`/`site_url`), so `feeds_public` exposes it;
-the client loads it directly (not via the image proxy).
+the client loads it directly (not via the image proxy). A handful of publishers
+ship a **black-on-transparent** favicon (a dark monochrome mark) that vanishes
+on the dark page background; those are inverted to white in dark mode. Inversion
+is **opt-in per registrable domain** (a curated set in `faviconInvert.ts`, e.g.
+`vox.com`) rather than applied to every favicon — blanket inversion would wreck
+full-color logos.
 **Opened** titles render `--rm-read`. Not rendered: rank numbers, inline
 source/date links, external-link chevron (the reader's "Open original" owns
 that). (No points/comments/Hot flag/"N new" — those are HN-specific.)
