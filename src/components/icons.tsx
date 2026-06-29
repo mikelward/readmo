@@ -397,6 +397,20 @@ export function OpenInNew(props: IconProps) {
   );
 }
 
+// ---- Article (open in reader) ---------------------------------------------
+// Material Symbols `article` — a page of text. Marks the row button that opens
+// an external-open feed's item in the in-app reader (the row body itself goes
+// to the source / newshacker target), so it reads as "open in reader" rather
+// than the `OpenInNew` "leaves the app" glyph.
+
+export function Article(props: IconProps) {
+  return (
+    <MaterialIcon {...props}>
+      <path d="M320-240h320v-80H320v80Zm0-160h320v-80H320v80ZM240-80q-33 0-56.5-23.5T160-160v-640q0-33 23.5-56.5T240-880h320l240 240v480q0 33-23.5 56.5T720-80H240Zm280-520v-200H240v640h480v-440H520ZM240-800v200-200 640-640Z" />
+    </MaterialIcon>
+  );
+}
+
 // ---- Newshacker ("n" mark) ------------------------------------------------
 // newshacker's own app icon (its public/favicon.svg), edited only to suit a
 // monochrome line-icon context: the filled tile becomes an outlined squircle

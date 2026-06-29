@@ -1,11 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useLocation } from 'react-router-dom';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { ItemRow } from './ItemRow';
 import { PushPinFilled } from './icons';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import type { FeedItem } from '../lib/types';
+
+/** Surfaces the router's current path so a test can assert in-app navigation
+ * (the reader button) without a real route tree. */
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location">{location.pathname}</div>;
+}
 
 function stubWideViewport(wide: boolean) {
   const original = window.matchMedia;
@@ -116,45 +124,48 @@ describe('ItemRow', () => {
       expect(source.stateStore.get('item-1').done).toBe(false);
     });
 
-    it('adds an Open original button to the left of the Pin button', () => {
+    it('adds an Open in reader button to the left of the Pin button', () => {
       renderWithProviders(<ItemRow feedItem={FEED_ITEM} openOriginal />);
-      // Pin stays; Open original is added.
+      // Pin stays; the reader shortcut is added (the row body opens the source,
+      // so this button is the row's path back to the in-app reader).
       expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
-      const openBtn = screen.getByTestId('open-original-btn');
-      expect(openBtn).toHaveAttribute('aria-label', 'Open A test headline on its website');
-      // Open original sits before Pin in DOM order (to its left).
+      const openBtn = screen.getByTestId('open-reader-btn');
+      expect(openBtn).toHaveAttribute('aria-label', 'Open A test headline in reader');
+      // The reader button sits before Pin in DOM order (to its left).
       const buttons = screen.getAllByRole('button');
       expect(buttons.indexOf(openBtn)).toBeLessThan(
         buttons.indexOf(screen.getByTestId('pin-btn')),
       );
     });
 
-    it('opens the source and marks opened when the Open original button is clicked', async () => {
+    it('opens the in-app reader (not a new tab) when the reader button is clicked', async () => {
       const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
       const user = userEvent.setup();
       const { source } = renderWithProviders(
-        <ItemRow feedItem={FEED_ITEM} openOriginal />,
+        <>
+          <ItemRow feedItem={FEED_ITEM} openOriginal />
+          <LocationProbe />
+        </>,
       );
-      await user.click(screen.getByTestId('open-original-btn'));
-      expect(openSpy).toHaveBeenCalledWith(
-        'https://example.com/post',
-        '_blank',
-        'noopener,noreferrer',
-      );
+      await user.click(screen.getByTestId('open-reader-btn'));
+      // Navigates in-app rather than opening the source in a new tab…
+      expect(screen.getByTestId('location')).toHaveTextContent('/item/item-1');
+      expect(openSpy).not.toHaveBeenCalled();
+      // …and marks the item opened, like a reader-mode row-body tap.
       expect(source.stateStore.get('item-1').opened).toBe(true);
       expect(source.stateStore.get('item-1').done).toBe(false);
       openSpy.mockRestore();
     });
 
-    it('keeps Pin and the wide-viewport Done button alongside Open original', () => {
+    it('keeps Pin and the wide-viewport Done button alongside the reader button', () => {
       restoreMatchMedia = stubWideViewport(true);
       renderWithProviders(<ItemRow feedItem={FEED_ITEM} openOriginal />);
       expect(screen.getByTestId('done-btn')).toBeInTheDocument();
       expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
-      expect(screen.getByTestId('open-original-btn')).toBeInTheDocument();
+      expect(screen.getByTestId('open-reader-btn')).toBeInTheDocument();
     });
 
-    it('keeps the library inverse action (no Open original button) on library rows', () => {
+    it('keeps the library inverse action (no reader button) on library rows', () => {
       renderWithProviders(
         <ItemRow
           feedItem={FEED_ITEM}
@@ -172,7 +183,7 @@ describe('ItemRow', () => {
       expect(screen.getByTestId('item-title')).toHaveAttribute('target', '_blank');
       // …but the contextual right-side action is preserved, not replaced.
       expect(screen.getByTestId('library-action-pinned')).toBeInTheDocument();
-      expect(screen.queryByTestId('open-original-btn')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('open-reader-btn')).not.toBeInTheDocument();
     });
 
     it('falls back to the in-app reader when the item URL is not a safe http URL', () => {
@@ -184,8 +195,8 @@ describe('ItemRow', () => {
       const body = screen.getByTestId('item-title');
       expect(body).toHaveAttribute('href', '/item/item-1');
       expect(body).not.toHaveAttribute('target');
-      // No safe URL ⇒ no Open-original button either; the Pin button stays.
-      expect(screen.queryByTestId('open-original-btn')).not.toBeInTheDocument();
+      // Body already goes to the reader ⇒ no separate reader button; Pin stays.
+      expect(screen.queryByTestId('open-reader-btn')).not.toBeInTheDocument();
       expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
     });
   });
@@ -214,26 +225,31 @@ describe('ItemRow', () => {
       expect(body.getAttribute('rel')).toContain('noopener');
     });
 
-    it('adds an Open-on-newshacker button (not the open-original one)', () => {
+    it('adds the same Open in reader button as open-original mode', () => {
       renderWithProviders(<ItemRow feedItem={HN_FEED_ITEM} openNewshacker />);
-      const btn = screen.getByTestId('open-newshacker-btn');
-      expect(btn).toHaveAttribute('aria-label', 'Open A test headline on newshacker');
-      expect(screen.queryByTestId('open-original-btn')).not.toBeInTheDocument();
+      const btn = screen.getByTestId('open-reader-btn');
+      expect(btn).toHaveAttribute('aria-label', 'Open A test headline in reader');
       expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
     });
 
-    it('opens the newshacker discussion and marks opened when the button is clicked', async () => {
+    it('opens the in-app reader from the button while the body still goes to newshacker', async () => {
       const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
       const user = userEvent.setup();
       const { source } = renderWithProviders(
-        <ItemRow feedItem={HN_FEED_ITEM} openNewshacker />,
+        <>
+          <ItemRow feedItem={HN_FEED_ITEM} openNewshacker />
+          <LocationProbe />
+        </>,
       );
-      await user.click(screen.getByTestId('open-newshacker-btn'));
-      expect(openSpy).toHaveBeenCalledWith(
+      // Row body opens the newshacker discussion in a new tab…
+      expect(screen.getByTestId('item-title')).toHaveAttribute(
+        'href',
         'https://newshacker.app/item/42662903',
-        '_blank',
-        'noopener,noreferrer',
       );
+      // …but the dedicated button navigates to the in-app reader instead.
+      await user.click(screen.getByTestId('open-reader-btn'));
+      expect(screen.getByTestId('location')).toHaveTextContent('/item/item-1');
+      expect(openSpy).not.toHaveBeenCalled();
       expect(source.stateStore.get('item-1').opened).toBe(true);
       expect(source.stateStore.get('item-1').done).toBe(false);
       openSpy.mockRestore();
@@ -250,8 +266,8 @@ describe('ItemRow', () => {
         'href',
         'https://example.com/the-article',
       );
-      expect(screen.getByTestId('open-original-btn')).toBeInTheDocument();
-      expect(screen.queryByTestId('open-newshacker-btn')).not.toBeInTheDocument();
+      // Both external modes resolve to the same single reader-shortcut button.
+      expect(screen.getByTestId('open-reader-btn')).toBeInTheDocument();
     });
 
     it('derives the link from the structured commentsUrl when present', () => {
@@ -272,7 +288,7 @@ describe('ItemRow', () => {
         'href',
         'https://newshacker.app/item/42662903',
       );
-      expect(screen.getByTestId('open-newshacker-btn')).toBeInTheDocument();
+      expect(screen.getByTestId('open-reader-btn')).toBeInTheDocument();
     });
 
     it('derives the link from the stored description HTML for the official HN feed', () => {
@@ -293,7 +309,7 @@ describe('ItemRow', () => {
         'href',
         'https://newshacker.app/item/44390000',
       );
-      expect(screen.getByTestId('open-newshacker-btn')).toBeInTheDocument();
+      expect(screen.getByTestId('open-reader-btn')).toBeInTheDocument();
     });
 
     it('falls back to the in-app reader when the item has no Hacker News id', () => {
@@ -302,7 +318,8 @@ describe('ItemRow', () => {
       const body = screen.getByTestId('item-title');
       expect(body).toHaveAttribute('href', '/item/item-1');
       expect(body).not.toHaveAttribute('target');
-      expect(screen.queryByTestId('open-newshacker-btn')).not.toBeInTheDocument();
+      // Body already goes to the reader ⇒ no separate reader button; Pin stays.
+      expect(screen.queryByTestId('open-reader-btn')).not.toBeInTheDocument();
       expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
     });
   });

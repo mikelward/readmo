@@ -17,6 +17,7 @@ const REQUIRED = [
   'ArrowBack',
   'MoreVert',
   'OpenInNew',
+  'Article',
   'Share',
   'Refresh',
   'Close',
