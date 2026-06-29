@@ -30,7 +30,6 @@ import {
   FavoriteOutline,
   MoreVert,
   OpenInNew,
-  PushPinFilled,
   PushPinOutline,
   Share as ShareIcon,
   VerticalAlignTop,
@@ -120,12 +119,6 @@ function ReaderToolbar({
 }: ReaderToolbarProps) {
   const moreBtnRef = useRef<HTMLButtonElement>(null);
   const sfx = placement === 'bottom' ? '-bottom' : '';
-  // The narrow bar can't hold a fifth 44px action without breaking the ≥320px
-  // single-row invariant (SPEC *Reader action bar*). When the conditional
-  // Comments button is present on a narrow viewport, Pin moves into the ⋮
-  // overflow menu (see ItemPage's menuItems) so Comments stays inline; with no
-  // Comments button, or on a wide viewport, Pin stays inline as before.
-  const pinInline = wide || !commentsHref;
 
   return (
     <div className={`reader__${placement}bar`}>
@@ -211,20 +204,6 @@ function ReaderToolbar({
               {state.favorite ? <FavoriteFilled /> : <FavoriteOutline />}
             </TooltipButton>
           </>
-        ) : null}
-
-        {pinInline ? (
-          <TooltipButton
-            type="button"
-            className={'reader__action' + (state.pinned ? ' reader__action--active' : '')}
-            tooltip={state.pinned ? 'Unpin' : 'Pin'}
-            aria-label={state.pinned ? 'Unpin' : 'Pin'}
-            aria-pressed={state.pinned}
-            onClick={() => toggle('pinned')}
-            data-testid={`reader-pin${sfx}`}
-          >
-            {state.pinned ? <PushPinFilled /> : <PushPinOutline />}
-          </TooltipButton>
         ) : null}
 
         <TooltipButton
@@ -473,23 +452,20 @@ export function ItemPage() {
   }, []);
   // Favorite/Share live on the bar as inline icons on wide viewports, so
   // they drop out of the menu there to avoid duplicate entry points; below
-  // 960px they stay here. Pin joins them in the menu only when it's been
-  // pushed off the narrow bar to make room for the Comments button (see
-  // `pinInline` in ReaderToolbar). Open feed is always in the menu. "Show feed
-  // version" appears only when the reader is sitting in the extracted
+  // 960px they stay here. Pin/Unpin is **always** in the menu — it's no longer
+  // an inline bar action on either viewport (the bar carries Open original,
+  // Comments, Done, ⋮; Pin leads the overflow). Open feed is always in the menu.
+  // "Show feed version" appears only when the reader is sitting in the extracted
   // reading view AND a feed body exists to swap back to.
-  const pinInMenu = !wide && !!commentsHref;
   const menuItems = useMemo<ItemRowMenuItem[]>(() => {
     if (!resolved) return [];
     const it = resolved.item;
     const items: ItemRowMenuItem[] = [];
-    if (pinInMenu) {
-      items.push({
-        key: 'pin',
-        label: state.pinned ? 'Unpin' : 'Pin',
-        onSelect: () => toggle('pinned'),
-      });
-    }
+    items.push({
+      key: 'pin',
+      label: state.pinned ? 'Unpin' : 'Pin',
+      onSelect: () => toggle('pinned'),
+    });
     if (!wide) {
       items.push({
         key: 'favorite',
@@ -518,7 +494,6 @@ export function ItemPage() {
   }, [
     resolved,
     wide,
-    pinInMenu,
     state.favorite,
     state.pinned,
     toggle,

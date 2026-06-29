@@ -99,51 +99,48 @@ describe('ItemPage (reader)', () => {
     ).toBeInTheDocument();
   });
 
-  it('pins from the reader action bar', async () => {
+  it('pins from the reader overflow menu (Pin is no longer an inline bar action)', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
     renderReader(source);
-    const pin = await screen.findByTestId('reader-pin');
-    await user.click(pin);
+    expect(screen.queryByTestId('reader-pin')).not.toBeInTheDocument();
+    await user.click(await screen.findByTestId('reader-more'));
+    await user.click(await screen.findByTestId('item-row-menu-pin'));
     expect(source.stateStore.get('item-1').pinned).toBe(true);
   });
 
-  it('renders the toolbar at the bottom too and pins from it', async () => {
+  it('renders the toolbar at the bottom too and pins from its overflow menu', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
     renderReader(source);
-    const pin = await screen.findByTestId('reader-pin-bottom');
-    expect(screen.getByTestId('open-original-bottom')).toBeInTheDocument();
-    await user.click(pin);
+    expect(await screen.findByTestId('open-original-bottom')).toBeInTheDocument();
+    await user.click(screen.getByTestId('reader-more-bottom'));
+    await user.click(await screen.findByTestId('item-row-menu-pin'));
     expect(source.stateStore.get('item-1').pinned).toBe(true);
   });
 
-  it('renders the toolbar at the bottom with a back-to-top button and pins from it', async () => {
+  it('renders the bottom toolbar with a back-to-top button and pins from its menu', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
     renderReader(source);
-    const pin = await screen.findByTestId('reader-pin-bottom');
-    expect(screen.getByTestId('open-original-bottom')).toBeInTheDocument();
+    expect(await screen.findByTestId('open-original-bottom')).toBeInTheDocument();
     expect(screen.getByTestId('reader-back-to-top')).toBeInTheDocument();
-    await user.click(pin);
+    await user.click(screen.getByTestId('reader-more-bottom'));
+    await user.click(await screen.findByTestId('item-row-menu-pin'));
     expect(source.stateStore.get('item-1').pinned).toBe(true);
   });
 
-  it('orders the action cluster Pin then Done, with Done second from the right (left of More)', async () => {
+  it('orders the inline cluster open original → Done → More (Pin lives in the overflow)', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     renderReader(source);
-    const pin = await screen.findByTestId('reader-pin');
-    const toolbar = pin.closest('.reader__actions');
+    const done = await screen.findByTestId('reader-done');
+    const toolbar = done.closest('.reader__actions');
     expect(toolbar).not.toBeNull();
     const actionOrder = Array.from(
       toolbar!.querySelectorAll('[data-testid]'),
     ).map((el) => el.getAttribute('data-testid'));
-    expect(actionOrder).toEqual([
-      'open-original',
-      'reader-pin',
-      'reader-done',
-      'reader-more',
-    ]);
+    expect(actionOrder).toEqual(['open-original', 'reader-done', 'reader-more']);
+    expect(screen.queryByTestId('reader-pin')).not.toBeInTheDocument();
   });
 
   it('Done marks the item done and clears pinned (exclusivity)', async () => {
@@ -313,18 +310,17 @@ describe('ItemPage comments button', () => {
     expect(screen.queryByTestId('reader-comments')).not.toBeInTheDocument();
   });
 
-  it('moves Pin into the overflow menu on narrow when the Comments button is present', async () => {
+  it('keeps the inline cluster at four with Comments present (Pin stays in the overflow)', async () => {
     const user = userEvent.setup();
     const source = new CommentsSource({
       item: { commentsUrl: 'https://example.com/blog/post/comments' },
     });
     renderReader(source);
     const comments = await screen.findByTestId('reader-comments');
-    // Pin is no longer an inline bar button on either bar — it made room for
-    // Comments to keep the ≥320px single-row layout.
+    // Pin is never an inline bar button on either bar.
     expect(screen.queryByTestId('reader-pin')).not.toBeInTheDocument();
     expect(screen.queryByTestId('reader-pin-bottom')).not.toBeInTheDocument();
-    // The narrow inline cluster is open original → comments → done → more.
+    // The inline cluster is open original → comments → done → more.
     const cluster = comments.closest('.reader__actions');
     const order = Array.from(cluster!.querySelectorAll('[data-testid]')).map((el) =>
       el.getAttribute('data-testid'),
@@ -341,15 +337,6 @@ describe('ItemPage comments button', () => {
     expect(pin).toHaveTextContent('Pin');
     await user.click(pin);
     expect(source.stateStore.get('item-1').pinned).toBe(true);
-  });
-
-  it('keeps Pin inline on narrow when the item has no comments', async () => {
-    // Regression: the Pin demotion is scoped to commented items, so a normal
-    // item keeps Pin on the bar (main's Pin-inline design).
-    const source = new MockDataSource(`test-${Math.random()}`);
-    renderReader(source);
-    expect(await screen.findByTestId('reader-pin')).toBeInTheDocument();
-    expect(screen.queryByTestId('reader-comments')).not.toBeInTheDocument();
   });
 
   it('opens comments with the "c" keyboard shortcut', async () => {

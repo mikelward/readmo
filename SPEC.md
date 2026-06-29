@@ -1686,12 +1686,14 @@ last lines of text. Left→right:
 
 **Open original** (primary; icon-only with a soft accent-tinted fill — the
 tooltip and aria-label carry the name; marks Opened, fades to neutral once
-opened) → **Comments** (💬, conditional — see below) → **Pin/Unpin** (📌) →
-**Done** (✓) → **More ⋮**. On wide viewports (≥960px)
+opened) → **Comments** (💬, conditional — see below) → **Done** (✓) →
+**More ⋮**. On wide viewports (≥960px)
 **Share** and **Favorite** (♥) surface inline between the conditional Comments
-slot and Pin (in that order — Share sits next to Open original / Comments);
-below 960px they live in the overflow. Done sits second from the right,
-immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
+slot and Done (in that order — Share sits next to Open original / Comments);
+below 960px they live in the overflow. **Pin/Unpin** (📌) is **not** an inline
+bar action — it lives in the ⋮ overflow menu on every viewport (it leads the
+menu). Done sits second from the right, immediately left of the overflow ⋮. (No
+Upvote — RSS has no votes.)
 
 - **Comments** (chat-bubble icon) is shown **only when the item has a
   discussion destination**, and is a **deep link out** to that discussion — not
@@ -1714,10 +1716,9 @@ immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
     body doesn't sprout a (mislabeled) newshacker button.
 
   The button is absent — not a fourth always-present action — when there's no
-  discussion to open. On a **narrow** viewport, where a fifth 44px action would
-  break the ≥320px single-row invariant, the Comments button takes the slot and
-  **Pin moves into the ⋮ overflow menu** (like Share/Favorite already do on
-  narrow); with no Comments button — or on a wide viewport — Pin stays inline.
+  discussion to open. Keeping the bar within the ≥320px single-row budget is why
+  **Pin is not an inline action** (it lives in the ⋮ menu): even with Comments
+  present, the inline cluster stays at Open original → Comments → Done → ⋮.
 
 - **Feed name** sits immediately right of the leading button (Back on the top
   bar, Back to top on the bottom bar), linking to `/feed/:feedId`. This is the
@@ -1731,9 +1732,10 @@ immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
 - **Done** also unpins and **navigates back** (the "I'm finished, move on"
   gesture); **Unmark done** does not navigate. Same as newshacker.
 - Bottom bar swaps the primary slot to **Back to top** (neutral, stretched) so
-  Pin/Done/⋮ land at the same x-position — handy right where you finish reading,
+  Done/⋮ land at the same x-position — handy right where you finish reading,
   since this bar is the relative footer at the article's end.
-- **More ⋮** overflow: Favorite/Share (when not inline), **Open feed**, **Copy
+- **More ⋮** overflow: **Pin/Unpin** (always — it leads the menu), Favorite/Share
+  (when not inline), **Open feed**, **Copy
   link**, **Mute feed**. This is the **shared `ItemRowMenu`** component (the same
   one the feed list rows use, and the mirror of newshacker's thread ⋮) — lifted
   to the reader page so the top and bottom bars drive one instance. Anchored
