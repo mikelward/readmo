@@ -1507,8 +1507,11 @@ resolved on each fetch in order:
 3. else the site origin's **`/favicon.ico`** guess.
 
 Every candidate (advertised or HTML-declared) is scheme-checked to http(s) and
-rejected if it looks tokenized (embedded credentials / `?token=…` / high-entropy
-path), failing closed to the next step. It's decorative (`alt=""`) and the
+rejected if it looks tokenized — embedded credentials, a high-entropy path
+segment, or a secret-shaped query *value* — failing closed to the next step.
+Benign query strings are kept, though: publishers' advertised icons routinely
+carry image-resize params (`…/icon.png?w=150&h=150&crop=1`), so rejecting every
+query would throw away real icons (e.g. Vox, MIT Technology Review). It's decorative (`alt=""`) and the
 `<img>` hides itself on load error, so a `/favicon.ico` guess that 404s leaves
 no broken glyph. The URL is display-safe metadata (like `title`/`site_url`), so
 `feeds_public` exposes it; the client loads it directly (not via the image

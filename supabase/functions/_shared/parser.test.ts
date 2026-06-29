@@ -347,13 +347,25 @@ describe('parseFeed — favicon', () => {
     );
   });
 
-  it('rejects a tokenized advertised icon (query/credentials) and derives instead', () => {
-    // A private feed's advertised icon carrying a secret must not be stored or
-    // exposed via feeds_public; fall back to the credential-free /favicon.ico.
+  it('keeps an advertised icon with benign resize query params', () => {
+    // Vox / MIT Tech Review etc. advertise CDN icons with ?w=…&h=…&crop=1;
+    // those are not secrets and must be kept, not thrown away for the guess.
+    const raw =
+      '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">' +
+      '<title>T</title><link rel="alternate" href="https://vox.com/"/>' +
+      '<icon>https://cdn.vox-cdn.com/uploads/icon.png?w=150&amp;h=150&amp;crop=1</icon></feed>';
+    expect(parseFeed(raw, 'https://vox.com/feed.xml').faviconUrl).toBe(
+      'https://cdn.vox-cdn.com/uploads/icon.png?w=150&h=150&crop=1',
+    );
+  });
+
+  it('rejects an advertised icon with a secret-shaped query value or credentials', () => {
+    // A private feed's advertised icon carrying a real token must not be stored
+    // or exposed via feeds_public; fall back to the /favicon.ico guess.
     const withQueryToken =
       '<?xml version="1.0"?><rss version="2.0"><channel><title>T</title>' +
       '<link>https://ex.com/</link>' +
-      '<image><url>https://cdn.ex.com/icon.png?token=abc123secret</url></image>' +
+      '<image><url>https://cdn.ex.com/icon.png?token=0123456789abcdef0123456789abcdef</url></image>' +
       '<item><title>i</title><guid>g1</guid></item></channel></rss>';
     expect(parseFeed(withQueryToken, 'https://ex.com/feed.xml').faviconUrl).toBe(
       'https://ex.com/favicon.ico',

@@ -53,6 +53,40 @@ export function looksTokenized(url: string): boolean {
   return false;
 }
 
+/**
+ * Like {@link looksTokenized}, but a benign query string is allowed — only a
+ * query VALUE that itself looks like a high-entropy token is rejected (along
+ * with embedded credentials and tokenized path segments). For favicon URLs:
+ * publishers' advertised icons routinely carry image-resize params
+ * (`…/icon.png?w=150&h=150&crop=1`), which are not secrets, and the favicon is
+ * loaded directly by the browser `<img>` rather than forwarded to a third
+ * party. We still reject a `?token=<random>`-style value so a genuinely
+ * secret-bearing icon URL isn't stored/exposed via `feeds_public`.
+ */
+export function looksTokenizedAllowingQuery(url: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return true; // unparseable → fail closed
+  }
+  if (u.username || u.password) return true; // credentials are always a secret
+  for (const rawSeg of u.pathname.split('/')) {
+    let seg = rawSeg;
+    try {
+      seg = decodeURIComponent(rawSeg);
+    } catch {
+      /* keep the raw segment */
+    }
+    if (seg && segmentLooksTokenized(seg)) return true;
+  }
+  // Query is allowed unless one of its values is itself token-shaped.
+  for (const value of u.searchParams.values()) {
+    if (segmentLooksTokenized(value)) return true;
+  }
+  return false;
+}
+
 /** Long hex run (md5/sha-style) — 20+ hex chars with no break. */
 function isHexBlob(s: string): boolean {
   return s.length >= 20 && /^[0-9a-f]+$/i.test(s);

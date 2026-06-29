@@ -41,9 +41,15 @@ describe('pickIconFromHtml', () => {
     expect(pickIconFromHtml('<head><title>No icon</title></head>', base)).toBeNull();
   });
 
-  it('rejects a tokenized icon href (screened like any favicon)', () => {
-    const html = '<link rel="icon" href="https://cdn.example.com/i.png?token=secret123">';
+  it('rejects an icon href with a secret-shaped query token', () => {
+    const html =
+      '<link rel="icon" href="https://cdn.example.com/i.png?token=0123456789abcdef0123456789abcdef">';
     expect(pickIconFromHtml(html, base)).toBeNull();
+  });
+
+  it('keeps an icon href with benign resize query params', () => {
+    const html = '<link rel="icon" href="https://cdn.example.com/i.png?w=150&h=150&crop=1">';
+    expect(pickIconFromHtml(html, base)).toBe('https://cdn.example.com/i.png?w=150&h=150&crop=1');
   });
 
   it('rejects a non-http(s) icon href', () => {
@@ -62,7 +68,7 @@ describe('pickIconFromHtml', () => {
 
   it('falls back to a valid apple-touch icon when the only standard icon is rejected', () => {
     const html =
-      '<link rel="icon" href="https://cdn.example.com/i.png?token=secret123">' +
+      '<link rel="icon" href="https://cdn.example.com/i.png?token=0123456789abcdef0123456789abcdef">' +
       '<link rel="apple-touch-icon" href="/touch.png">';
     expect(pickIconFromHtml(html, base)).toBe('https://example.com/touch.png');
   });

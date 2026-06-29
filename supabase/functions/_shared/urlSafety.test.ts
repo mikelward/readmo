@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { looksTokenized, redactUrl } from './urlSafety.ts';
+import { looksTokenized, looksTokenizedAllowingQuery, redactUrl } from './urlSafety.ts';
 
 describe('looksTokenized — ordinary article URLs pass (false)', () => {
   it.each([
@@ -32,6 +32,29 @@ describe('looksTokenized — token-bearing URLs are skipped (true)', () => {
     expect(
       looksTokenized('https://example.com/a/9f86d081884c7d659a2feaa0c55ad015-thumb'),
     ).toBe(true);
+  });
+});
+
+describe('looksTokenizedAllowingQuery — benign queries allowed (false)', () => {
+  it.each([
+    'https://cdn.vox-cdn.com/uploads/icon.png?w=150&h=150&crop=1', // image resize params
+    'https://example.com/favicon.png?v=3', // cache-buster
+    'https://example.com/icon.png', // no query
+    'https://example.com/assets/site-logo.svg?width=64',
+  ])('%s', (url) => {
+    expect(looksTokenizedAllowingQuery(url)).toBe(false);
+  });
+});
+
+describe('looksTokenizedAllowingQuery — real secrets still rejected (true)', () => {
+  it.each([
+    'https://cdn.example.com/i.png?token=0123456789abcdef0123456789abcdef', // hex token value
+    'https://cdn.example.com/i.png?sig=' + 'A1b2'.repeat(8), // mixed high-entropy value
+    'https://user:pass@cdn.example.com/i.png', // credentials
+    'https://example.com/s/9f86d081884c7d659a2feaa0c55ad015/icon.png', // tokenized path segment
+    'not a url',
+  ])('%s', (url) => {
+    expect(looksTokenizedAllowingQuery(url)).toBe(true);
   });
 });
 

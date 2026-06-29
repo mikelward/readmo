@@ -16,7 +16,7 @@
 
 import { XMLParser } from 'fast-xml-parser';
 import { decodeHTML } from 'entities';
-import { looksTokenized } from './urlSafety.ts';
+import { looksTokenizedAllowingQuery } from './urlSafety.ts';
 
 /** A single normalized feed entry. All string fields are trimmed; absent
  * optional fields are `null` rather than `undefined` so callers (and the DB
@@ -155,13 +155,15 @@ const MAX_FAVICON_URL_LEN = 2048;
 
 /** Screen a favicon candidate: absolutize against `base`, then require http(s),
  * a bounded length, and that it does NOT look tokenized — embedded credentials,
- * a `?token=…` query, or a high-entropy path segment (the same screen
- * `urlSafety` applies before forwarding URLs to third parties). Returns the
- * clean absolute URL or null. A favicon is STORED in `feeds.favicon_url` and
- * exposed to EVERY subscriber via `feeds_public`, so a private/tokenized feed's
- * advertised (or site-HTML-declared) icon must not leak its secret; failing
- * closed makes the caller fall back to the credential-free derived /favicon.ico.
- * Exported so site-HTML icon discovery (`siteIcon.ts`) screens identically. */
+ * a high-entropy path segment, or a token-shaped query VALUE. Benign query
+ * strings ARE allowed (`looksTokenizedAllowingQuery`): publishers' advertised
+ * icons routinely carry image-resize params (`…/icon.png?w=150&h=150&crop=1`),
+ * which we must not throw away. Returns the clean absolute URL or null. A
+ * favicon is STORED in `feeds.favicon_url` and exposed to EVERY subscriber via
+ * `feeds_public`, so a genuinely secret-bearing icon URL (credentials / random
+ * token) must not leak; failing closed makes the caller fall back to the derived
+ * /favicon.ico. Exported so site-HTML icon discovery (`siteIcon.ts`) screens
+ * identically. */
 export function sanitizeFaviconUrl(
   href: string | null | undefined,
   base: string | null | undefined,
@@ -176,7 +178,7 @@ export function sanitizeFaviconUrl(
     return null;
   }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
-  if (looksTokenized(abs)) return null;
+  if (looksTokenizedAllowingQuery(abs)) return null;
   return abs;
 }
 
