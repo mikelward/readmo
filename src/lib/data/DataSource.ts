@@ -221,6 +221,11 @@ export interface DataSource {
    * Implementations coalesce overlapping calls. The mock no-ops it (its store is
    * the local source of truth — there's no server to reconcile against). */
   resyncState(): Promise<void>;
+  /** Epoch ms of the last successful server `item_state` pull (boot hydration or
+   * a cross-device resync), or null if none has completed this session. Surfaced
+   * on `/debug` as "Last sync". Optional: sources with no server to reconcile
+   * against (the in-memory mock) omit it, and `/debug` then shows it as N/A. */
+  getLastSyncedAt?(): number | null;
 
   // --- OPML -----------------------------------------------------------------
   importOpml(xml: string): Promise<{ added: number; skipped: number }>;

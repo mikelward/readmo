@@ -89,6 +89,12 @@ describe('SupabaseDataSource reads', () => {
     env = setup();
   });
 
+  it('getLastSyncedAt is null until the first server pull, then a timestamp', async () => {
+    expect(env.ds.getLastSyncedAt()).toBeNull();
+    await env.ds.getHomeItems(); // triggers item_state hydration
+    expect(typeof env.ds.getLastSyncedAt()).toBe('number');
+  });
+
   it('getHomeItems: excludes muted feeds, filters Done/Hidden, prepends Pinned (oldest-first)', async () => {
     const page = await env.ds.getHomeItems();
     // i2 pinned (top), then body newest-first: i6 (day 6), i3 (day 3).
