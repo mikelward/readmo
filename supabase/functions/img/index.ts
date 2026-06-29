@@ -12,6 +12,7 @@
 
 // @ts-nocheck — runs under Deno, not node/tsc.
 import { safeFetch, SsrfError } from '../_shared/ssrf.ts';
+import { USER_AGENT } from '../_shared/version.ts';
 import { redactUrl } from '../_shared/urlSafety.ts';
 
 // Only proxy real image bytes — never let the endpoint relay arbitrary content
@@ -39,7 +40,7 @@ Deno.serve(async (req: Request) => {
     const res = await safeFetch(target, {
       timeoutMs: 10_000,
       maxBytes: MAX_IMAGE_BYTES,
-      headers: { Accept: 'image/*', 'User-Agent': 'Readmo/1.0 (+https://readmo.app)' },
+      headers: { Accept: 'image/*', 'User-Agent': USER_AGENT },
     });
     if (res.status >= 400) {
       // Log the upstream status so a 502 here is diagnosable. Without this the

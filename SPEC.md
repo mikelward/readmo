@@ -683,8 +683,16 @@ loopback/link-local/private/metadata targets and redirects to them.
   off on `429`/`Retry-After`; exponential backoff + jitter on errors
   (`error_count`), capped ~6h; circuit-breaker parks a feed after N failures
   (surfaced as a feed-health badge). Healthy interval ~15–30 min.
-- **Send a descriptive, contactable `User-Agent` on every fetch** (e.g.
-  `Readmo/1.0 (+https://readmo.app)`). Some publishers — **Reddit notably** —
+- **Send a descriptive, contactable `User-Agent` on every fetch**, versioned
+  with the build number — `Readmo/1.0.<build> (+https://readmo.app)`, where
+  `<build>` is the commit count (`git rev-list --count HEAD`, the same number
+  the client stamps as `x-readmo-build`). It's injected at deploy time as the
+  `READMO_BUILD` secret (set by `make deploy`) and read by
+  `supabase/functions/_shared/version.ts`; all server fetchers (poller, refresh,
+  image proxy, and the SSRF helper's default that discovery + full-text use)
+  share it. When the secret is unset the UA falls back to the unversioned
+  `Readmo/1.0 (+https://readmo.app)`, so an old or pre-secret deploy still sends
+  a valid UA. Some publishers — **Reddit notably** —
   return `429`/`403` to generic or empty UAs, and Reddit rate-limits by IP.
   Because all users share the poller's IP, a popular Reddit feed could hit
   Reddit's per-IP ceiling for *everyone* at once; mitigate by respecting

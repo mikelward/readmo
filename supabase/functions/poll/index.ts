@@ -19,9 +19,8 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { parseFeedBody } from '../_shared/parser.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
+import { USER_AGENT } from '../_shared/version.ts';
 import { redactUrl } from '../_shared/urlSafety.ts';
-
-const USER_AGENT = 'Readmo/1.0 (+https://readmo.app)';
 const BATCH_SIZE = 25;
 // Adaptive interval bounds (seconds).
 const MIN_INTERVAL_S = 15 * 60; //  15 min — politeness floor for healthy feeds

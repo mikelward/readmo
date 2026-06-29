@@ -25,8 +25,9 @@ import robotsParser from 'robots-parser';
 import { safeFetch } from './ssrf.ts';
 
 /** Our crawler's product token, matched (case-insensitively) against the
- * `User-agent:` lines in robots.txt. Mirrors the `User-Agent` request header
- * the fetchers send (`Readmo/1.0 (+https://readmo.app)`). */
+ * `User-agent:` lines in robots.txt. This is the bare product name — the
+ * request UA carries a version (`Readmo/1.0.<build> …`, see version.ts) but
+ * robots.txt matches on the product token, which stays `Readmo`. */
 export const ROBOTS_USER_AGENT = 'Readmo';
 
 /** Minimal shape of a fetch result `robotsAllows` needs — `safeFetch` satisfies

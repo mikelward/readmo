@@ -16,8 +16,8 @@ import { safeFetch } from '../_shared/ssrf.ts';
 import { corsHeaders, preflight } from '../_shared/cors.ts';
 import { RateLimiter, rateLimitKey } from '../_shared/rateLimit.ts';
 import { CLIENT_BUILD_HEADER, checkClientBuild } from '../_shared/clientVersion.ts';
+import { USER_AGENT } from '../_shared/version.ts';
 
-const USER_AGENT = 'Readmo/1.0 (+https://readmo.app)';
 // Debounce window: skip a forced refetch if the feed was fetched within this.
 const DEBOUNCE_S = 60;
 

@@ -24,6 +24,8 @@
 // scheme/host shape; `safeFetch` wires in a (possibly injected) resolver and
 // fetch so tests can simulate redirects to metadata without real I/O.
 
+import { USER_AGENT } from './version.ts';
+
 export interface SafeFetchOptions {
   method?: string;
   headers?: Record<string, string>;
@@ -293,7 +295,7 @@ export async function safeFetch(
   delete baseHeaders.Authorization;
   delete baseHeaders.Cookie;
   if (!hasHeader(baseHeaders, 'user-agent')) {
-    baseHeaders['User-Agent'] = 'Readmo/1.0 (+https://readmo.app)';
+    baseHeaders['User-Agent'] = USER_AGENT;
   }
 
   let current = url;

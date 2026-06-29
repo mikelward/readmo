@@ -131,6 +131,7 @@ origins and `http://localhost:5173/**` for local dev).
 | `SUPABASE_SERVICE_ROLE_KEY` | **server only** (Edge Functions / poller) | **Yes — never ship to client** |
 | Google / Discord client secrets | Supabase Auth config | **Yes — server only** |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_TLS` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM` / `SIGNUP_NOTIFY_TO` | **server only** (`notify-signup` function) — `supabase secrets set …`; see §9 | **`SMTP_PASSWORD` yes — never ship to client** |
+| `READMO_BUILD` | **server only** (Edge Functions) — set automatically by `make deploy` to the commit count; versions the outbound `User-Agent` (`_shared/version.ts`). Unset → UA falls back to unversioned. | No (just a build number) |
 
 **Client build** (Vite) gets only `SUPABASE_URL` + `SUPABASE_ANON_KEY` as
 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` — copy `.env.example` to
@@ -336,7 +337,9 @@ keeps one bad feed from affecting others; a parked feed surfaces as a
 feed-health badge with "retry now".
 
 > **Reddit note:** send the descriptive `User-Agent`
-> (`Readmo/1.0 (+https://readmo.app)`, already wired) and respect
+> (`Readmo/1.0.<build> (+https://readmo.app)`, already wired; `<build>` is the
+> commit count from the `READMO_BUILD` secret, unversioned fallback when unset)
+> and respect
 > `Retry-After`; Reddit rate-limits by IP and all users share the poller's IP.
 > Identical Reddit listings de-dup to one shared `feeds` row.
 
