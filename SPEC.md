@@ -1952,6 +1952,8 @@ Reader page (`/item/:id`):
 |-----|--------|
 | `j` / `k` | Scroll to next/previous section heading (or page top/bottom) |
 | `o` | Open original · `c` Comments (when present) · `p` Pin · `f` Favorite · `d` Done (navigates back) |
+| `u` | Go up to this item's feed (`/feed/:id`). RSS articles have no comment tree, so the feed is the "parent" — the analog of newshacker's `u` (parent comment). |
+| `b` | Go back to the previous page (`navigate(-1)`), the same action as the Back button. |
 | `?` / `Esc` | Help / close |
 
 Same bail-out conditions as newshacker (skip in inputs, open dialog/menu,

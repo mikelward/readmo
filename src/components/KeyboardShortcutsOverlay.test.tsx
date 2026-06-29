@@ -92,6 +92,8 @@ describe('<KeyboardShortcutsOverlay>', () => {
     expect(overlay).toHaveTextContent(/Next section/);
     expect(overlay).toHaveTextContent(/Favorite or unfavorite/);
     expect(overlay).toHaveTextContent(/Mark the item done/);
+    expect(overlay).toHaveTextContent(/Go up to this item’s feed/);
+    expect(overlay).toHaveTextContent(/Go back to the previous page/);
     // List-only bindings should not appear here.
     expect(overlay).not.toHaveTextContent(/Next item/);
     expect(overlay).not.toHaveTextContent(/row actions menu/);

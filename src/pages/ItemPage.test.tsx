@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useState, type ReactNode } from 'react';
-import { Route, Routes } from 'react-router-dom';
-import { act, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { IsRestoringProvider, QueryClient } from '@tanstack/react-query';
+import { IsRestoringProvider, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderWithProviders } from '../test/renderWithProviders';
+import { ToastProvider } from '../components/Toast';
+import { FeedBarProvider } from '../components/FeedBarContext';
+import { DataSourceProvider } from '../lib/data/context';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import { _resetNetworkStatusForTests, reportFetchFailure } from '../lib/networkStatus';
 import type { Feed, FeedItem, Item, ItemId } from '../lib/types';
@@ -21,6 +24,44 @@ function renderReader(
       <Route path="/item/:id" element={<ItemPage />} />
     </Routes>,
     { source, queryClient, route: `/item/${id}` },
+  );
+}
+
+// Surfaces the current path so the u / b navigation shortcuts can be asserted.
+function LocationProbe() {
+  const loc = useLocation();
+  return <div data-testid="location-pathname">{loc.pathname}</div>;
+}
+
+// Renders the reader inside a multi-entry MemoryRouter so `b` (navigate(-1))
+// has somewhere to pop back to, and `u` has a feed route to land on.
+function renderReaderWithHistory(
+  source: MockDataSource,
+  { entries }: { entries: string[] },
+) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <DataSourceProvider source={source}>
+        <ToastProvider>
+          <FeedBarProvider>
+            <MemoryRouter
+              initialEntries={entries}
+              initialIndex={entries.length - 1}
+            >
+              <LocationProbe />
+              <Routes>
+                <Route path="/item/:id" element={<ItemPage />} />
+                <Route path="/feed/:id" element={<div data-testid="route-feed" />} />
+                <Route path="*" element={<div data-testid="route-other" />} />
+              </Routes>
+            </MemoryRouter>
+          </FeedBarProvider>
+        </ToastProvider>
+      </DataSourceProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -367,6 +408,36 @@ describe('ItemPage comments button', () => {
       'noopener,noreferrer',
     );
     openSpy.mockRestore();
+  });
+});
+
+describe('ItemPage navigation shortcuts', () => {
+  it('b pops back to the previous page', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReaderWithHistory(source, { entries: ['/', '/item/item-1'] });
+    await screen.findByTestId('open-original');
+
+    await user.keyboard('b');
+    await waitFor(() => {
+      expect(screen.getByTestId('location-pathname')).toHaveTextContent('/');
+    });
+  });
+
+  it('u goes up to this item’s feed', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    // item-1 belongs to the Verge feed (feed-verge).
+    renderReaderWithHistory(source, { entries: ['/item/item-1'] });
+    await screen.findByTestId('open-original');
+
+    await user.keyboard('u');
+    await waitFor(() => {
+      expect(screen.getByTestId('location-pathname')).toHaveTextContent(
+        '/feed/feed-verge',
+      );
+    });
+    expect(screen.getByTestId('route-feed')).toBeInTheDocument();
   });
 });
 
