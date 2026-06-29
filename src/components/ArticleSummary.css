@@ -1,13 +1,12 @@
 /* AI summary card — top of the reader, below the toolbar, above the article.
    The reader surface is the white card background, so the summary uses the page
-   surface plus a left accent rule to read as a distinct "summary" affordance
+   surface plus a hairline border to read as a distinct "summary" affordance
    without shouting. Horizontal margin matches the reader's 16px gutter. */
 .article-summary {
   margin: 12px 16px 4px;
   padding: 12px 14px;
   background: var(--rm-bg);
   border: 1px solid var(--rm-border);
-  border-left: 3px solid var(--rm-accent);
   border-radius: var(--rm-radius);
 }
 
