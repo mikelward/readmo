@@ -269,6 +269,30 @@ export function isIpLiteral(host: string): boolean {
 // safeFetch
 // ---------------------------------------------------------------------------
 
+/** The build number this function bundle was deployed at — the SAME monotonic
+ * "commit count" scheme the client stamps as `x-readmo-build`
+ * (`buildInfo.commitCount`; vite.config.ts). Injected at deploy time via the
+ * `READMO_BUILD` secret (`make deploy` sets it from `git rev-list --count HEAD`);
+ * `0` when unset (local serve / unit tests), matching the client's own
+ * `commitCount=0` fallback on a shallow/no-git checkout. Read through a
+ * node-safe guard so this module still imports under vitest (where `Deno` is
+ * undefined). */
+export function readmoBuildNumber(): string {
+  const D = (globalThis as {
+    Deno?: { env?: { get(k: string): string | undefined } };
+  }).Deno;
+  const raw = D?.env?.get?.('READMO_BUILD')?.trim();
+  return raw && /^\d+$/.test(raw) ? raw : '0';
+}
+
+/** Our outbound User-Agent for first-party fetches (poller, discover, image
+ * proxy, reading-mode extraction). Versioned with the SAME build-number scheme
+ * as the client so a publisher sees a consistent, identifiable `Readmo/<build>`
+ * string instead of a static `1.0`. */
+export function readmoUserAgent(): string {
+  return `Readmo/${readmoBuildNumber()} (+https://readmo.app)`;
+}
+
 /**
  * Fetch a URL with full SSRF hardening: scheme + resolved-IP checks on the
  * initial URL and on every redirect hop, a timeout, and a body size cap.
@@ -293,7 +317,7 @@ export async function safeFetch(
   delete baseHeaders.Authorization;
   delete baseHeaders.Cookie;
   if (!hasHeader(baseHeaders, 'user-agent')) {
-    baseHeaders['User-Agent'] = 'Readmo/1.0 (+https://readmo.app)';
+    baseHeaders['User-Agent'] = readmoUserAgent();
   }
 
   let current = url;

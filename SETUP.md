@@ -165,6 +165,12 @@ text; unset → it falls back to summarizing the item's stored body:
 ```
 supabase secrets set GOOGLE_API_KEY=…
 ```
+
+`make deploy` also sets **`READMO_BUILD`** (= `git rev-list --count HEAD`) — the
+build number the Edge Functions stamp into their outbound `User-Agent`
+(`Readmo/<build> (+https://readmo.app)`), the same commit-count scheme the client
+uses (`x-readmo-build`). You don't set it by hand; `make deploy` / `make
+set-build` do. Unset → the functions send `Readmo/0`.
 The service-role key is needed by hand in only two places: the **cron poller**
 (§7, passed as a bearer token) and **local** `supabase functions serve`
 (off-platform, so put the three vars in a local, untracked `.env`; see

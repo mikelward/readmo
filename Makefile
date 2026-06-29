@@ -1,6 +1,6 @@
 IMPORT_MAP := supabase/functions/import_map.json
 
-.PHONY: deploy deploy-discover deploy-refresh deploy-poll deploy-img deploy-fulltext deploy-summary deploy-notify-signup deploy-db-perf migrate check-link
+.PHONY: deploy deploy-discover deploy-refresh deploy-poll deploy-img deploy-fulltext deploy-summary deploy-notify-signup deploy-db-perf migrate set-build check-link
 
 # Fail fast unless we're sitting in the linked project. Without a local
 # supabase/config.toml the CLI silently walks up the tree and resolves a
@@ -17,8 +17,19 @@ check-link:
 migrate: check-link
 	supabase db push
 
-## Deploy all Edge Functions (run migrate first to apply any schema changes)
-deploy: migrate deploy-discover deploy-refresh deploy-poll deploy-img deploy-fulltext deploy-summary deploy-notify-signup deploy-db-perf
+## Set the build-number secret the Edge Functions stamp into their outbound
+## User-Agent (`Readmo/<build>`), using the SAME commit-count scheme the client
+## uses (buildInfo.commitCount / x-readmo-build). Unshallow first if needed so
+## the count is accurate (the client's vite.config.ts does the same). Read by
+## `readmoBuildNumber()` in _shared/ssrf.ts; `0` until this is set.
+set-build: check-link
+	@if [ "$$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then \
+	  git fetch --unshallow >/dev/null 2>&1 || true; fi
+	supabase secrets set READMO_BUILD=$$(git rev-list --count HEAD)
+
+## Deploy all Edge Functions (run migrate first to apply any schema changes,
+## and stamp the current build number into the functions' outbound User-Agent)
+deploy: migrate set-build deploy-discover deploy-refresh deploy-poll deploy-img deploy-fulltext deploy-summary deploy-notify-signup deploy-db-perf
 
 deploy-discover: check-link
 	supabase functions deploy discover --import-map $(IMPORT_MAP)
