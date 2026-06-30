@@ -1086,6 +1086,134 @@ describe('ItemList', () => {
     await waitFor(() => expect(body.style.minHeight).toBe(''));
   });
 
+  it('holds the scroll offset when releasing the lock would shrink the document below it, so the group headers do not slide down', async () => {
+    // Regression ("the group header moves when you sweep a group"): a Sweep
+    // removes rows for good, so the post-sweep document is permanently shorter.
+    // If the reader swept a feed near the bottom of the loaded list, simply
+    // clearing the min-height lock lets the browser clamp window.scrollY toward
+    // the top — sliding every still-pinned group header down. The release now
+    // keeps just enough min-height to hold the current scroll (restoring the
+    // clamp) and defers the final drop to the reader's next scroll.
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ groupByFeed: true, limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`gp-bottom-sweep-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+
+    const body = screen.getByTestId('item-list-body');
+    // jsdom has no layout, so model the geometry: the reader has scrolled near
+    // the bottom (scrollY 600), and once the lock is cleared the document's
+    // natural max scroll is only 100 (scrollHeight 500 − innerHeight 400) — a
+    // 500px deficit the release must back-fill instead of letting it clamp.
+    Object.defineProperty(body, 'offsetHeight', { value: 300, configurable: true });
+    Object.defineProperty(window, 'innerHeight', { value: 400, configurable: true });
+    Object.defineProperty(window, 'scrollY', { value: 600, configurable: true, writable: true });
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      value: 500,
+      configurable: true,
+    });
+    // jsdom doesn't implement scrollTo; stub it so the release's restore call
+    // (a no-op here, since nothing clamped) doesn't throw.
+    Object.defineProperty(window, 'scrollTo', { value: vi.fn(), configurable: true });
+
+    // Sweep the first feed's section; the post-sweep refetch settles (not held),
+    // so the lock releases via the layout effect.
+    await user.click(screen.getAllByTestId('group-sweep')[0]);
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+
+    // The release held min-height (offsetHeight 300 + 500 deficit) rather than
+    // clearing it, keeping the document tall enough that window.scrollY stays a
+    // valid offset — so the browser never clamps it and the headers don't move.
+    // (In a real browser the clear momentarily clamps scrollY and the release
+    // restores it via scrollTo, before paint; jsdom has no layout so no clamp
+    // occurs to restore — see the Playwright walk-through in the PR.)
+    await waitFor(() => expect(body.style.minHeight).toBe('800px'));
+
+    // The reader scrolls back up to where the natural document can hold the
+    // offset (scrollY 50 ≤ natural max 100): the held slack drops to nothing, so
+    // there's no persistent blank tail.
+    Object.defineProperty(window, 'scrollY', { value: 50, configurable: true, writable: true });
+    act(() => {
+      window.dispatchEvent(new Event('scroll'));
+    });
+    expect(body.style.minHeight).toBe('');
+    // Sanity: the swept section really did shrink the rendered list.
+    expect(container.querySelectorAll('[data-item-id]').length).toBeLessThan(
+      seed.items.length,
+    );
+  });
+
+  it('folds the held offset into a fresh lock when a second in-viewport Done lands before the reader scrolls', async () => {
+    // Codex P2 on #300: after a bottom sweep deferred the release, the slack
+    // min-height is the only thing keeping window.scrollY off the natural (now
+    // shorter) bottom. A second in-viewport Done/Sweep before any scroll takes a
+    // fresh lock via lockBodyHeight — which must NOT clear that slack first, or
+    // the browser clamps the scroll back and re-measures the already-short
+    // document, bringing the header jump back. The fresh lock measures with the
+    // slack still applied so the held offset survives.
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ groupByFeed: true, limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`gp-relock-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+
+    const body = screen.getByTestId('item-list-body');
+    // Model offsetHeight as a real browser would: the larger of the natural
+    // content height and any applied min-height — so a lock that folds in the
+    // slack measures it back rather than collapsing to the natural height.
+    const naturalContent = 300;
+    Object.defineProperty(body, 'offsetHeight', {
+      configurable: true,
+      get: () => Math.max(naturalContent, parseFloat(body.style.minHeight) || 0),
+    });
+    Object.defineProperty(window, 'innerHeight', { value: 400, configurable: true });
+    Object.defineProperty(window, 'scrollY', { value: 600, configurable: true, writable: true });
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      value: 500,
+      configurable: true,
+    });
+    Object.defineProperty(window, 'scrollTo', { value: vi.fn(), configurable: true });
+
+    await user.click(screen.getAllByTestId('group-sweep')[0]);
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+    // Deferred release is active: slack held (offsetHeight 300 + 500 deficit).
+    await waitFor(() => expect(body.style.minHeight).toBe('800px'));
+
+    // A second in-viewport Done on a surviving row, WITHOUT scrolling first.
+    const survivor = container.querySelector('[data-item-id]');
+    expect(survivor).not.toBeNull();
+    act(() => {
+      source.stateStore.hide(survivor!.getAttribute('data-item-id')!);
+    });
+
+    // The fresh lock folded the slack in instead of clearing it: the held
+    // offset survives, so the scroll isn't clamped and the headers don't move.
+    // (Clearing first would have re-measured the natural 300px height.)
+    expect(body.style.minHeight).toBe('800px');
+  });
+
   it('opts out of scroll anchoring when a single row is marked Done, so the scroll position and the rows above hold', async () => {
     // Regression: marking ONE visible article Done (row menu Done, the Done
     // button, the `d` shortcut, or swipe-right — all route through store.hide)

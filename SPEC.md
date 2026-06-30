@@ -1221,6 +1221,18 @@ negligible and off every critical path. See the External services table in
      visible row fixed — and it's **dropped one frame after the swept rows leave
      the DOM**, not held for the whole post-sweep refetch like the height lock,
      so an auto-hide triggered by scrolling mid-refetch still gets anchoring.
+     **Releasing the height lock can't shrink the document under the scroll
+     either.** A Sweep removes rows for good, so once the refetch returns the
+     survivors the document is *permanently* shorter — and if the reader swept a
+     feed near the bottom of the loaded list, the offset they're holding now sits
+     past the natural bottom. Clearing the lock there would let the browser clamp
+     `scrollY` toward the top and slide every still-pinned group header down (the
+     "group header moves when you sweep a group" jump). So the release keeps just
+     enough `min-height` to hold the current scroll (restoring the momentary
+     clamp before paint) and **defers the final drop to the reader's next
+     scroll** — the held slack shrinks in lockstep as they scroll up and clears
+     the instant the natural document can hold the offset, so the headers never
+     move and no blank tail persists.
      **Marking a single article Done** (the row's Done action, the `d`
      shortcut, or a swipe-right — a Sweep of one) takes the same anchor opt-out:
      it removes one row the reader can currently see, so without it the browser
