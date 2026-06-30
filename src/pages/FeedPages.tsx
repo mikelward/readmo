@@ -208,6 +208,19 @@ export function FeedPage() {
           ) : null}
           {feed?.title ?? 'Feed'}
         </h1>
+        {/* Pencil to the feed-management page, where this feed can be renamed,
+            muted, or unsubscribed. Sits immediately after the title; any parked
+            badge floats to the far right past it. The `feed` query param tells
+            the Feeds page which row to scroll to and briefly highlight. */}
+        <Link
+          to={`/feeds?feed=${encodeURIComponent(feedId)}`}
+          className="page-header__edit"
+          aria-label="Feed settings"
+          title="Feed settings"
+          data-testid="feed-settings-link"
+        >
+          <Edit width={20} height={20} />
+        </Link>
         {feed?.parked ? (
           <button
             type="button"
@@ -219,19 +232,6 @@ export function FeedPage() {
             Feed has errors · Retry now
           </button>
         ) : null}
-        {/* Pencil to the feed-management page, where this feed can be renamed,
-            muted, or unsubscribed. Pushed to the right of the title (and any
-            parked badge) by its margin-left:auto. The `feed` query param tells
-            the Feeds page which row to scroll to and briefly highlight. */}
-        <Link
-          to={`/feeds?feed=${encodeURIComponent(feedId)}`}
-          className="page-header__edit"
-          aria-label="Feed settings"
-          title="Feed settings"
-          data-testid="feed-settings-link"
-        >
-          <Edit width={20} height={20} />
-        </Link>
       </div>
       {/* Single feed: sort order applies; grouping-by-feed is a no-op (one
           feed), so no section headers. */}
