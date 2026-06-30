@@ -174,4 +174,20 @@ describe('measureStickyBottomInset', () => {
     makeStickyEl('list-toolbar list-toolbar--bottom', 767.6); // top = 719.6
     expect(measureStickyBottomInset()).toBe(Math.floor(768 - 719.6));
   });
+
+  it('clamps the intrusion to the toolbar height when it floats mid-viewport mid-reflow', () => {
+    // Regression: a reflow that briefly shrinks the content below the viewport
+    // height (toggling group-by-feed, a "More" page, the initial paint, or
+    // *pinning rows* — which lifts them out of a feed section and momentarily
+    // shrinks it) drops the `bottom: 0` toolbar into normal flow mid-screen. Its
+    // `top` jumps up, so `innerHeight - top` balloons far past the toolbar's real
+    // 48px height. The raw intrusion (768 - 300 = 468) would shrink the sweep
+    // root so far that rows the reader can plainly see count as hidden — the
+    // feed's broom grays out and the group Sweep leaves an unpinned row behind.
+    // Clamping to the toolbar height keeps the inset truthful through the
+    // transient.
+    setInnerHeight(768);
+    makeStickyEl('list-toolbar list-toolbar--bottom', 348); // top = 300, height 48
+    expect(measureStickyBottomInset()).toBe(48);
+  });
 });

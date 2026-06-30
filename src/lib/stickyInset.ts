@@ -81,10 +81,24 @@ export function measureTopChromeHeight(): number {
 // toolbar below the 0.999 ratio cutoff — Sweep then grays out on a row the
 // reader can plainly see. Floor never over-shrinks, so the flush row stays
 // sweepable.
+//
+// Clamp the intrusion to the toolbar's own height: a `bottom: 0` sticky strip
+// can occlude at most its height. During a reflow that briefly makes the content
+// shorter than the viewport — toggling group-by-feed, a "More" page, the initial
+// paint, or *pinning rows* (which lifts them out of a feed section and momentarily
+// shrinks it) — the toolbar drops into normal flow mid-screen, so `rect.top` jumps
+// up and `innerHeight - rect.top` balloons far past the toolbar. That oversized
+// inset shrinks the sweep observer's root so rows the reader can plainly see count
+// as hidden: their feed's header broom grays out and a group Sweep skips them,
+// leaving an unpinned row behind, until an unrelated scroll re-measures. The
+// toolbar never covers more than its height, so capping there keeps the inset
+// truthful through the transient regardless of when it's sampled (the
+// `useStickyInset` re-measure observers are then just belt-and-suspenders).
 export function measureStickyBottomInset(): number {
   if (typeof document === 'undefined' || typeof window === 'undefined') return 0;
   const el = document.querySelector('.list-toolbar--bottom');
   if (!el) return 0;
   const rect = el.getBoundingClientRect();
-  return Math.max(0, Math.floor(window.innerHeight - rect.top));
+  const intrusion = window.innerHeight - rect.top;
+  return Math.max(0, Math.min(Math.floor(intrusion), Math.floor(rect.height)));
 }
