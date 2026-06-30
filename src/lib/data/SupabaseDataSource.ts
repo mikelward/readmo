@@ -283,36 +283,18 @@ export class SupabaseDataSource implements DataSource {
   // entry — to re-pull server truth, so the re-hydrate's pending overlay no longer
   // preserves the stale optimistic value the in-flight write would have kept.
   private lwwLossPending = false;
-  /** When an item_state read is in flight, the map a concurrent write's
-   * exclusivity-CLOSED diff is recorded into (keyed by id), so a write that is
-   * enqueued AND delivered entirely within the read window — invisible to both
-   * the `before` and post-read outbox snapshots — is still overlaid onto the
-   * (possibly pre-write) server rows. Capturing the *closed* diff the sink sends
-   * (not the mutation listener's natural diff) is what keeps a pin made over a
-   * stale mirror from leaving pinned+done behind: the closed diff carries the
-   * cleared done/hidden, so the overlay reasserts them. Null when no read is in
-   * flight; hydrations are serialized so at most one capture is ever active. */
-  private hydrationWriteCapture: Map<ItemId, ChangedFields> | null = null;
-  /** Items whose write was PERMANENTLY REJECTED (lost visibility) while the
-   * in-flight read awaited: the whole write never landed, so every captured field
-   * is pruned and the item falls back to the just-read server row. Null when no
-   * read is in flight (paired with the capture). */
-  private hydrationRejectedIds: Set<ItemId> | null = null;
-  /** Per-item, per-field `at` of the LATEST write captured during the in-flight
-   * read (set in the sink). Paired with {@link hydrationLostFields} so the prune
-   * only drops a field when its *latest* captured write is the one that lost — a
-   * later winning write to the same field (lose → toggle → win within one read)
-   * stamps a newer `at` here, so its value is kept. Null when no read is in
-   * flight. */
-  private hydrationCaptureAt: Map<ItemId, Map<ItemStateField, number>> | null = null;
-  /** Per-item, per-field `at` of a write that LOST last-write-wins while the
-   * in-flight read awaited. `set_item_state` resolves LWW field-by-field, so a
-   * multi-field closed write (e.g. a pin = `pinned:true` + `done:false`) can have
-   * some fields commit and others lose to a newer server value. A field is pruned
-   * from the during-read capture only when this losing `at` still equals the
-   * latest captured `at` ({@link hydrationCaptureAt}) — so won fields, and fields
-   * a later write re-changed, stay overlaid. Null when no read is in flight. */
-  private hydrationLostFields: Map<ItemId, Map<ItemStateField, number>> | null = null;
+  /** Changed FIELDS written by the user WHILE an item_state read is in flight,
+   * unioned per item. Two jobs: (a) protect a brand-new row (no server row yet)
+   * that raced the read from being dropped as "absent"; (b) carry the field set
+   * so a write that enqueues AND drains entirely within the read window — leaving
+   * the outbox, so neither the start nor end pending snapshot has it — can still
+   * be overlaid onto a tied server row (a same-ms `at` the parked snapshot also
+   * holds, which strict-`>` LWW would otherwise resolve to the stale server
+   * value, with the outbox already empty so no loss re-pull corrects it). A
+   * permanent reject removes its id (the write landed nothing and the item is
+   * gone). Null when no read is in flight; hydrations are serialized so at most
+   * one map is ever active. */
+  private hydrationWrittenChanges: Map<ItemId, ChangedFields> | null = null;
   /** Set once any item_state hydration has successfully applied. Lets a read
    * tell "the store has never been populated" (wait for the first hydration so
    * the first paint isn't all default flags) from "we already have last-good
@@ -371,24 +353,23 @@ export class SupabaseDataSource implements DataSource {
           // already matched but lost on the LWW clock (an older replay of the same
           // value), leaves the local store stale — a wrong value, or a stale `*At`
           // that skews the TTL window and library ordering. Either way, re-pull.
-          const lostEntries = (Object.entries(changed) as [ItemStateField, { value: boolean; at: number }][])
-            .filter(([f, c]) => serverRow[f] !== c.value || serverRow[`${f}At`] !== c.at);
-          // Flag it; onDrained re-pulls once the entry is no longer pending. Doing
-          // the re-pull here (while this write is still in flight) would let the
-          // hydrate's pending overlay keep the very stale value we need to drop.
-          if (lostEntries.length > 0) {
+          const lostFields = (Object.entries(changed) as [ItemStateField, { value: boolean; at: number }][])
+            .filter(([f, c]) => serverRow[f] !== c.value || serverRow[`${f}At`] !== c.at)
+            .map(([f]) => f);
+          if (lostFields.length) {
+            // Our write lost LWW on at least one field, so the local store holds a
+            // stale value the server-read may not reflect. Flag a re-pull (onDrained
+            // runs it once the entry is no longer pending) to adopt the winner — its
+            // newer `<f>At` wins the store's per-field LWW hydrate.
             this.lwwLossPending = true;
-            // A read awaiting now must NOT re-overlay the LOST fields — they lost,
-            // so the server row it just read is the truth for them. Record each
-            // losing field with THIS write's `at` (per-field LWW), so the prune
-            // keeps fields that landed AND fields a later write re-changed (a newer
-            // `at` in hydrationCaptureAt won't match this losing `at`).
-            const reverts = this.hydrationLostFields;
-            if (reverts) {
-              let m = reverts.get(id);
-              if (!m) reverts.set(id, (m = new Map()));
-              for (const [f, c] of lostEntries) m.set(f, c.at);
-            }
+            // …and drop the lost fields from any in-flight read's during-read note,
+            // so the parked snapshot's reconcile adopts the server winner for them
+            // instead of the overlay re-applying the stale local value (the overlay
+            // exists only to win ties / null-clock upgrades, never a real loss). A
+            // later write to the same field re-adds it to the note via the sink, so
+            // lose→toggle→win keeps the re-won value.
+            const note = this.hydrationWrittenChanges?.get(id);
+            if (note) for (const f of lostFields) delete note[f];
           }
         }
         // Only a KNOWN-permanent error (lost visibility) drops the write; a
@@ -406,10 +387,10 @@ export class SupabaseDataSource implements DataSource {
       (ids) => {
         // Some writes were permanently rejected (lost visibility) — drop our
         // memoized hydration so the next read re-pulls server truth and corrects
-        // the local store. A read awaiting now must NOT re-overlay these never-
-        // landed writes over what it just read, so prune them (whole-item — a
-        // reject lands nothing) from its capture.
-        for (const id of ids) this.hydrationRejectedIds?.add(id);
+        // the local store. The item is gone, so don't let a read in flight protect
+        // it as a brand-new row: forget any during-read write note for it, letting
+        // hydrate drop the now-absent local row.
+        for (const id of ids) this.hydrationWrittenChanges?.delete(id);
         this.hydration = null;
         void this.ensureHydrated();
       },
@@ -431,23 +412,14 @@ export class SupabaseDataSource implements DataSource {
       },
     );
     this.stateStore.setMutationSink((id, changed, at) => {
-      // `changed` here is the exclusivity-CLOSED diff (a pin carries done=false +
-      // hidden=false, a done/hide carries pinned=false) — the same fields the RPC
-      // gets. If a read is in flight, record it so the hydrate overlay below
-      // reasserts every field this write touched, not just the ones that flipped
-      // in this tab's (possibly stale) mirror.
-      const capture = this.hydrationWriteCapture;
-      if (capture) {
-        capture.set(id, { ...capture.get(id), ...changed });
-        // Stamp each captured field with this write's `at`, so the prune can tell
-        // a field whose latest write LOST from one a newer write re-changed.
-        const atMap = this.hydrationCaptureAt;
-        if (atMap) {
-          let m = atMap.get(id);
-          if (!m) atMap.set(id, (m = new Map()));
-          for (const f of Object.keys(changed) as ItemStateField[]) m.set(f, at);
-        }
-      }
+      // The store already applied this write optimistically with its action time
+      // on every touched field, so the hydrate's per-field LWW preserves it. While
+      // a read is in flight, note the write's changed fields (unioned) so a write
+      // that also drains before the read returns can still overlay them onto a
+      // tied server row, and so a brand-new row that raced the read isn't dropped
+      // as "absent" (see applyHydration).
+      const note = this.hydrationWrittenChanges;
+      if (note) note.set(id, { ...note.get(id), ...changed });
       this.outbox.enqueue(id, changed, at);
     });
     // Kick off item_state hydration at boot so the library routes (/pinned,
@@ -571,34 +543,25 @@ export class SupabaseDataSource implements DataSource {
   /** One serialized hydration: read item_state live and reconcile it into the
    * store. Only called via {@link runHydration}, so reads never overlap. */
   private async applyHydration(): Promise<void> {
-    // Snapshot pending writes BEFORE the read: a write that's in flight at boot
-    // (flush + hydration start together) may resolve and clear the outbox while
-    // this select is awaiting, which would otherwise let the just-read pre-write
-    // server row look authoritative and overwrite the optimistic state.
-    const before = this.outbox.pendingChanges();
-    // Also record every user write that lands WHILE this read is in flight.
-    // A write can be enqueued AND delivered (clearing the outbox) entirely within
-    // the read window, so it is absent from BOTH `before` and the post-read
-    // pending snapshot below — yet a read issued before that write committed
-    // carries a pre-write server snapshot. Without this, hydrate would treat the
-    // pre-write row as authoritative and revert the just-made change: the
-    // canonical case is unpin-then-sweep landing during a boot/resync read, which
-    // resurfaced the item still pinned. The capture taps the sink, so it records
-    // the EXCLUSIVITY-CLOSED diff actually sent to the server (a pin carries
-    // done=false + hidden=false), not the mutation listener's natural diff — that
-    // way a pin made over a stale mirror can't leave pinned+done after the read.
-    const duringRead = new Map<ItemId, ChangedFields>();
-    const captureAt = new Map<ItemId, Map<ItemStateField, number>>();
-    const rejected = new Set<ItemId>();
-    const lostFields = new Map<ItemId, Map<ItemStateField, number>>();
-    const prevCapture = this.hydrationWriteCapture;
-    const prevCaptureAt = this.hydrationCaptureAt;
-    const prevRejected = this.hydrationRejectedIds;
-    const prevLostFields = this.hydrationLostFields;
-    this.hydrationWriteCapture = duringRead;
-    this.hydrationCaptureAt = captureAt;
-    this.hydrationRejectedIds = rejected;
-    this.hydrationLostFields = lostFields;
+    // The store hydrate reconciles each field by last-write-wins on its `<f>At`
+    // clock (so a just-made local write with a newer clock survives a pre-write
+    // server row), then overlays the still-pending changed FIELDS — keeping local
+    // for them regardless of the clock compare, which covers ms-`at` ties and
+    // rows upgraded from a client that persisted `null` clocks on cleared false
+    // fields. The pending map's KEYS also gate which server-absent local rows to
+    // keep. Snapshot the outbox pending CHANGES at the read's START so an entry
+    // that resolves and clears mid-read still carries its fields to overlay (its
+    // `at` may tie the parked server row, which strict-`>` LWW would resolve to
+    // the stale server value, and the outbox is empty so no loss re-pull fixes
+    // it)…
+    const startPending = new Map(this.outbox.pendingChanges());
+    // …PLUS every write made WHILE the read is in flight (it may enqueue and drain
+    // — leaving the outbox — entirely within the read window, so it shows in
+    // neither the start nor end pending set, yet it must still overlay its fields
+    // and protect its brand-new row). A permanent reject removes its id (above).
+    const writtenDuringRead = new Map<ItemId, ChangedFields>();
+    const prevWritten = this.hydrationWrittenChanges;
+    this.hydrationWrittenChanges = writtenDuringRead;
     // Append an always-unique `item_id=not.eq.<uuid>` filter (excludes nothing —
     // no row has that id — so every row is still returned). It makes the request
     // URL unique per read, which busts any URL-keyed cache. That matters during a
@@ -639,43 +602,21 @@ export class SupabaseDataSource implements DataSource {
         afterId = page[page.length - 1].item_id;
       }
     } finally {
-      this.hydrationWriteCapture = prevCapture;
-      this.hydrationCaptureAt = prevCaptureAt;
-      this.hydrationRejectedIds = prevRejected;
-      this.hydrationLostFields = prevLostFields;
+      this.hydrationWrittenChanges = prevWritten;
     }
-    // Prune during-read writes that didn't land while the read awaited, so they
-    // fall back to the just-read (correct) server row instead of re-applying a
-    // stale value and pre-empting the failure re-pull. A permanent reject lands
-    // NOTHING → drop the whole item; an LWW loss is per-field → drop only a lost
-    // field, AND only when its losing `at` is still the latest captured `at` for
-    // that field. If a later write re-changed the field during this same read
-    // (lose → toggle → win), the newer capture stamps a different `at`, so the
-    // winning value is kept instead of being reverted to the stale snapshot.
-    for (const id of rejected) duringRead.delete(id);
-    for (const [id, fields] of lostFields) {
-      const ch = duringRead.get(id);
-      if (!ch) continue;
-      const capAt = captureAt.get(id);
-      for (const [f, lostAt] of fields) {
-        if (capAt?.get(f) === lostAt) delete ch[f];
-      }
-      if (Object.keys(ch).length === 0) duringRead.delete(id);
-    }
-    // Union with anything pending now, so an enqueue made DURING the select is
-    // preserved too (newer fields win), PLUS anything the user mutated during the
-    // read that already drained successfully (the unpin-then-sweep-during-a-read
-    // case above). Any single source alone misses one of the races; the union
-    // covers all.
-    const pending = before;
-    for (const [id, ch] of this.outbox.pendingChanges()) {
+    // Build the pending map hydrate uses to (a) overlay still-pending changed
+    // FIELDS and (b) protect server-absent local rows. Union the fields across
+    // all three sources — pending at the read's start, written during the read,
+    // and still queued now — so a write that drained mid-read still overlays its
+    // fields onto a tied server row (an LWW loss is instead corrected by the
+    // lwwLossPending re-pull, whose winner carries a newer clock). Each source's
+    // KEYS protect a brand-new row from being dropped as absent.
+    const pending = new Map<ItemId, ChangedFields>();
+    const fold = (id: ItemId, ch: ChangedFields) =>
       pending.set(id, { ...pending.get(id), ...ch });
-    }
-    for (const [id, ch] of duringRead) {
-      pending.set(id, { ...pending.get(id), ...ch });
-    }
-    // Overlay un-synced local writes onto server truth (per field) while
-    // clearing genuinely-stale rows.
+    for (const [id, ch] of startPending) fold(id, ch);
+    for (const [id, ch] of writtenDuringRead) fold(id, ch);
+    for (const [id, ch] of this.outbox.pendingChanges()) fold(id, ch);
     this.stateStore.hydrate(
       rows.map((r) => [r.item_id, mapItemState(r)] as [ItemId, ItemState]),
       pending,

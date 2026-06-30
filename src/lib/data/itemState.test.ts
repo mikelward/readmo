@@ -21,11 +21,23 @@ describe('applyMutation', () => {
     expect(next.favoriteAt).toBe(NOW);
   });
 
-  it('clears the timestamp when a field is turned off', () => {
+  it('stamps the action time when a field is turned off (kept as the last-change clock)', () => {
     const prev = applyMutation(DEFAULT_ITEM_STATE, 'pinned', true, NOW);
     const next = applyMutation(prev, 'pinned', false, NOW + 1);
     expect(next.pinned).toBe(false);
-    expect(next.pinnedAt).toBeNull();
+    // `<f>At` is the field's last-change clock, kept even when false so a later
+    // hydrate can reconcile per-field by last-write-wins against the server.
+    expect(next.pinnedAt).toBe(NOW + 1);
+  });
+
+  it('stamps exclusivity-cleared fields with the same action time', () => {
+    const prev = state({ done: true, doneAt: NOW, hidden: true, hiddenAt: NOW });
+    const next = applyMutation(prev, 'pinned', true, NOW + 5);
+    // Pin clears Done+Hidden; all three carry the pin's `now`, so an LWW merge
+    // keeps them winning together (no stale per-field split).
+    expect(next.pinnedAt).toBe(NOW + 5);
+    expect(next.doneAt).toBe(NOW + 5);
+    expect(next.hiddenAt).toBe(NOW + 5);
   });
 
   it('pinning clears Done and Hidden (exclusivity)', () => {
@@ -380,57 +392,140 @@ describe('ItemStateStore', () => {
     expect(after.hidden).toBe(false);
   });
 
-  describe('hydrate (server reconcile)', () => {
+  describe('hydrate (server reconcile, per-field LWW)', () => {
     const srv = (over: Partial<ItemState>): ItemState => ({
       ...DEFAULT_ITEM_STATE,
       ...over,
     });
 
-    it('takes server truth for non-pending items', () => {
+    it('adopts a server field whose change is NEWER than the local one', () => {
       const store = new ItemStateStore(memoryPersistence());
-      store.set('a', 'pinned', true);
-      // Server says a is done (not pinned); a has no pending write → server wins.
-      store.hydrate([['a', srv({ done: true })]], new Map());
-      expect(store.get('a').pinned).toBe(false);
-      expect(store.get('a').done).toBe(true);
+      store.set('a', 'pinned', true, NOW);
+      // Another device marked a done LATER. The server row is exclusivity-closed
+      // (the done-write stamped pinned=false@NOW+10 too), so per-field LWW adopts
+      // the whole newer action together.
+      const serverDone = applyMutation(DEFAULT_ITEM_STATE, 'done', true, NOW + 10);
+      store.hydrate([['a', serverDone]], new Map(), NOW + 10);
+      // Read at NOW+10 so the TTL'd Done isn't retention-expired against real time.
+      expect(store.get('a', NOW + 10).pinned).toBe(false); // server's done cleared it
+      expect(store.get('a', NOW + 10).done).toBe(true);
     });
 
-    it('drops local-only rows the server omits when not pending', () => {
+    it('keeps a local field whose change is NEWER than the server row', () => {
+      const store = new ItemStateStore(memoryPersistence());
+      // Server shows an older done; the local pin is newer → local wins.
+      store.set('a', 'pinned', true, NOW + 10);
+      store.hydrate([['a', srv({ done: true, doneAt: NOW })]], new Map(), NOW + 10);
+      expect(store.get('a').pinned).toBe(true);
+      expect(store.get('a').done).toBe(false); // pin@NOW+10 cleared done, newer than server
+    });
+
+    it('drops a local-only row the server omits when it is NOT protected', () => {
       const store = new ItemStateStore(memoryPersistence());
       store.set('a', 'pinned', true);
-      store.hydrate([], new Map()); // server has no rows, nothing pending
+      store.hydrate([], new Map()); // server has no rows; a is not protected
       expect(store.get('a')).toEqual(DEFAULT_ITEM_STATE); // cleared
     });
 
-    it('preserves a pending local row the server has not yet got', () => {
+    it('preserves a protected local-only row the server has not yet got', () => {
       const store = new ItemStateStore(memoryPersistence());
-      store.set('a', 'pinned', true); // optimistic, still in flight
-      // a is pending → keep the optimistic pin.
-      store.hydrate([], new Map([['a', { pinned: true }]]));
+      store.set('a', 'pinned', true); // optimistic, write still un-synced
+      store.hydrate([], new Map([['a', {}]])); // a protected → keep the optimistic pin
       expect(store.get('a').pinned).toBe(true);
     });
 
-    it('keeps the optimistic value for a pending item the server also returns', () => {
+    it('keeps a newer local field even when the server also returns the (older) row', () => {
       const store = new ItemStateStore(memoryPersistence());
-      store.set('a', 'pinned', true);
-      // Server still shows the pre-write (unpinned) row, but a is pending.
-      store.hydrate(
-        [['a', srv({ pinned: false })]],
-        new Map([['a', { pinned: true }]]),
-      );
+      store.set('a', 'pinned', true, NOW + 10);
+      // Server still shows the pre-write (unpinned) row, older clock.
+      store.hydrate([['a', srv({ pinned: false, pinnedAt: NOW })]], new Map(), NOW + 10);
       expect(store.get('a').pinned).toBe(true);
     });
 
-    it('adopts an independent server field while keeping the pending one', () => {
+    it('adopts an independent newer server field while keeping the newer local one', () => {
       const store = new ItemStateStore(memoryPersistence());
-      store.set('a', 'pinned', true); // local pending write: pinned
-      // Server hasn't got the pin yet, but another device favorited a.
+      store.set('a', 'pinned', true, NOW); // local pin
+      // Another device favorited a later (favorite is independent of pinned).
       store.hydrate(
-        [['a', srv({ pinned: false, favorite: true })]],
-        new Map([['a', { pinned: true }]]),
+        [['a', srv({ pinned: false, pinnedAt: NOW - 5, favorite: true, favoriteAt: NOW + 10 })]],
+        new Map(),
+        NOW + 10,
       );
-      expect(store.get('a').pinned).toBe(true); // pending field preserved
-      expect(store.get('a').favorite).toBe(true); // independent server field adopted
+      expect(store.get('a').pinned).toBe(true); // local pin newer than server's unpin
+      expect(store.get('a').favorite).toBe(true); // independent newer server field adopted
+    });
+
+    it('keeps an undone dismissal through a hydrate carrying the still-dismissed server row', () => {
+      // Pin, then sweep, then Undo — all before the undo's server write lands. A
+      // focus resync then reads the still-swept server row. The undo restamps the
+      // restored fields to its own clock, so per-field LWW keeps the restore (the
+      // item stays pinned, not done) instead of re-applying the dismissal.
+      const store = new ItemStateStore(memoryPersistence());
+      store.set('a', 'pinned', true, NOW); // pin@NOW
+      store.hideMany(['a'], NOW + 10); // sweep@NOW+10 (done=true, pin cleared)
+      store.undoLast(NOW + 20); // undo@NOW+20 → restore the pin, restamped to NOW+20
+      // The server still shows the swept row (the undo hasn't synced yet).
+      const serverSwept = applyMutation(DEFAULT_ITEM_STATE, 'done', true, NOW + 10);
+      store.hydrate([['a', serverSwept]], new Map([['a', {}]]), NOW + 20);
+      expect(store.get('a', NOW + 20).pinned).toBe(true); // undo's clock beats the sweep
+      expect(store.get('a', NOW + 20).done).toBe(false);
+    });
+
+    it('restamps undo exclusivity-cleared fields so a newer server hidden=true cannot re-clear the pin', () => {
+      // Restoring a pin sends the closed write (hidden:false too). If the restamp
+      // skipped `hidden` because its boolean was already false, a server row with a
+      // newer hidden=true (legacy/stale source) would win LWW, and the hidden→Done
+      // migration would clear the restored pin. Restamping the closed fields keeps
+      // the pin.
+      const store = new ItemStateStore(memoryPersistence());
+      store.set('a', 'pinned', true, NOW);
+      store.hideMany(['a'], NOW + 10); // sweep clears the pin
+      store.undoLast(NOW + 20); // restore the pin; closed fields restamped to NOW+20
+      // A legacy hidden=true server row, newer than the sweep but older than the undo.
+      const serverHidden = applyMutation(DEFAULT_ITEM_STATE, 'hidden', true, NOW + 15);
+      store.hydrate([['a', serverHidden]], new Map([['a', {}]]), NOW + 20);
+      expect(store.get('a', NOW + 20).pinned).toBe(true); // not re-cleared by hidden→Done
+      expect(store.get('a', NOW + 20).hidden).toBe(false);
+      expect(store.get('a', NOW + 20).done).toBe(false);
+    });
+
+    it('overlays a pending field on a clock TIE instead of reverting to the server', () => {
+      // A queued write whose `at` equals the stale server row's clock (same-ms
+      // toggle / reduced-precision timer). Strict-`>` LWW would treat the tie as
+      // server truth and revert the optimistic value; the pending overlay keeps
+      // local, matching the server's own `>=` when the write lands.
+      const store = new ItemStateStore(memoryPersistence());
+      store.set('a', 'pinned', true, NOW); // a prior pin synced at NOW
+      store.set('a', 'pinned', false, NOW); // queued unpin, SAME ms → ties the server clock
+      const serverPinned = state({ pinned: true, pinnedAt: NOW }); // stale pre-unpin row
+      store.hydrate([['a', serverPinned]], new Map([['a', { pinned: false }]]), NOW);
+      expect(store.get('a').pinned).toBe(false); // pending unpin not reverted by the tie
+    });
+
+    it('overlays a pending closed field whose clock persisted null (older-client upgrade)', () => {
+      // An older client persisted the pin's exclusivity-cleared `done` with a null
+      // clock, but the outbox entry carries the real action. A hydrate returning a
+      // sibling server `done=true` would (clocks alone) adopt it AND keep the pin,
+      // leaving an invalid pinned+done row. Overlaying the pending closed fields
+      // keeps local done=false.
+      let saved: Record<string, ItemState> = {
+        a: state({ pinned: true, pinnedAt: NOW }), // doneAt defaults to null (old shape)
+      };
+      const store = new ItemStateStore({
+        load: () => saved,
+        save: (m) => {
+          saved = m;
+        },
+      });
+      const serverDone = applyMutation(DEFAULT_ITEM_STATE, 'done', true, NOW + 10);
+      // The outbox still holds the pin's closed diff for 'a'.
+      store.hydrate(
+        [['a', serverDone]],
+        new Map([['a', { pinned: true, done: false, hidden: false }]]),
+        NOW + 10,
+      );
+      expect(store.get('a', NOW + 10).pinned).toBe(true);
+      expect(store.get('a', NOW + 10).done).toBe(false); // not left pinned+done
     });
   });
 });
