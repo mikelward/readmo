@@ -380,6 +380,16 @@
   flex-direction: column;
 }
 
+/* Flipped variant: when a row sits near the bottom of the viewport, opening
+   the menu downward would run it off-screen, so it's anchored above the
+   trigger instead (placement decided in ReorderableSubscriptions). */
+.settings__sub-menu--above {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 4px;
+}
+
 .settings__sub-menuitem {
   appearance: none;
   border: none;

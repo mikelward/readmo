@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -168,6 +169,45 @@ export function ReorderableSubscriptions({
   // Per-row overflow menu (Rename / Mute / Unsubscribe). Only one open at a
   // time; clicks outside or Escape close it.
   const [menuFor, setMenuFor] = useState<FeedId | null>(null);
+  // The menu drops below its trigger by default, but a row near the bottom of
+  // the viewport would push the menu off-screen. After it opens we measure and
+  // flip it above the trigger when there isn't room below — see the layout
+  // effect below.
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [menuPlacement, setMenuPlacement] = useState<'below' | 'above'>(
+    'below',
+  );
+  useLayoutEffect(() => {
+    if (menuFor === null) {
+      setMenuPlacement('below');
+      return;
+    }
+    const menu = menuRef.current;
+    // The menu lives inside `.settings__sub-actions` (its anchor); measure that
+    // box rather than the trigger so the math doesn't depend on icon padding.
+    const anchor = menu?.parentElement;
+    if (!menu || !anchor || typeof window === 'undefined') return;
+    const pad = 8;
+    const gap = 4; // matches the menu's 4px top/bottom margin
+    const anchorRect = anchor.getBoundingClientRect();
+    // Measured while the menu is still placed below, so its height is its full
+    // natural height regardless of which way we end up flipping it.
+    const menuHeight = menu.getBoundingClientRect().height;
+    // The sticky app header (`.app-header`, z-index above this menu) covers the
+    // top of the viewport, so the usable ceiling for a flipped-up menu is its
+    // bottom edge, not 0. Fall back to the viewport top if it isn't mounted.
+    const header = document.querySelector('.app-header');
+    const ceiling = header ? header.getBoundingClientRect().bottom : 0;
+    const spaceBelow = window.innerHeight - anchorRect.bottom;
+    const spaceAbove = anchorRect.top - ceiling;
+    // Flip up only when it doesn't fit below AND it genuinely fits above (clear
+    // of the header). A bottom overflow is recoverable by scrolling the page;
+    // items hidden under the fixed header are not — so when it fits neither way
+    // we keep it below rather than tucking the first actions under the header.
+    const fitsBelow = spaceBelow >= menuHeight + gap + pad;
+    const fitsAbove = spaceAbove >= menuHeight + gap + pad;
+    setMenuPlacement(!fitsBelow && fitsAbove ? 'above' : 'below');
+  }, [menuFor]);
   // Inline rename. `editing` tracks which row is in edit mode and the current
   // draft value; the input is autofocused on entry. Enter commits, Esc cancels,
   // blur commits. An empty/whitespace-only draft clears the override (null).
@@ -444,7 +484,17 @@ export function ReorderableSubscriptions({
                 <span aria-hidden="true">⋯</span>
               </TooltipButton>
               {menuFor === feed.id ? (
-                <div role="menu" className="settings__sub-menu">
+                <div
+                  role="menu"
+                  ref={menuRef}
+                  className={
+                    'settings__sub-menu' +
+                    (menuPlacement === 'above'
+                      ? ' settings__sub-menu--above'
+                      : '')
+                  }
+                  data-placement={menuPlacement}
+                >
                   <button
                     type="button"
                     role="menuitem"
