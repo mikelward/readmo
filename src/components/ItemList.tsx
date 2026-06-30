@@ -2057,6 +2057,14 @@ export function ItemList({
       // only. Anchoring is deliberately left ON here — auto-hide-on-scroll
       // removes rows above the viewport and needs it to keep the first visible
       // row fixed. Only the sweep path (lockBodyHeight) opts anchoring out.
+      //
+      // Take over any deferred bottom-sweep release the same way lockBodyHeight
+      // does: drop its pending scroll listener (but NOT its held slack — that's
+      // folded into the lock by measuring offsetHeight with it still applied) so
+      // a scroll during this refetch can't run the stale release and clear
+      // min-height while we're still locked, shrinking the document under the
+      // reader.
+      detachHeightRelease();
       el.style.minHeight = `${el.offsetHeight}px`;
       heightLockedRef.current = true;
     } else if (!isRefreshing && heightLockedRef.current) {
@@ -2072,7 +2080,7 @@ export function ItemList({
       }
       heightLockedRef.current = false;
     }
-  }, [isRefreshing, showMissState, releaseBodyHeight]);
+  }, [isRefreshing, showMissState, releaseBodyHeight, detachHeightRelease]);
 
   // Backstop release for the sweep pre-lock. lockBodyHeight() takes the lock
   // synchronously at sweep time and relies on a background refresh to drive the
