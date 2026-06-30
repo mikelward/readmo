@@ -224,6 +224,17 @@ describe('FeedPage (parked-feed retry)', () => {
   });
 });
 
+describe('FeedPage (feed settings link)', () => {
+  it('links the header pencil to the feed-management page', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderFeed(source, 'feed-verge');
+    // The pencil is the route to rename / mute / unsubscribe this feed.
+    const link = await screen.findByTestId('feed-settings-link');
+    expect(link).toHaveAttribute('href', '/feeds');
+    expect(link).toHaveAccessibleName('Feed settings');
+  });
+});
+
 describe('FeedPage (header favicon)', () => {
   it("shows the feed's favicon left of the title", async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
