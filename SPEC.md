@@ -1438,7 +1438,9 @@ negligible and off every critical path. See the External services table in
       within the **3-tap-zone cap** as drag handle (left), a non-interactive
       row body (title + URL), and a right-side **overflow (⋯) button** that
       opens a per-row menu with **Rename / Mute / open mode (Open original /
-      Open on newshacker) / Unsubscribe**. The drag
+      Open on newshacker) / Unsubscribe**. The menu drops below the ⋯ button,
+      but **flips above it** for a row near the bottom of the viewport so the
+      menu is never clipped off-screen. The drag
       handle is both pointer-draggable (mouse + touch) and keyboard-operable
       (focus it, then ArrowUp/ArrowDown), so reordering isn't mouse-only. The
       order persists to `subscriptions.sort` (via `reorderSubscriptions`) and

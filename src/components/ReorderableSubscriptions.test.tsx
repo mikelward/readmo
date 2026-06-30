@@ -127,6 +127,103 @@ describe('ReorderableSubscriptions', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
+  it('opens the overflow menu below its trigger when there is room', () => {
+    setup();
+    // jsdom's default getBoundingClientRect reports a zero-height box well
+    // inside the 768px viewport, so the menu stays below the trigger.
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Alpha' }));
+    expect(screen.getByRole('menu')).toHaveAttribute('data-placement', 'below');
+  });
+
+  // Drive menu placement by faking the geometry the layout effect reads. `rects`
+  // maps a class name to the box getBoundingClientRect should report for any
+  // element carrying it; everything else falls through to the real impl.
+  function withRects(
+    rects: Record<string, Partial<DOMRect>>,
+    run: () => void,
+  ) {
+    const real = HTMLElement.prototype.getBoundingClientRect;
+    const make = (over: Partial<DOMRect>): DOMRect =>
+      ({
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
+        width: 0,
+        height: 0,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+        ...over,
+      }) as DOMRect;
+    const spy = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        for (const [cls, box] of Object.entries(rects)) {
+          if (this.classList.contains(cls)) return make(box);
+        }
+        return real.call(this);
+      });
+    try {
+      run();
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  it('flips the overflow menu above its trigger when the row is near the bottom of the viewport', () => {
+    setup();
+    // Anchor sits at the very bottom of the 768px jsdom viewport (only 18px
+    // below it) while the menu is 200px tall — no room below, plenty above, so
+    // it should flip up.
+    withRects(
+      {
+        'settings__sub-actions': { top: 740, bottom: 750, height: 10 },
+        'settings__sub-menu': { top: 0, bottom: 200, width: 160, height: 200 },
+      },
+      () => {
+        fireEvent.click(
+          screen.getByRole('button', { name: 'Actions for Alpha' }),
+        );
+        expect(screen.getByRole('menu')).toHaveAttribute(
+          'data-placement',
+          'above',
+        );
+      },
+    );
+  });
+
+  it('keeps the menu below when it fits neither way, rather than tucking it under the sticky header', () => {
+    setup();
+    // A sticky app header occupies the top 80px; the trigger is low enough that
+    // the 200px menu overflows below, but flipping up would slide its first
+    // items under that header (it doesn't fit above the header either). The
+    // bottom overflow is page-scrollable, so we keep it below.
+    const header = document.createElement('div');
+    header.className = 'app-header';
+    document.body.appendChild(header);
+    try {
+      withRects(
+        {
+          'app-header': { top: 0, bottom: 80, height: 80 },
+          'settings__sub-actions': { top: 200, bottom: 620, height: 420 },
+          'settings__sub-menu': { top: 0, bottom: 200, width: 160, height: 200 },
+        },
+        () => {
+          fireEvent.click(
+            screen.getByRole('button', { name: 'Actions for Alpha' }),
+          );
+          expect(screen.getByRole('menu')).toHaveAttribute(
+            'data-placement',
+            'below',
+          );
+        },
+      );
+    } finally {
+      header.remove();
+    }
+  });
+
   it('labels each handle for assistive tech and keyboard use', () => {
     setup();
     expect(
