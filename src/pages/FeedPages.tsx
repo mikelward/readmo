@@ -6,6 +6,7 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useItemSort, useGroupByFeed } from '../hooks/useReadingPrefs';
 import { ItemList } from '../components/ItemList';
 import { HomeEmptyCoach } from '../components/HomeEmptyCoach';
+import { faviconNeedsDarkInvert } from '../lib/faviconInvert';
 import { PER_FEED_WINDOW } from '../lib/types';
 import './PageHeader.css';
 
@@ -181,7 +182,31 @@ export function FeedPage() {
   return (
     <>
       <div className="page-header">
-        <h1 className="page-header__title">{feed?.title ?? 'Feed'}</h1>
+        <h1 className="page-header__title">
+          {/* Feed favicon left of the name, matching the reader bars and rows.
+              Decorative (alt=""); hides itself on a load error so a 404'd
+              /favicon.ico guess leaves no broken glyph. */}
+          {feed?.faviconUrl ? (
+            <img
+              className={
+                'page-header__favicon' +
+                (faviconNeedsDarkInvert(feed.faviconUrl)
+                  ? ' favicon--invert-dark'
+                  : '')
+              }
+              src={feed.faviconUrl}
+              alt=""
+              aria-hidden="true"
+              width={20}
+              height={20}
+              data-testid="feed-header-favicon"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+              }}
+            />
+          ) : null}
+          {feed?.title ?? 'Feed'}
+        </h1>
         {feed?.parked ? (
           <button
             type="button"

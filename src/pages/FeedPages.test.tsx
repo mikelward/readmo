@@ -223,3 +223,25 @@ describe('FeedPage (parked-feed retry)', () => {
     expect(screen.queryByTestId('group-by-feed-btn')).toBeNull();
   });
 });
+
+describe('FeedPage (header favicon)', () => {
+  it("shows the feed's favicon left of the title", async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderFeed(source, 'feed-verge');
+    const favicon = await screen.findByTestId('feed-header-favicon');
+    // The Verge's favicon, decorative, inside the page-header title.
+    expect(favicon).toHaveAttribute('src', 'https://www.theverge.com/favicon.ico');
+    expect(favicon).toHaveAttribute('alt', '');
+    expect(favicon.closest('.page-header__title')).not.toBeNull();
+  });
+
+  it('omits the favicon when the feed advertises none', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const verge = (await source.getFeed('feed-verge'))!;
+    vi.spyOn(source, 'getFeed').mockResolvedValue({ ...verge, faviconUrl: null });
+    renderFeed(source, 'feed-verge');
+    // Title still renders; just no icon.
+    await screen.findByRole('heading', { level: 1, name: 'The Verge' });
+    expect(screen.queryByTestId('feed-header-favicon')).toBeNull();
+  });
+});

@@ -1506,7 +1506,10 @@ offline), where rows from different feeds interleave with no section header to
 attribute them, each row *can* show its own feed's favicon just before the
 source name — gated on the **Show feed icons on articles** setting (Settings →
 Reading; `readmo:show-row-favicon`, **off by default**, per-device). The
-group-by-feed header always carries its icon regardless of the setting. That
+group-by-feed header always carries its icon regardless of the setting. The
+**single feed page** (`/feed/:feedId`) also shows it once, left of the feed name
+in the page-header title (sized up to 20px for the heading), independent of that
+per-device row setting. That
 favicon comes from `feeds.favicon_url`, which
 the poller resolves on each fetch: the feed-advertised icon when present (Atom
 `<icon>`/`<logo>`, RSS `<image>`, JSON Feed `favicon`/`icon`, scheme-checked to
