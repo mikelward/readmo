@@ -1,4 +1,5 @@
-// Feed health checker for the curated suggestions in src/lib/popularFeeds.ts.
+// Feed health checker for the curated feeds in src/lib/popularFeeds.ts and the
+// per-publisher section feeds in src/lib/feedSections.ts.
 //
 // Fetches every feedUrl and reports the ones that fail to load or don't look
 // like a feed, so dead/rotted entries get caught before a user hits them.
@@ -25,6 +26,7 @@ import path from 'node:path';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FEEDS_FILE = path.join(ROOT, 'src/lib/popularFeeds.ts');
+const SECTIONS_FILE = path.join(ROOT, 'src/lib/feedSections.ts');
 
 const TIMEOUT_MS = 15_000;
 const CONCURRENCY = 8;
@@ -196,10 +198,33 @@ async function runPool(items, worker, concurrency) {
   return results;
 }
 
+/** De-duplicate `{ name, feedUrl }` entries by feedUrl, keeping the first seen.
+ * BBC News etc. appear both as a single curated feed and as a publisher's main
+ * section, so the two lists overlap — fetch each URL once. */
+function dedupeByFeedUrl(entries) {
+  const seen = new Set();
+  const out = [];
+  for (const e of entries) {
+    if (seen.has(e.feedUrl)) continue;
+    seen.add(e.feedUrl);
+    out.push(e);
+  }
+  return out;
+}
+
 async function main() {
   const asJson = process.argv.includes('--json');
-  const source = await readFile(FEEDS_FILE, 'utf8');
-  const feeds = parseFeedList(source);
+  // The same `{ name, feedUrl }` shape (and parser) covers both files: the
+  // section entries in feedSections.ts match too, while its Publisher objects
+  // (name without an adjacent feedUrl) don't.
+  const [popularSrc, sectionsSrc] = await Promise.all([
+    readFile(FEEDS_FILE, 'utf8'),
+    readFile(SECTIONS_FILE, 'utf8'),
+  ]);
+  const feeds = dedupeByFeedUrl([
+    ...parseFeedList(popularSrc),
+    ...parseFeedList(sectionsSrc),
+  ]);
   const results = await runPool(feeds, checkOne, CONCURRENCY);
   const failures = results.filter((r) => !r.ok);
 

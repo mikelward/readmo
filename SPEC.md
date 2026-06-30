@@ -522,7 +522,10 @@ folders       (user_id FK, name, sort)
   the feed URL directly into the input and bypasses the HTML-discovery step —
   the known feed URL is submitted straight to `subscribe()`. This also avoids
   bot-blocking issues for popular sites whose homepages reject programmatic
-  requests (the RSS endpoint itself is almost always accessible). The dropdown
+  requests (the RSS endpoint itself is almost always accessible). **The one
+  exception is a suggestion (or resolved name) that belongs to a publisher we
+  carry a curated section list for** (see *Curated section feeds* below): that
+  opens the section picker instead of subscribing to the single picked feed. The dropdown
   is keyboard-navigable: ArrowDown/Up move focus, Enter selects, Escape closes.
   When the user subscribes via a curated suggestion, the client always sets the
   subscription's `title_override` to the curated display name — the brand the
@@ -578,6 +581,28 @@ folders       (user_id FK, name, sort)
   curated autocomplete suggestions bypass discovery entirely as before. The
   picker only surfaces the sections a site advertises on the submitted page; it
   does not crawl the site for sections that page doesn't link.
+- **Curated section feeds.** Big news orgs publish many per-section feeds
+  (World, Business, Sport, …) but often advertise *none* of them where a crawler
+  can see — BBC's feeds live on a separate host and are only listed on a help
+  page, so live discovery of `bbc.com` finds nothing and would fall through to
+  the Google News last resort. So for a small, hand-curated set of major
+  publishers (`src/lib/feedSections.ts` — BBC, The Guardian, NPR, CBC at first,
+  extensible), the **same multi-select picker** is populated from a stored list
+  of that publisher's section feeds (**main feed first**, capped at ~10) the
+  moment the user adds the site — no fetch, no discovery round-trip. It fires
+  when the user adds a curated publisher **by name** (a dropdown pick or a
+  resolved catalog name) **or by its site URL** (`bbc.com`, `bbc.co.uk`).
+  Pasting a *specific feed* URL — even on that publisher's host (e.g.
+  `theguardian.com/world/rss`) — still subscribes to just that feed (the user
+  "meant that feed"); the distinction is a feed-shape check on the pasted URL.
+  Each chosen section's curated label is pinned as the per-user `title_override`
+  (so rows read "BBC World", not a generic channel title), per-user and editable
+  like any curated pick. This is purely additive: any publisher *not* in the
+  list keeps today's behavior (live discovery → its advertised feed(s) → the
+  allowlist-gated Google News fallback). The list follows the
+  `popularFeeds.ts` convention — URLs match each publisher's documented feed
+  scheme but aren't live-verified in the sandbox; `npm run feeds:check` covers
+  them.
 - **Deep-link fallback: pasting an article URL still finds the site's feed.** A
   pasted article (e.g. a Sky Sports match report deep in `/football/news/…`)
   usually doesn't advertise the site's feed in its own `<head>`, so when the
