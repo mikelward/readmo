@@ -17,29 +17,26 @@ import { onlineManager } from '@tanstack/react-query';
 
 type Listener = (online: boolean) => void;
 
-// A request failing tells us our backend wasn't reachable on the last try — it
-// does NOT tell us the device has no network. Those are different problems with
-// different fixes (wait for the server vs. find a connection), so we surface
-// them as distinct states instead of one blanket "Offline":
-//   - 'online'              — both signals agree we're connected.
-//   - 'offline'             — the device itself reports no network
-//                             (navigator.onLine === false). The user's problem.
-//   - 'backend-unreachable' — the device has a connection but our backend isn't
-//                             answering (overloaded / erroring / behind a CDN
-//                             returning a CORS-less 5xx, which surfaces as a
-//                             TypeError). Readmo's problem, not theirs. Shown as
-//                             "Down", not "Offline", so we stop telling users
-//                             they're offline when the server is the one that's
-//                             struggling.
-// Disambiguating the two when navigator.onLine lags: a single failed fetch with
-// the device still claiming a connection reads as 'backend-unreachable' (we
-// don't mislabel a server outage as the user being offline on one data point).
-// But we don't wait out navigator.onLine forever — the recovery probe hits the
-// always-up `/auth/v1/health` endpoint, so *sustained* probe failure (no HTTP
-// response at all) means we can't reach the network and the device is offline.
-// After OFFLINE_AFTER_PROBE_FAILURES consecutive probe failures the status
-// becomes 'offline' on its own. (A genuinely-down-but-reachable backend answers
-// the probe with a 4xx/5xx, which counts as success — so it never trips this.)
+// "Can't reach the backend" and "the backend answered with an error" are
+// different problems with different fixes (find a connection vs. wait for the
+// server), so we surface three states instead of one blanket "Offline" — and,
+// crucially, we label from EVIDENCE, not assumption:
+//   - 'online'              — reads are succeeding.
+//   - 'offline'             — we can't reach our backend: the device reports no
+//                             network (navigator.onLine === false), OR a read
+//                             threw with no response (DNS/unreachable/dropped/
+//                             CORS-less gateway failure). We can't prove the
+//                             device has a connection, so the honest, actionable
+//                             label is "Offline" — the user's problem.
+//   - 'backend-unreachable' — the backend ANSWERED, but with a 5xx: it's reachable
+//                             and erroring (overloaded / failing). Readmo's
+//                             problem, not theirs. Shown as "Down".
+// The old design *assumed* "Down" on any failed fetch and only fell back to
+// "Offline" after two ~30s recovery-probe failures — so a genuinely-offline
+// device whose navigator.onLine lags `true` sat on a wrong "Down" for up to a
+// minute. Now a throw is "Offline" immediately, and "Down" requires a 5xx we can
+// actually see. Both non-online states back off identically: reads pause and a
+// 30s recovery probe re-tests, so a struggling backend is never retry-stormed.
 export type ConnectivityStatus = 'online' | 'offline' | 'backend-unreachable';
 
 type StatusListener = (status: ConnectivityStatus) => void;
@@ -51,39 +48,29 @@ function initialBrowserOnline(): boolean {
 
 let browserOnline: boolean = initialBrowserOnline();
 let fetchOnline: boolean = true;
-
-// Consecutive *recovery-timer* probe failures (a probe that got NO HTTP response
-// — a TypeError, i.e. we couldn't reach the network at all). The probe hits
-// `/auth/v1/health`, an in-process GoTrue endpoint that stays up even when the
-// DB is saturated, so a *failed* probe is strong evidence the DEVICE has no
-// network rather than the backend being down (a real backend outage where the
-// server is reachable answers with a 4xx/5xx, which the probe counts as success).
-// Only the serial recovery timer advances this (once per interval — it can't
-// double-count); opportunistic probes (focus/visibility/empty-read) adjudicate
-// the status but don't count. Reset to 0 by any cache-bypassing success. Used to
-// conclude 'offline' without waiting on navigator.onLine (which lags badly on
-// mobile — the reason this could sit on "Down" and never say "Offline"). The flap
-// suppression is separate: it keys on `awaitingLiveness` (see reportFetchSuccess),
-// so it takes effect the instant we go down, not after a probe fails.
-let probeFailures = 0;
-// Two consecutive recovery-timer failures (~one interval apart) is enough
-// sustained evidence to conclude the device, not the backend, is the problem and
-// surface "Offline".
-const OFFLINE_AFTER_PROBE_FAILURES = 2;
+// True when the most recent read got an actual HTTP *error response* (5xx) from
+// our backend — proof the device reached the server but the server is erroring.
+// This, not a bare fetch failure, is what justifies the "Down" label: a request
+// that throws (no response) can't tell "our server is down" from "the device has
+// no network", so it reads as Offline; a 5xx we can actually see does. Cleared by
+// the next response below 500 (a real read recovering).
+let backendErroring = false;
 
 function computeStatus(): ConnectivityStatus {
-  if (browserOnline && fetchOnline) return 'online';
-  // A device that reports no network is offline regardless of fetch state —
+  // A device that reports no network is offline regardless of anything else —
   // the device signal wins, since "find a connection" is the actionable fix.
   if (!browserOnline) return 'offline';
-  // Browser still claims a connection, but our liveness probe has failed
-  // repeatedly. The probe endpoint is effectively always up when reachable, so
-  // sustained failure means we can't reach the network — treat it as the device
-  // being offline, not the backend down, rather than waiting out navigator.onLine.
-  if (probeFailures >= OFFLINE_AFTER_PROBE_FAILURES) return 'offline';
-  // Browser says connected and we haven't (yet) proven the network is gone:
-  // our last fetch failed, so the backend is the problem, not the connection.
-  return 'backend-unreachable';
+  // We got a 5xx from the backend: the device reached the server, so this is our
+  // problem, not the connection's → "Down". Evidence-based: only an actual error
+  // response earns this label, never a bare fetch failure.
+  if (backendErroring) return 'backend-unreachable';
+  // A read is failing with no response at all (a throw). We can't reach our
+  // backend and can't prove the device has a connection, so the honest, actionable
+  // label is "Offline" — not "Down". (This is the fix: a genuinely offline device
+  // whose navigator.onLine lags `true` reads as Offline immediately, instead of
+  // sitting on "Down" while a recovery probe slowly concludes otherwise.)
+  if (!fetchOnline) return 'offline';
+  return 'online';
 }
 
 let lastStatus: ConnectivityStatus = computeStatus();
@@ -165,8 +152,7 @@ export function setConnectivityProbeUrl(u: string | null) {
 function emitIfChanged() {
   const next = computeStatus();
   if (next === lastStatus) return;
-  const wasOnline = lastStatus === 'online';
-  const isOnline = next === 'online';
+  const prev = lastStatus;
   lastStatus = next;
   // NB: the recovery probe is NOT started/stopped here — its lifecycle keys on
   // `awaitingLiveness` (set in goOffline, cleared by a cache-bypassing success),
@@ -174,14 +160,17 @@ function emitIfChanged() {
   // the backend is still down. See updateRecoveryProbe.
   // Status subscribers see every transition (e.g. 'offline' -> 'backend-
   // unreachable'); boolean subscribers + onlineManager only fire on the
-  // online/not-online edge so query pausing/resume behaves exactly as before.
+  // online/not-online edge.
   for (const fn of statusListeners) fn(next);
+  const wasOnline = prev === 'online';
+  const isOnline = next === 'online';
   if (wasOnline === isOnline) return;
   for (const fn of listeners) fn(isOnline);
-  // Keep React Query's own onlineManager in sync so paused queries
-  // resume when we reconnect (belt-and-braces with networkMode:
-  // 'offlineFirst' — that mode prevents hanging, this keeps
-  // refetch-on-reconnect working).
+  // Pause React Query whenever we're not fully online — including "Down" (the
+  // backend answered 5xx, i.e. it's struggling): backing off the read load is
+  // exactly what a saturated backend needs, never a retry storm. The backed-off
+  // recovery probe (every 30s) flips us back online to re-test; a healthy (<500)
+  // read then sticks. Resume on reconnect, same as before.
   onlineManager.setOnline(isOnline);
 }
 
@@ -225,7 +214,6 @@ export function reportFetchSuccess(cacheBypassing = false) {
     // confirms it.
     livenessSeq++;
     awaitingLiveness = false;
-    probeFailures = 0; // network reachable again — clear the offline evidence
     updateRecoveryProbe();
   }
   if (fetchOnline) return;
@@ -248,7 +236,17 @@ export function reportFetchSuccess(cacheBypassing = false) {
  * it). Reported as cache-bypassing so it counts toward the liveness counter.
  */
 function reportProbeSuccess() {
+  // The health endpoint answered, so optimistically clear a "Down" (5xx) flag and
+  // let a read re-test: if it 5xxes again we go straight back to Down (one read
+  // per probe interval — backed off). Health up doesn't prove reads are up, but
+  // re-testing on the interval is how we notice the backend actually recovered.
+  backendErroring = false;
   reportFetchSuccess(true);
+  // Recovering from "Down" leaves `fetchOnline` already true (a 5xx is a
+  // response), so reportFetchSuccess early-returns without emitting — emit here so
+  // the Down→online transition notifies subscribers and un-pauses onlineManager.
+  // No-op when the status is unchanged (the offline→online path already emitted).
+  emitIfChanged();
 }
 
 export function reportFetchFailure(err: unknown): Promise<void> | void {
@@ -265,10 +263,30 @@ function goOffline() {
   awaitingLiveness = true;
   updateRecoveryProbe();
   fetchOnline = false;
-  // Always re-emit (not just on the fetchOnline edge): a probe failure that lands
-  // while we're already down can still tip the *status* from backend-unreachable
-  // to offline as `probeFailures` crosses the threshold. emitIfChanged is guarded
-  // by an unchanged-status check, so a true no-op stays a no-op.
+  // A throw is the absence of a response, so it is NOT the 5xx "Down" case — clear
+  // any prior backend-erroring flag so the status falls through to "Offline".
+  backendErroring = false;
+  emitIfChanged();
+}
+
+/**
+ * The backend answered, but with a 5xx — it's reachable yet erroring ("Down").
+ * Back off exactly like a connection failure: pause reads (emitIfChanged flips
+ * onlineManager off below the 'online' edge) and arm the recovery probe, which
+ * re-tests on the interval. `fetchOnline` stays true (a 5xx is a response, not a
+ * throw), so once `backendErroring` clears the status returns to 'online'.
+ */
+function goBackendDown() {
+  backendErroring = true;
+  fetchOnline = true;
+  // The origin answered, so it's reachable — bump BOTH stale-probe guards so an
+  // in-flight probe that started before this 5xx can't relatch us to 'offline'
+  // and wipe the fresh Down evidence: `livenessSeq` (confirmBackendReachable) and
+  // `successSeq` (maybeProbeAfterTimeout, which keys its baseline off successSeq).
+  livenessSeq++;
+  successSeq++;
+  awaitingLiveness = true;
+  updateRecoveryProbe();
   emitIfChanged();
 }
 
@@ -327,21 +345,11 @@ async function maybeProbeAfterTimeout(): Promise<void> {
  * trusting it as "all caught up": a cache-served empty page would otherwise lie.
  *
  * The outcome is reported into the tracker so the connectivity status reflects
- * it — a failed probe flips us to backend-unreachable (or offline). Returns true
- * iff the backend answered. Unconfigured (no probe URL — mock/local dev with no
- * remote backend to be down) returns true: the mock source is authoritative.
- *
- * `countTowardOffline` advances the consecutive-failure counter that decides when
- * to surface "Offline" (Part B). Only the **serial** recovery-timer probe passes
- * `true`: it fires once per interval, so it can't double-count. Opportunistic
- * callers (empty-read confirmation, focus/visibility re-checks) pass `false` —
- * several can overlap on a single tab return, and counting each toward the
- * threshold would falsely declare "Offline" off one instant rather than sustained
- * evidence. They still adjudicate the status (goOffline / reportProbeSuccess).
+ * it — a failed probe flips us to offline. Returns true iff the backend answered.
+ * Unconfigured (no probe URL — mock/local dev with no remote backend to be down)
+ * returns true: the mock source is authoritative.
  */
-export async function confirmBackendReachable(
-  countTowardOffline = false,
-): Promise<boolean> {
+export async function confirmBackendReachable(): Promise<boolean> {
   if (probeUrl == null) return true;
   // Snapshot the liveness counter before probing so a *stale* failure can't
   // relatch us offline. Probes can overlap (the 30s interval racing a focus/
@@ -372,9 +380,8 @@ export async function confirmBackendReachable(
     // since we started, which makes this failure stale: relatching then would
     // falsely re-show "Down" over a backend already proven reachable.
     if (livenessSeq === baselineSeq) {
-      // Couldn't reach the always-up health endpoint → device-offline evidence.
-      // Only the serial recovery-timer probe advances the counter (see above).
-      if (countTowardOffline) probeFailures++;
+      // Couldn't reach the always-up health endpoint → we can't reach our backend
+      // at all, so this is "Offline", not "Down".
       goOffline();
     }
     return false;
@@ -391,7 +398,10 @@ export async function confirmBackendReachable(
  * Called wherever those inputs change. Idempotent.
  */
 function updateRecoveryProbe() {
-  if (awaitingLiveness && browserOnline && probeUrl != null) startRecoveryProbe();
+  // Run while in doubt — offline (awaiting liveness) OR Down (backendErroring) —
+  // so a non-core cache-bypassing success that clears `awaitingLiveness` can't
+  // stop the probe while core reads are still erroring.
+  if (inDoubt() && browserOnline && probeUrl != null) startRecoveryProbe();
   else stopRecoveryProbe();
 }
 
@@ -406,9 +416,9 @@ function updateRecoveryProbe() {
 function startRecoveryProbe() {
   if (recoveryTimer != null) return;
   recoveryTimer = setInterval(() => {
-    // The serial, once-per-interval probe — its failures are the sustained
-    // evidence that advances the consecutive-failure counter toward "Offline".
-    void confirmBackendReachable(/* countTowardOffline */ true);
+    // The backed-off, once-per-interval re-test: reaches the backend → online
+    // (a read re-evaluates); still unreachable → stays offline.
+    void confirmBackendReachable();
   }, RECOVERY_PROBE_INTERVAL_MS);
 }
 
@@ -426,7 +436,7 @@ function stopRecoveryProbe() {
  * focus while genuinely online fires no needless probe).
  */
 function handleRegainedFocus() {
-  if (!awaitingLiveness || !browserOnline) return;
+  if (!inDoubt() || !browserOnline) return;
   void confirmBackendReachable();
 }
 
@@ -473,6 +483,35 @@ function methodOf(input: RequestInfo | URL, init?: RequestInit): string {
   return 'GET';
 }
 
+/** The request URL across the `Request | string | URL` shapes fetch accepts. */
+function urlOf(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input;
+  if (input instanceof URL) return input.href;
+  if (input instanceof Request) return input.url;
+  return '';
+}
+
+/**
+ * Whether this is a **core data-plane** request — Supabase REST/RPC (`/rest/v1/`:
+ * table reads, the `feed_items`/`feed_unread_counts` read RPCs, item-state
+ * writes). Only these drive the "Down" (backend-unreachable) state: a 5xx from a
+ * progressive Edge Function (`/functions/v1/`) or auth (`/auth/v1/`) is the
+ * caller's to handle and must not pause reads app-wide.
+ */
+function isCoreReadUrl(input: RequestInfo | URL): boolean {
+  return urlOf(input).includes('/rest/v1/');
+}
+
+/**
+ * In doubt about backend reachability: either we can't reach it (a throw →
+ * `awaitingLiveness`) or core reads are erroring (a 5xx → `backendErroring`).
+ * Drives the recovery probe and the cache-hit flap suppression so that a non-core
+ * success clearing `awaitingLiveness` can't strand the probe while still "Down".
+ */
+function inDoubt(): boolean {
+  return awaitingLiveness || backendErroring;
+}
+
 export async function trackedFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
@@ -487,7 +526,33 @@ export async function trackedFetch(
     // cache-bypassing liveness proof (Workbox runtime caching is GET-only, so a
     // POST/PATCH/DELETE always reached the origin); a GET might be a cache hit,
     // so it isn't trusted as liveness evidence — that's what the probe is for.
-    reportFetchSuccess(methodOf(input, init) !== 'GET');
+    //
+    // A 5xx is the one response that's also bad news: the server answered but is
+    // erroring, which is exactly the "Down" (backend-unreachable) case — but only
+    // for the **core data plane** (`/rest/v1/`: table reads + the feed RPCs).
+    // `trackedFetch` is the fetch impl for *every* Supabase request, so a 5xx from
+    // a progressive Edge Function (`fulltext`/`summary`/`discover`/`refresh`) or
+    // auth must NOT shed the whole app — those callers degrade locally. A status
+    // below 500 (2xx/3xx/4xx — incl. auth's own 401/403) is the backend serving.
+    const cacheBypassing = methodOf(input, init) !== 'GET';
+    const coreRead = isCoreReadUrl(input);
+    if (res.status >= 500 && coreRead) {
+      goBackendDown();
+    } else {
+      // The origin answered, so it's reachable. Clear a "Down" flag only on a
+      // genuine sub-500 CORE read recovering: a stale Workbox cache hit (a GET we
+      // can't trust while in doubt), a non-core response, or a non-core 5xx must
+      // not flap us out of Down — only a cache-bypassing core success or the
+      // health probe may. Mirrors reportFetchSuccess's own flap suppression.
+      const suppressedCacheHit = !cacheBypassing && inDoubt() && probeUrl != null;
+      if (coreRead && res.status < 500 && !suppressedCacheHit) {
+        backendErroring = false;
+      }
+      reportFetchSuccess(cacheBypassing);
+      // reportFetchSuccess early-returns when fetchOnline was already true, so a
+      // read recovering a prior "Down" wouldn't emit on its own — surface it.
+      emitIfChanged();
+    }
     return res;
   } catch (err) {
     reportFetchFailure(err);
@@ -533,13 +598,13 @@ export function _resetNetworkStatusForTests() {
   stopRecoveryProbe();
   browserOnline = initialBrowserOnline();
   fetchOnline = true;
+  backendErroring = false;
   lastStatus = computeStatus();
   probeUrl = null;
   probeInFlight = false;
   successSeq = 0;
   probeBaselineSeq = 0;
   livenessSeq = 0;
-  probeFailures = 0;
   awaitingLiveness = false;
   // Re-sync React Query's singleton onlineManager to the reset state — a test
   // that drove us offline (pausing queries) would otherwise leak that into the

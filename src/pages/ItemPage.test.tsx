@@ -9,7 +9,7 @@ import { ToastProvider } from '../components/Toast';
 import { FeedBarProvider } from '../components/FeedBarContext';
 import { DataSourceProvider } from '../lib/data/context';
 import { MockDataSource } from '../lib/data/MockDataSource';
-import { _resetNetworkStatusForTests, reportFetchFailure } from '../lib/networkStatus';
+import { _resetNetworkStatusForTests, trackedFetch } from '../lib/networkStatus';
 import type { Feed, FeedItem, Item, ItemId } from '../lib/types';
 import type { FullTextResult } from '../lib/fullText';
 import { ItemPage } from './ItemPage';
@@ -628,11 +628,13 @@ describe('ItemPage reading mode', () => {
   });
 
   it('blames the server, not the user, when the backend is unreachable but the device is online', async () => {
-    // Device has a connection (navigator.onLine stays true) but a hard fetch
-    // failure flipped the network tracker, and there's no cached copy to fall
-    // back to. The miss state must say the server is the problem — not "pin it
-    // while online", which would wrongly imply the user is offline.
-    reportFetchFailure(new TypeError('Failed to fetch'));
+    // Device has a connection (navigator.onLine stays true) and the backend
+    // answered — with a 5xx, so it's reachable-but-erroring ("Down"). With no
+    // cached copy to fall back to, the miss state must say the server is the
+    // problem, not "pin it while online" (which would imply the user is offline).
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 503 })));
+    await trackedFetch('/rest/v1/x');
+    vi.unstubAllGlobals();
     class DownSource extends MockDataSource {
       async getItem(): Promise<FeedItem | null> {
         throw new Error('backend down');

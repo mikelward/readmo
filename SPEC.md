@@ -2154,13 +2154,11 @@ keys differ; the strategies map one-to-one:
   treating a timeout as offline). Cost/reliability: same Supabase project (no new
   third party), fires only on the rare timeout path, ~5s budget — negligible.
   Hard network errors (`TypeError`/`NetworkError` — DNS, unreachable host,
-  dropped connection) still flip the **fetch** signal immediately (they fail
-  fast), but a failed fetch is **not** assumed to mean the *device* is offline —
-  a cross-origin backend behind a CDN/gateway surfaces an overload as a
-  CORS-less 5xx or a dropped connection, which `fetch` reports as a `TypeError`
-  indistinguishable from a genuine disconnect. So the *label* keys off
-  `navigator.onLine`: a failed fetch while the device still reports a connection
-  is shown as **"Down"** (backend unreachable), not "Offline" — see *Offline UX*.
+  dropped connection) flip the **fetch** signal immediately (they fail fast) and,
+  because a throw is no response, read as **"Offline"** — we can't prove the
+  device has a connection, so we don't blame our backend without evidence. The
+  one failure that *is* evidence our backend is the problem is an HTTP **5xx**
+  response (reachable but erroring), which shows **"Down"** — see *Offline UX*.
 - `CACHE_BUSTER` wipes the persisted blob on schema change; the outbox and
   Supabase data are unaffected (server is canonical).
 - **All client caches are scoped to the signed-in user and purged on account
@@ -2259,60 +2257,47 @@ keys differ; the strategies map one-to-one:
 
 ### Offline UX (mirrors newshacker)
 
-- **Connectivity pill** in the header, linking to `/offline`. Its label
-  distinguishes *the device has no network* from *our backend isn't answering*,
-  so a server problem never reads as the user being offline:
-  - **"Offline"** — the device reports no network (`navigator.onLine === false`).
-    The user's problem (find a connection).
-  - **"Down"** — the device has a connection but our backend isn't responding
-    (overloaded / erroring / a CORS-less gateway 5xx that surfaces as a
-    `TypeError`). Readmo's problem, not theirs. `title` reads "Readmo's server
-    isn't responding right now"; the feed/reader views echo this in their error
-    copy instead of a blanket "couldn't load".
-  - No pill when fully online.
-- **Detection** (`networkStatus.ts`): two signals — `browserOnline`
-  (`navigator.onLine` + online/offline events) and `fetchOnline` (`trackedFetch`
-  flips it on `TypeError`/`NetworkError` or any response; `AbortError` ignored).
-  A three-way status derives from them: `online` (both up), `offline`
-  (`!browserOnline` — the device signal wins), else `backend-unreachable`. The
-  legacy boolean `online === (status === 'online')` is kept for callers that
-  only gate on connected-or-not, and React Query's `onlineManager` is held in
-  sync with it. `useOnlineStatus` returns the boolean; `useConnectivityStatus`
-  returns the three-way status. `navigator.onLine` lags on mobile, so a *single*
-  failed fetch with the OS still claiming online reads as "Down" — we don't
-  mislabel a one-off server blip as the user being offline. But we don't wait out
-  `navigator.onLine` forever: the recovery probe targets the always-up
-  `/auth/v1/health` endpoint, so **two consecutive probe failures**
-  (`OFFLINE_AFTER_PROBE_FAILURES`) — no HTTP response at all, i.e. we can't reach
-  the network — flip the status to **"Offline"** on their own, without the
-  `offline` event ever landing. A genuinely-down but *reachable* backend answers
-  the probe with a 4xx/5xx (counted as success), so it stays "Down" and never
-  trips the offline path. This is what stopped the pill from sitting on "Down"
-  (or flapping "Down" ↔ "online", never showing "Offline") when the device is
-  genuinely offline but `navigator.onLine` is stuck `true`.
-- **"Down" self-heals.** Going `backend-unreachable` pauses React Query
-  (`onlineManager.setOnline(false)`), so no app read fires to notice the backend
-  recover — left alone the "Down" pill would stick on screen indefinitely (worse
-  for a user reading cached content, who issues no reads at all). So
-  `networkStatus.ts` re-probes the SW-bypassing liveness endpoint
+- **Connectivity pill** in the header, linking to `/offline`. Its label is
+  **evidence-based** — it never *assumes* whose fault a failure is:
+  - **"Offline"** — we can't reach our backend: the device reports no network
+    (`navigator.onLine === false`), **or** a read threw with no response at all
+    (DNS/unreachable/dropped/CORS-less gateway failure — a `TypeError`/
+    `NetworkError`). A throw can't prove the device has a connection, so the
+    honest, actionable label is "Offline" (find a connection). The user's problem.
+  - **"Down"** — the backend *answered*, with a **5xx**: it's reachable and
+    erroring (overloaded / failing). Readmo's problem, not theirs. `title` reads
+    "Readmo's server isn't responding right now"; the feed/reader views echo this
+    in their error copy instead of a blanket "couldn't load".
+  - No pill when reads are succeeding.
+- **Detection** (`networkStatus.ts`): three signals — `browserOnline`
+  (`navigator.onLine` + online/offline events), `fetchOnline` (`trackedFetch`
+  clears it on a `TypeError`/`NetworkError` throw; `AbortError` ignored), and
+  `backendErroring` (the last read got an HTTP **5xx** — a response, so the SW
+  can't have served it from a NetworkFirst cache). Status: `offline` if
+  `!browserOnline` **or** a read threw; `backend-unreachable` if a 5xx was seen;
+  else `online`. The boolean `online === (status === 'online')` is kept for
+  callers that only gate on connected-or-not; `useOnlineStatus` returns it,
+  `useConnectivityStatus` the three-way status. This is the fix for the old
+  behavior, which *assumed* "Down" on any failed fetch and only fell back to
+  "Offline" after two ~30s recovery-probe failures — so a genuinely-offline device
+  whose `navigator.onLine` lags `true` sat on a wrong "Down" for up to a minute.
+  Now a throw is "Offline" immediately and "Down" requires a 5xx we can actually
+  see.
+- **Both non-online states back off and self-heal.** Going not-online pauses
+  React Query (`onlineManager.setOnline(false)`) — in the **"Down"** case that
+  back-off is the point: a 5xx means the backend is struggling, so we stop firing
+  reads at it rather than retry-storming. No app read then fires to notice
+  recovery, so `networkStatus.ts` re-probes the SW-bypassing liveness endpoint
   (`confirmBackendReachable`, `/auth/v1/health`) every 30s, and immediately on
-  regained window focus / tab visibility, until liveness is re-confirmed. The
-  probe's lifecycle keys on a liveness flag (`awaitingLiveness`), **not** on the
-  connectivity status. That same flag stops the flap: **while awaiting liveness
-  confirmation (and a probe is configured), a Workbox cache hit
-  (`reportFetchSuccess(false)`) can no longer flip us back to `online`** — a
-  cache-served GET proves nothing about reachability. The doubt is set on any
-  `goOffline` (so suppression takes effect the instant we go down — no window
-  before the first probe) and cleared only by a **cache-bypassing** success — a
-  probe, or a non-GET request the backend accepted (Workbox runtime caching is
-  GET-only, so a POST/PATCH/DELETE always reached the origin; a GET might be a
-  cache hit). So the pill settles on "Down" immediately, then "Offline" after two
-  *recovery-timer* failures, instead of bouncing on every cache hit. Only the
-  serial recovery-timer probe advances the offline counter — opportunistic probes
-  (focus/visibility/empty-read confirmations, which can overlap on one tab return)
-  adjudicate the status but don't count, so a single instant can't trip "Offline".
-  **Cost:** negligible — one in-process GoTrue GET (no Postgres) every 30s, only
-  while liveness is in doubt.
+  regained window focus / tab visibility. A probe that **reaches** the backend
+  clears the doubt and flips us online (a read re-evaluates — if it 5xxes again we
+  go straight back to "Down", so the load stays capped at ~one read per interval);
+  a probe that **can't** reach it leaves us "Offline". The probe's lifecycle keys
+  on `awaitingLiveness` (set on any go-not-online, cleared by a **cache-bypassing**
+  success — a probe or a non-GET the backend accepted), **not** on the status, so
+  a Workbox cache hit (`reportFetchSuccess(false)`) can't flap us back online while
+  the backend is still unreachable. **Cost:** negligible — one in-process GoTrue
+  GET (no Postgres) every 30s, only while in doubt.
 - **Reader body from the list cache (instant open + offline fallback):** the
   reader paints this item's body from a list page already on the device the
   moment it opens — list payloads carry `content_html` (the gated full-text
