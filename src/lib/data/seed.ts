@@ -6,13 +6,23 @@ import type { Feed, Item, Subscription } from '../types';
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 
+// Demo favicons come from Google's keyless favicon service rather than each
+// publisher's guessed /favicon.ico. In production the poller resolves a real
+// per-feed favicon_url; the mock has no poller, and several of those guessed
+// paths (e.g. The Verge) don't resolve to a usable icon, so the demo showed
+// gaps. s2/favicons returns a crisp icon for any domain (free, no key, never a
+// broken glyph), keeping the no-backend demo's icons working and recognizable.
+// sz=64 is sharp at the 16-20px display sizes on retina.
+const demoFavicon = (domain: string): string =>
+  `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+
 export const SEED_FEEDS: Feed[] = [
   {
     id: 'feed-verge',
     url: 'https://www.theverge.com/rss/index.xml',
     siteUrl: 'https://www.theverge.com',
     title: 'The Verge',
-    faviconUrl: 'https://www.theverge.com/favicon.ico',
+    faviconUrl: demoFavicon('theverge.com'),
     errorCount: 0,
     lastError: null,
     parked: false,
@@ -22,7 +32,7 @@ export const SEED_FEEDS: Feed[] = [
     url: 'https://www.nasa.gov/feed/',
     siteUrl: 'https://www.nasa.gov',
     title: 'NASA Breaking News',
-    faviconUrl: 'https://www.nasa.gov/favicon.ico',
+    faviconUrl: demoFavicon('nasa.gov'),
     errorCount: 0,
     lastError: null,
     parked: false,
@@ -32,7 +42,7 @@ export const SEED_FEEDS: Feed[] = [
     url: 'https://css-tricks.com/feed/',
     siteUrl: 'https://css-tricks.com',
     title: 'CSS-Tricks',
-    faviconUrl: 'https://css-tricks.com/favicon.ico',
+    faviconUrl: demoFavicon('css-tricks.com'),
     errorCount: 0,
     lastError: null,
     parked: false,
@@ -42,7 +52,7 @@ export const SEED_FEEDS: Feed[] = [
     url: 'https://www.reddit.com/r/programming/.rss',
     siteUrl: 'https://www.reddit.com/r/programming',
     title: 'r/programming',
-    faviconUrl: 'https://www.reddit.com/favicon.ico',
+    faviconUrl: demoFavicon('reddit.com'),
     errorCount: 0,
     lastError: null,
     parked: false,

@@ -103,10 +103,11 @@ describe('ItemPage (reader)', () => {
     const top = await screen.findByTestId('reader-feedname-favicon');
     const bottom = screen.getByTestId('reader-feedname-favicon-bottom');
     // The Verge's favicon, decorative, and sitting inside the feed-name link.
-    expect(top).toHaveAttribute('src', 'https://www.theverge.com/favicon.ico');
+    const vergeFavicon = 'https://www.google.com/s2/favicons?domain=theverge.com&sz=64';
+    expect(top).toHaveAttribute('src', vergeFavicon);
     expect(top).toHaveAttribute('alt', '');
     expect(top.closest('[data-testid="reader-feedname"]')).not.toBeNull();
-    expect(bottom).toHaveAttribute('src', 'https://www.theverge.com/favicon.ico');
+    expect(bottom).toHaveAttribute('src', vergeFavicon);
     expect(bottom.closest('[data-testid="reader-feedname-bottom"]')).not.toBeNull();
   });
 

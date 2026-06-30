@@ -241,7 +241,10 @@ describe('FeedPage (header favicon)', () => {
     renderFeed(source, 'feed-verge');
     const favicon = await screen.findByTestId('feed-header-favicon');
     // The Verge's favicon, decorative, inside the page-header title.
-    expect(favicon).toHaveAttribute('src', 'https://www.theverge.com/favicon.ico');
+    expect(favicon).toHaveAttribute(
+      'src',
+      'https://www.google.com/s2/favicons?domain=theverge.com&sz=64',
+    );
     expect(favicon).toHaveAttribute('alt', '');
     expect(favicon.closest('.page-header__title')).not.toBeNull();
   });
