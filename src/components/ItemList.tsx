@@ -1539,6 +1539,18 @@ export function ItemList({
   // by scrolling during that refetch (those remove rows above the viewport and
   // depend on anchoring to hold the first still-visible row steady).
   const anchorLockedRef = useRef(false);
+  // A deferred height-lock release armed on the reader's next scroll — see
+  // releaseBodyHeight. Held here so it can be torn down on unmount and whenever
+  // a fresh lock is taken.
+  const heightReleaseScrollRef = useRef<(() => void) | null>(null);
+  // Tear down a deferred height-lock release (the scroll listener armed by
+  // releaseBodyHeight). Safe to call when none is pending.
+  const detachHeightRelease = useCallback(() => {
+    if (heightReleaseScrollRef.current) {
+      window.removeEventListener('scroll', heightReleaseScrollRef.current);
+      heightReleaseScrollRef.current = null;
+    }
+  }, []);
   // Freeze the body at its current rendered height. Idempotent: a no-op if the
   // lock is already held (so a sweep landing mid-refresh doesn't re-measure at a
   // momentarily-shrunken height). The matching release lives in the
@@ -1587,9 +1599,83 @@ export function ItemList({
     el.style.overflowAnchor = 'none';
     anchorLockedRef.current = true;
     if (heightLockedRef.current) return;
+    // Stop a deferred release from later clearing this fresh lock out from under
+    // us, but DON'T clear its held slack first: when a prior bottom-sweep release
+    // is still holding min-height to keep the scroll offset valid, that slack is
+    // the only thing keeping window.scrollY off the natural (shorter) bottom.
+    // Clearing it here would let the browser clamp the scroll back to the bottom
+    // before we re-measure — re-introducing the very header jump this avoids, and
+    // freezing the new lock at the already-shortened height. Measuring with the
+    // slack still applied folds it into the new lock, so the offset holds.
+    detachHeightRelease();
     el.style.minHeight = `${el.offsetHeight}px`;
     heightLockedRef.current = true;
-  }, []);
+  }, [detachHeightRelease]);
+
+  // Release the body height lock without letting the document snap shorter than
+  // the reader's current scroll offset.
+  //
+  // The min-height freeze holds the document tall through the post-sweep
+  // refetch (above). But a Sweep removes rows *for good*, so once the refetch
+  // returns the survivors the document is permanently shorter. If the reader had
+  // scrolled past where it now ends — e.g. they swept a feed near the bottom of
+  // the loaded list — simply clearing min-height lets the browser clamp
+  // window.scrollY toward the top, sliding every still-pinned group header down
+  // (the reported "the group header moves when you sweep a group"). The
+  // overflow-anchor opt-out doesn't help here: it's already been dropped, and it
+  // only stops the anchor *rewind*, not the document-too-short *clamp*.
+  //
+  // So when clearing would clamp, keep exactly enough min-height to hold the
+  // current scroll and finish the release on the reader's next scroll — when
+  // they're driving, so the document settling to its natural height reads as
+  // their own scrolling rather than a jump under their eyes. The held slack
+  // shrinks in lockstep as they scroll up and clears the moment the natural
+  // document can hold the offset, so there's never a persistent blank tail.
+  // A no-op (plain clear) whenever the natural document is already tall enough —
+  // every sweep except one near the very bottom.
+  const releaseBodyHeight = useCallback(() => {
+    const el = bodyRef.current;
+    detachHeightRelease();
+    if (!el) return;
+    if (typeof window === 'undefined') {
+      el.style.minHeight = '';
+      return;
+    }
+    // Natural max scroll once min-height is cleared.
+    const naturalMax = () =>
+      Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    // Hold the document just tall enough that `target` stays a valid scroll
+    // offset, restoring the scroll the clear may have already clamped — measured
+    // and corrected synchronously, before paint, so no clamp is ever shown.
+    // Returns the leftover slack (0 once the natural document holds `target`).
+    const holdFor = (target: number): number => {
+      el.style.minHeight = '';
+      const deficit = target - naturalMax();
+      if (deficit <= 0) return 0;
+      el.style.minHeight = `${el.offsetHeight + deficit}px`;
+      if (Math.round(window.scrollY) !== target) window.scrollTo(0, target);
+      return deficit;
+    };
+    // Capture the offset BEFORE clearing — clearing reflows synchronously and
+    // the browser clamps window.scrollY toward the top, so reading it after the
+    // clear would already be the clamped (wrong) value.
+    if (holdFor(Math.round(window.scrollY)) <= 0) return;
+    // Slack still held: shrink it in lockstep as the reader scrolls (they're now
+    // driving, so the settle reads as their scrolling, not a jump), and drop it
+    // entirely once the natural document can hold where they are.
+    const onScroll = () => {
+      if (!bodyRef.current) {
+        detachHeightRelease();
+        return;
+      }
+      if (holdFor(Math.round(window.scrollY)) <= 0) detachHeightRelease();
+    };
+    heightReleaseScrollRef.current = onScroll;
+    window.addEventListener('scroll', onScroll, { passive: true });
+  }, [detachHeightRelease]);
+
+  // Never leave a deferred-release scroll listener attached past unmount.
+  useEffect(() => detachHeightRelease, [detachHeightRelease]);
 
   // A single in-viewport mark-done — the row menu's Done, the wide-viewport Done
   // button, the `d` shortcut, or a swipe-right (all route through `store.hide`)
@@ -1974,7 +2060,9 @@ export function ItemList({
       el.style.minHeight = `${el.offsetHeight}px`;
       heightLockedRef.current = true;
     } else if (!isRefreshing && heightLockedRef.current) {
-      el.style.minHeight = '';
+      // Release without letting the now-shorter post-sweep document clamp the
+      // scroll (which would slide every pinned group header down).
+      releaseBodyHeight();
       // Defensive: the sweep anchor opt-out is normally dropped a frame after
       // the removal (the dedicated effect below), well before the refetch
       // settles — but clear it here too so a held lock never strands it.
@@ -1984,7 +2072,7 @@ export function ItemList({
       }
       heightLockedRef.current = false;
     }
-  }, [isRefreshing, showMissState]);
+  }, [isRefreshing, showMissState, releaseBodyHeight]);
 
   // Backstop release for the sweep pre-lock. lockBodyHeight() takes the lock
   // synchronously at sweep time and relies on a background refresh to drive the
@@ -2000,14 +2088,14 @@ export function ItemList({
   // still owns that release), and re-runs after a sweep via `visibleItems`.
   useEffect(() => {
     if (!isRefreshing && heightLockedRef.current && bodyRef.current) {
-      bodyRef.current.style.minHeight = '';
+      releaseBodyHeight();
       if (anchorLockedRef.current) {
         bodyRef.current.style.overflowAnchor = '';
         anchorLockedRef.current = false;
       }
       heightLockedRef.current = false;
     }
-  }, [isRefreshing, visibleItems.length]);
+  }, [isRefreshing, visibleItems.length, releaseBodyHeight]);
 
   // Drop the sweep's scroll-anchoring opt-out one frame after the swept rows
   // leave the DOM — a passive (post-paint) effect, so the browser has already
