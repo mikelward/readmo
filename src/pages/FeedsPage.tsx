@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useId } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { POPULAR_FEEDS, RECOMMENDED_FEEDS } from '../lib/popularFeeds';
 import { searchFeeds, resolveFeedByName } from '../lib/feedSearch';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -51,6 +52,11 @@ export function FeedsPage() {
   const ds = useDataSource();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
+  // The single feed page's settings pencil links here with `?feed=<id>`; the
+  // subscriptions list scrolls that row into view and briefly highlights it so
+  // the user lands on the feed they came from.
+  const [searchParams] = useSearchParams();
+  const scrollToFeedId = searchParams.get('feed');
   const fileRef = useRef<HTMLInputElement | null>(null);
   // Pending timer for the suggestion-dropdown close-on-blur. Tracked so it can
   // be cleared on unmount — otherwise it fires after the component is gone and
@@ -537,6 +543,7 @@ export function FeedsPage() {
         ) : null}
         <ReorderableSubscriptions
           subs={subs}
+          scrollToFeedId={scrollToFeedId}
           onReorder={async (orderedFeedIds: FeedId[]) => {
             await ds.reorderSubscriptions(orderedFeedIds);
             invalidate();

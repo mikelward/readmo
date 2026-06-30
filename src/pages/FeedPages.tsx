@@ -221,9 +221,10 @@ export function FeedPage() {
         ) : null}
         {/* Pencil to the feed-management page, where this feed can be renamed,
             muted, or unsubscribed. Pushed to the right of the title (and any
-            parked badge) by its margin-left:auto. */}
+            parked badge) by its margin-left:auto. The `feed` query param tells
+            the Feeds page which row to scroll to and briefly highlight. */}
         <Link
-          to="/feeds"
+          to={`/feeds?feed=${encodeURIComponent(feedId)}`}
           className="page-header__edit"
           aria-label="Feed settings"
           title="Feed settings"

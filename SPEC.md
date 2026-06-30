@@ -1553,7 +1553,10 @@ this feed can be renamed, muted, or unsubscribed (there's no per-feed unsubscrib
 on the feed view itself — the management page owns those controls), and — only
 when the feed is **parked** after repeated fetch failures — a **"Feed has errors
 · Retry now"** badge that un-parks and refetches it. When both are present the
-badge sits left of the pencil.
+badge sits left of the pencil. The pencil deep-links with `?feed=<id>`, so the
+Feeds page **scrolls that feed's row into view and briefly highlights it** (an
+accent ring that fades after ~2s, honoring `prefers-reduced-motion`) rather than
+dropping the user at the top of the subscriptions list.
 **Opened** titles render `--rm-read`. Not rendered: rank numbers, inline
 source/date links, external-link chevron (the reader's "Open original" owns
 that). (No points/comments/Hot flag/"N new" — those are HN-specific.)

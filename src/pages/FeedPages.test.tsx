@@ -230,7 +230,8 @@ describe('FeedPage (feed settings link)', () => {
     renderFeed(source, 'feed-verge');
     // The pencil is the route to rename / mute / unsubscribe this feed.
     const link = await screen.findByTestId('feed-settings-link');
-    expect(link).toHaveAttribute('href', '/feeds');
+    // The `feed` query param tells the Feeds page which row to scroll to.
+    expect(link).toHaveAttribute('href', '/feeds?feed=feed-verge');
     expect(link).toHaveAccessibleName('Feed settings');
   });
 });

@@ -46,6 +46,10 @@ interface Props {
   /** Set a per-user display name for `feedId`. Pass `null` to clear the
    * override and fall back to the publisher's feed title. */
   onRename: (feedId: FeedId, title: string | null) => void | Promise<void>;
+  /** When set, scroll this feed's row into view once it renders and briefly
+   * highlight it. Used by the single feed page's settings pencil so the user
+   * lands on the feed they came from rather than the top of the list. */
+  scrollToFeedId?: FeedId | null;
 }
 
 /** The Settings subscriptions list with drag-to-reorder handles. Each row
@@ -68,6 +72,7 @@ export function ReorderableSubscriptions({
   showOpenNewshacker = true,
   onUnsubscribe,
   onRename,
+  scrollToFeedId,
 }: Props) {
   const propIds = subs.map((s) => s.feed.id);
   const [order, setOrder] = useState<FeedId[]>(propIds);
@@ -254,6 +259,35 @@ export function ReorderableSubscriptions({
       refocus.current = null;
     }
   });
+
+  // Deep-link from the single feed page (`/feeds?feed=<id>`): scroll that row
+  // into view and flash a highlight. `order` is a dep so the effect re-runs
+  // once the async subscriptions load and the target row mounts; `scrolledFor`
+  // guards against re-scrolling on every later re-render (a drag, a rename).
+  const [highlightId, setHighlightId] = useState<FeedId | null>(null);
+  const scrolledFor = useRef<FeedId | null>(null);
+  useEffect(() => {
+    if (!scrollToFeedId) return;
+    if (scrolledFor.current === scrollToFeedId) return;
+    const el = rowRefs.current.get(scrollToFeedId);
+    if (!el) return; // target row not rendered yet — re-runs when `order` updates
+    scrolledFor.current = scrollToFeedId;
+    el.scrollIntoView({ block: 'center' });
+    setHighlightId(scrollToFeedId);
+  }, [scrollToFeedId, order]);
+
+  // Clear the highlight ~2s after it's set, in its own effect keyed on
+  // `highlightId` rather than inline in the scroll effect above. If the timer
+  // lived in that effect, any unrelated re-run before it fired (a mid-highlight
+  // reorder bumps `order`; a StrictMode setup/cleanup cycle) would clear the
+  // timeout and then early-return on the `scrolledFor` guard without scheduling
+  // a replacement — stranding the row highlighted. Keyed on `highlightId`, the
+  // timer is only torn down when the highlight actually changes or unmounts.
+  useEffect(() => {
+    if (highlightId === null) return;
+    const t = setTimeout(() => setHighlightId(null), 2000);
+    return () => clearTimeout(t);
+  }, [highlightId]);
   // Shared dropdown dismissal: Escape, outside-press, and the first-press-only
   // swallow (so dismissing the menu doesn't also activate whatever was tapped —
   // a neighboring row, another control). The "inside" region is the open row,
@@ -327,7 +361,9 @@ export function ReorderableSubscriptions({
           <li
             key={feed.id}
             className={
-              'settings__sub' + (draggingId === feed.id ? ' is-dragging' : '')
+              'settings__sub' +
+              (draggingId === feed.id ? ' is-dragging' : '') +
+              (highlightId === feed.id ? ' is-highlighted' : '')
             }
             ref={(el) => {
               if (el) rowRefs.current.set(feed.id, el);
