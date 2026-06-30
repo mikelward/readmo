@@ -16,6 +16,7 @@ import {
   isSafeHttpUrl,
 } from '../lib/itemMeta';
 import { fullTextStaleTime, looksTruncated } from '../lib/fullText';
+import { faviconNeedsDarkInvert } from '../lib/faviconInvert';
 import type { FullTextResult } from '../lib/fullText';
 import type { Item, ItemState, ItemStateField } from '../lib/types';
 import { ArticleSummary } from '../components/ArticleSummary';
@@ -76,6 +77,10 @@ interface ReaderToolbarProps {
    * just the title + meta line. */
   source: string;
   feedId: string;
+  /** The feed's favicon, shown between the leading button and the feed name as
+   * a "which feed is this?" glyph while reading. Null when the feed advertises
+   * no icon — the bar then shows just the back button and name. */
+  faviconUrl: string | null;
   wide: boolean;
   onBack: () => void;
   openOriginal: () => void;
@@ -106,6 +111,7 @@ function ReaderToolbar({
   state,
   source,
   feedId,
+  faviconUrl,
   wide,
   onBack,
   openOriginal,
@@ -158,6 +164,26 @@ function ReaderToolbar({
         className="reader__feedname"
         data-testid={`reader-feedname${sfx}`}
       >
+        {/* Feed favicon between the leading button and the name, mirroring the
+            per-row icon. Decorative (alt=""); hides itself on load error so a
+            404'd /favicon.ico guess leaves no broken glyph. */}
+        {faviconUrl ? (
+          <img
+            className={
+              'reader__feedname-favicon' +
+              (faviconNeedsDarkInvert(faviconUrl) ? ' favicon--invert-dark' : '')
+            }
+            src={faviconUrl}
+            alt=""
+            aria-hidden="true"
+            width={16}
+            height={16}
+            data-testid={`reader-feedname-favicon${sfx}`}
+            onError={(e) => {
+              e.currentTarget.style.display = 'none';
+            }}
+          />
+        ) : null}
         <span className="reader__feedname-text">{source}</span>
       </Link>
 
@@ -648,6 +674,7 @@ export function ItemPage() {
     state,
     source,
     feedId: feed.id,
+    faviconUrl: feed.faviconUrl,
     wide,
     onBack: goBack,
     openOriginal,

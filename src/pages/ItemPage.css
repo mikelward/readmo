@@ -69,6 +69,7 @@
 .reader__feedname {
   display: flex;
   align-items: center;
+  gap: 6px;
   flex: 1 1 auto;
   min-width: 0;
   min-height: var(--rm-tap);
@@ -78,6 +79,17 @@
   font-weight: 700;
   color: var(--rm-accent);
   text-decoration: none;
+}
+
+/* Feed favicon ahead of the name. flex: 0 0 auto keeps it from shrinking when
+   the name is long; the name's inner span takes the truncation. Matches the
+   16px per-row icon (.item-row__favicon). */
+.reader__feedname-favicon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  object-fit: contain;
 }
 
 .reader__feedname-text {

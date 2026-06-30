@@ -97,6 +97,31 @@ describe('ItemPage (reader)', () => {
     expect(bottom).toHaveAttribute('href', '/feed/feed-verge');
   });
 
+  it("shows the feed's favicon next to the feed name in both toolbars", async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReader(source, 'item-1');
+    const top = await screen.findByTestId('reader-feedname-favicon');
+    const bottom = screen.getByTestId('reader-feedname-favicon-bottom');
+    // The Verge's favicon, decorative, and sitting inside the feed-name link.
+    expect(top).toHaveAttribute('src', 'https://www.theverge.com/favicon.ico');
+    expect(top).toHaveAttribute('alt', '');
+    expect(top.closest('[data-testid="reader-feedname"]')).not.toBeNull();
+    expect(bottom).toHaveAttribute('src', 'https://www.theverge.com/favicon.ico');
+    expect(bottom.closest('[data-testid="reader-feedname-bottom"]')).not.toBeNull();
+  });
+
+  it('omits the favicon when the feed advertises none', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const detail = (await source.getItem('item-1'))!;
+    vi.spyOn(source, 'getItem').mockResolvedValue({
+      ...detail,
+      feed: { ...detail.feed, faviconUrl: null },
+    });
+    renderReader(source, 'item-1');
+    await screen.findByTestId('reader-feedname');
+    expect(screen.queryByTestId('reader-feedname-favicon')).not.toBeInTheDocument();
+  });
+
   it('shows the article domain in the meta line below the title when it links off-site', async () => {
     // item-8 is the Reddit "Show" post, which links out to github.com.
     const source = new MockDataSource(`test-${Math.random()}`);

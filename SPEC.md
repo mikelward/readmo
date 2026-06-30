@@ -1928,7 +1928,11 @@ immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
   bar, Back to top on the bottom bar), linking to `/feed/:feedId`. This is the
   **only** place the feed name appears (the header shows just title + meta), on
   both bars so "which feed is this?" stays answerable while reading (the top bar
-  is sticky) and at the article's foot. It grows to fill the gap before the
+  is sticky) and at the article's foot. The feed's **site favicon** sits between
+  the leading button and the name — the same 16px `feeds.favicon_url` icon the
+  rows use (decorative `alt=""`, hides itself on a load error, dark-monochrome
+  inversion per `faviconInvert.ts`), omitted when the feed advertises none. It
+  grows to fill the gap before the
   action cluster and **truncates with an ellipsis** so a long title can't push
   the actions off the bar; it's a full `--rm-tap` (44px) tap target with a
   pressed `:active` state. Not a new tap zone on the row — it's reader chrome,
