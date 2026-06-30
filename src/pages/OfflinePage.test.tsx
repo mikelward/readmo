@@ -1,12 +1,21 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import 'fake-indexeddb/auto';
+import { IDBFactory } from 'fake-indexeddb';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { MockDataSource } from '../lib/data/MockDataSource';
+import { _resetIdbForTests } from '../lib/idbStorage';
 import { OfflinePage } from './OfflinePage';
 
 describe('OfflinePage', () => {
+  beforeEach(() => {
+    // A working IndexedDB so the storage-availability probe reads "available"
+    // (the real-browser default); the unavailable-storage case stubs it off.
+    globalThis.indexedDB = new IDBFactory();
+    _resetIdbForTests();
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -117,6 +126,45 @@ describe('OfflinePage', () => {
     ).toBeInTheDocument();
   });
 
+  it('tells the user to leave incognito when IndexedDB is unavailable', async () => {
+    vi.stubGlobal('indexedDB', undefined);
+    _resetIdbForTests();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    source.stateStore.set('item-1', 'pinned', true);
+
+    renderWithProviders(<OfflinePage />, {
+      route: '/offline',
+      source,
+      queryClient: cacheClient(),
+    });
+
+    expect(
+      await screen.findByText(
+        /please exit incognito mode or grant database permission/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('does not claim nothing is saved when items are pinned but uncached on this device', async () => {
+    // The bug report: with pins present but no cached body for them, `/offline`
+    // wrongly read as "nothing saved". It must own that there ARE saved items.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    source.stateStore.set('item-1', 'pinned', true);
+
+    renderWithProviders(<OfflinePage />, {
+      route: '/offline',
+      source,
+      queryClient: cacheClient(),
+    });
+
+    expect(
+      await screen.findByText(/Your saved items aren't on this device yet/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Nothing saved offline yet/i),
+    ).not.toBeInTheDocument();
+  });
+
   it('updates live when a saved item is warmed into the cache after mount', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     source.stateStore.set('item-1', 'pinned', true);
@@ -124,9 +172,10 @@ describe('OfflinePage', () => {
 
     renderWithProviders(<OfflinePage />, { route: '/offline', source, queryClient });
 
-    // Pinned, but its detail isn't cached yet → empty.
+    // Pinned, but its detail isn't cached yet → the "saved but not on this
+    // device" copy (not the genuine "nothing saved").
     expect(
-      await screen.findByText(/Nothing saved offline yet/i),
+      await screen.findByText(/Your saved items aren't on this device yet/i),
     ).toBeInTheDocument();
 
     // The offline-cache lock warms the detail; the list should pick it up.

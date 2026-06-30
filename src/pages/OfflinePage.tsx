@@ -6,6 +6,7 @@ import {
 } from '@tanstack/react-query';
 import { useStateBucket } from '../hooks/useItemState';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { useOfflineStorageAvailable } from '../hooks/useOfflineStorageAvailable';
 import { ItemRows } from '../components/ItemRows';
 import { ListPage } from '../components/ListPage';
 import { findCachedFeedItem } from '../lib/offlineItem';
@@ -31,6 +32,10 @@ export function OfflinePage() {
   // without this guard the "Nothing saved offline yet" copy flashes for users
   // who do have saved items cached.
   const isRestoring = useIsRestoring();
+  // Offline caching needs a usable IndexedDB. In a private/incognito session or
+  // with site storage blocked it isn't, so nothing the user pins ever persists —
+  // say so instead of showing a misleading "nothing saved" empty state.
+  const storageAvailable = useOfflineStorageAvailable();
   useDocumentTitle('Offline · readmo');
 
   // Pinned first, then favorited; both buckets are already newest-first.
@@ -44,12 +49,24 @@ export function OfflinePage() {
   // just-pinned item, or hydration landing persisted entries, both surface here).
   const items = useOfflineItems(queryClient, ids);
 
+  // Pick the empty-state copy for what's actually true:
+  //  - storage unavailable (private mode / blocked): caching can't work at all;
+  //  - have saved items but no cached body here: don't claim you saved nothing
+  //    (the bug report: "saying I haven't pinned anything, which is untrue");
+  //  - genuinely nothing pinned or favorited.
+  const emptyLabel =
+    storageAvailable === false
+      ? 'Please exit incognito mode or grant database permission to use offline mode.'
+      : ids.length > 0
+        ? "Your saved items aren't on this device yet. Open one while online to keep a copy here."
+        : 'Nothing saved offline yet. Pin or favorite items to keep a copy.';
+
   return (
     <ListPage header={<h1 className="page-header__title">Offline</h1>}>
       <ItemRows
         items={items}
         isLoading={isRestoring && items.length === 0}
-        emptyLabel="Nothing saved offline yet. Pin or favorite items to keep a copy."
+        emptyLabel={emptyLabel}
       />
     </ListPage>
   );

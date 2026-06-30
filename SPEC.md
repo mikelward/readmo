@@ -2157,12 +2157,24 @@ keys differ; the strategies map one-to-one:
   `CACHE_BUSTER` bump). The outbox is per-user, flushed-or-discarded on
   sign-out. The one place Readmo must be stricter than newshacker, which never
   had multiple identities or private content on a device.
-- **On-device storage surfaces.** Until the IndexedDB move lands, the client
-  keys these `localStorage` surfaces by the signed-in user id — the real
-  `auth.uid()` when Supabase is configured, the mock uid otherwise — falling
-  back to the unscoped base key when signed out:
-  - `readmo:rq-cache:<uid>` — persisted React Query blob.
-  - `readmo:item-state:<uid>` — per-item triage state (pinned/favorite/…).
+- **On-device storage surfaces.** The client keys these surfaces by the
+  signed-in user id — the real `auth.uid()` when Supabase is configured, the mock
+  uid otherwise — falling back to the unscoped base key when signed out:
+  - `readmo:rq-cache:<uid>` — persisted React Query blob, stored in **IndexedDB**
+    (`readmo-cache` DB, `keyval` store; see `lib/idbStorage.ts`). It holds the
+    pinned/favorited article bodies warmed for `/offline`, which overflow
+    localStorage's ~5 MB synchronous cap — a failed quota write there left
+    *nothing* persisted, so a reload-while-offline showed an empty `/offline`.
+    Purged on account change like the other scoped surfaces. An upgrading client's
+    leftover localStorage copy under the same key is **dropped** (not migrated):
+    receiving a new build requires being online, and `useOfflineCacheLock`
+    re-warms every pinned/favorited item into IndexedDB on the next online open,
+    so the cache repopulates itself. When IndexedDB is unusable (private/incognito
+    mode, blocked site storage) offline caching can't work at all — `/offline`
+    says so (`useOfflineStorageAvailable`, a usability probe) rather than showing a
+    misleading "nothing saved" state.
+  - `readmo:item-state:<uid>` — per-item triage state (pinned/favorite/…), in
+    `localStorage` (small, synchronous).
   - `readmo:last-uid` — the uid that last booted (sentinel; `''` when signed
     out), used to detect an account switch that happened via a full-page reload.
   - `readmo:cache-migrated` — one-shot flag marking that the pre-scoping global
@@ -2187,8 +2199,9 @@ keys differ; the strategies map one-to-one:
   upgrade-while-signed-out can migrate its legacy data on the next sign-in. The
   Workbox runtime caches (`readmo-data`/`readmo-images`/`readmo-favicons`) are
   **purged** on transition/boot in PR1 but not yet per-user *prefixed* — true
-  per-user keying (and the IndexedDB move) lands with real auth in PR2, when the
-  NetworkFirst data cache actually holds Supabase responses (PR1 has none).
+  per-user keying lands with real auth in PR2, when the NetworkFirst data cache
+  actually holds Supabase responses (PR1 has none). The persisted-query-cache
+  IndexedDB move has landed (see `readmo:rq-cache:<uid>` above).
 
 ### Prefetch on Pin/Favorite (mirrors newshacker's pin/favorite prefetch)
 
@@ -2214,6 +2227,12 @@ keys differ; the strategies map one-to-one:
   list (`findCachedFeedItem`) for an item loaded into a list but not yet warmed.
   The list re-derives on cache mutations (a just-warmed pin appears live) and is
   guarded by `useIsRestoring` so it doesn't flash the empty copy mid-hydration.
+  Its empty state reflects what's actually true: if IndexedDB is unusable
+  (private/incognito mode, blocked storage) it tells the user to exit incognito or
+  grant database permission; with **no** pinned/favorited items it reads "Nothing
+  saved offline yet"; with saved items present but **no** cached body for any of
+  them on this device it says they "aren't on this device yet" (open one while
+  online) — it never claims you saved nothing when you did.
   (The library views `/pinned` and `/favorites` keep the online-first-with-cache-
   fallback read, since they legitimately want fresh server data when online.)
   **Standalone images and cross-device sync are not yet wired** — see *Open
