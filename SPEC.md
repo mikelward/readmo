@@ -1546,6 +1546,14 @@ on the dark page background; those are inverted to white in dark mode. Inversion
 is **opt-in per registrable domain** (a curated set in `faviconInvert.ts`, e.g.
 `vox.com`) rather than applied to every favicon — blanket inversion would wreck
 full-color logos.
+
+On the **single feed page** the page-header title carries right-aligned
+controls: a **pencil** (44×44 tap target) linking to the **Feeds page**, where
+this feed can be renamed, muted, or unsubscribed (there's no per-feed unsubscribe
+on the feed view itself — the management page owns those controls), and — only
+when the feed is **parked** after repeated fetch failures — a **"Feed has errors
+· Retry now"** badge that un-parks and refetches it. When both are present the
+badge sits left of the pencil.
 **Opened** titles render `--rm-read`. Not rendered: rank numbers, inline
 source/date links, external-link chevron (the reader's "Open original" owns
 that). (No points/comments/Hot flag/"N new" — those are HN-specific.)

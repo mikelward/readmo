@@ -47,3 +47,26 @@
   cursor: pointer;
   min-height: 32px;
 }
+
+/* Pencil link to the feed-management page (rename / mute / unsubscribe).
+   margin-left:auto floats it to the right edge; when a parked badge is also
+   present the badge wins the free space and this sits just after it. The 44px
+   box keeps the tap floor even though the glyph is 20px. */
+.page-header__edit {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 var(--rm-tap);
+  width: var(--rm-tap);
+  height: var(--rm-tap);
+  color: var(--rm-text);
+  border-radius: 999px;
+  text-decoration: none;
+}
+
+@media (hover: hover) {
+  .page-header__edit:hover {
+    background: var(--rm-bg);
+  }
+}

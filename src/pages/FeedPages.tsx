@@ -1,4 +1,4 @@
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useHomeFeed } from '../hooks/useHomeFeed';
@@ -6,6 +6,7 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useItemSort, useGroupByFeed } from '../hooks/useReadingPrefs';
 import { ItemList } from '../components/ItemList';
 import { HomeEmptyCoach } from '../components/HomeEmptyCoach';
+import { Edit } from '../components/icons';
 import { faviconNeedsDarkInvert } from '../lib/faviconInvert';
 import { PER_FEED_WINDOW } from '../lib/types';
 import './PageHeader.css';
@@ -218,6 +219,18 @@ export function FeedPage() {
             Feed has errors · Retry now
           </button>
         ) : null}
+        {/* Pencil to the feed-management page, where this feed can be renamed,
+            muted, or unsubscribed. Pushed to the right of the title (and any
+            parked badge) by its margin-left:auto. */}
+        <Link
+          to="/feeds"
+          className="page-header__edit"
+          aria-label="Feed settings"
+          title="Feed settings"
+          data-testid="feed-settings-link"
+        >
+          <Edit width={20} height={20} />
+        </Link>
       </div>
       {/* Single feed: sort order applies; grouping-by-feed is a no-op (one
           feed), so no section headers. */}
