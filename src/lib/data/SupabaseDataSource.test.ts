@@ -354,13 +354,11 @@ describe('SupabaseDataSource reads', () => {
 
   it('preserves an unpin+sweep made while a resync read is in flight (no resurrect as pinned)', async () => {
     // Regression: a resync (focus/visibility) read parks holding the pre-unpin
-    // server snapshot; the user unpins THEN sweeps the item, so both writes
-    // commit to the server and leave the outbox while the read is still parked;
-    // then the stale read lands. Its snapshot predates the writes and they are no
-    // longer queued, so a hydrate that only consults the outbox at the read's
-    // start/end would adopt the server's still-pinned row and the swept item
-    // would resurface PINNED. The hydrate must also overlay the fields the user
-    // changed DURING the read.
+    // server snapshot; the user unpins THEN sweeps the item; then the stale read
+    // lands carrying the still-pinned row. The local unpin/sweep stamped newer
+    // `<f>At` clocks than that snapshot, so per-field LWW keeps them and the swept
+    // item does NOT resurface pinned — even though the writes already drained from
+    // the outbox by the time the read returns.
     const fake = makeFakeSupabase(seed()); // i2 is pinned in the seed
     const realFrom = fake.client.from.bind(fake.client);
     let releaseResync: () => void = () => {};
@@ -415,15 +413,14 @@ describe('SupabaseDataSource reads', () => {
     expect(ds.stateStore.get('i2').done).toBe(true);
   });
 
-  it('overlays the exclusivity-closed diff of a write made over a stale mirror during a resync', async () => {
-    // The during-read capture must record the CLOSED diff (what the RPC gets),
-    // not the mutation listener's natural diff. Scenario: another device marked
-    // i2 Done; this tab's mirror hasn't learned that yet. A resync read parks
-    // holding the (Done) server snapshot; the user pins the still-rendered row,
-    // whose closed write sends pinned=true + done=false and drains before the
-    // post-read snapshot; then the stale read lands carrying done=true. Capturing
-    // only the natural {pinned:true} would leave the store pinned+done; the closed
-    // diff carries done=false, so the overlay reasserts it.
+  it('keeps a pin made over a stale mirror consistent (not pinned+done) through a resync', async () => {
+    // Scenario: another device marked i2 Done; this tab's mirror hasn't learned
+    // that yet. A resync read parks holding the (Done) server snapshot; the user
+    // pins the still-rendered row, then the stale read lands carrying done=true.
+    // Because applyMutation stamps the pin's exclusivity-cleared done=false with
+    // the SAME action clock, the local row's doneAt is as new as its pinnedAt, so
+    // per-field LWW keeps BOTH (pinned=true, done=false) over the older server
+    // row — no invalid pinned+done.
     const baseSeed = seed();
     baseSeed.item_state = []; // boot sees no state for i2 → local mirror clean
     const fake = makeFakeSupabase(baseSeed);
@@ -480,13 +477,13 @@ describe('SupabaseDataSource reads', () => {
     expect(ds.stateStore.get('i2').done).toBe(false); // not left pinned+done
   });
 
-  it('does not re-overlay a during-read write that LOST LWW (falls back to server truth)', async () => {
-    // A write made during a resync read that the server rejects on LWW never
-    // landed, so the just-read (winning) server row is the truth. The during-read
-    // overlay must prune it — otherwise it re-applies the lost optimistic value
-    // over the correct row, pre-empting the lwwLossPending re-pull (which here is
-    // held open, standing in for a stuck/slow follow-up). With the prune, the
-    // store ends on server truth even though the re-pull never completes.
+  it('adopts server truth for a during-read write that LOST LWW (newer server clock wins)', async () => {
+    // A write made during a resync read whose server value is NEWER (another
+    // device's pin) must not stick. The parked read carries that winning server
+    // row (pinned=true with the newer clock); per-field LWW compares it against
+    // the local unpin's older clock and adopts the server — directly, without
+    // needing the lwwLossPending re-pull (held open here to prove the read alone
+    // reconciles correctly).
     const baseSeed = seed();
     // Another device pinned i2 with a timestamp NEWER than our clock, so this
     // tab's unpin will lose LWW on the server.
@@ -514,7 +511,8 @@ describe('SupabaseDataSource reads', () => {
         return itemStateReadStub(() => held) as ReturnType<typeof realFrom>;
       }
       // reads >= 3 is the lwwLossPending re-pull — hold it open so it can't
-      // correct the store, isolating the during-read prune as the only fix.
+      // correct the store, proving the read's own per-field LWW already adopts
+      // the newer server value.
       if (reads >= 3) {
         return itemStateReadStub(() => new Promise(() => {})) as ReturnType<typeof realFrom>;
       }
@@ -544,12 +542,11 @@ describe('SupabaseDataSource reads', () => {
     expect(ds.stateStore.get('i2').pinned).toBe(true);
   });
 
-  it('keeps a during-read field that WON LWW when a sibling field of the same write lost', async () => {
-    // A pin is a multi-field closed write (pinned:true + done:false). If another
-    // device set a NEWER done, the server resolves LWW per field: pinned:true
-    // commits but the done:false clear loses. Pruning the whole captured write
-    // would drop the winning pinned:true and let the stale read reapply
-    // pinned:false; only the lost `done` field may be pruned.
+  it('keeps a field that WON LWW while a sibling field of the same write lost', async () => {
+    // A pin touches multiple fields (pinned:true + done:false). If another device
+    // set a NEWER done, per-field LWW splits: the local pin keeps pinned=true (its
+    // clock beats the server), while the newer server done is adopted — exactly
+    // the field-by-field resolution, no whole-row revert of the winning pin.
     const baseSeed = seed();
     // Another device marked i2 Done with a timestamp NEWER than our clock, so our
     // pin's done-clear loses LWW while the pin itself (no prior pinned_at) wins.
@@ -577,7 +574,7 @@ describe('SupabaseDataSource reads', () => {
         return itemStateReadStub(() => held) as ReturnType<typeof realFrom>;
       }
       // reads >= 3 (the lwwLoss re-pull) — held open so it can't correct the
-      // store, isolating the per-field prune.
+      // store, proving per-field LWW keeps the winning pin from the read alone.
       if (reads >= 3) {
         return itemStateReadStub(() => new Promise(() => {})) as ReturnType<typeof realFrom>;
       }
@@ -604,15 +601,15 @@ describe('SupabaseDataSource reads', () => {
     releaseResync();
     await resync;
 
-    // The winning pin must survive the prune even though its sibling done lost.
+    // The winning pin must survive even though its sibling done lost LWW.
     expect(ds.stateStore.get('i2').pinned).toBe(true);
   });
 
   it('keeps a field re-changed by a later WINNING write after an earlier write LOST it', async () => {
     // A field can be written several times during one long parked read. If an
     // early write loses LWW but a later write to the SAME field wins (lose →
-    // toggle → win), the prune must keep the winning value — the lost marker is
-    // keyed by the losing write's `at`, which a newer capture supersedes. Uses
+    // toggle → win), the store's latest `<f>At` (the winning write's) is what the
+    // hydrate compares, so LWW keeps the winning value over the stale read. Uses
     // explicit action timestamps so the server's per-field LWW is deterministic.
     const baseSeed = seed();
     // Another device left i2 unpinned with last-change clock 2000: a write older
@@ -640,7 +637,7 @@ describe('SupabaseDataSource reads', () => {
         return itemStateReadStub(() => held) as ReturnType<typeof realFrom>;
       }
       // reads >= 3 (the lwwLoss re-pull from the early loss) — held open so it
-      // can't correct the store, isolating the per-`at` prune.
+      // can't correct the store, proving the store's latest clock drives the read.
       if (reads >= 3) {
         return itemStateReadStub(() => new Promise(() => {})) as ReturnType<typeof realFrom>;
       }
@@ -674,6 +671,72 @@ describe('SupabaseDataSource reads', () => {
 
     // The final winning pin must survive — not reverted to the unpinned snapshot
     // by the stale lost marker from the @1000 write.
+    expect(ds.stateStore.get('i2').pinned).toBe(true);
+  });
+
+  it('overlays a during-read write that drained on a clock TIE with the parked server row', async () => {
+    // A write made AND drained during the parked read whose `at` exactly ties the
+    // parked server row's `<f>At` (same-ms toggle / reduced timer precision). The
+    // server accepts the tie via `>=` and echoes our `at`, so the outbox drains
+    // clean — no lost marker, no lwwLossPending re-pull. But the parked snapshot
+    // still carries the PRE-write value at that same clock, and the store's
+    // hydrate compares with strict `>`, so per-field LWW alone would adopt the
+    // stale server value and silently revert the write. The during-read note must
+    // carry the changed FIELDS (not just the id) so the overlay keeps it.
+    const baseSeed = seed();
+    // Server holds i2 unpinned with last-change clock 5000; our pin@5000 ties it.
+    baseSeed.item_state = [mkState('i2', { pinned: false, pinned_at: new Date(5000).toISOString() })];
+    const fake = makeFakeSupabase(baseSeed);
+    const realFrom = fake.client.from.bind(fake.client);
+    let releaseResync: () => void = () => {};
+    let resyncStartedResolve!: () => void;
+    const resyncStarted = new Promise<void>((r) => (resyncStartedResolve = r));
+    let reads = 0;
+    fake.client.from = ((table: string) => {
+      if (table !== 'item_state') return realFrom(table);
+      reads += 1;
+      const settle = {
+        data: (fake.store.item_state ?? []).map((r) => ({ ...r })),
+        count: null,
+        error: null,
+      };
+      if (reads === 2) {
+        const held = new Promise<typeof settle>((res) => {
+          releaseResync = () => res(settle);
+        });
+        resyncStartedResolve();
+        return itemStateReadStub(() => held) as ReturnType<typeof realFrom>;
+      }
+      // No re-pull is expected (the tie drains clean) — hold any later read open
+      // so the test proves the parked read's own reconcile keeps the write.
+      if (reads >= 3) {
+        return itemStateReadStub(() => new Promise(() => {})) as ReturnType<typeof realFrom>;
+      }
+      return itemStateReadStub(() => settle) as ReturnType<typeof realFrom>;
+    }) as typeof fake.client.from;
+
+    const ds = new SupabaseDataSource(
+      'readmo:item-state:test',
+      fake.client as unknown as SupabaseClient,
+    );
+    await ds.getItemsByIds([]); // boot → store holds i2 unpinned@5000
+    expect(ds.stateStore.get('i2').pinned).toBe(false);
+
+    const resync = ds.resyncState();
+    await resyncStarted; // resync read parked, holding the unpinned@5000 snapshot
+
+    // Pin i2 at the SAME clock the parked row carries; it drains and WINS the tie
+    // on the server (no loss, no re-pull), so only the overlay can preserve it.
+    ds.stateStore.set('i2', 'pinned', true, 5000);
+    await drainOutbox(ds);
+    const serverRow = (fake.store.item_state ?? []).find((r) => r.item_id === 'i2');
+    expect(serverRow?.pinned).toBe(true); // tie accepted via `>=`
+    expect(ds.pendingItemIds().has('i2')).toBe(false); // outbox already empty
+
+    releaseResync();
+    await resync;
+
+    // The pin survives the tied parked snapshot — overlaid, not reverted to false.
     expect(ds.stateStore.get('i2').pinned).toBe(true);
   });
 

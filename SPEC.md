@@ -855,20 +855,36 @@ negligible and off every critical path. See the External services table in
   rows; `useStateSync` (mounted app-wide) fires it when the tab regains focus or
   visibility, or the device comes back online, so a pin / favorite / done made
   on another device syncs in without a manual pull-to-refresh. Overlapping calls
-  coalesce (one tab return can fire both `focus` and `visibilitychange`); the
-  hydrate path's pending overlay preserves an un-synced local write so the
-  re-pull can't clobber a just-made change — **including a write that is made
-  *and* delivered (so it has already left the outbox) entirely while the read is
-  in flight.** The canonical case is unpin-then-sweep during a resync: the read
-  was issued before either write committed, so it carries a still-pinned
-  snapshot, yet neither write is queued at the read's start or end — so the
-  hydrate also overlays the writes made *during* the read, not just the ones
-  pending at its boundaries. It captures the **exclusivity-closed** diff each
-  such write sent the server (a pin carries `done=false`/`hidden=false`), so a
-  write made over a stale mirror can't leave the row in an invalid pinned+done
-  state. Without this, the stale snapshot would resurrect the swept item as
-  pinned. The store emits on change → the feed-invalidation hook refetches and
-  the library pages re-read.
+  coalesce (one tab return can fire both `focus` and `visibilitychange`). The
+  hydrate reconciles **per field by last-write-wins** on each field's `<f>At`
+  clock — the same rule the server's `set_item_state` applies: an un-synced or
+  just-made local change carries a newer clock than the (possibly pre-write)
+  server snapshot and survives, while a field another device changed more
+  recently has a newer server clock and is adopted. This is why the client store
+  keeps `<f>At` populated **even when a flag is false** (matching the server) and
+  stamps every field a mutation touches — the action field *and* the
+  exclusivity-cleared ones — with the same action time, so the newest action's
+  fields all win together and a merge of two consistent rows stays consistent (no
+  invalid pinned+done). The canonical race it dissolves is unpin-then-sweep
+  during a resync: the read carries a still-pinned snapshot, but the local
+  unpin/sweep clocks are newer, so LWW keeps them. On top of the clock compare,
+  the hydrate **overlays the un-acknowledged changed fields** (keeping the local
+  value): a write the server read can't reflect yet must not be reverted by a
+  millisecond-`at` tie (the server resolves the same tie its way via `>=`) or by
+  a `null` clock an older client persisted on a cleared false field. The overlay
+  set is the union of the outbox's still-pending fields **and** any write that
+  enqueued and drained entirely *within* the read window (tracked as a
+  during-read note) — the latter included because its server-accepted tie leaves
+  nothing pending and no re-pull, so only the overlay can hold it. A field that
+  genuinely **lost** server-side is excluded: the drain drops it from the
+  during-read note (a later write to the same field re-adds it, so
+  lose→toggle→win keeps the re-won value), and the loss re-pull
+  (`lwwLossPending` / `onPermanentReject`) reads the winner, whose newer clock
+  wins the same LWW. A local row the read omits is kept only while it still has a
+  **pending** write (a brand-new row that hasn't reached the server, or raced the
+  read), else
+  dropped as gone. The store emits on change → the feed-invalidation hook
+  refetches and the library pages re-read.
   - **`item_state` reads are `NetworkOnly`** — a dedicated Workbox route
     (`supabaseItemStatePattern`, registered ahead of the NetworkFirst REST route
     — `vite.config.ts`) serves them with no cache fallback, so item-state

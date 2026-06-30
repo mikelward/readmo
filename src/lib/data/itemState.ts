@@ -7,6 +7,15 @@ import {
 } from '../types';
 import type { ChangedFields } from './itemStateOutbox';
 
+/** The five item-state boolean fields, each with its `<f>At` last-change clock. */
+const ITEM_STATE_FIELDS: readonly ItemStateField[] = [
+  'pinned',
+  'favorite',
+  'done',
+  'hidden',
+  'opened',
+];
+
 /**
  * Apply a single field mutation to an item's state, enforcing the
  * exclusivity rules from SPEC.md *Item state model → Enforcement at the
@@ -30,9 +39,18 @@ export function applyMutation(
   now: number = Date.now(),
 ): ItemState {
   const next: ItemState = { ...prev };
+  // Stamp the action time on EVERY field this mutation touches — including the
+  // exclusivity-cleared ones (a pin clears done+hidden) and a field set to
+  // false. `<f>At` is each field's last-change clock, kept even while the flag is
+  // false, exactly as the server stores it (migration 0023) and only ever read
+  // while the flag is true (retention TTL, library sort, feed pin-order). Keeping
+  // it lets `hydrate` reconcile per-field by last-write-wins against the server
+  // read — and because the cleared fields share this `now`, the newest action's
+  // fields all win together, so an LWW merge of two consistent rows stays
+  // consistent (the same property the server's closed-diff LWW relies on).
   const stamp = (f: ItemStateField, on: boolean) => {
     next[f] = on;
-    next[`${f}At` as const] = on ? now : null;
+    next[`${f}At` as const] = now;
   };
 
   stamp(field, value);
@@ -80,31 +98,27 @@ export function withRetention(
 }
 
 /**
- * Overlay only the *pending* (un-synced) fields onto the authoritative server
- * row, so a hydrate adopts independent fields another device changed while still
- * preserving the local optimistic write that hasn't reached the server yet.
- * Prefers the local snapshot's values (real action timestamps); falls back to
- * re-applying the queued field changes when there's no local mirror. Stays
- * consistent with the exclusivity rules because the outbox's changed-set is
- * itself closed under them (a Pin diff carries the cleared Done/Hidden too).
+ * Reconcile a local row against the authoritative server row by **per-field
+ * last-write-wins** on each field's `<f>At` clock — the same rule the server's
+ * `set_item_state` applies (migration 0023). For each field, keep the local
+ * value only when its last-change time is strictly newer than the server's;
+ * otherwise adopt the server (so an un-acted field — both clocks null/0 — takes
+ * server truth, and a clock tie adopts the server here — a tie that is still an
+ * un-synced local write is handled by the pending overlay in `hydrate`, which
+ * matches the server's own `>=` tie bias). Because a mutation stamps every field
+ * it touches (the action field AND the exclusivity-cleared ones) with the same
+ * `now`, the newest action's fields all win together, so merging two
+ * individually-consistent rows stays consistent without re-deriving
+ * pin/done/hidden exclusivity here.
  */
-function mergePending(
-  srv: ItemState,
-  local: ItemState | undefined,
-  changed: ChangedFields,
-  now: number,
-): ItemState {
-  if (local) {
-    const next: ItemState = { ...srv };
-    for (const f of Object.keys(changed) as ItemStateField[]) {
+function mergeByLww(srv: ItemState, local: ItemState): ItemState {
+  const next: ItemState = { ...srv };
+  for (const f of ITEM_STATE_FIELDS) {
+    const fAt = `${f}At` as const;
+    if ((local[fAt] ?? 0) > (srv[fAt] ?? 0)) {
       next[f] = local[f];
-      next[`${f}At` as const] = local[`${f}At` as const];
+      next[fAt] = local[fAt];
     }
-    return next;
-  }
-  let next = srv;
-  for (const [f, v] of Object.entries(changed)) {
-    next = applyMutation(next, f as ItemStateField, v as boolean, now);
   }
   return next;
 }
@@ -332,15 +346,28 @@ export class ItemStateStore {
 
   /**
    * Reconcile the local store against the authoritative server `item_state`
-   * rows. The server is the source of truth field-by-field, EXCEPT for the
-   * specific fields with an un-synced pending write (`pending`, the outbox's
-   * changed-fields per item): those keep their optimistic local value so a
-   * hydrate that races an in-flight write neither wipes the user's change nor
-   * masks an independent field another device changed. Local rows the server
-   * didn't return AND that aren't pending are genuinely stale (the item_state
-   * row was reset/expired elsewhere) and are dropped — the pending guard is what
-   * makes that clearing safe (no data-loss race). Persists + notifies once if
-   * anything changed. Used by SupabaseDataSource after fetching the caller's rows.
+   * rows by **per-field last-write-wins** ({@link mergeByLww}): each field takes
+   * whichever of {local, server} has the newer `<f>At` clock. An un-synced or
+   * just-made local write carries a newer clock than the (possibly pre-write)
+   * server snapshot, so it survives, while an independent field another device
+   * changed has a newer server clock and is adopted. A stale local write that
+   * LOST server-side is corrected when the failure re-pull (`lwwLossPending` /
+   * `onPermanentReject`) reads the winner's newer clock.
+   *
+   * `pending` (the outbox's changed-fields per item) covers what LWW clocks
+   * alone can't decide:
+   *  - **Field overlay.** A field with an un-synced write keeps its LOCAL value
+   *    regardless of the clock compare — the write hasn't reached the server, so
+   *    the read can't reflect it, and it WILL win the server's `>=` when it
+   *    lands. This wins ms-`at` ties (a strict `>` would wrongly drop the
+   *    optimistic value) and rows upgraded from an older client whose
+   *    exclusivity-cleared false fields persisted with a `null` clock.
+   *  - **Absent-row protection.** A local row the server didn't return is kept
+   *    only when it has a pending write (a brand-new row whose write hasn't
+   *    reached the server, or raced this read); otherwise it's genuinely gone
+   *    (lost visibility / reset elsewhere) and dropped.
+   *
+   * Persists + notifies once if anything changed. Used by SupabaseDataSource.
    */
   hydrate(
     rows: Array<[ItemId, ItemState]>,
@@ -349,11 +376,21 @@ export class ItemStateStore {
   ): void {
     const serverIds = new Set(rows.map(([id]) => id));
     const next: Record<ItemId, ItemState> = {};
-    // Server rows win unless the item has a pending local write — then overlay
-    // just the pending fields onto server truth.
     for (const [id, srv] of rows) {
-      const changed = pending.get(id);
-      const merged = changed ? mergePending(srv, this.map[id], changed, now) : srv;
+      const local = this.map[id];
+      let merged = local ? mergeByLww(srv, local) : srv;
+      // Overlay the still-pending fields onto the LWW result, taking the local
+      // value+clock so an un-synced write isn't reverted by a clock tie or a
+      // pre-write/sibling server field (see the `pending` note above).
+      const changed = local && pending.get(id);
+      if (changed) {
+        const overlaid: ItemState = { ...merged };
+        for (const f of Object.keys(changed) as ItemStateField[]) {
+          overlaid[f] = local[f];
+          overlaid[`${f}At` as const] = local[`${f}At` as const];
+        }
+        merged = overlaid;
+      }
       // Migrate pre-merge hidden rows that arrive from the server: same logic
       // as the constructor migration so Supabase-hydrated hidden=true/done=false
       // rows don't stay invisible with /hidden removed.
@@ -367,7 +404,8 @@ export class ItemStateStore {
         next[id] = merged;
       }
     }
-    // Keep local-only rows only while a write for them is still pending.
+    // Keep a local-only row (absent from the server) only while it has a pending
+    // write; otherwise it's genuinely gone.
     for (const id of Object.keys(this.map)) {
       if (!serverIds.has(id) && pending.has(id)) next[id] = this.map[id];
     }
@@ -467,16 +505,36 @@ export class ItemStateStore {
     // aren't sent. The restore is a fresh action, so it carries `now` as its
     // last-write-wins clock and wins over the dismissal it reverses.
     for (const [id, prior] of batch) {
-      this.emitDiff(
-        id,
-        this.map[id] ?? DEFAULT_ITEM_STATE,
-        prior ?? DEFAULT_ITEM_STATE,
-        now,
-      );
-    }
-    for (const [id, prior] of batch) {
-      if (prior === null) delete next[id];
-      else next[id] = prior;
+      const current = this.map[id] ?? DEFAULT_ITEM_STATE;
+      const restored = prior ?? DEFAULT_ITEM_STATE;
+      this.emitDiff(id, current, restored, now);
+      // Restamp the reverted fields' `<f>At` to `now` so the local restore carries
+      // the SAME last-write-wins clock the server write does. Writing the prior
+      // snapshot back with its pre-hide clocks would let a hydrate landing before
+      // the undo syncs compare those (older) clocks against the server's newer
+      // dismissal clocks and re-apply the dismissal. A brand-new item (prior null,
+      // restored to DEFAULT) keeps its now-stamped row rather than being deleted,
+      // for the same reason — else the server's still-dismissed row would win LWW
+      // until the undo lands.
+      //
+      // Restamp EXACTLY the fields the server write carries — the
+      // exclusivity-CLOSED diff (mirrors emitDiff): the changed booleans PLUS the
+      // fields the restored action clears, even when their local boolean was
+      // already false. Otherwise restoring a pin leaves `hidden`'s clock stale, and
+      // a server row with a newer hidden=true would win LWW and re-clear the pin.
+      const next_id: ItemState = { ...restored };
+      const restamp = new Set<ItemStateField>();
+      for (const f of ITEM_STATE_FIELDS) {
+        if (current[f] !== restored[f]) restamp.add(f);
+      }
+      if (restored.pinned && !current.pinned) {
+        restamp.add('done');
+        restamp.add('hidden');
+      }
+      if (restored.done && !current.done) restamp.add('pinned');
+      if (restored.hidden && !current.hidden) restamp.add('pinned');
+      for (const f of restamp) next_id[`${f}At` as const] = now;
+      next[id] = next_id;
     }
     this.map = next;
     this.lastUndo = null;
