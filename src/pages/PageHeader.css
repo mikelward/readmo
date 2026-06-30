@@ -48,12 +48,13 @@
   min-height: 32px;
 }
 
-/* Pencil link to the feed-management page (rename / mute / unsubscribe).
-   margin-left:auto floats it to the right edge; when a parked badge is also
-   present the badge wins the free space and this sits just after it. The 44px
-   box keeps the tap floor even though the glyph is 20px. */
+/* Pencil link to the feed-management page (rename / mute / unsubscribe). Sits
+   immediately after the title; the parked badge's own margin-left:auto floats
+   it to the far right, past the pencil. The 44px box keeps the tap floor even
+   though the glyph is 20px; the negative margin pulls it snug to the title past
+   the page-header's 12px flex gap and the box's own internal centering. */
 .page-header__edit {
-  margin-left: auto;
+  margin-left: -6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
