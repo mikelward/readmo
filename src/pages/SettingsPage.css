@@ -246,6 +246,29 @@
   opacity: 0.9;
 }
 
+/* Deep-link highlight: when the single feed page's settings pencil lands the
+   user here (`?feed=<id>`), the target row flashes an accent ring + tint, then
+   fades back via the transition as the class is removed. An inset ring rather
+   than a heavy fill so it reads in both themes (the accent is near-ink in light
+   mode). The component removes `.is-highlighted` after ~2s; the longer fade-out
+   transition makes the release gentle. Honored only where motion is allowed. */
+.settings__sub {
+  border-radius: var(--rm-radius);
+  transition: background-color 0.6s ease, box-shadow 0.6s ease;
+}
+
+.settings__sub.is-highlighted {
+  background: color-mix(in srgb, var(--rm-accent) 12%, var(--rm-bg-card));
+  box-shadow: inset 0 0 0 2px var(--rm-accent);
+  transition: background-color 0.1s ease, box-shadow 0.1s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings__sub {
+    transition: none;
+  }
+}
+
 /* Drag handle: a 44×44 touch target (guardrail #2). `touch-action: none` lets
    the pointer drag work on touch without the page scrolling under the finger. */
 .settings__sub-drag {

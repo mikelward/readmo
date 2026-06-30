@@ -589,3 +589,98 @@ describe('ReorderableSubscriptions', () => {
     });
   });
 });
+
+describe('ReorderableSubscriptions (deep-link scroll/highlight)', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  function setupScroll(scrollToFeedId: FeedId | null) {
+    const subs = [
+      entry('a', 'Alpha', 0),
+      entry('b', 'Beta', 1),
+      entry('c', 'Gamma', 2),
+    ];
+    render(
+      <ReorderableSubscriptions
+        subs={subs}
+        scrollToFeedId={scrollToFeedId}
+        onReorder={vi.fn()}
+        onMute={vi.fn()}
+        onSetOpenOriginal={vi.fn()}
+        onSetOpenMode={vi.fn()}
+        onUnsubscribe={vi.fn()}
+        onRename={vi.fn()}
+      />,
+    );
+  }
+
+  it('scrolls the linked feed row into view, highlights it, then clears the highlight', () => {
+    // jsdom doesn't implement scrollIntoView; stub it on the prototype.
+    const scrollSpy = vi.fn();
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrollSpy;
+    try {
+      setupScroll('b');
+      const beta = screen.getByText('Beta').closest('li')!;
+      expect(beta).toHaveClass('is-highlighted');
+      expect(scrollSpy).toHaveBeenCalledTimes(1);
+      // Only the linked row is highlighted.
+      expect(screen.getByText('Alpha').closest('li')).not.toHaveClass(
+        'is-highlighted',
+      );
+      // The highlight clears after ~2s.
+      act(() => vi.advanceTimersByTime(2000));
+      expect(beta).not.toHaveClass('is-highlighted');
+    } finally {
+      Element.prototype.scrollIntoView = orig;
+    }
+  });
+
+  it('clears the highlight after ~2s even if the list is reordered mid-flash', () => {
+    // Regression: the clear timer must not be cancelled-without-reschedule when
+    // an unrelated dep (`order`) changes before it fires. A reorder 1s into the
+    // highlight bumps `order` and re-runs the scroll effect; the original 2s
+    // timer must still fire and clear the highlight.
+    const scrollSpy = vi.fn();
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrollSpy;
+    try {
+      setupScroll('b');
+      expect(screen.getByText('Beta').closest('li')).toHaveClass(
+        'is-highlighted',
+      );
+
+      // 1s in, reorder via the keyboard (changes `order`, re-runs the effect).
+      act(() => vi.advanceTimersByTime(1000));
+      const handles = screen.getAllByTestId('sub-drag-handle');
+      act(() => {
+        fireEvent.keyDown(handles[0], { key: 'ArrowDown' });
+      });
+      // Still highlighted right after the reorder.
+      expect(screen.getByText('Beta').closest('li')).toHaveClass(
+        'is-highlighted',
+      );
+
+      // The original timer (≈1s remaining) still fires and clears it.
+      act(() => vi.advanceTimersByTime(1000));
+      expect(screen.getByText('Beta').closest('li')).not.toHaveClass(
+        'is-highlighted',
+      );
+    } finally {
+      Element.prototype.scrollIntoView = orig;
+    }
+  });
+
+  it('does nothing when no feed is linked', () => {
+    const scrollSpy = vi.fn();
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrollSpy;
+    try {
+      setupScroll(null);
+      expect(scrollSpy).not.toHaveBeenCalled();
+      expect(document.querySelector('.is-highlighted')).toBeNull();
+    } finally {
+      Element.prototype.scrollIntoView = orig;
+    }
+  });
+});
