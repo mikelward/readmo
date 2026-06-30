@@ -1,7 +1,9 @@
-// Per-user cache scoping (AGENTS guardrail #8). Derives the localStorage keys
-// for the persisted React-Query blob and the item-state store from the
-// signed-in user id, and purges a departing user's persisted data + named
-// Workbox runtime caches, so a shared device never leaks one user's
+import { removeItem as idbRemoveItem } from './idbStorage';
+
+// Per-user cache scoping (AGENTS guardrail #8). Derives the storage keys for the
+// persisted React-Query blob (IndexedDB) and the item-state store (localStorage)
+// from the signed-in user id, and purges a departing user's persisted data +
+// named Workbox runtime caches, so a shared device never leaks one user's
 // cached/private content to the next.
 //
 // PR1 keys against the mock-auth uid (see useAuth); the same surface keys
@@ -55,13 +57,16 @@ export function outboxKey(uid: string | null): string {
 }
 
 /**
- * Purge a user's persisted, on-device data: their keyed React-Query blob and
- * item-state store, plus the named Workbox runtime caches. Best-effort and
- * never throws — localStorage may be unavailable/denied, and the Cache API is
- * absent under jsdom/SSR.
+ * Purge a user's persisted, on-device data: their keyed React-Query blob (now in
+ * IndexedDB) and item-state store, plus the named Workbox runtime caches.
+ * Best-effort and never throws — storage may be unavailable/denied, and the
+ * Cache API is absent under jsdom/SSR.
  */
 export async function clearUserCaches(uid: string | null): Promise<void> {
   try {
+    // The React-Query blob lived in localStorage before it moved to IndexedDB;
+    // remove the legacy copy too so an upgrading shared device doesn't strand a
+    // departing user's cached content under the old key.
     window.localStorage.removeItem(rqCacheKey(uid));
     window.localStorage.removeItem(itemStateKey(uid));
     window.localStorage.removeItem(outboxKey(uid));
@@ -71,11 +76,18 @@ export async function clearUserCaches(uid: string | null): Promise<void> {
   } catch {
     // ignore (storage unavailable/denied)
   }
-  if (typeof caches !== 'undefined') {
-    await Promise.all(
-      WORKBOX_CACHES.map((name) => caches.delete(name).catch(() => false)),
-    );
-  }
+  // The persisted React-Query cache (article bodies for `/offline`) now lives in
+  // IndexedDB — purge the departing user's blob there, or it leaks to the next.
+  // Kick it off WITHOUT awaiting first, so the synchronous Cache-API deletes
+  // below still dispatch in the same tick (a caller may reload right after).
+  const idbDone = idbRemoveItem(rqCacheKey(uid));
+  const cachesDone =
+    typeof caches !== 'undefined'
+      ? Promise.all(
+          WORKBOX_CACHES.map((name) => caches.delete(name).catch(() => false)),
+        )
+      : Promise.resolve();
+  await Promise.all([idbDone, cachesDone]);
 }
 
 // Copy a legacy global store into its user-scoped key (only when the scoped key
@@ -97,9 +109,28 @@ function moveKey(from: string, to: string): void {
 function migrateLegacyCaches(currentUid: string | null): void {
   try {
     if (!currentUid || window.localStorage.getItem(MIGRATED_KEY)) return;
-    moveKey(RQ_CACHE_BASE, rqCacheKey(currentUid));
+    // The React-Query blob no longer lives in localStorage (it's in IndexedDB),
+    // so there's nothing to move for it — only the item-state store migrates.
+    // reclaimLegacyRqCache() below drops any stale localStorage RQ blob.
     moveKey(ITEM_STATE_BASE, itemStateKey(currentUid));
     window.localStorage.setItem(MIGRATED_KEY, '1');
+  } catch {
+    // ignore (storage unavailable/denied)
+  }
+}
+
+// The persisted React-Query cache moved from localStorage to IndexedDB, so the
+// old localStorage blob is dead weight (up to the full ~5 MB budget). Drop it on
+// boot. We deliberately do NOT migrate it across: receiving a new app version
+// requires being online, and `useOfflineCacheLock` re-warms every pinned/
+// favorited item into IndexedDB on the next online open — so the cache
+// repopulates itself, and the only window with an empty `/offline` is the rare
+// case of an offline reload onto a service-worker-pre-cached update, which heals
+// on the next online open. Idempotent and cheap.
+function reclaimLegacyRqCache(currentUid: string | null): void {
+  try {
+    window.localStorage.removeItem(rqCacheKey(currentUid));
+    window.localStorage.removeItem(RQ_CACHE_BASE);
   } catch {
     // ignore (storage unavailable/denied)
   }
@@ -123,6 +154,7 @@ export async function reconcileUserCachesOnBoot(
   currentUid: string | null,
 ): Promise<void> {
   migrateLegacyCaches(currentUid);
+  reclaimLegacyRqCache(currentUid);
 
   let raw: string | null = null;
   try {

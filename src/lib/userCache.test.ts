@@ -1,3 +1,5 @@
+import 'fake-indexeddb/auto';
+import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearUserCaches,
@@ -7,6 +9,14 @@ import {
   reconcileUserCachesOnBoot,
   rqCacheKey,
 } from './userCache';
+import { getItem, setItem, _resetIdbForTests } from './idbStorage';
+
+// fake-indexeddb keeps its data across `it` blocks; start each test with a fresh,
+// empty IndexedDB so a blob seeded by one case can't leak into the next.
+beforeEach(() => {
+  globalThis.indexedDB = new IDBFactory();
+  _resetIdbForTests();
+});
 
 describe('cache key derivation', () => {
   it('keys by uid and falls back to the base key when signed out', () => {
@@ -52,6 +62,19 @@ describe('clearUserCaches', () => {
     expect(del).toHaveBeenCalledWith('readmo-favicons');
   });
 
+  it("purges the departing user's IndexedDB query-cache blob, not another user's", async () => {
+    _resetIdbForTests();
+    await setItem(rqCacheKey('u1'), 'u1-bodies');
+    await setItem(rqCacheKey('u2'), 'u2-bodies');
+    vi.stubGlobal('caches', { delete: vi.fn().mockResolvedValue(true) });
+
+    await clearUserCaches('u1');
+
+    expect(await getItem(rqCacheKey('u1'))).toBeNull();
+    // A different user's cached bodies are untouched.
+    expect(await getItem(rqCacheKey('u2'))).toBe('u2-bodies');
+  });
+
   it('no-ops without throwing when the Cache API is absent (jsdom/SSR)', async () => {
     vi.stubGlobal('caches', undefined);
     await expect(clearUserCaches('u1')).resolves.toBeUndefined();
@@ -92,12 +115,26 @@ describe('reconcileUserCachesOnBoot', () => {
 
   it('does not purge when booting under the same uid', async () => {
     window.localStorage.setItem('readmo:last-uid', 'same');
-    window.localStorage.setItem(rqCacheKey('same'), 'keep');
+    // Item-state is the per-user data persisted in localStorage now (the
+    // React-Query blob moved to IndexedDB); it must survive a same-uid boot.
+    window.localStorage.setItem(itemStateKey('same'), 'keep');
 
     await reconcileUserCachesOnBoot('same');
 
-    expect(window.localStorage.getItem(rqCacheKey('same'))).toBe('keep');
+    expect(window.localStorage.getItem(itemStateKey('same'))).toBe('keep');
     expect(caches.delete).not.toHaveBeenCalled();
+  });
+
+  it('reclaims a stale localStorage query-cache blob left by a pre-IndexedDB build', async () => {
+    // The React-Query cache lives in IndexedDB now and re-warms on the next
+    // online open, so the dead localStorage blob is simply dropped (not migrated):
+    // it would otherwise crowd out the ~5 MB budget the item-state store needs.
+    window.localStorage.setItem('readmo:last-uid', 'demo');
+    window.localStorage.setItem(rqCacheKey('demo'), 'stale-bodies');
+
+    await reconcileUserCachesOnBoot('demo');
+
+    expect(window.localStorage.getItem(rqCacheKey('demo'))).toBeNull();
   });
 
   it('records the signed-out sentinel and purges the prior user', async () => {
@@ -109,17 +146,20 @@ describe('reconcileUserCachesOnBoot', () => {
     expect(caches.delete).toHaveBeenCalledWith('readmo-data');
   });
 
-  it('migrates legacy global stores into the user scope on first keyed boot', async () => {
+  it('migrates the legacy item-state store into the user scope on first keyed boot', async () => {
     // No sentinel / no migrated flag → an install upgrading to the keyed layout.
     window.localStorage.setItem(itemStateKey(null), 'legacy-state');
+    // A legacy localStorage React-Query blob from before the IndexedDB move.
     window.localStorage.setItem(rqCacheKey(null), 'legacy-rq');
 
     await reconcileUserCachesOnBoot('demo');
 
-    // Legacy data is moved into the demo user's scope, not wiped.
+    // Item-state is moved into the demo user's scope, not wiped.
     expect(window.localStorage.getItem(itemStateKey('demo'))).toBe('legacy-state');
-    expect(window.localStorage.getItem(rqCacheKey('demo'))).toBe('legacy-rq');
     expect(window.localStorage.getItem(itemStateKey(null))).toBeNull();
+    // The React-Query blob now lives in IndexedDB, so the localStorage copy is
+    // dropped rather than carried into the user's scope.
+    expect(window.localStorage.getItem(rqCacheKey('demo'))).toBeNull();
     expect(window.localStorage.getItem(rqCacheKey(null))).toBeNull();
     // First keyed boot has no previous user, so nothing is purged.
     expect(caches.delete).not.toHaveBeenCalled();

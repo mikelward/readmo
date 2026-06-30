@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { QueryClient } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
-import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister';
+import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 import App from './App';
 import { ToastProvider } from './components/Toast';
 import { DataSourceProvider } from './lib/data/context';
@@ -36,6 +36,7 @@ import '@fontsource/fira-sans/latin-600.css';
 import '@fontsource/fira-sans/latin-700.css';
 import '@fontsource/fira-sans/latin-800.css';
 import { getActiveUid } from './hooks/useAuth';
+import { idbStorage } from './lib/idbStorage';
 import {
   itemStateKey,
   reconcileUserCachesOnBoot,
@@ -46,8 +47,10 @@ import './styles/global.css';
 // Bump to invalidate the persisted query cache on a breaking shape change.
 const CACHE_BUSTER = '1';
 // Pinned/Favorited content must survive arbitrarily long offline gaps, so the
-// persister never discards the blob by age. (PR2 moves the persisted store to
-// IndexedDB for article bodies; PR1 uses localStorage with the mock seed.)
+// persister never discards the blob by age. The blob lives in IndexedDB (see
+// idbStorage): localStorage's ~5 MB cap overflowed on real article bodies and
+// the failed write left nothing persisted, so a reload-while-offline showed an
+// empty `/offline`. IndexedDB's quota is far larger and async.
 const PERSIST_MAX_AGE = Number.POSITIVE_INFINITY;
 
 const queryClient = new QueryClient({
@@ -101,8 +104,8 @@ applyFont(getStoredFont());
 // created only after the reconcile so they see the migrated, correctly-scoped
 // data. Same-user boots skip the purge and hydrate their own cache.
 void reconcileUserCachesOnBoot(bootUid).finally(() => {
-  const persister = createSyncStoragePersister({
-    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+  const persister = createAsyncStoragePersister({
+    storage: idbStorage,
     key: rqCacheKey(bootUid),
     throttleTime: 1000,
   });
