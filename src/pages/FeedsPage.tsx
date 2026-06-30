@@ -2,6 +2,12 @@ import { useEffect, useRef, useState, useId } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { POPULAR_FEEDS, RECOMMENDED_FEEDS } from '../lib/popularFeeds';
 import { searchFeeds, resolveFeedByName } from '../lib/feedSearch';
+import {
+  publisherForUrl,
+  looksLikeFeedUrl,
+  MAX_SECTIONS,
+  type Publisher,
+} from '../lib/feedSections';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import {
@@ -74,6 +80,11 @@ export function FeedsPage() {
   // candidates; `selected` holds the URLs the user has checked.
   const [picker, setPicker] = useState<DiscoveredFeed[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // True when the open picker holds curated publisher *sections* (from
+  // feedSections), whose row titles are real section labels we pin as the
+  // per-user title override on subscribe. False for a live-discovery picker,
+  // whose titles are the publishers' own <channel><title> and aren't pinned.
+  const [pickerCurated, setPickerCurated] = useState(false);
   const suggestionsId = useId();
 
   // Monotonic token for the in-flight discovery request. Discovery can take
@@ -93,12 +104,57 @@ export function FeedsPage() {
     discoverSeq.current += 1;
     setPicker(null);
     setSelected(new Set());
+    setPickerCurated(false);
   };
+
+  // Open the multi-feed picker on a publisher's curated sections (main feed
+  // first, capped at MAX_SECTIONS). Used when the user adds a known publisher by
+  // name/dropdown pick or by its site URL — its sections aren't autodiscoverable
+  // (e.g. BBC advertises none on its home page), so we offer the curated set
+  // rather than falling through to live discovery / Google News.
+  // `preselectUrl` pre-checks one section — the specific feed the user picked
+  // (e.g. tapping "BBC Sport" opens all BBC sections with Sport already ticked),
+  // so their pick isn't lost while the rest stay one tap away. Omitted for a
+  // whole-site add (a typed site URL), where nothing is pre-checked.
+  const openSectionPicker = (pub: Publisher, preselectUrl?: string) => {
+    const sections = pub.sections.slice(0, MAX_SECTIONS);
+    setSelected(
+      preselectUrl && sections.some((s) => s.feedUrl === preselectUrl)
+        ? new Set([preselectUrl])
+        : new Set(),
+    );
+    setPickerCurated(true);
+    setPicker(
+      sections.map((s) => ({
+        url: s.feedUrl,
+        title: s.name,
+        siteUrl: null,
+        sampleTitles: [],
+      })),
+    );
+  };
+
   // True when feedUrl was filled from the curated list; skip discover in that case.
   const isFromSuggestion = useRef(false);
   // Display name of the curated suggestion that was selected, so we can use it
   // as a title override if the server-side refresh fails to populate the feed.
   const selectedSuggestionName = useRef<string | null>(null);
+
+  // Apply a chosen autocomplete suggestion: fill the box with its feed URL and,
+  // for a publisher we carry sections for, open the section picker right away —
+  // so tapping "BBC News"/"BBC Sport" shows the sections on the tap itself
+  // rather than only after a separate "Add". Other (single-feed) suggestions
+  // just fill the URL and subscribe on Add, as before.
+  const selectSuggestion = (feed: { name: string; feedUrl: string }) => {
+    isFromSuggestion.current = true;
+    selectedSuggestionName.current = feed.name;
+    setFeedUrl(feed.feedUrl);
+    setShowSuggestions(false);
+    setActiveIdx(-1);
+    clearPicker();
+    const pub = publisherForUrl(feed.feedUrl);
+    if (pub) openSectionPicker(pub, feed.feedUrl);
+  };
 
   // Autocomplete content. While the user types, fuzzy-match the catalog (see
   // searchFeeds): substring on the name, feed URL (so a country code like
@@ -132,16 +188,18 @@ export function FeedsPage() {
     ds.refresh(feed.id).then(() => invalidate()).catch(() => {});
   };
 
-  // Subscribe to one or more already-resolved feed URLs. `curatedName` only
-  // applies to the single curated-suggestion path (see the title-override note).
+  // Subscribe to one or more already-resolved feed URLs. `names[i]` is the
+  // curated label to pin for `urls[i]` (a curated-suggestion brand name, or a
+  // chosen publisher section's label), or null to keep the publisher's own
+  // title. The two arrays are positional and the same length.
   const subscribeFeeds = useMutation({
     mutationFn: async ({
       urls,
-      curatedName,
+      names,
       seq,
     }: {
       urls: string[];
-      curatedName: string | null;
+      names: (string | null)[];
       seq: number;
     }) => {
       // allSettled, not all: subscribe_to_feed commits one URL at a time with no
@@ -160,14 +218,22 @@ export function FeedsPage() {
       );
       const settled = await Promise.allSettled(urls.map((u) => ds.subscribe(u)));
       const feeds: Feed[] = [];
+      // The curated label to pin for each *committed* feed, positionally
+      // aligned with `feeds` (allSettled preserves `urls` order, so index i of
+      // settled maps to names[i]).
+      const feedNames: (string | null)[] = [];
       const errors: unknown[] = [];
-      for (const r of settled) {
-        if (r.status === 'fulfilled') feeds.push(r.value);
-        else errors.push(r.reason);
-      }
-      return { feeds, errors, curatedName, seq, preSubIds };
+      settled.forEach((r, i) => {
+        if (r.status === 'fulfilled') {
+          feeds.push(r.value);
+          feedNames.push(names[i] ?? null);
+        } else {
+          errors.push(r.reason);
+        }
+      });
+      return { feeds, feedNames, errors, seq, preSubIds };
     },
-    onSuccess: async ({ feeds, errors, curatedName, seq, preSubIds }) => {
+    onSuccess: async ({ feeds, feedNames, errors, seq, preSubIds }) => {
       // subscribe() awaits a publisher refresh and can take seconds, during which
       // the input stays editable. If the user has moved on (typed a new URL,
       // started another add) the add context is no longer ours: bumped token.
@@ -186,19 +252,23 @@ export function FeedsPage() {
           });
         return;
       }
-      // Pin the curated display name on a brand-new curated subscribe: the
-      // curated label is the brand the user picked (e.g. "The Economist"),
+      // Pin each fresh subscription's curated label: the brand the user picked
+      // (e.g. "The Economist") or the chosen publisher section ("BBC World"),
       // which beats whatever the publisher's <channel> happens to say (The
-      // Economist's /latest/rss.xml is literally titled "Latest Updates"). The
-      // override is per-user and editable in this page, so users can revert to
-      // the publisher's title or pick their own. Only the single curated path
-      // carries a name to pin, AND only when the feed wasn't already in this
-      // user's subscriptions — subscribe() is idempotent for an existing row, so
-      // a curated re-add must never clobber a rename the user applied earlier.
-      const curatedFeed = curatedName && feeds.length === 1 ? feeds[0] : null;
-      if (curatedFeed && curatedName && !preSubIds.has(curatedFeed.id)) {
-        await ds.setTitleOverride(curatedFeed.id, curatedName).catch(() => {});
-      }
+      // Economist's /latest/rss.xml is literally titled "Latest Updates"; BBC's
+      // section feeds share a generic title). The override is per-user and
+      // editable in this page. Skipped when the feed was already in this user's
+      // subscriptions — subscribe() is idempotent for an existing row, so a
+      // re-add must never clobber a rename the user applied earlier.
+      await Promise.all(
+        feeds.map((feed, i) => {
+          const name = feedNames[i];
+          if (name && !preSubIds.has(feed.id)) {
+            return ds.setTitleOverride(feed.id, name).catch(() => {});
+          }
+          return Promise.resolve();
+        }),
+      );
       // Always invalidate feed-meta so FeedPage re-fetches the post-subscribe
       // title regardless of whether a curated override was applied.
       feeds.forEach(settleFeed);
@@ -212,12 +282,13 @@ export function FeedsPage() {
         clearPicker();
       }
       // Some succeeded; if others failed, say so rather than silently dropping.
+      const firstName = feeds.length === 1 ? feedNames[0] ?? feeds[0].title : null;
       const message =
         errors.length > 0
           ? `Subscribed to ${feeds.length} feed${feeds.length > 1 ? 's' : ''}; ` +
             `${errors.length} couldn’t be added`
           : feeds.length === 1
-            ? `Subscribed to ${curatedName ?? feeds[0].title}`
+            ? `Subscribed to ${firstName}`
             : `Subscribed to ${feeds.length} feeds`;
       showToast({ message });
     },
@@ -250,10 +321,13 @@ export function FeedsPage() {
       // site.
       if (seq !== discoverSeq.current) return;
       if (candidates.length === 1) {
-        subscribeFeeds.mutate({ urls: [candidates[0].url], curatedName: null, seq });
+        subscribeFeeds.mutate({ urls: [candidates[0].url], names: [null], seq });
         return;
       }
       setSelected(new Set());
+      // A live-discovery picker: its row titles are publisher channel titles,
+      // not curated labels, so they aren't pinned on subscribe.
+      setPickerCurated(false);
       setPicker(candidates);
     },
     onError: (err, { seq }) => {
@@ -285,9 +359,19 @@ export function FeedsPage() {
     const seq = discoverSeq.current;
     if (isFromSuggestion.current) {
       isFromSuggestion.current = false;
-      // Capture the curated name synchronously so a concurrent autocomplete
-      // interaction can't overwrite it while the request is in-flight.
-      subscribeFeeds.mutate({ urls: [url], curatedName: selectedSuggestionName.current, seq });
+      // A curated pick for a publisher we carry sections for opens the section
+      // picker (BBC News → all BBC sections, main first) instead of subscribing
+      // to just the one picked feed.
+      const pub = publisherForUrl(url);
+      if (pub) {
+        openSectionPicker(pub, url);
+        return;
+      }
+      // Otherwise subscribe straight to the picked feed (bypassing discovery as
+      // before). Capture the curated name synchronously so a concurrent
+      // autocomplete interaction can't overwrite it while the request is
+      // in-flight.
+      subscribeFeeds.mutate({ urls: [url], names: [selectedSuggestionName.current], seq });
       return;
     }
     // Expand a known shorthand ("r/sub" → reddit.com; "youtube/<handle>" →
@@ -313,8 +397,23 @@ export function FeedsPage() {
     // URLs fall through to discovery.
     const nameMatch = resolveFeedByName(url, POPULAR_FEEDS);
     if (nameMatch) {
+      // A resolved name for a sectioned publisher opens its section picker; any
+      // other catalog name subscribes directly with its curated brand name.
+      const pub = publisherForUrl(nameMatch.feedUrl);
+      if (pub) {
+        openSectionPicker(pub, nameMatch.feedUrl);
+        return;
+      }
       selectedSuggestionName.current = nameMatch.name;
-      subscribeFeeds.mutate({ urls: [nameMatch.feedUrl], curatedName: nameMatch.name, seq });
+      subscribeFeeds.mutate({ urls: [nameMatch.feedUrl], names: [nameMatch.name], seq });
+      return;
+    }
+    // A pasted *site* URL for a publisher we carry sections for → its sections.
+    // A pasted *feed* URL "meant that feed" (even on that publisher's host), so
+    // skip expansion and let discovery subscribe to it directly below.
+    const sitePub = publisherForUrl(url, { sitesOnly: true });
+    if (sitePub && !looksLikeFeedUrl(url)) {
+      openSectionPicker(sitePub);
       return;
     }
     discoverFeeds.mutate({ url, seq });
@@ -409,12 +508,7 @@ export function FeedsPage() {
                   setActiveIdx((i) => Math.max(i - 1, -1));
                 } else if (e.key === 'Enter' && activeIdx >= 0) {
                   e.preventDefault();
-                  isFromSuggestion.current = true;
-                  selectedSuggestionName.current = suggestions[activeIdx].name;
-                  setFeedUrl(suggestions[activeIdx].feedUrl);
-                  setShowSuggestions(false);
-                  setActiveIdx(-1);
-                  clearPicker();
+                  selectSuggestion(suggestions[activeIdx]);
                 } else if (e.key === 'Escape') {
                   setShowSuggestions(false);
                   setActiveIdx(-1);
@@ -440,12 +534,7 @@ export function FeedsPage() {
                     }
                     onMouseDown={(e) => {
                       e.preventDefault();
-                      isFromSuggestion.current = true;
-                      selectedSuggestionName.current = feed.name;
-                      setFeedUrl(feed.feedUrl);
-                      setShowSuggestions(false);
-                      setActiveIdx(-1);
-                      clearPicker();
+                      selectSuggestion(feed);
                     }}
                   >
                     <span className="settings__suggestion-name">{feed.name}</span>
@@ -507,13 +596,15 @@ export function FeedsPage() {
                 type="button"
                 className="settings__btn"
                 disabled={selected.size === 0 || isAdding}
-                onClick={() =>
-                  subscribeFeeds.mutate({
-                    urls: [...selected],
-                    curatedName: null,
-                    seq: discoverSeq.current,
-                  })
-                }
+                onClick={() => {
+                  const urls = [...selected];
+                  // Pin the section label for a curated picker; a live-discovery
+                  // picker keeps each publisher's own title (null).
+                  const names = pickerCurated
+                    ? urls.map((u) => picker?.find((c) => c.url === u)?.title ?? null)
+                    : urls.map(() => null);
+                  subscribeFeeds.mutate({ urls, names, seq: discoverSeq.current });
+                }}
               >
                 {isAdding
                   ? 'Adding…'

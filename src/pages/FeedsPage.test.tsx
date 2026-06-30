@@ -7,6 +7,7 @@ import { AddFeedError, type DiscoveredFeed } from '../lib/data/DataSource';
 import type { AddFeedErrorKind } from '../lib/data/DataSource';
 import { FeedsPage } from './FeedsPage';
 import { POPULAR_FEEDS, RECOMMENDED_FEEDS } from '../lib/popularFeeds';
+import { PUBLISHERS, publisherForUrl } from '../lib/feedSections';
 
 /** A source whose subscribe() returns a feed with no siteUrl or meaningful
  * title — simulating a silent server-side refresh failure (the edge function
@@ -190,13 +191,16 @@ describe('FeedsPage — popular feed autocomplete', () => {
     const before = (await source.getSubscriptions()).length;
     renderWithProviders(<FeedsPage />, { source });
     const input = screen.getByLabelText('Feed name or URL') as HTMLInputElement;
+    // A single-feed recommended entry (one that isn't a sectioned publisher, so
+    // it subscribes directly rather than opening the section picker).
+    const recommended = RECOMMENDED_FEEDS.find((f) => !publisherForUrl(f.feedUrl))!;
     // Focus → recommended dropdown → pick fills the feed URL → Add subscribes.
     await user.click(input);
     const listbox = await screen.findByRole('listbox');
-    await user.click(within(listbox).getByText(RECOMMENDED_FEEDS[0].name));
-    expect(input.value).toBe(RECOMMENDED_FEEDS[0].feedUrl);
+    await user.click(within(listbox).getByText(recommended.name));
+    expect(input.value).toBe(recommended.feedUrl);
     await user.click(screen.getByRole('button', { name: /^Add$/ }));
-    await screen.findByText(`Subscribed to ${RECOMMENDED_FEEDS[0].name}`);
+    await screen.findByText(`Subscribed to ${recommended.name}`);
     // Curated picks bypass discovery.
     expect(discoverSpy).not.toHaveBeenCalled();
     expect((await source.getSubscriptions()).length).toBe(before + 1);
@@ -314,8 +318,10 @@ describe('FeedsPage — popular feed autocomplete', () => {
     const discoverSpy = vi.spyOn(source, 'discover');
     renderWithProviders(<FeedsPage />, { source });
     const input = screen.getByLabelText('Feed name or URL') as HTMLInputElement;
-    await user.type(input, 'bbc news');
-    await user.click(await screen.findByText('BBC News'));
+    // A single-feed catalog entry (not a sectioned publisher) subscribes
+    // straight through without discovery and without the section picker.
+    await user.type(input, 'ars technica');
+    await user.click(await screen.findByText('Ars Technica'));
     await user.click(screen.getByRole('button', { name: /^Add$/ }));
     await screen.findByText(/^Subscribed to /);
     expect(discoverSpy).not.toHaveBeenCalled();
@@ -326,14 +332,15 @@ describe('FeedsPage — popular feed autocomplete', () => {
     const source = new RefreshFailSource(`test-${Math.random()}`);
     renderWithProviders(<FeedsPage />, { source });
     const input = screen.getByLabelText('Feed name or URL') as HTMLInputElement;
-    await user.type(input, 'bbc news');
-    await user.click(await screen.findByText('BBC News'));
+    // A single-feed catalog entry takes the direct curated-subscribe path.
+    await user.type(input, 'ars technica');
+    await user.click(await screen.findByText('Ars Technica'));
     await user.click(screen.getByRole('button', { name: /^Add$/ }));
     // Toast should use the known name, not "Untitled feed".
-    await screen.findByText(/^Subscribed to BBC News/);
+    await screen.findByText(/^Subscribed to Ars Technica/);
     // Subscription list should show the curated name, not "Untitled feed".
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Actions for BBC News' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Actions for Ars Technica' })).toBeTruthy();
     });
   });
 
@@ -370,11 +377,11 @@ describe('FeedsPage — popular feed autocomplete', () => {
     // again must not overwrite a per-row rename the user applied earlier.
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
-    // Pre-subscribe to BBC News (bypasses the curated-name pin so the existing
-    // row has a null override at the start of the test, matching the case the
-    // bug report describes).
-    const bbcFeed = POPULAR_FEEDS.find((f) => f.name === 'BBC News')!;
-    const created = await source.subscribe(bbcFeed.feedUrl);
+    // Pre-subscribe to a single-feed catalog entry (bypasses the curated-name
+    // pin so the existing row has a null override at the start of the test,
+    // matching the case the bug report describes).
+    const arsFeed = POPULAR_FEEDS.find((f) => f.name === 'Ars Technica')!;
+    const created = await source.subscribe(arsFeed.feedUrl);
     await source.setTitleOverride(created.id, 'My News');
     renderWithProviders(<FeedsPage />, { source });
 
@@ -383,11 +390,11 @@ describe('FeedsPage — popular feed autocomplete', () => {
     // Re-add via the curated suggestion. subscribe() returns the existing
     // feed; the override must NOT be touched.
     const input = screen.getByLabelText('Feed name or URL') as HTMLInputElement;
-    await user.type(input, 'bbc news');
+    await user.type(input, 'ars technica');
     const listbox = await screen.findByRole('listbox');
-    await user.click(within(listbox).getByText('BBC News'));
+    await user.click(within(listbox).getByText('Ars Technica'));
     await user.click(screen.getByRole('button', { name: /^Add$/ }));
-    await screen.findByText(/^Subscribed to BBC News/);
+    await screen.findByText(/^Subscribed to Ars Technica/);
 
     expect(setSpy).not.toHaveBeenCalled();
     const after = (await source.getSubscriptions()).find(
@@ -679,10 +686,11 @@ describe('FeedsPage — Add a feed', () => {
     renderWithProviders(<FeedsPage />, { source });
 
     // Select a curated suggestion and add it; subscribe resolves with a
-    // fallback title, so onSuccess awaits the (gated) setTitleOverride.
+    // fallback title, so onSuccess awaits the (gated) setTitleOverride. A
+    // single-feed entry (not a sectioned publisher) takes the direct path.
     const input = screen.getByLabelText('Feed name or URL') as HTMLInputElement;
-    await user.type(input, 'bbc news');
-    await user.click(await screen.findByText('BBC News'));
+    await user.type(input, 'ars technica');
+    await user.click(await screen.findByText('Ars Technica'));
     await user.click(screen.getByRole('button', { name: /^Add$/ }));
 
     // While the title override is pending, the user starts the next URL.
@@ -756,6 +764,126 @@ describe('FeedsPage — Add a feed', () => {
     });
     const subs = await source.getSubscriptions();
     expect(subs.length).toBeGreaterThan(0);
+  });
+});
+
+describe('FeedsPage — curated section picker', () => {
+  const bbc = PUBLISHERS.find((p) => p.name === 'BBC')!;
+
+  it('opens the section picker (main feed first) the moment a sectioned publisher is picked', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const discoverSpy = vi.spyOn(source, 'discover');
+    renderWithProviders(<FeedsPage />, { source });
+
+    // Tapping the suggestion itself opens the picker — no separate "Add" tap,
+    // and no falling through to discovery on the exact feed URL it fills in.
+    await user.type(screen.getByLabelText('Feed name or URL'), 'bbc news');
+    await user.click(await screen.findByText('BBC News'));
+
+    const picker = await screen.findByRole('group', { name: /choose feeds/i });
+    // Every curated BBC section is offered, main feed first.
+    for (const section of bbc.sections) {
+      expect(within(picker).getByText(section.name)).toBeTruthy();
+    }
+    const labels = within(picker)
+      .getAllByText(/^BBC /)
+      .map((el) => el.textContent);
+    expect(labels[0]).toBe(bbc.sections[0].name);
+    // The picked section is pre-checked so the user's choice isn't lost, with
+    // the rest one tap away. Subscribe is therefore enabled already.
+    const newsCheckbox = within(picker)
+      .getByText('BBC News')
+      .closest('label')!
+      .querySelector('input[type="checkbox"]') as HTMLInputElement;
+    expect(newsCheckbox.checked).toBe(true);
+    // Curated sections need no live discovery.
+    expect(discoverSpy).not.toHaveBeenCalled();
+  });
+
+  it('opens the picker with nothing pre-checked when picking the publisher main feed by site URL', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderWithProviders(<FeedsPage />, { source });
+
+    // A whole-site add (typed site URL) selects no specific section, so the
+    // Subscribe button stays disabled until the user checks something.
+    await user.type(screen.getByLabelText('Feed name or URL'), 'bbc.com');
+    await user.click(screen.getByRole('button', { name: /^Add$/ }));
+    await screen.findByRole('group', { name: /choose feeds/i });
+    expect(screen.getByRole('button', { name: /^Subscribe$/ })).toHaveProperty('disabled', true);
+  });
+
+  it('opens the section picker when a publisher SITE URL is typed (no discovery, no Google News)', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const discoverSpy = vi.spyOn(source, 'discover');
+    renderWithProviders(<FeedsPage />, { source });
+
+    // Typing the bare site (the case that used to fall through to Google News).
+    await user.type(screen.getByLabelText('Feed name or URL'), 'bbc.com');
+    await user.click(screen.getByRole('button', { name: /^Add$/ }));
+
+    expect(await screen.findByRole('group', { name: /choose feeds/i })).toBeTruthy();
+    expect(discoverSpy).not.toHaveBeenCalled();
+  });
+
+  it('subscribes the selected sections and pins each section label', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const setSpy = vi.spyOn(source, 'setTitleOverride');
+    const before = (await source.getSubscriptions()).length;
+    renderWithProviders(<FeedsPage />, { source });
+
+    await user.type(screen.getByLabelText('Feed name or URL'), 'bbc.com');
+    await user.click(screen.getByRole('button', { name: /^Add$/ }));
+    const picker = await screen.findByRole('group', { name: /choose feeds/i });
+
+    await user.click(within(picker).getByText('BBC World'));
+    await user.click(within(picker).getByText('BBC Sport'));
+    await user.click(screen.getByRole('button', { name: /^Subscribe to 2$/ }));
+
+    await screen.findByText('Subscribed to 2 feeds');
+    await waitFor(async () => {
+      expect((await source.getSubscriptions()).length).toBe(before + 2);
+    });
+    // Each chosen section's label is pinned as the per-user title override, so
+    // the rows read "BBC World"/"BBC Sport" rather than a generic channel title.
+    expect(setSpy).toHaveBeenCalledWith(expect.any(String), 'BBC World');
+    expect(setSpy).toHaveBeenCalledWith(expect.any(String), 'BBC Sport');
+  });
+
+  it('subscribes directly to a pasted publisher FEED url (no section picker)', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const discoverSpy = vi.spyOn(source, 'discover');
+    renderWithProviders(<FeedsPage />, { source });
+
+    // A specific Guardian section feed lives on theguardian.com itself; pasting
+    // it "meant that feed", so it must go straight to discovery/subscribe, not
+    // expand to the whole-publisher section picker.
+    await user.type(
+      screen.getByLabelText('Feed name or URL'),
+      'https://www.theguardian.com/world/rss',
+    );
+    await user.click(screen.getByRole('button', { name: /^Add$/ }));
+
+    await screen.findByText(/^Subscribed to /);
+    expect(screen.queryByRole('group', { name: /choose feeds/i })).toBeNull();
+    expect(discoverSpy).toHaveBeenCalled();
+  });
+
+  it('clears the section picker when the URL field is edited', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderWithProviders(<FeedsPage />, { source });
+
+    await user.type(screen.getByLabelText('Feed name or URL'), 'bbc.com');
+    await user.click(screen.getByRole('button', { name: /^Add$/ }));
+    await screen.findByRole('group', { name: /choose feeds/i });
+
+    await user.type(screen.getByLabelText('Feed name or URL'), 'x');
+    expect(screen.queryByRole('group', { name: /choose feeds/i })).toBeNull();
   });
 });
 
