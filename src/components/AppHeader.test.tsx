@@ -4,7 +4,7 @@ import { useLocation } from 'react-router-dom';
 import { renderWithProviders } from '../test/renderWithProviders';
 import {
   _resetNetworkStatusForTests,
-  reportFetchFailure,
+  trackedFetch,
 } from '../lib/networkStatus';
 import { AppHeader } from './AppHeader';
 
@@ -124,13 +124,15 @@ describe('AppHeader connectivity pill', () => {
     expect(screen.getByTestId('offline-pill')).toHaveTextContent('Offline');
   });
 
-  it('shows "Down" — not "Offline" — when the device is online but the backend is unreachable', () => {
-    // navigator.onLine stays true; only the fetch signal failed, so the server
-    // is the problem, not the user's connection.
-    reportFetchFailure(new TypeError('Failed to fetch'));
+  it('shows "Down" — not "Offline" — when the backend answers with a 5xx', async () => {
+    // navigator.onLine stays true and the server answered, just with a 5xx, so it's
+    // reachable-but-erroring (our problem), not the user's connection.
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 503 })));
+    await trackedFetch('/rest/v1/x');
     renderWithProviders(<AppHeader />);
     const pill = screen.getByTestId('offline-pill');
     expect(pill).toHaveTextContent('Down');
     expect(pill).not.toHaveTextContent('Offline');
+    vi.unstubAllGlobals();
   });
 });
