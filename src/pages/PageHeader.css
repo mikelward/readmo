@@ -10,6 +10,19 @@
   margin: 0;
 }
 
+/* Feed favicon ahead of the title text on a single feed's page. Sized up a
+   touch from the 16px row/reader icon to sit with the 1.4rem heading; inline
+   with a slight baseline nudge so it centers on the text. Matches the row icon
+   otherwise (rounded, contained). */
+.page-header__favicon {
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  object-fit: contain;
+  vertical-align: -0.15em;
+  margin-right: 8px;
+}
+
 .search-input {
   flex: 1 1 auto;
   width: 100%;
