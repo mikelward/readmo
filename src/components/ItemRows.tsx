@@ -293,11 +293,15 @@ export function ItemRows({
               {favicon}
               <span className="item-list__group-title">{title}</span>
             </Link>
-            <button
-              type="button"
+            {/* A plain (non-focusable) div, not a button: this is a redundant
+                pointer-only collapse region, so it must never take focus or land
+                in the accessibility tree — the chevron button above is the
+                labeled, keyboard-operable collapse control. aria-hidden keeps it
+                out of the a11y tree; keyboard/AT users use the chevron, so the
+                deliberately missing key handler here is not an accessibility gap. */}
+            <div
               className="item-list__group-collapse-rest"
               data-testid="group-collapse-rest"
-              tabIndex={-1}
               aria-hidden="true"
               onClick={() => onToggleCollapse(feedId)}
             >
@@ -309,7 +313,7 @@ export function ItemRows({
                   {count > 99 ? '99+' : count}
                 </span>
               ) : null}
-            </button>
+            </div>
           </>
         ) : (
           <span className="item-list__group-static" aria-hidden="true">
