@@ -264,11 +264,12 @@ export function ItemRows({
         {onToggleCollapse ? (
           // The name row collapses everywhere *except* the feed-name link (which
           // opens the feed) and the right-side Undo/Sweep actions. The chevron
-          // stays far left as the keyboard-focusable collapse control; the count
-          // + trailing whitespace to the right of the name is a second, pointer-
-          // only collapse region (aria-hidden, out of the tab order) so tapping
-          // the blank space beside the name toggles too, without a duplicate
-          // screen-reader stop.
+          // stays far left as the keyboard-focusable collapse control; the unread
+          // count rides the feed name's baseline inside the link (so it stays
+          // aligned with the name, and tapping it opens the feed like the name);
+          // the blank space to the right is a second, pointer-only collapse
+          // region (aria-hidden, out of the tab order) so tapping beside the name
+          // toggles too, without a duplicate screen-reader stop.
           <>
             <button
               type="button"
@@ -291,29 +292,33 @@ export function ItemRows({
               aria-label={`View ${title}`}
             >
               {favicon}
-              <span className="item-list__group-title">{title}</span>
+              {/* Title + count baseline-aligned so the number sits on the name's
+                  text baseline rather than being centered against it (which left
+                  the larger title looking slightly high). */}
+              <span className="item-list__group-label">
+                <span className="item-list__group-title">{title}</span>
+                {showCount ? (
+                  // Decorative: the count is announced via the chevron button's
+                  // aria-label, so screen readers still hear the unread total.
+                  <span className="item-list__group-count" aria-hidden="true">
+                    {count > 99 ? '99+' : count}
+                  </span>
+                ) : null}
+              </span>
             </Link>
             {/* A plain (non-focusable) div, not a button: this is a redundant
-                pointer-only collapse region, so it must never take focus or land
-                in the accessibility tree — the chevron button above is the
-                labeled, keyboard-operable collapse control. aria-hidden keeps it
-                out of the a11y tree; keyboard/AT users use the chevron, so the
-                deliberately missing key handler here is not an accessibility gap. */}
+                pointer-only collapse region for the blank space beside the name,
+                so it must never take focus or land in the accessibility tree —
+                the chevron button above is the labeled, keyboard-operable
+                collapse control. aria-hidden keeps it out of the a11y tree;
+                keyboard/AT users use the chevron, so the deliberately missing key
+                handler here is not an accessibility gap. */}
             <div
               className="item-list__group-collapse-rest"
               data-testid="group-collapse-rest"
               aria-hidden="true"
               onClick={() => onToggleCollapse(feedId)}
-            >
-              {showCount ? (
-                // Decorative: the count is announced via the chevron button's
-                // aria-label (this region is aria-hidden), so screen readers
-                // still hear the unread total.
-                <span className="item-list__group-count" aria-hidden="true">
-                  {count > 99 ? '99+' : count}
-                </span>
-              ) : null}
-            </div>
+            />
           </>
         ) : (
           <span className="item-list__group-static" aria-hidden="true">

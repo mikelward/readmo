@@ -66,6 +66,15 @@ describe('group-by-feed section header positioning contract', () => {
     expect(z).toBeLessThan(10);
   });
 
+  it('baseline-aligns the feed name and its unread count', () => {
+    // The title (0.75rem) and the count (0.6875rem) share a baseline group so
+    // the number sits on the name's text baseline; vertically centering the two
+    // different sizes instead left the larger title reading slightly high.
+    expect(declarationsFor('.item-list__group-label')['align-items']).toBe(
+      'baseline',
+    );
+  });
+
   it('keeps the feed name to a single line so the pinned header stays compact', () => {
     // A wrapped two-line feed name would make the sticky header band jump in
     // height as the reader scrolled between sections, so the title truncates.
