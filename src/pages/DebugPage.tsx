@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { useAuth } from '../hooks/useAuth';
 import { useDataSource } from '../lib/data/context';
 import { buildInfo, buildInfoRows, summarizeBuild } from '../lib/buildInfo';
 import { formatLastSync } from '../lib/lastSync';
+import { formatPendingWrites } from '../lib/pendingWrites';
 import { isSupabaseConfigured, supabaseHealthUrl } from '../lib/supabase/client';
 import {
   describeSupabase,
@@ -17,7 +18,12 @@ import './PageHeader.css';
 
 type Row = { label: string; value: string; state?: StatusBadge };
 
-function runtimeRows(online: boolean, supabase: Row, lastSync: Row): Row[] {
+function runtimeRows(
+  online: boolean,
+  supabase: Row,
+  lastSync: Row,
+  pendingWrites: Row,
+): Row[] {
   const hasNavigator = typeof navigator !== 'undefined';
   // Badged status rows first, grouped together — the glanceable health signals
   // (Network, Service worker, Supabase) read as one block of dots.
@@ -35,8 +41,11 @@ function runtimeRows(online: boolean, supabase: Row, lastSync: Row): Row[] {
   }
   rows.push(supabase);
   // Last sync sits just under Supabase — it's the cross-device pull against that
-  // backend — then the informational rows (no badge) follow.
+  // backend — then Pending writes (the outbound side: item-state writes the
+  // outbox still owes the server). The two together split a sync failure into
+  // "never pulled" vs. "never pushed". Informational rows (no badge) follow.
   rows.push(lastSync);
+  rows.push(pendingWrites);
   if (hasNavigator) {
     rows.push({ label: 'Language', value: navigator.language || 'unknown' });
   }
@@ -87,6 +96,16 @@ export function DebugPage() {
   const dataSource = useDataSource();
   useDocumentTitle('Debug · readmo');
 
+  // Re-read the pending-writes count whenever the item-state store emits — a
+  // triage toggle enqueues one and an outbox drain (notifySynced) clears it, so
+  // the "/debug" count tracks the outbox live rather than freezing at its
+  // first-render snapshot.
+  const [, bumpOnStoreChange] = useReducer((n: number) => n + 1, 0);
+  useEffect(
+    () => dataSource.stateStore.subscribe(bumpOnStoreChange),
+    [dataSource],
+  );
+
   // Live backend reachability, the readmo analog of newshacker's /debug Services
   // line. `null` means unconfigured (mock mode) — the row still shows, with a
   // neutral badge, rather than probing a backend that isn't there.
@@ -120,6 +139,10 @@ export function DebugPage() {
     online,
     { label: 'Supabase', value: supabase.value, state: supabase.badge },
     { label: 'Last sync', value: formatLastSync(dataSource.getLastSyncedAt?.()) },
+    {
+      label: 'Pending writes',
+      value: formatPendingWrites(dataSource.pendingItemIds?.().size),
+    },
   );
 
   return (

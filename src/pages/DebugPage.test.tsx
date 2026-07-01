@@ -97,6 +97,15 @@ describe('DebugPage', () => {
     expect(screen.getByText('n/a (mock data)')).toBeInTheDocument();
   });
 
+  it('shows the Pending writes row (drained "none" under the mock)', () => {
+    // MockDataSource implements pendingItemIds() as an always-empty set (its
+    // store is authoritative — no outbox), so the row reads "none". The queued-
+    // count formatting is unit-tested in pendingWrites.test.ts.
+    renderWithProviders(<DebugPage />, { route: '/debug' });
+    expect(screen.getByText('Pending writes')).toBeInTheDocument();
+    expect(screen.getByText('none')).toBeInTheDocument();
+  });
+
   it('groups the badged status rows together at the top of Runtime', () => {
     renderWithProviders(<DebugPage />, { route: '/debug' });
     const runtime = screen
