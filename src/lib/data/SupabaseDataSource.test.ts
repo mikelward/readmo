@@ -6,7 +6,11 @@ import { SupabaseDataSource } from './SupabaseDataSource';
 import { _resetNetworkStatusForTests, setConnectivityProbeUrl } from '../networkStatus';
 import { makeFakeSupabase, type FakeTables } from './fakeSupabaseClient';
 
-const recent = new Date('2026-06-20T00:00:00.000Z').toISOString();
+// 5 days ago — always inside the 30-day Done/Hidden TTL. A fixed calendar
+// date would silently expire as the wall clock advances and flip every
+// fixture that expects i1/i4 filtered (the fake mirrors the RPC's
+// wall-clock TTL), failing the suite by date alone.
+const recent = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
 function iso(day: number): string {
   return new Date(`2026-06-${String(day).padStart(2, '0')}T00:00:00.000Z`).toISOString();
 }
@@ -107,6 +111,31 @@ describe('SupabaseDataSource reads', () => {
     expect(env.ds.getLastSyncedAt()).toBeNull();
     await env.ds.getHomeItems(); // triggers item_state hydration
     expect(typeof env.ds.getLastSyncedAt()).toBe('number');
+  });
+
+  it('re-serves an item whose Done aged past the 30-day TTL (matching the real feed_items)', async () => {
+    // Regression (test-double gap): the fake filtered Done items forever,
+    // while the deployed feed_items RPC (0031) only drops a Done row for 30
+    // days — Done is a 30-day completion log (SPEC *Retention*), after which
+    // the item re-enters the feed body.
+    const tables = seed();
+    const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+    tables.item_state = [mkState('i4', { done: true, done_at: old })];
+    const stale = setup(tables);
+    const page = await stale.ds.getHomeItems();
+    expect(ids(page.items)).toContain('i4');
+  });
+
+  it('keeps filtering a Done row with no done_at (SQL NULL semantics)', async () => {
+    // `coalesce(done,false) and done_at > now() - 30d` is NULL for a null
+    // timestamp, and the body's `not is_done` drops a NULL row — a
+    // timestamp-less fixture must not surface just because the TTL can't be
+    // evaluated.
+    const tables = seed();
+    tables.item_state = [mkState('i4', { done: true, done_at: null })];
+    const stale = setup(tables);
+    const page = await stale.ds.getHomeItems();
+    expect(ids(page.items)).not.toContain('i4');
   });
 
   it('getHomeItems: excludes muted feeds, filters Done/Hidden, prepends Pinned (oldest-first)', async () => {
@@ -1278,7 +1307,7 @@ describe('SupabaseDataSource dispatch + writes', () => {
   });
 
   it('re-pulls server truth when an LWW write loses, correcting the stale optimistic value', async () => {
-    // i2 is pinned server-side at `recent` (2026-06-20). A *stale* local unpin —
+    // i2 is pinned server-side at `recent`. A *stale* local unpin —
     // an older action than the server's pin — loses LWW: the RPC returns the
     // unchanged (still-pinned) row with no error. Without correction the device
     // would keep showing its losing unpinned state until an unrelated resync; the
@@ -1296,7 +1325,7 @@ describe('SupabaseDataSource dispatch + writes', () => {
         }
       });
     });
-    const staleAt = Date.parse('2026-06-19T00:00:00.000Z'); // older than `recent`
+    const staleAt = Date.parse(recent) - 24 * 60 * 60 * 1000; // older than `recent`
     env.ds.stateStore.set('i2', 'pinned', false, staleAt);
     expect(env.ds.stateStore.get('i2').pinned).toBe(false); // optimistic loser shown
 
@@ -1335,7 +1364,7 @@ describe('SupabaseDataSource dispatch + writes', () => {
 
     readsWork = true; // the loss-triggered re-pull will now succeed
     const t2 = Date.parse(recent);
-    const t1 = Date.parse('2026-06-10T00:00:00.000Z'); // older than recent
+    const t1 = t2 - 10 * 24 * 60 * 60 * 1000; // older than recent
     const corrected = new Promise<void>((resolve) => {
       const unsub = ds.stateStore.subscribe(() => {
         if (ds.stateStore.get('i6').doneAt === t2) {

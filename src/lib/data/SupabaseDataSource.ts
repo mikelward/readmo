@@ -20,6 +20,7 @@ import { confirmBackendReachable } from '../networkStatus';
 import { OUTBOX_SUFFIX } from '../userCache';
 import { isGoogleNewsFeedUrl } from '../googleNews';
 import { ItemStateStore, localStoragePersistence } from './itemState';
+import { escapeXml, decodeXmlEntities } from './xmlEntities';
 import {
   ItemStateOutbox,
   localStorageOutboxPersistence,
@@ -164,26 +165,6 @@ function cacheBustUuid(): string {
 function escapeLike(q: string): string {
   // Treat the user's query literally: escape the LIKE wildcards.
   return q.replace(/[\\%_]/g, (c) => `\\${c}`);
-}
-
-function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-/** Decode the XML entities OPML attribute values are escaped with (inverse of
- * escapeXml). `&amp;` is decoded last so `&amp;lt;` → `&lt;`, not `<`. */
-function decodeXmlEntities(s: string): string {
-  return s
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, '&');
 }
 
 function decodeCursor(cursor: string | null | undefined): number {

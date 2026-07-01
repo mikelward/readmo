@@ -365,10 +365,13 @@ function runRpc(
     // tests use (every item is within the per-feed floor), and consistent with
     // the mock's count for those seeds.
     const wanted = new Set((params.p_feed_ids ?? []) as string[]);
+    // Same NULL semantics as feed_items' doneActive/hiddenActive: a flagged
+    // row with no timestamp makes the SQL count-filter condition NULL, which
+    // excludes the item from the unread count — mirror that here.
     const activeFlag = (st: Row | undefined, flag: string, at: string) =>
       Boolean(st?.[flag]) &&
-      typeof st?.[at] === 'string' &&
-      Date.now() - Date.parse(st[at] as string) <= TTL_MS;
+      (typeof st?.[at] !== 'string' ||
+        Date.now() - Date.parse(st[at] as string) <= TTL_MS);
     const counts = new Map<string, number>();
     for (const id of wanted) counts.set(id, 0);
     for (const it of items) {
@@ -424,20 +427,30 @@ function runRpc(
       groupByFeed && params.p_per_feed_limit != null
         ? Math.max(Number(params.p_per_feed_limit), 0)
         : null;
+    // Done/Hidden expire after the 30-day TTL — an expired flag re-enters the
+    // body, exactly like the real RPC (`flag_at > now() - interval '30 days'`).
+    // A flagged row with NO timestamp stays filtered: in SQL the conjunction
+    // `coalesce(flag,false) and flag_at > …` is NULL, and the body's
+    // `not is_done and not is_hidden` drops a NULL — so a timestamp-less
+    // fixture row must not surface here either.
     const hiddenActive = (st: Row | undefined) =>
       Boolean(st?.hidden) &&
-      typeof st?.hidden_at === 'string' &&
-      Date.now() - Date.parse(st.hidden_at) <= TTL_MS; // Hidden expires after the TTL
+      (typeof st?.hidden_at !== 'string' ||
+        Date.now() - Date.parse(st.hidden_at) <= TTL_MS);
+    const doneActive = (st: Row | undefined) =>
+      Boolean(st?.done) &&
+      (typeof st?.done_at !== 'string' ||
+        Date.now() - Date.parse(st.done_at) <= TTL_MS);
     const isPinned = (it: Row) => Boolean(stateByItem.get(it.id as string)?.pinned);
     const feedSort = (it: Row) =>
       Number(subByFeed.get(it.feed_id as string)?.sort ?? Number.POSITIVE_INFINITY);
     const combined = items
       .filter((it) => inScope(it.feed_id))
       .filter((it) => {
-        // Pinned rows are kept regardless; the body drops Done/active-Hidden.
+        // Pinned rows are kept regardless; the body drops active-Done/Hidden.
         if (isPinned(it)) return true;
         const st = stateByItem.get(it.id as string);
-        return !(st && (st.done || hiddenActive(st)));
+        return !(st && (doneActive(st) || hiddenActive(st)));
       })
       .sort((a, b) => {
         if (groupByFeed) {
