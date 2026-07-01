@@ -1145,7 +1145,8 @@ negligible and off every critical path. See the External services table in
        small control strip. On the far left, a **44px chevron** button is the
        collapse control; next to it the **site favicon + feed name + unread/to-do
        count badge** link to that feed's own view (`/feed/:feedId`) — the count
-       rides the feed name's baseline; and the **empty space** up to the actions
+       tracks the feed name's baseline, lifted a hair so it optically centers
+       against the name's caps; and the **empty space** up to the actions
        is a second, pointer-only collapse region — so tapping *anywhere on the row
        except the feed name/icon/count and the Undo/Sweep buttons* toggles the
        section (see below). On the right sit two
