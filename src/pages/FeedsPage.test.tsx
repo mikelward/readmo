@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { MockDataSource } from '../lib/data/MockDataSource';
@@ -893,5 +893,50 @@ describe('FeedsPage — Subscriptions', () => {
     renderWithProviders(<FeedsPage />, { source });
     const handles = await screen.findAllByTestId('sub-drag-handle');
     expect(handles.length).toBeGreaterThan(0);
+  });
+});
+
+describe('FeedsPage — OPML import', () => {
+  /** Feed the hidden file input directly — the visible Import button just
+   * proxies a click to it. */
+  function uploadOpml(container: HTMLElement, contents: string) {
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).toBeTruthy();
+    const file = new File([contents], 'subs.opml', { type: 'text/xml' });
+    // jsdom's File doesn't implement the Blob.text() the handler reads;
+    // supply it (the browser platform API, not app logic under test).
+    Object.defineProperty(file, 'text', { value: () => Promise.resolve(contents) });
+    fireEvent.change(input!, { target: { files: [file] } });
+  }
+
+  it('shows the added/skipped toast after a successful import', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const { container } = renderWithProviders(<FeedsPage />, { source });
+    await screen.findAllByTestId('sub-drag-handle'); // page settled
+
+    uploadOpml(
+      container,
+      '<opml><body><outline type="rss" xmlUrl="https://imported.example.com/feed" /></body></opml>',
+    );
+
+    await screen.findByText('Imported 1, skipped 0');
+  });
+
+  it('surfaces an import failure instead of dying silently', async () => {
+    // Regression: onImport had no catch and its caller doesn't await it, so a
+    // rejected importOpml produced no toast, no list refresh, and an unhandled
+    // rejection — the user had no idea whether anything was imported.
+    class FailingImportSource extends MockDataSource {
+      async importOpml(): Promise<{ added: number; skipped: number }> {
+        throw new Error('server down');
+      }
+    }
+    const source = new FailingImportSource(`test-${Math.random()}`);
+    const { container } = renderWithProviders(<FeedsPage />, { source });
+    await screen.findAllByTestId('sub-drag-handle');
+
+    uploadOpml(container, '<opml><body></body></opml>');
+
+    await screen.findByText('Import failed');
   });
 });

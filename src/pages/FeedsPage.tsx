@@ -429,10 +429,21 @@ export function FeedsPage() {
   };
 
   const onImport = async (file: File) => {
-    const xml = await file.text();
-    const result = await ds.importOpml(xml);
-    invalidate();
-    showToast({ message: `Imported ${result.added}, skipped ${result.skipped}` });
+    try {
+      const xml = await file.text();
+      const result = await ds.importOpml(xml);
+      invalidate();
+      showToast({ message: `Imported ${result.added}, skipped ${result.skipped}` });
+    } catch (err) {
+      // importOpml skips per-entry failures, so reaching here means the import
+      // itself failed (unreadable file, signed-out session, server down). Some
+      // entries may have subscribed before the failure — refresh the list so
+      // they show, and surface the failure instead of dying silently (the call
+      // site doesn't await this handler).
+      console.warn('OPML import failed:', err);
+      invalidate();
+      showToast({ message: 'Import failed', detail: addFeedDetail(err) });
+    }
   };
 
   const onExport = async () => {
