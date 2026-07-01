@@ -61,6 +61,10 @@ export function useSwipeToDismiss({
   const startRef = useRef<PointerStart | null>(null);
   const justSwipedRef = useRef(false);
   const timeoutRef = useRef<number | null>(null);
+  // A committed swipe's action, waiting out the exit animation. Held in a ref
+  // so the unmount cleanup can run it — the gesture already committed, so the
+  // action must not be lost if the row unmounts inside the exit window.
+  const pendingCommitRef = useRef<(() => void) | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const onSwipeLeftRef = useRef(onSwipeLeft);
   const onSwipeRightRef = useRef(onSwipeRight);
@@ -89,6 +93,15 @@ export function useSwipeToDismiss({
         window.clearTimeout(timeoutRef.current);
       }
       clearLongPressTimer();
+      // A committed swipe defers its handler by EXIT_DURATION_MS for the exit
+      // animation. If the row unmounts inside that window (route change, the
+      // list re-keying on a group/sort toggle), run the handler now — the user
+      // completed the gesture, so dropping it would silently undo their
+      // Done/Pin. (Same principle as ItemList committing a pending Sweep on
+      // unmount.)
+      const pending = pendingCommitRef.current;
+      pendingCommitRef.current = null;
+      pending?.();
     };
   }, [clearLongPressTimer]);
 
@@ -174,7 +187,9 @@ export function useSwipeToDismiss({
         setIsDismissing(true);
         setOffset(dir * Math.max(width, 300));
         const willDismiss = dir > 0 ? dismissOnRight : dismissOnLeft;
+        pendingCommitRef.current = handler;
         timeoutRef.current = window.setTimeout(() => {
+          pendingCommitRef.current = null;
           handler();
           // Save-and-stay (the default): the row will remain mounted, so
           // reset offset/isDismissing to snap it back to its resting
@@ -217,6 +232,9 @@ export function useSwipeToDismiss({
       window.clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
     }
+    // An explicit rollback cancels a still-pending commit — it must not fire
+    // later from the unmount cleanup.
+    pendingCommitRef.current = null;
     setIsDismissing(false);
     setOffset(0);
   }, []);

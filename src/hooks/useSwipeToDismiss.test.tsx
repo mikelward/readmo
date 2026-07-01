@@ -206,6 +206,67 @@ describe('useSwipeToDismiss', () => {
     expect(result.current.offset).toBe(offBefore);
   });
 
+  describe('unmount during the exit window', () => {
+    function swipeRight(handlers: ReturnType<typeof useSwipeToDismiss>['handlers']) {
+      act(() => {
+        handlers.onPointerDown(makePointerEvent('pointerdown', { clientX: 100, clientY: 24 }));
+      });
+      act(() => {
+        handlers.onPointerMove(makePointerEvent('pointermove', { clientX: 300, clientY: 24 }));
+      });
+      act(() => {
+        handlers.onPointerUp(makePointerEvent('pointerup', { clientX: 300, clientY: 24 }));
+      });
+    }
+
+    it('commits a pending swipe action when the row unmounts before the exit timer fires', () => {
+      // Regression: the unmount cleanup cleared the EXIT_DURATION_MS timer
+      // without running the deferred handler, so swiping a row and then
+      // navigating (or re-keying the list) within 200ms silently dropped the
+      // user's Done/Pin.
+      const onSwipeRight = vi.fn();
+      const { result, unmount } = renderHook(() =>
+        useSwipeToDismiss({ onSwipeRight, dismissOnRight: true }),
+      );
+
+      swipeRight(result.current.handlers);
+      expect(onSwipeRight).not.toHaveBeenCalled();
+
+      unmount();
+      expect(onSwipeRight).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not double-fire when the exit timer already ran', () => {
+      const onSwipeRight = vi.fn();
+      const { result, unmount } = renderHook(() =>
+        useSwipeToDismiss({ onSwipeRight, dismissOnRight: true }),
+      );
+
+      swipeRight(result.current.handlers);
+      act(() => {
+        vi.advanceTimersByTime(250);
+      });
+      expect(onSwipeRight).toHaveBeenCalledTimes(1);
+
+      unmount();
+      expect(onSwipeRight).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not fire a commit that reset() rolled back', () => {
+      const onSwipeRight = vi.fn();
+      const { result, unmount } = renderHook(() =>
+        useSwipeToDismiss({ onSwipeRight, dismissOnRight: true }),
+      );
+
+      swipeRight(result.current.handlers);
+      act(() => {
+        result.current.reset();
+      });
+      unmount();
+      expect(onSwipeRight).not.toHaveBeenCalled();
+    });
+  });
+
   describe('onClickCapture', () => {
     it('does NOT swallow a tap on an action button after a scrub armed the swipe guard', () => {
       // Regression: a below-threshold scrub on the row body arms `justSwiped`;
