@@ -1143,15 +1143,16 @@ negligible and off every critical path. See the External services table in
        preference.
      - **Section header controls** (group-by-feed only). Each feed's header is a
        small control strip. On the far left, a **44px chevron** button is the
-       collapse control; next to it the **site favicon + feed name** link to that
-       feed's own view (`/feed/:feedId`); and the **unread/to-do count badge plus
-       the empty space** up to the actions is a second, pointer-only collapse
-       region — so tapping *anywhere on the row except the feed name/icon and the
-       Undo/Sweep buttons* toggles the section (see below). On the right sit two
+       collapse control; next to it the **site favicon + feed name + unread/to-do
+       count badge** link to that feed's own view (`/feed/:feedId`) — the count
+       rides the feed name's baseline; and the **empty space** up to the actions
+       is a second, pointer-only collapse region — so tapping *anywhere on the row
+       except the feed name/icon/count and the Undo/Sweep buttons* toggles the
+       section (see below). On the right sit two
        **44×44px** icon buttons, ≥8px apart — **Undo** and **Sweep this feed**
        (broom), in that left-to-right order to match the top toolbar's
        right-anchored cluster. This puts **four** focusable tap zones on a header
-       (chevron collapse, name link, Undo, Sweep — the count/whitespace collapse
+       (chevron collapse, name link, Undo, Sweep — the blank-space collapse
        region is `aria-hidden` and out of the tab order, redundant with the
        chevron) — a **deliberate exception** to guardrail #2's three-per-*row*
        cap: a section header is a control strip, not an article row (it already
@@ -1170,10 +1171,10 @@ negligible and off every critical path. See the External services table in
        gone — unlike a *collapsed* feed, which keeps its header because its items
        still exist.)
      - **Collapse / expand sections** (group-by-feed only). Everything on the
-       header's name row **except the feed name/icon** is a **tap target** that
-       toggles its section collapsed (rows hidden, a chevron flips); the header
-       stays visible. (Tapping the **feed name or icon** instead opens that
-       feed's own view — see *Section header controls*.) Per-device and
+       header's name row **except the feed name/icon/count** is a **tap target**
+       that toggles its section collapsed (rows hidden, a chevron flips); the
+       header stays visible. (Tapping the **feed name, icon, or count** instead
+       opens that feed's own view — see *Section header controls*.) Per-device and
        **persisted**
        (`readmo:collapsed-feeds`, a JSON array of collapsed feed ids), so a
        section stays collapsed across reloads and between grouped views. The

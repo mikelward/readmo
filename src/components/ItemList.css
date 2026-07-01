@@ -131,6 +131,18 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Wraps the title and (optional) count and aligns them on a shared baseline, so
+   the smaller count sits on the feed name's text baseline instead of being
+   vertically centered against it — center-aligning the two different sizes left
+   the larger title reading slightly high. min-width: 0 lets the title ellipsize
+   within the link's available width. */
+.item-list__group-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
 /* Static (non-interactive) header label keeps the original padding and lays
    the (optional) favicon out beside the name. */
 .item-list__group-static {
@@ -203,12 +215,12 @@
   background: var(--rm-bg-card);
 }
 
-/* Right-of-name collapse region: the unread count plus the flexed empty space
-   up to the Undo/Sweep actions. Redundant with the chevron button (both toggle
-   the section), so it's aria-hidden and out of the tab order — a pointer-only
-   affordance that lets tapping the blank space beside the name collapse too.
-   The guaranteed 44px collapse tap target is the chevron, so this may shrink to
-   nothing beside a long title without stranding the control. */
+/* Right-of-name collapse region: the flexed empty space up to the Undo/Sweep
+   actions. Redundant with the chevron button (both toggle the section), so it's
+   aria-hidden and out of the tab order — a pointer-only affordance that lets
+   tapping the blank space beside the name collapse too. The guaranteed 44px
+   collapse tap target is the chevron, so this may shrink to nothing beside a
+   long title without stranding the control. */
 .item-list__group-collapse-rest {
   display: flex;
   align-items: center;
