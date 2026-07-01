@@ -75,6 +75,25 @@ describe('clearUserCaches', () => {
     expect(await getItem(rqCacheKey('u2'))).toBe('u2-bodies');
   });
 
+  it('re-purges a key re-written during the async deletion window', async () => {
+    // Regression (guardrail #8 residual data): the localStorage keys were
+    // deleted once, up front — but the app is still alive during the async
+    // IDB/Cache deletions, and an in-flight outbox send settling (its
+    // finally → persist()) re-wrote the just-purged outbox key, so the
+    // departing user's queued triage writes survived sign-out.
+    window.localStorage.setItem(outboxKey('u1'), 'queued-writes');
+    vi.stubGlobal('caches', { delete: vi.fn().mockResolvedValue(true) });
+
+    const purge = clearUserCaches('u1');
+    // The synchronous first sweep already ran; simulate the in-flight persist
+    // landing while the async deletions are still pending.
+    expect(window.localStorage.getItem(outboxKey('u1'))).toBeNull();
+    window.localStorage.setItem(outboxKey('u1'), 'rewritten-mid-purge');
+
+    await purge;
+    expect(window.localStorage.getItem(outboxKey('u1'))).toBeNull();
+  });
+
   it('no-ops without throwing when the Cache API is absent (jsdom/SSR)', async () => {
     vi.stubGlobal('caches', undefined);
     await expect(clearUserCaches('u1')).resolves.toBeUndefined();

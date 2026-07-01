@@ -88,6 +88,20 @@ export async function clearUserCaches(uid: string | null): Promise<void> {
         )
       : Promise.resolve();
   await Promise.all([idbDone, cachesDone]);
+  // Delete the localStorage keys AGAIN before resolving: the app is still
+  // alive during the async deletions above, and an in-flight outbox send
+  // settling (its finally → persist()) or a landing hydration save can
+  // re-write the just-purged item-state/outbox keys mid-purge. The caller
+  // reloads as soon as this resolves, so a final sweep here closes that
+  // window and no departing user's triage writes survive on a shared device.
+  try {
+    window.localStorage.removeItem(rqCacheKey(uid));
+    window.localStorage.removeItem(itemStateKey(uid));
+    window.localStorage.removeItem(outboxKey(uid));
+    window.localStorage.removeItem(COLLAPSED_FEEDS_KEY);
+  } catch {
+    // ignore (storage unavailable/denied)
+  }
 }
 
 // Copy a legacy global store into its user-scoped key (only when the scoped key
