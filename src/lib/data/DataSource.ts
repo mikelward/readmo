@@ -217,6 +217,16 @@ export interface DataSource {
    * offer a write the old backend rejects. Omitted sources are assumed to
    * support it. */
   supportsOpenNewshacker?(): boolean;
+  /** Per-feed "mark done when opening": when true, opening one of the feed's
+   * items on the original source website or the newshacker discussion also marks
+   * it Done. Deliberately does NOT cover an in-app reader (article view) open.
+   * Independent of the open mode. */
+  setMarkDoneOnOpen(feedId: FeedId, markDoneOnOpen: boolean): Promise<void>;
+  /** Whether the backend supports the "mark done when opening" preference (the
+   * `mark_done_on_open` column, 0037, exists). False against a backend that
+   * predates the migration, so the UI can hide the control rather than offer a
+   * write the old backend rejects. Omitted sources are assumed to support it. */
+  supportsMarkDoneOnOpen?(): boolean;
   setTitleOverride(feedId: FeedId, title: string | null): Promise<void>;
   /** Force an immediate server-side refresh of one feed (or all). */
   refresh(feedId?: FeedId): Promise<void>;

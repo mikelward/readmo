@@ -481,6 +481,7 @@ export class MockDataSource implements DataSource {
           muted: false,
           openOriginal: false,
           openNewshacker: false,
+          markDoneOnOpen: false,
           sort: this.subs.size,
         });
       }
@@ -510,6 +511,7 @@ export class MockDataSource implements DataSource {
       muted: false,
       openOriginal: false,
       openNewshacker: false,
+      markDoneOnOpen: false,
       sort: this.subs.size,
     });
     return { ...feed };
@@ -546,6 +548,17 @@ export class MockDataSource implements DataSource {
   }
 
   supportsOpenNewshacker(): boolean {
+    // The in-memory store always carries the field, so the control is always
+    // available against the mock.
+    return true;
+  }
+
+  async setMarkDoneOnOpen(feedId: FeedId, markDoneOnOpen: boolean): Promise<void> {
+    const sub = this.subs.get(feedId);
+    if (sub) sub.markDoneOnOpen = markDoneOnOpen;
+  }
+
+  supportsMarkDoneOnOpen(): boolean {
     // The in-memory store always carries the field, so the control is always
     // available against the mock.
     return true;

@@ -81,11 +81,14 @@ const ITEM_COLS_LEGACY =
 // read can't reach it either is folded into the DB-backed allowlist follow-up.
 const ITEM_STATE_COLS =
   'item_id, pinned, pinned_at, favorite, favorite_at, done, done_at, hidden, hidden_at, opened, opened_at';
-// `open_original` (0027) and `open_newshacker` (0034) are selected optionally: a
-// client can reach a backend not yet migrated with either column, so
-// loadSubscriptions steps down through these column sets on an undefined-column
-// error (guardrail #11): full → pre-0034 → pre-0027 (legacy).
+// `open_original` (0027), `open_newshacker` (0034), and `mark_done_on_open`
+// (0037) are selected optionally: a client can reach a backend not yet migrated
+// with any of them, so loadSubscriptions steps down through these column sets on
+// an undefined-column error (guardrail #11): full → pre-0037 → pre-0034 →
+// pre-0027 (legacy).
 const SUBSCRIPTION_COLS =
+  'feed_id, folder, title_override, muted, open_original, open_newshacker, mark_done_on_open, sort';
+const SUBSCRIPTION_COLS_NO_MARK_DONE =
   'feed_id, folder, title_override, muted, open_original, open_newshacker, sort';
 const SUBSCRIPTION_COLS_NO_NEWSHACKER =
   'feed_id, folder, title_override, muted, open_original, sort';
@@ -278,6 +281,14 @@ export class SupabaseDataSource implements DataSource {
   // column ships, so the new client never offers a write the old backend would
   // reject (guardrail #11).
   private openNewshackerColumn = true;
+  // Capability flag for the `subscriptions.mark_done_on_open` column (0037), the
+  // newest of the open-preference columns. Starts optimistic and flips false the
+  // first time loadSubscriptions has to step down to the pre-0037 column set —
+  // i.e. the backend predates the migration. The Feeds page reads it
+  // (supportsMarkDoneOnOpen) to hide the "Mark done when opening" control until
+  // the column ships, so the new client never offers a write the old backend
+  // would reject (guardrail #11).
+  private markDoneOnOpenColumn = true;
   // Set by the write path when an LWW write lost (the server returned a row that
   // didn't take our value). Consumed by onDrained — *after* the drain clears the
   // entry — to re-pull server truth, so the re-hydrate's pending overlay no longer
@@ -784,32 +795,43 @@ export class SupabaseDataSource implements DataSource {
     // mute, or to pick up another device's change) must re-hit Supabase here.
     const res = await this.sb.from('subscriptions').select(SUBSCRIPTION_COLS);
     // Step down through the column sets when the backend predates a migration —
-    // 0034 (`open_newshacker`) then 0027 (`open_original`) — so a new client can
-    // still read the subscription list against an un-migrated backend.
-    // mapSubscription defaults a missing field to false, and we record which
-    // columns are absent so the UI hides the write-triggering controls until they
-    // ship (guardrail #11).
+    // 0037 (`mark_done_on_open`), 0034 (`open_newshacker`), then 0027
+    // (`open_original`) — so a new client can still read the subscription list
+    // against an un-migrated backend. mapSubscription defaults a missing field to
+    // false, and we record which columns are absent so the UI hides the
+    // write-triggering controls until they ship (guardrail #11).
     let subRows: SubscriptionRow[];
     if (!isMissingColumnError(res.error)) {
       this.openOriginalColumn = true;
       this.openNewshackerColumn = true;
+      this.markDoneOnOpenColumn = true;
       subRows = this.unwrap<SubscriptionRow[]>(res);
     } else {
-      // The full select failed on an unknown column. `open_newshacker` is the
-      // newest, so drop it first and retry; if that still fails, the backend
-      // predates 0027 too, so fall back to the legacy set.
-      this.openNewshackerColumn = false;
-      const res2 = await this.sb
+      // The full select failed on an unknown column. `mark_done_on_open` is the
+      // newest, so drop it first and retry; step down further if the backend
+      // predates the earlier migrations too.
+      this.markDoneOnOpenColumn = false;
+      const resU = await this.sb
         .from('subscriptions')
-        .select(SUBSCRIPTION_COLS_NO_NEWSHACKER);
-      if (!isMissingColumnError(res2.error)) {
+        .select(SUBSCRIPTION_COLS_NO_MARK_DONE);
+      if (!isMissingColumnError(resU.error)) {
         this.openOriginalColumn = true;
-        subRows = this.unwrap<SubscriptionRow[]>(res2);
+        this.openNewshackerColumn = true;
+        subRows = this.unwrap<SubscriptionRow[]>(resU);
       } else {
-        this.openOriginalColumn = false;
-        subRows = this.unwrap<SubscriptionRow[]>(
-          await this.sb.from('subscriptions').select(SUBSCRIPTION_COLS_LEGACY),
-        );
+        this.openNewshackerColumn = false;
+        const res2 = await this.sb
+          .from('subscriptions')
+          .select(SUBSCRIPTION_COLS_NO_NEWSHACKER);
+        if (!isMissingColumnError(res2.error)) {
+          this.openOriginalColumn = true;
+          subRows = this.unwrap<SubscriptionRow[]>(res2);
+        } else {
+          this.openOriginalColumn = false;
+          subRows = this.unwrap<SubscriptionRow[]>(
+            await this.sb.from('subscriptions').select(SUBSCRIPTION_COLS_LEGACY),
+          );
+        }
       }
     }
     await this.ensureFeeds(subRows.map((s) => s.feed_id));
@@ -1402,6 +1424,36 @@ export class SupabaseDataSource implements DataSource {
         return;
       }
       throw e2 instanceof Error ? e2 : new Error(String(e2));
+    }
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+
+  supportsMarkDoneOnOpen(): boolean {
+    // False only once a subscriptions read has proven the column absent (a
+    // pre-0037 backend). Optimistic until then; the Feeds page reads this after
+    // the subscriptions query settles, so by the time the rows render the value
+    // is known. Mirrors supportsOpenOriginal.
+    return this.markDoneOnOpenColumn;
+  }
+
+  async setMarkDoneOnOpen(feedId: FeedId, markDoneOnOpen: boolean): Promise<void> {
+    // RLS + the column-scoped UPDATE grant (0037) confine this to the caller's
+    // own row and the single display column.
+    const { error } = await this.sb
+      .from('subscriptions')
+      .update({ mark_done_on_open: markDoneOnOpen })
+      .eq('feed_id', feedId);
+    if (!error) return;
+    // Against a backend that predates 0037 the column doesn't exist. The Feeds
+    // page hides the control via supportsMarkDoneOnOpen(), but that flag is only
+    // proven after a live subscriptions read — a render served entirely from the
+    // persisted query cache could still surface the control. So tolerate the
+    // undefined-column write here too: record the column as absent (so the
+    // control hides on the next render) and no-op rather than hard-reject. The
+    // client must never *require* the unshipped migration (guardrail #11).
+    if (isMissingColumnError(error)) {
+      this.markDoneOnOpenColumn = false;
+      return;
     }
     throw error instanceof Error ? error : new Error(String(error));
   }

@@ -3,6 +3,7 @@ import type { FeedId, FeedItem, ItemId } from '../lib/types';
 import { useShareItem } from '../hooks/useShareItem';
 import { useOpenOriginalFeeds } from '../hooks/useOpenOriginalFeeds';
 import { useOpenNewshackerFeeds } from '../hooks/useOpenNewshackerFeeds';
+import { useMarkDoneOnOpenFeeds } from '../hooks/useMarkDoneOnOpenFeeds';
 import { useShowRowFavicon } from '../hooks/useReadingPrefs';
 import { faviconNeedsDarkInvert } from '../lib/faviconInvert';
 import { ItemRow, type RightAction } from './ItemRow';
@@ -145,6 +146,10 @@ export function ItemRows({
   // Feeds the user set to "open on newshacker" — their rows link to the item's
   // Hacker News discussion on newshacker.app instead of the in-app reader.
   const openNewshackerFeeds = useOpenNewshackerFeeds();
+  // Feeds the user set to "mark done when opening" — opening a row's original /
+  // newshacker target also marks the item done. Same shared subscriptions read,
+  // deduped via React Query.
+  const markDoneOnOpenFeeds = useMarkDoneOnOpenFeeds();
   // Off-by-default per-device setting (Settings → Reading). Only consulted in
   // the non-grouped path below; group-by-feed shows the icon on its header.
   const { showRowFavicon: showRowFaviconPref } = useShowRowFavicon();
@@ -190,6 +195,7 @@ export function ItemRows({
         enableSwipe={enableSwipe}
         openOriginal={openOriginalFeeds.has(fi.item.feedId)}
         openNewshacker={openNewshackerFeeds.has(fi.item.feedId)}
+        markDoneOnOpen={markDoneOnOpenFeeds.has(fi.item.feedId)}
         showFavicon={showRowFavicon}
         onShare={() => share({ title: fi.item.title, url: fi.item.url })}
         rightAction={rightAction?.(fi)}

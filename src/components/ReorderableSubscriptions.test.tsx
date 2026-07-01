@@ -31,6 +31,7 @@ function entry(
       muted: false,
       openOriginal,
       openNewshacker: false,
+      markDoneOnOpen: false,
       sort,
     },
   };
@@ -52,6 +53,7 @@ function hnEntry(
       muted: false,
       openOriginal: false,
       openNewshacker: false,
+      markDoneOnOpen: false,
       sort,
       ...overrides,
     },
@@ -68,6 +70,7 @@ function setup() {
   const onMute = vi.fn();
   const onSetOpenOriginal = vi.fn();
   const onSetOpenMode = vi.fn();
+  const onSetMarkDoneOnOpen = vi.fn();
   const onUnsubscribe = vi.fn();
   const onRename = vi.fn<(id: FeedId, title: string | null) => void>();
   render(
@@ -77,11 +80,20 @@ function setup() {
       onMute={onMute}
       onSetOpenOriginal={onSetOpenOriginal}
       onSetOpenMode={onSetOpenMode}
+      onSetMarkDoneOnOpen={onSetMarkDoneOnOpen}
       onUnsubscribe={onUnsubscribe}
       onRename={onRename}
     />,
   );
-  return { onReorder, onMute, onSetOpenOriginal, onSetOpenMode, onUnsubscribe, onRename };
+  return {
+    onReorder,
+    onMute,
+    onSetOpenOriginal,
+    onSetOpenMode,
+    onSetMarkDoneOnOpen,
+    onUnsubscribe,
+    onRename,
+  };
 }
 
 // The persist is debounced (300ms, only-latest-wins), so drive it with fake
@@ -274,6 +286,7 @@ describe('ReorderableSubscriptions', () => {
         onMute={vi.fn()}
         onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
+        onSetMarkDoneOnOpen={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
       />,
@@ -335,6 +348,38 @@ describe('ReorderableSubscriptions', () => {
     expect(screen.queryByRole('menu')).toBeNull(); // closes after action
   });
 
+  it('toggles "Mark done when opening" on via the overflow menu', () => {
+    const { onSetMarkDoneOnOpen } = setup();
+    openMenu('Beta');
+    fireEvent.click(
+      screen.getByRole('menuitemcheckbox', { name: 'Mark done when opening' }),
+    );
+    expect(onSetMarkDoneOnOpen).toHaveBeenCalledWith('b', true);
+    expect(screen.queryByRole('menu')).toBeNull(); // closes after action
+  });
+
+  it('hides "Mark done when opening" when the backend does not support it', () => {
+    render(
+      <ReorderableSubscriptions
+        subs={[entry('a', 'Alpha', 0)]}
+        onReorder={vi.fn()}
+        onMute={vi.fn()}
+        onSetOpenOriginal={vi.fn()}
+        onSetOpenMode={vi.fn()}
+        onSetMarkDoneOnOpen={vi.fn()}
+        showMarkDoneOnOpen={false}
+        onUnsubscribe={vi.fn()}
+        onRename={vi.fn()}
+      />,
+    );
+    openMenu('Alpha');
+    expect(
+      screen.queryByRole('menuitemcheckbox', { name: 'Mark done when opening' }),
+    ).toBeNull();
+    // The rest of the menu is unaffected.
+    expect(screen.getByRole('menuitem', { name: 'Unsubscribe' })).toBeInTheDocument();
+  });
+
   it('marks "Open original" checked and toggles it back off when already set', () => {
     const onSetOpenOriginal = vi.fn();
     render(
@@ -344,6 +389,7 @@ describe('ReorderableSubscriptions', () => {
         onMute={vi.fn()}
         onSetOpenOriginal={onSetOpenOriginal}
         onSetOpenMode={vi.fn()}
+        onSetMarkDoneOnOpen={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
       />,
@@ -363,6 +409,7 @@ describe('ReorderableSubscriptions', () => {
         onMute={vi.fn()}
         onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
+        onSetMarkDoneOnOpen={vi.fn()}
         showOpenOriginal={false}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
@@ -386,6 +433,7 @@ describe('ReorderableSubscriptions', () => {
   ) {
     const onSetOpenMode = vi.fn();
     const onSetOpenOriginal = vi.fn();
+    const onSetMarkDoneOnOpen = vi.fn();
     render(
       <ReorderableSubscriptions
         subs={[hnEntry('hn', 'Hacker News', 0, sub)]}
@@ -393,12 +441,13 @@ describe('ReorderableSubscriptions', () => {
         onMute={vi.fn()}
         onSetOpenOriginal={onSetOpenOriginal}
         onSetOpenMode={onSetOpenMode}
+        onSetMarkDoneOnOpen={onSetMarkDoneOnOpen}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
         {...props}
       />,
     );
-    return { onSetOpenMode, onSetOpenOriginal };
+    return { onSetOpenMode, onSetOpenOriginal, onSetMarkDoneOnOpen };
   }
 
   it('offers a three-way open-mode radio for a Hacker News feed (reader default)', () => {
@@ -484,6 +533,7 @@ describe('ReorderableSubscriptions', () => {
         onMute={vi.fn()}
         onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
+        onSetMarkDoneOnOpen={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
       />,
@@ -599,6 +649,7 @@ describe('ReorderableSubscriptions', () => {
         onMute={vi.fn()}
         onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
+        onSetMarkDoneOnOpen={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={onRename}
       />,
@@ -653,6 +704,7 @@ describe('ReorderableSubscriptions', () => {
         onMute={vi.fn()}
         onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
+        onSetMarkDoneOnOpen={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={onRename}
       />,
@@ -705,6 +757,7 @@ describe('ReorderableSubscriptions (deep-link scroll/highlight)', () => {
         onMute={vi.fn()}
         onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
+        onSetMarkDoneOnOpen={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
       />,

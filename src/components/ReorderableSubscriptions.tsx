@@ -43,6 +43,15 @@ interface Props {
    * the `open_newshacker` preference yet (pre-0033), so the choice degrades to
    * the reader/original checkbox. Defaults to true. */
   showOpenNewshacker?: boolean;
+  /** Toggle the feed's "mark done when opening" preference — when on, opening one
+   * of its items on the original source or the newshacker discussion also marks
+   * it Done. Independent of the open-mode choice above. */
+  onSetMarkDoneOnOpen: (feedId: FeedId, markDoneOnOpen: boolean) => void;
+  /** Whether to offer the "Mark done when opening" menu item. Hidden when the
+   * backend doesn't support the `mark_done_on_open` preference yet (pre-0037), so
+   * the control never triggers a write the old backend would reject. Defaults to
+   * true. */
+  showMarkDoneOnOpen?: boolean;
   onUnsubscribe: (feedId: FeedId) => void;
   /** Set a per-user display name for `feedId`. Pass `null` to clear the
    * override and fall back to the publisher's feed title. */
@@ -71,6 +80,8 @@ export function ReorderableSubscriptions({
   onSetOpenMode,
   showOpenOriginal = true,
   showOpenNewshacker = true,
+  onSetMarkDoneOnOpen,
+  showMarkDoneOnOpen = true,
   onUnsubscribe,
   onRename,
   scrollToFeedId,
@@ -567,6 +578,23 @@ export function ReorderableSubscriptions({
                       Open original
                       <span className="settings__sub-check" aria-hidden="true">
                         {subscription.openOriginal ? '✓' : ''}
+                      </span>
+                    </button>
+                  ) : null}
+                  {showMarkDoneOnOpen ? (
+                    <button
+                      type="button"
+                      role="menuitemcheckbox"
+                      aria-checked={subscription.markDoneOnOpen}
+                      className="settings__sub-menuitem settings__sub-menuitem--check"
+                      onClick={() => {
+                        setMenuFor(null);
+                        onSetMarkDoneOnOpen(feed.id, !subscription.markDoneOnOpen);
+                      }}
+                    >
+                      Mark done when opening
+                      <span className="settings__sub-check" aria-hidden="true">
+                        {subscription.markDoneOnOpen ? '✓' : ''}
                       </span>
                     </button>
                   ) : null}
