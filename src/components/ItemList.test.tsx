@@ -375,6 +375,42 @@ describe('ItemList', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('auto-skips a duplicate-only page (offset drift) when tapping More', async () => {
+    // Regression: pages are deduped against the already-loaded list (offset
+    // drift re-serves the previous page's tail), so an appended page can render
+    // nothing new. The pager must measure progress on that same deduped view —
+    // counting the raw page contents made it stop on the invisible page, so a
+    // More tap visibly did nothing.
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const all = (await source.getHomeItems()).items;
+    expect(all.length).toBeGreaterThanOrEqual(3);
+    const pagesByCursor: Record<string, { items: FeedItem[]; nextCursor: string | null }> = {
+      start: { items: [all[0], all[1]], nextCursor: '1' },
+      // The poller shifted every offset by a full page: this page re-serves
+      // only already-loaded items.
+      '1': { items: [all[0], all[1]], nextCursor: '2' },
+      '2': { items: [all[2]], nextCursor: null },
+    };
+    renderWithProviders(
+      <ItemList
+        viewKey={`dup-${Math.random()}`}
+        fetchPage={(cursor) => Promise.resolve(pagesByCursor[cursor ?? 'start'])}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+    expect(screen.queryByText(all[2].item.title)).not.toBeInTheDocument();
+
+    // One More tap pages past the duplicate-only page and lands the next new
+    // item, instead of stopping on a page that shows nothing.
+    await user.click(screen.getByTestId('more-btn'));
+    expect(await screen.findByText(all[2].item.title)).toBeInTheDocument();
+    // And the duplicates still render only once each.
+    expect(screen.getAllByTestId('item-row')).toHaveLength(3);
+  });
+
   it('re-measures end-of-list when sections collapse, so the pinned bar fetches instead of paging down', async () => {
     const user = userEvent.setup();
     // Pin the bottom bar to the viewport (where "More" is a pager).
