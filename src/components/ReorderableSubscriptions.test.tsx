@@ -313,6 +313,46 @@ describe('ReorderableSubscriptions', () => {
     expect(onReorder).toHaveBeenLastCalledWith(['b', 'c', 'a']);
   });
 
+  it('ignores a second pointer while a drag is in progress', () => {
+    // Regression: a second finger landing on another handle mid-drag replaced
+    // the drag state, so the first finger's moves reordered the WRONG feed and
+    // its release persisted the half-scrambled order.
+    const { onReorder } = setup();
+    const handles = screen.getAllByTestId('sub-drag-handle');
+    // jsdom buttons don't implement pointer capture.
+    for (const h of handles) {
+      (h as unknown as { setPointerCapture: unknown }).setPointerCapture = vi.fn();
+    }
+    const rows = screen.getAllByRole('listitem');
+    // jsdom has no PointerEvent — dispatch a raw Event with pointer fields
+    // (same pattern as TooltipButton.test.tsx).
+    const pointer = (target: Element, type: string, pointerId: number) => {
+      const evt = new Event(type, { bubbles: true, cancelable: true });
+      Object.assign(evt, { pointerId, button: 0, clientY: 0, isPrimary: pointerId === 1 });
+      act(() => {
+        target.dispatchEvent(evt);
+      });
+    };
+
+    pointer(handles[0], 'pointerdown', 1);
+    expect(rows[0].className).toContain('is-dragging');
+
+    // Second finger on another handle: ignored — Alpha keeps dragging.
+    pointer(handles[1], 'pointerdown', 2);
+    expect(rows[0].className).toContain('is-dragging');
+    expect(rows[1].className).not.toContain('is-dragging');
+
+    // The second finger's release must not end (or persist) Alpha's drag.
+    pointer(handles[1], 'pointerup', 2);
+    expect(rows[0].className).toContain('is-dragging');
+
+    // The dragging finger's release ends it; order unchanged → no persist.
+    pointer(handles[0], 'pointerup', 1);
+    expect(rows[0].className).not.toContain('is-dragging');
+    flushPersist();
+    expect(onReorder).not.toHaveBeenCalled();
+  });
+
   it('does not persist a move past the ends', () => {
     const { onReorder } = setup();
     const handles = screen.getAllByTestId('sub-drag-handle');
