@@ -814,6 +814,56 @@ describe('SupabaseDataSource reads', () => {
     expect(env.ds.stateStore.get('i2').pinned).toBe(false); // rolled back
   });
 
+  it('does not leak an unhandled rejection when the correction re-pull after a permanent reject fails', async () => {
+    // Regression: onPermanentReject kicked `void this.ensureHydrated()` with no
+    // catch; ensureHydrated re-throws after clearing the memo, so a correction
+    // re-pull that fails (e.g. the device went offline right as the write was
+    // rejected) surfaced as an unhandled rejection. The memo is still cleared,
+    // so the next read retries — the rejection just must not escape.
+    const env = setup();
+    await env.ds.getItemsByIds([]); // boot hydration succeeds
+
+    // The set_item_state write is permanently rejected (42501 lost visibility)…
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'set_item_state') {
+        return Promise.resolve({
+          data: null,
+          error: { code: '42501', message: 'lost visibility' },
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+
+    // …and every subsequent item_state read fails, so the re-pull rejects.
+    let repullStarted!: () => void;
+    const repullRan = new Promise<void>((r) => (repullStarted = r));
+    const realFrom = env.fake.client.from.bind(env.fake.client);
+    env.fake.client.from = ((table: string) => {
+      if (table !== 'item_state') return realFrom(table);
+      repullStarted();
+      return itemStateReadStub(() => Promise.reject(new Error('offline'))) as ReturnType<
+        typeof realFrom
+      >;
+    }) as typeof env.fake.client.from;
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      env.ds.stateStore.set('i2', 'opened', true); // → permanent reject → re-pull
+      await repullRan;
+      // Let the rejection propagate: its handlers (or their absence) resolve in
+      // microtasks, and node emits unhandledRejection only after the microtask
+      // queue drains — so yield a full turn, twice, before asserting.
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   it('does not strand the feed on its skeletons when item_state hydration hangs but state is already loaded', async () => {
     // Repro of the "all cards stuck loading" bug. A feed read used to AWAIT the
     // full (paged, serialized) item_state hydration before returning any row, so

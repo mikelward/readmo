@@ -403,7 +403,10 @@ export class SupabaseDataSource implements DataSource {
         // hydrate drop the now-absent local row.
         for (const id of ids) this.hydrationWrittenChanges?.delete(id);
         this.hydration = null;
-        void this.ensureHydrated();
+        // Swallow rejection: ensureHydrated re-throws after clearing the memo,
+        // so a failing correction re-pull (e.g. the device just went offline)
+        // would otherwise be an unhandled rejection. The next read retries.
+        void this.ensureHydrated().catch(() => {});
       },
       () => {
         // A queued write committed server-side. The list self-heals via the
@@ -418,7 +421,9 @@ export class SupabaseDataSource implements DataSource {
         if (this.lwwLossPending) {
           this.lwwLossPending = false;
           this.hydration = null;
-          void this.ensureHydrated();
+          // Swallow rejection — same reasoning as the permanent-reject re-pull
+          // above; the memo is cleared so the next read retries.
+          void this.ensureHydrated().catch(() => {});
         }
       },
     );
