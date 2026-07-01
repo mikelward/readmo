@@ -4,8 +4,7 @@
 }
 
 .item-list__rows,
-.item-list__section-rows,
-.item-list__skeletons {
+.item-list__section-rows {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -282,29 +281,6 @@
 
 .item-list__group-toggle:active {
   background: var(--rm-bg-card);
-}
-
-.item-list__skeleton {
-  /* Match the live row's compact height (.item-row in ItemRow.css). */
-  height: 56px;
-  border-bottom: 1px solid var(--rm-border);
-  background: linear-gradient(
-    90deg,
-    var(--rm-bg-card) 0%,
-    var(--rm-bg) 50%,
-    var(--rm-bg-card) 100%
-  );
-  background-size: 200% 100%;
-  animation: item-list-shimmer 1.2s ease-in-out infinite;
-}
-
-@keyframes item-list-shimmer {
-  0% {
-    background-position: 200% 0;
-  }
-  100% {
-    background-position: -200% 0;
-  }
 }
 
 .item-list__state {

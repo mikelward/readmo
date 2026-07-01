@@ -2721,7 +2721,7 @@ describe('ItemList', () => {
       { source },
     );
 
-    // Skeletons are up; no exhausted-feed message should flash under them.
+    // The loading indicator is up; no exhausted-feed message should flash under it.
     await screen.findByTestId('back-to-top');
     expect(screen.queryByTestId('more-btn')).toBeNull();
 

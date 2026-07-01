@@ -31,11 +31,19 @@ export function EmptyState({ message }: EmptyStateProps) {
 }
 
 interface LoadingStateProps {
-  /** Visually hidden label announced to assistive tech. */
+  /** The label announced to assistive tech (and shown on screen when
+   * {@link LoadingStateProps.showLabel} is set). */
   label?: string;
+  /** Render the label as visible on-screen text beside the spinner, rather than
+   * only exposing it to assistive tech. Feed/library loading uses this so the
+   * wait reads as "Loading…" instead of a bare spinner over blank rows. */
+  showLabel?: boolean;
 }
 
-export function LoadingState({ label = 'Loading…' }: LoadingStateProps) {
+export function LoadingState({
+  label = 'Loading…',
+  showLabel = false,
+}: LoadingStateProps) {
   return (
     <div
       className="state state--loading"
@@ -44,7 +52,11 @@ export function LoadingState({ label = 'Loading…' }: LoadingStateProps) {
       data-testid="loading-state"
     >
       <span className="state__spinner" aria-hidden="true" />
-      <span className="state__sr-only">{label}</span>
+      {showLabel ? (
+        <span className="state__loading-label">{label}</span>
+      ) : (
+        <span className="state__sr-only">{label}</span>
+      )}
     </div>
   );
 }

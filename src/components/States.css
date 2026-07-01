@@ -19,6 +19,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 10px;
+}
+
+.state__loading-label {
+  font-size: 15px;
+  color: var(--rm-meta);
 }
 
 .state__spinner {
