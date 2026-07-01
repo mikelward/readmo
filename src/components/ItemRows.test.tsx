@@ -282,6 +282,11 @@ describe('ItemRows', () => {
     // still collapses it.
     const rest = screen.getByTestId('group-collapse-rest');
     expect(rest).toHaveAttribute('aria-hidden', 'true');
+    // Non-focusable (a plain div, not a button): an aria-hidden control that can
+    // still take focus on pointer activation would strand a screen reader on a
+    // control removed from the a11y tree. The chevron button is the keyboard/AT
+    // collapse control; this region is a pointer-only convenience.
+    expect(rest.tagName).toBe('DIV');
     await userEvent.setup().click(rest);
     expect(onToggle).toHaveBeenCalledWith(items[0].item.feedId);
   });
