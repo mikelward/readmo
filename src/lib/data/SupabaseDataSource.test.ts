@@ -2222,6 +2222,34 @@ describe('SupabaseDataSource dispatch + writes', () => {
     });
   });
 
+  it('importOpml skips an entry whose subscribe fails and continues with the rest', async () => {
+    // Regression: only the Google News branch caught subscribe failures, so one
+    // dead URL (or transient RPC 500) aborted the whole import mid-file —
+    // earlier entries were already committed, later ones were never attempted,
+    // and the caller saw a rejection instead of a result.
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'subscribe_to_feed' && params?.p_url === 'https://dead.example.com/feed') {
+        return Promise.resolve({ data: null, error: { code: '500', message: 'boom' } });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+
+    const xml = `<opml><body>
+      <outline type="rss" xmlUrl="https://first.example.com/feed" />
+      <outline type="rss" xmlUrl="https://dead.example.com/feed" />
+      <outline type="rss" xmlUrl="https://third.example.com/feed" />
+    </body></opml>`;
+    const result = await env.ds.importOpml(xml);
+    expect(result).toEqual({ added: 2, skipped: 1 });
+    // The entry after the failing one was still attempted.
+    expect(env.fake.rpcCalls).toContainEqual({
+      name: 'subscribe_to_feed',
+      params: { p_url: 'https://third.example.com/feed', p_folder: null },
+    });
+  });
+
   it('serializes set_item_state writes for the same item (last action wins)', async () => {
     const env = setup();
     await env.ds.getHomeItems(); // hydrate

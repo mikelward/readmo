@@ -1602,7 +1602,15 @@ export class SupabaseDataSource implements DataSource {
           continue;
         }
       } else {
-        feed = await this.subscribeOnly(url); // no per-feed refresh storm
+        try {
+          feed = await this.subscribeOnly(url); // no per-feed refresh storm
+        } catch {
+          // A dead URL or transient RPC failure skips this entry only — one bad
+          // outline must not abort the rest of the file (entries before it are
+          // already committed server-side, and the caller would report nothing).
+          skipped++;
+          continue;
+        }
       }
       if (subscribed.has(feed.id)) {
         skipped++;
