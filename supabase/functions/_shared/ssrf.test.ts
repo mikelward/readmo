@@ -96,6 +96,16 @@ describe('isBlockedAddress — IPv6', () => {
     expect(isBlockedAddress('64:ff9b:1::1')).toBe(true);
   });
 
+  it('blocks 6to4 2002::/16 embedding a private/metadata IPv4', () => {
+    expect(isBlockedAddress('2002:a9fe:a9fe::')).toBe(true); // 169.254.169.254
+    expect(isBlockedAddress('2002:7f00:1::')).toBe(true); // 127.0.0.1
+    expect(isBlockedAddress('2002:a00:1::1')).toBe(true); // 10.0.0.1
+  });
+
+  it('allows 6to4 embedding a public IPv4', () => {
+    expect(isBlockedAddress('2002:808:808::1')).toBe(false); // 8.8.8.8
+  });
+
   it('allows ordinary public IPv6', () => {
     expect(isBlockedAddress('2606:4700:4700::1111')).toBe(false); // cloudflare
   });
@@ -295,6 +305,22 @@ describe('safeFetch — with injected resolver/fetch', () => {
     expect(seen?.get('user-agent')).toMatch(
       /^Readmo\/\d+ \(\+https:\/\/readmo\.app\)$/,
     );
+  });
+
+  it('strips credentials regardless of header-name casing', async () => {
+    // Header names are case-insensitive on the wire; an exact-key delete let
+    // AUTHORIZATION / COOKIE through.
+    let seen: Headers | undefined;
+    await safeFetch('https://example.com/', {
+      headers: { AUTHORIZATION: 'Bearer secret', COOKIE: 'sid=1', 'aUtHoRiZaTiOn': 'x' },
+      resolve: async () => ['8.8.8.8'],
+      fetchImpl: async (_u, init) => {
+        seen = new Headers(init?.headers);
+        return okResponse('ok');
+      },
+    });
+    expect(seen?.get('authorization')).toBeNull();
+    expect(seen?.get('cookie')).toBeNull();
   });
 });
 
