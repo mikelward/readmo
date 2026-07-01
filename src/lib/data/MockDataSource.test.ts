@@ -282,12 +282,56 @@ describe('MockDataSource library + subscriptions', () => {
     expect(result.skipped).toBeGreaterThan(0);
   });
 
+  it('importOpml resubscribes a previously-unsubscribed feed (like the real subscribe RPC)', async () => {
+    // Regression: the skip-check tested the global feeds table, not the
+    // caller's subscriptions, so a known-but-unsubscribed feed was counted
+    // "skipped" and never re-added — while SupabaseDataSource resubscribes it.
+    const ds = fresh();
+    const xml = await ds.exportOpml();
+    await ds.unsubscribe('feed-verge');
+    expect((await ds.getSubscriptions()).some((s) => s.feed.id === 'feed-verge')).toBe(false);
+
+    const result = await ds.importOpml(xml);
+    expect(result.added).toBe(1);
+    expect((await ds.getSubscriptions()).some((s) => s.feed.id === 'feed-verge')).toBe(true);
+  });
+
+  it('round-trips a feed URL containing & without duplicating the feed', async () => {
+    // Regression: exportOpml XML-escapes the URL but importOpml read it raw,
+    // so a round-trip re-subscribed `…&amp;b=2` as a brand-new duplicate feed.
+    const ds = fresh();
+    const feed = await ds.subscribe('https://example.com/feed?a=1&b=2');
+    const before = (await ds.getSubscriptions()).length;
+
+    const result = await ds.importOpml(await ds.exportOpml());
+    expect(result.added).toBe(0);
+    const subs = await ds.getSubscriptions();
+    expect(subs).toHaveLength(before);
+    expect(subs.filter((s) => s.feed.url === feed.url)).toHaveLength(1);
+  });
+
   it('search matches titles and feed names', async () => {
     const ds = fresh();
     const byTitle = await ds.search('foldable');
     expect(byTitle.length).toBeGreaterThan(0);
     const byFeed = await ds.search('NASA');
     expect(byFeed.length).toBeGreaterThan(0);
+  });
+
+  it('search matches the overridden feed title, not the replaced one (like SupabaseDataSource)', async () => {
+    // SupabaseDataSource searches the title the user sees (ensureFeeds applies
+    // title_override before matching); the mock matched the raw publisher
+    // title and ignored overrides — the exact opposite.
+    const ds = fresh();
+    await ds.setTitleOverride('feed-verge', 'Gadget Zone');
+
+    const byOverride = await ds.search('gadget zone');
+    expect(byOverride.length).toBeGreaterThan(0);
+    expect(byOverride.every((fi) => fi.feed.id === 'feed-verge')).toBe(true);
+
+    // The replaced title no longer matches as a feed name.
+    const byOld = await ds.search('The Verge');
+    expect(byOld.filter((fi) => fi.feed.id === 'feed-verge')).toHaveLength(0);
   });
 
   it('getFeed applies title_override from the subscription', async () => {

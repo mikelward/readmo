@@ -15,6 +15,7 @@ import {
   ItemStateStore,
   localStoragePersistence,
 } from './itemState';
+import { escapeXml, decodeXmlEntities } from './xmlEntities';
 import type { FullTextResult } from '../fullText';
 import type { SummaryResult } from '../summary';
 import {
@@ -393,11 +394,12 @@ export class MockDataSource implements DataSource {
     if (!q) return [];
     return this.items
       .filter((it) => {
+        // Match the feed title the user actually sees — the subscription's
+        // rename when set (SupabaseDataSource searches the overridden title
+        // too, because ensureFeeds applies title_override before matching).
         const feed = this.feeds.get(it.feedId);
-        return (
-          it.title.toLowerCase().includes(q) ||
-          (feed?.title.toLowerCase().includes(q) ?? false)
-        );
+        const feedTitle = this.subs.get(it.feedId)?.titleOverride ?? feed?.title ?? '';
+        return it.title.toLowerCase().includes(q) || feedTitle.toLowerCase().includes(q);
       })
       .sort((a, b) => b.publishedAt - a.publishedAt)
       .map((it) => this.toFeedItem(it))
@@ -591,12 +593,17 @@ export class MockDataSource implements DataSource {
   // --- OPML -----------------------------------------------------------------
 
   async importOpml(xml: string): Promise<{ added: number; skipped: number }> {
-    const urls = [...xml.matchAll(/xmlUrl="([^"]+)"/g)].map((m) => m[1]);
+    // Mirror SupabaseDataSource: attribute values are XML-escaped, so decode
+    // entities before matching/subscribing (or a URL with `&` re-subscribes as
+    // a duplicate feed under its escaped form), and "skipped" means the caller
+    // is already SUBSCRIBED — a known feed the user unsubscribed from is
+    // re-added, not skipped (subscribe() resubscribes an existing feed).
+    const urls = [...xml.matchAll(/xmlUrl="([^"]+)"/g)].map((m) => decodeXmlEntities(m[1]));
     let added = 0;
     let skipped = 0;
     for (const url of urls) {
-      const exists = [...this.feeds.values()].some((f) => f.url === url);
-      if (exists) {
+      const existing = [...this.feeds.values()].find((f) => f.url === url);
+      if (existing && this.subs.has(existing.id)) {
         skipped++;
         continue;
       }
@@ -705,10 +712,3 @@ export class MockDataSource implements DataSource {
   }
 }
 
-function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
