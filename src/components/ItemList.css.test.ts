@@ -66,17 +66,20 @@ describe('group-by-feed section header positioning contract', () => {
     expect(z).toBeLessThan(10);
   });
 
-  it('baseline-aligns the feed name and its unread count, then optically centers the count', () => {
-    // The title (0.75rem) and the count (0.6875rem) share a baseline group…
+  it('sizes the unread count to the feed name so they share a baseline crisply', () => {
+    // The title and count share a baseline group…
     expect(declarationsFor('.item-list__group-label')['align-items']).toBe(
       'baseline',
     );
-    // …then the count gets a small upward optical lift so its smaller glyphs
-    // center against the title's caps instead of reading as sitting low. Visual
-    // only (transform), so the title's baseline and the row layout are unmoved.
-    expect(declarationsFor('.item-list__group-count').transform).toContain(
-      'translateY(',
+    // …and the count is the SAME font-size as the feed name. Matching sizes make
+    // baseline alignment exact (no sub-pixel vertical nudge, which softened the
+    // count's digits at small sizes); the parens + lighter weight set it apart.
+    const titleSize = declarationsFor('.item-list__group-title')['font-size'];
+    expect(declarationsFor('.item-list__group-count')['font-size']).toBe(
+      titleSize,
     );
+    // No transform nudge remains (it was what softened the digits).
+    expect(declarationsFor('.item-list__group-count').transform).toBeUndefined();
   });
 
   it('keeps the feed name to a single line so the pinned header stays compact', () => {

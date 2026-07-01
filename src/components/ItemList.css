@@ -117,25 +117,20 @@
   min-width: 0;
 }
 
-/* Per-feed unread/to-do count next to the feed name. Tabular figures + its own
-   casing (the title is uppercase) so the number reads as a count, not a word. */
+/* Per-feed unread/to-do count next to the feed name. Matches the feed name's
+   size and color (only the lighter weight sets it apart) so — being the same
+   size — it shares the name's baseline exactly and stays crisp at small sizes; a
+   smaller count needed a sub-pixel vertical nudge to look centered, which
+   softened the digits. Tabular figures + its own casing (the title is uppercase)
+   so the number reads as a count, not a word. */
 .item-list__group-count {
   flex: 0 0 auto;
-  margin-left: 2px;
-  font-size: 0.6875rem;
-  font-weight: 700;
-  line-height: 1;
+  font-size: 0.75rem;
+  font-weight: 400;
   letter-spacing: 0;
   text-transform: none;
-  color: var(--rm-accent);
+  color: var(--rm-meta);
   font-variant-numeric: tabular-nums;
-  /* Optical nudge: the label baseline-aligns the title and count (see below),
-     but because the count is a smaller font its caps stop just short of the
-     title's cap height, so a strictly baseline-aligned count reads as sitting a
-     hair low. Lift it by ~half the cap-height difference — measured at ≈0.5px,
-     i.e. ~0.04em of the count — to center its caps on the title's. Visual only
-     (transform), so it doesn't shift the title's baseline or the row layout. */
-  transform: translateY(-0.04em);
 }
 
 /* Wraps the title and (optional) count and aligns them on a shared baseline so

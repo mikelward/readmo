@@ -1144,9 +1144,10 @@ negligible and off every critical path. See the External services table in
      - **Section header controls** (group-by-feed only). Each feed's header is a
        small control strip. On the far left, a **44px chevron** button is the
        collapse control; next to it the **site favicon + feed name + unread/to-do
-       count badge** link to that feed's own view (`/feed/:feedId`) — the count
-       tracks the feed name's baseline, lifted a hair so it optically centers
-       against the name's caps; and the **empty space** up to the actions
+       count** link to that feed's own view (`/feed/:feedId`) — the count is drawn
+       at the feed name's size and color (only a lighter weight sets it apart) so
+       it shares the name's baseline exactly; and the **empty space** up to the
+       actions
        is a second, pointer-only collapse region — so tapping *anywhere on the row
        except the feed name/icon/count and the Undo/Sweep buttons* toggles the
        section (see below). On the right sit two
@@ -1158,7 +1159,7 @@ negligible and off every critical path. See the External services table in
        chevron) — a **deliberate exception** to guardrail #2's three-per-*row*
        cap: a section header is a control strip, not an article row (it already
        carried three — collapse, Undo, Sweep — before feed navigation was
-       added), and each zone still meets the 44×44px floor with ≥8px gaps. The **count badge** shows that feed's unread/to-do total (from
+       added), and each zone still meets the 44×44px floor with ≥8px gaps. The **count** shows that feed's unread/to-do total (from
        `getFeedUnreadCounts`; capped `99+`, hidden at 0), so a collapsed feed
        still shows how much it holds. **Sweep this feed** marks done only that
        feed's **fully-visible, unpinned** rows — the same shielding as the
