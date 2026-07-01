@@ -66,12 +66,16 @@ describe('group-by-feed section header positioning contract', () => {
     expect(z).toBeLessThan(10);
   });
 
-  it('baseline-aligns the feed name and its unread count', () => {
-    // The title (0.75rem) and the count (0.6875rem) share a baseline group so
-    // the number sits on the name's text baseline; vertically centering the two
-    // different sizes instead left the larger title reading slightly high.
+  it('baseline-aligns the feed name and its unread count, then optically centers the count', () => {
+    // The title (0.75rem) and the count (0.6875rem) share a baseline group…
     expect(declarationsFor('.item-list__group-label')['align-items']).toBe(
       'baseline',
+    );
+    // …then the count gets a small upward optical lift so its smaller glyphs
+    // center against the title's caps instead of reading as sitting low. Visual
+    // only (transform), so the title's baseline and the row layout are unmoved.
+    expect(declarationsFor('.item-list__group-count').transform).toContain(
+      'translateY(',
     );
   });
 

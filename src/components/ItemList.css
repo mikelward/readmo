@@ -129,13 +129,19 @@
   text-transform: none;
   color: var(--rm-accent);
   font-variant-numeric: tabular-nums;
+  /* Optical nudge: the label baseline-aligns the title and count (see below),
+     but because the count is a smaller font its caps stop just short of the
+     title's cap height, so a strictly baseline-aligned count reads as sitting a
+     hair low. Lift it by ~half the cap-height difference — measured at ≈0.5px,
+     i.e. ~0.04em of the count — to center its caps on the title's. Visual only
+     (transform), so it doesn't shift the title's baseline or the row layout. */
+  transform: translateY(-0.04em);
 }
 
-/* Wraps the title and (optional) count and aligns them on a shared baseline, so
-   the smaller count sits on the feed name's text baseline instead of being
-   vertically centered against it — center-aligning the two different sizes left
-   the larger title reading slightly high. min-width: 0 lets the title ellipsize
-   within the link's available width. */
+/* Wraps the title and (optional) count and aligns them on a shared baseline so
+   the count tracks the feed name's text baseline (the count then gets a small
+   optical lift — see .item-list__group-count). min-width: 0 lets the title
+   ellipsize within the link's available width. */
 .item-list__group-label {
   display: inline-flex;
   align-items: baseline;
