@@ -64,7 +64,7 @@ import { safeFetch } from '../_shared/ssrf.ts';
 import { robotsAllows } from '../_shared/robots.ts';
 import { looksTokenized, redactUrl } from '../_shared/urlSafety.ts';
 import { corsHeaders, preflight } from '../_shared/cors.ts';
-import { loadAllowlistFromDb, parseAllowlist, isAllowed } from '../_shared/allowlist.ts';
+import { loadAllowlistFromDb, isAllowed } from '../_shared/allowlist.ts';
 
 const JINA_MAX_BYTES = 4 * 1024 * 1024; // 4 MiB
 const FETCH_MAX_BYTES = 8 * 1024 * 1024; // 8 MiB — article pages can be large
@@ -130,11 +130,6 @@ async function handle(req: Request): Promise<Response> {
     console.error('fulltext: allowlist read failed — retryable unreachable:', err);
     return json({ status: 'unreachable', contentHtml: null });
   }
-  // Transitional cutover safety: union with the legacy READMO_ALLOWLIST env var,
-  // so an install that armed the OLD secret stays gated until it seeds the DB
-  // table and unsets the secret — deploying these functions before seeding can't
-  // briefly fling the gate open. (No-op once the secret is unset / never set.)
-  for (const e of parseAllowlist(Deno.env.get('READMO_ALLOWLIST'))) allowlist.add(e);
   if (allowlist.size > 0) {
     const { data: auth, error: authError } = await userClient.auth.getUser();
     if (authError || !auth?.user) {

@@ -539,10 +539,9 @@ straight to the culprit. The endpoint is read-only and service-role only.
 
 Reading-mode full text, Google News feeds, and AI article summaries are gated on
 a **trusted-user allowlist** that lives in the Postgres `allowlist` table
-(migration `0027`). It
-supersedes the old `READMO_ALLOWLIST` env var — if you ever set that secret you
-can now unset it (`supabase secrets unset READMO_ALLOWLIST`); the gate functions
-read the table (and, transitionally, still honor the secret until you unset it).
+(migration `0027`). It replaced the old `READMO_ALLOWLIST` env var, which the
+gate functions no longer read — if that secret is still set anywhere, unset it
+(`supabase secrets unset READMO_ALLOWLIST`).
 
 - **An empty `allowlist` table = disarmed** → reading mode + Google News + AI
   summaries are open to everyone (current behavior). Seeding any email arms the

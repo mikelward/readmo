@@ -54,7 +54,7 @@
 // @ts-nocheck — runs under Deno, not node/tsc.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { corsHeaders, preflight } from '../_shared/cors.ts';
-import { loadAllowlistFromDb, parseAllowlist, isAllowed } from '../_shared/allowlist.ts';
+import { loadAllowlistFromDb, isAllowed } from '../_shared/allowlist.ts';
 import { looksTokenized, redactUrl } from '../_shared/urlSafety.ts';
 import { assertSafeUrl } from '../_shared/ssrf.ts';
 import {
@@ -126,9 +126,6 @@ async function handle(req: Request): Promise<Response> {
     console.error('summary: allowlist read failed — retryable unreachable:', err);
     return json({ status: 'unreachable', summary: null });
   }
-  // Transitional cutover safety: union with the legacy READMO_ALLOWLIST env var,
-  // matching fulltext, so an install armed via the old secret stays gated.
-  for (const e of parseAllowlist(Deno.env.get('READMO_ALLOWLIST'))) allowlist.add(e);
   if (allowlist.size > 0) {
     const { data: auth, error: authError } = await userClient.auth.getUser();
     if (authError || !auth?.user) {
