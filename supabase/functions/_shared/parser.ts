@@ -385,6 +385,11 @@ function parseAtom(feed: Record<string, unknown>, feedUrl: string): ParsedFeed {
     // type="html|xhtml|text" and either text or nested markup.
     const contentHtml = atomContent(e.content);
     const summary = atomContent(e.summary);
+    // The body falls back to <summary> when <content> is absent; compare the
+    // summary against that EFFECTIVE body, not the raw <content>, so a
+    // summary-only entry doesn't store the same text as both body and summary
+    // (rendered twice). Mirrors the RSS 2.0 description/encoded suppression.
+    const bodyHtml = firstOf(contentHtml, summary);
     return finalizeItem({
       guidRaw: firstOf(text(e.id), url),
       url,
@@ -394,8 +399,8 @@ function parseAtom(feed: Record<string, unknown>, feedUrl: string): ParsedFeed {
       title: atomText(e.title),
       author: atomAuthor(e.author),
       publishedAt: toIso(firstOf(text(e.published), text(e.updated))),
-      contentHtml: firstOf(contentHtml, summary),
-      summary: summary === contentHtml ? null : summary,
+      contentHtml: bodyHtml,
+      summary: summary === bodyHtml ? null : summary,
       enclosures: collectAtomEnclosures(e.link, feedUrl),
       feedUrl,
     });
