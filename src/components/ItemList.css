@@ -93,9 +93,9 @@
   z-index: 5;
   display: flex;
   align-items: center;
-  /* Real gap between the collapse target (flexing toggle, whose padding is part
-     of its hit box) and the Sweep/Undo actions, so adjacent tap zones don't
-     touch — guardrail #2's ≥8px between interactive controls. */
+  /* Real gap between adjacent tap zones — the feed-name link, the collapse
+     toggle beside it, and the Sweep/Undo actions — so they don't touch,
+     honoring guardrail #2's ≥8px between interactive controls. */
   gap: 8px;
   background: var(--rm-bg);
   border-bottom: 1px solid var(--rm-border);
@@ -153,33 +153,77 @@
   object-fit: contain;
 }
 
-/* Tappable header: a full-width 44px row toggling the section. The chevron
-   points right when collapsed, down when expanded. */
+/* Collapse control, far left: a fixed 44px chevron button. It's the keyboard-
+   focusable toggle for the section; the count + empty space to the right of the
+   name is a second, pointer-only collapse region (group-collapse-rest below).
+   The chevron points right when collapsed, down when expanded. */
 .item-list__group-toggle {
   display: flex;
   align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: var(--rm-tap);
+  min-height: var(--rm-tap);
+  padding: 0.25rem 0.25rem 0.25rem 0.75rem;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+.item-list__group-toggle:active {
+  background: var(--rm-bg-card);
+}
+
+/* Middle tap zone: site icon + feed name, linking to that feed's own view.
+   Sized to its content (shrinking so a long name ellipsizes) rather than
+   filling the row, so the space beside it stays a collapse region. */
+.item-list__group-link {
+  display: flex;
+  align-items: center;
   gap: 6px;
+  flex: 0 1 auto;
+  /* 44px floor on both axes: height via min-height, and this holds the tap
+     width at the touch floor even for a short-title, favicon-less feed (a
+     longer name still ellipsizes, since the title inside sets min-width: 0). */
+  min-width: var(--rm-tap);
+  min-height: var(--rm-tap);
+  padding: 0.25rem 0;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .item-list__group-link:hover .item-list__group-title {
+    color: var(--rm-text);
+  }
+}
+
+.item-list__group-link:active {
+  background: var(--rm-bg-card);
+}
+
+/* Right-of-name collapse region: the unread count plus the flexed empty space
+   up to the Undo/Sweep actions. Redundant with the chevron button (both toggle
+   the section), so it's aria-hidden and out of the tab order — a pointer-only
+   affordance that lets tapping the blank space beside the name collapse too.
+   The guaranteed 44px collapse tap target is the chevron, so this may shrink to
+   nothing beside a long title without stranding the control. */
+.item-list__group-collapse-rest {
+  display: flex;
+  align-items: center;
   flex: 1;
   min-width: 0;
   min-height: var(--rm-tap);
-  padding: 0.25rem 1rem;
+  padding: 0.25rem 0.5rem;
   border: none;
   background: none;
   text-align: left;
   cursor: pointer;
 }
 
-/* Wraps the title and (optional) count so they baseline-align with each
-   other — without dragging the rest of the 44px toggle (chevron, padding,
-   min-height-driven slack) off-center. */
-.item-list__group-label {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  /* Fill the toggle's free width and allow shrinking so the title above can
-     ellipsize within the available space rather than overflowing the row. */
-  flex: 1;
-  min-width: 0;
+.item-list__group-collapse-rest:active {
+  background: var(--rm-bg-card);
 }
 
 /* Right-side per-feed controls: Sweep (mark visible done) + Undo. 44px touch
@@ -271,12 +315,6 @@
 
 .item-list__group-header--collapsed .item-list__group-chevron {
   transform: rotate(0deg); /* collapsed: pointing right */
-}
-
-@media (hover: hover) {
-  .item-list__group-toggle:hover .item-list__group-title {
-    color: var(--rm-text);
-  }
 }
 
 .item-list__group-toggle:active {

@@ -75,6 +75,22 @@ describe('group-by-feed section header positioning contract', () => {
     expect(title.overflow).toBe('hidden');
   });
 
+  it('floors the focusable name-row tap zones at the 44px touch width', () => {
+    // The name row's two focusable controls — the far-left chevron collapse
+    // button and the feed-name link — both pin min-width to the tap token so
+    // neither drops below the 44px floor: the chevron stays a guaranteed collapse
+    // target even beside a long title, and a favicon-less short title can't
+    // starve the link (guardrail #2's 44px touch floor). The redundant
+    // pointer-only collapse-rest region deliberately has no floor — it may
+    // shrink to nothing since the chevron already guarantees a tappable zone.
+    expect(declarationsFor('.item-list__group-link')['min-width']).toBe(
+      'var(--rm-tap)',
+    );
+    expect(declarationsFor('.item-list__group-toggle')['min-width']).toBe(
+      'var(--rm-tap)',
+    );
+  });
+
   it('bounds the sticky header to its own section container', () => {
     // The section <li> is the header's sticky containing block, so only the
     // current feed's header is ever pinned (earlier ones are pushed out, not
