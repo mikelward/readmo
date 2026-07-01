@@ -1142,12 +1142,21 @@ negligible and off every critical path. See the External services table in
        current layout — see *List toolbar*), which writes the same per-device
        preference.
      - **Section header controls** (group-by-feed only). Each feed's header is a
-       small control strip: the **chevron + site favicon + feed name +
-       unread/to-do count badge** form the collapse tap target (see below), and
-       on the right sit two
+       small control strip. On the far left, a **44px chevron** button is the
+       collapse control; next to it the **site favicon + feed name** link to that
+       feed's own view (`/feed/:feedId`); and the **unread/to-do count badge plus
+       the empty space** up to the actions is a second, pointer-only collapse
+       region — so tapping *anywhere on the row except the feed name/icon and the
+       Undo/Sweep buttons* toggles the section (see below). On the right sit two
        **44×44px** icon buttons, ≥8px apart — **Undo** and **Sweep this feed**
        (broom), in that left-to-right order to match the top toolbar's
-       right-anchored cluster. The **count badge** shows that feed's unread/to-do total (from
+       right-anchored cluster. This puts **four** focusable tap zones on a header
+       (chevron collapse, name link, Undo, Sweep — the count/whitespace collapse
+       region is `aria-hidden` and out of the tab order, redundant with the
+       chevron) — a **deliberate exception** to guardrail #2's three-per-*row*
+       cap: a section header is a control strip, not an article row (it already
+       carried three — collapse, Undo, Sweep — before feed navigation was
+       added), and each zone still meets the 44×44px floor with ≥8px gaps. The **count badge** shows that feed's unread/to-do total (from
        `getFeedUnreadCounts`; capped `99+`, hidden at 0), so a collapsed feed
        still shows how much it holds. **Sweep this feed** marks done only that
        feed's **fully-visible, unpinned** rows — the same shielding as the
@@ -1160,9 +1169,12 @@ negligible and off every critical path. See the External services table in
        just did. (One swept feed's section drops out entirely once its rows are
        gone — unlike a *collapsed* feed, which keeps its header because its items
        still exist.)
-     - **Collapse / expand sections** (group-by-feed only). The header's name
-       area is a **tap target** that toggles its section collapsed (rows hidden, a
-       chevron flips); the header stays visible. Per-device and **persisted**
+     - **Collapse / expand sections** (group-by-feed only). Everything on the
+       header's name row **except the feed name/icon** is a **tap target** that
+       toggles its section collapsed (rows hidden, a chevron flips); the header
+       stays visible. (Tapping the **feed name or icon** instead opens that
+       feed's own view — see *Section header controls*.) Per-device and
+       **persisted**
        (`readmo:collapsed-feeds`, a JSON array of collapsed feed ids), so a
        section stays collapsed across reloads and between grouped views. The
        **top toolbar** gains **Collapse all** / **Expand all** controls (only

@@ -237,6 +237,55 @@ describe('ItemRows', () => {
     expect(onToggle).toHaveBeenCalledWith(items[0].item.feedId);
   });
 
+  it('links the feed name/icon to that feed and does not collapse on tap', async () => {
+    const items = await sampleItems(2);
+    const onToggle = vi.fn();
+    const headers = new Map([
+      [items[0].item.id, { feedId: items[0].item.feedId, title: 'Alpha Feed' }],
+    ]);
+    renderWithProviders(
+      <ItemRows
+        items={items}
+        emptyLabel="Nothing here."
+        groupHeaders={headers}
+        collapsedFeeds={new Set()}
+        onToggleCollapse={onToggle}
+      />,
+    );
+    const link = screen.getByTestId('group-link');
+    // Points at the single-feed view for this feed…
+    expect(link).toHaveAttribute('href', `/feed/${items[0].item.feedId}`);
+    expect(link).toHaveAccessibleName('View Alpha Feed');
+    expect(link).toContainElement(screen.getByText('Alpha Feed'));
+    // …and tapping the name navigates rather than toggling the section.
+    await userEvent.setup().click(link);
+    expect(onToggle).not.toHaveBeenCalled();
+  });
+
+  it('collapses when the space beside the feed name is tapped', async () => {
+    const items = await sampleItems(2);
+    const onToggle = vi.fn();
+    const headers = new Map([
+      [items[0].item.id, { feedId: items[0].item.feedId, title: 'Alpha Feed' }],
+    ]);
+    renderWithProviders(
+      <ItemRows
+        items={items}
+        emptyLabel="Nothing here."
+        groupHeaders={headers}
+        collapsedFeeds={new Set()}
+        onToggleCollapse={onToggle}
+      />,
+    );
+    // The count + whitespace region (aria-hidden, pointer-only) toggles the
+    // section, so tapping anywhere on the row that isn't the name or an action
+    // still collapses it.
+    const rest = screen.getByTestId('group-collapse-rest');
+    expect(rest).toHaveAttribute('aria-hidden', 'true');
+    await userEvent.setup().click(rest);
+    expect(onToggle).toHaveBeenCalledWith(items[0].item.feedId);
+  });
+
   it('hides the rows of a collapsed feed but keeps its header', async () => {
     const items = await sampleItems(3); // three distinct seed feeds
     const headers = new Map(

@@ -1,4 +1,5 @@
 import type { AnimationEventHandler, ReactNode, Ref } from 'react';
+import { Link } from 'react-router-dom';
 import type { FeedId, FeedItem, ItemId } from '../lib/types';
 import { useShareItem } from '../hooks/useShareItem';
 import { useOpenOriginalFeeds } from '../hooks/useOpenOriginalFeeds';
@@ -261,32 +262,55 @@ export function ItemRows({
         data-header-for={headerForId}
       >
         {onToggleCollapse ? (
-          <button
-            type="button"
-            className="item-list__group-toggle"
-            data-testid="group-toggle"
-            aria-expanded={!collapsed}
-            aria-label={ariaLabel}
-            onClick={() => onToggleCollapse(feedId)}
-          >
-            <ChevronRight
-              className="item-list__group-chevron"
-              width={18}
-              height={18}
-            />
-            {favicon}
-            <span className="item-list__group-label">
+          // The name row collapses everywhere *except* the feed-name link (which
+          // opens the feed) and the right-side Undo/Sweep actions. The chevron
+          // stays far left as the keyboard-focusable collapse control; the count
+          // + trailing whitespace to the right of the name is a second, pointer-
+          // only collapse region (aria-hidden, out of the tab order) so tapping
+          // the blank space beside the name toggles too, without a duplicate
+          // screen-reader stop.
+          <>
+            <button
+              type="button"
+              className="item-list__group-toggle"
+              data-testid="group-toggle"
+              aria-expanded={!collapsed}
+              aria-label={ariaLabel}
+              onClick={() => onToggleCollapse(feedId)}
+            >
+              <ChevronRight
+                className="item-list__group-chevron"
+                width={18}
+                height={18}
+              />
+            </button>
+            <Link
+              className="item-list__group-link"
+              data-testid="group-link"
+              to={`/feed/${feedId}`}
+              aria-label={`View ${title}`}
+            >
+              {favicon}
               <span className="item-list__group-title">{title}</span>
+            </Link>
+            <button
+              type="button"
+              className="item-list__group-collapse-rest"
+              data-testid="group-collapse-rest"
+              tabIndex={-1}
+              aria-hidden="true"
+              onClick={() => onToggleCollapse(feedId)}
+            >
               {showCount ? (
-                // Decorative: the count is announced via the button's aria-label
-                // above (its own aria-label here would be ignored, since the
-                // button label is the accessible name).
+                // Decorative: the count is announced via the chevron button's
+                // aria-label (this region is aria-hidden), so screen readers
+                // still hear the unread total.
                 <span className="item-list__group-count" aria-hidden="true">
                   {count > 99 ? '99+' : count}
                 </span>
               ) : null}
-            </span>
-          </button>
+            </button>
+          </>
         ) : (
           <span className="item-list__group-static" aria-hidden="true">
             {favicon}

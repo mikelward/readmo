@@ -281,6 +281,20 @@ describe('ItemList', () => {
     );
   }
 
+  it('links each feed-section header name to that feed’s own view', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderGrouped(source);
+    await screen.findAllByTestId('item-row');
+    const links = screen.getAllByTestId('group-link');
+    // One link per feed section, each pointing at /feed/<its feed id>.
+    expect(links).toHaveLength(4);
+    for (const link of links) {
+      expect(link.getAttribute('href')).toMatch(/^\/feed\/[^/]+$/);
+    }
+    // The names still render inside the links.
+    expect(screen.getByText('The Verge').closest('a')).toBe(links[0]);
+  });
+
   it('collapses a feed section from its header toggle, hiding only its rows', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
