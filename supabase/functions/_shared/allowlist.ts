@@ -10,8 +10,7 @@
 //
 // The list lives in the Postgres `allowlist` table (emails), managed from the
 // /admin UI; the gate functions read it via {@link loadAllowlistFromDb} with
-// their service-role client. (It used to be the `READMO_ALLOWLIST` env var;
-// `parseAllowlist` is retained for unit tests and any transitional use.)
+// their service-role client.
 //
 // Semantics — arming is a deliberate operator action:
 //   - EMPTY list   → OPEN to every authenticated caller, so an unseeded deploy
@@ -24,19 +23,6 @@
 // `allowlist` table per gated call (the table holds a handful of family emails),
 // plus the existing `auth.getUser()` identity round-trip, only while armed.
 
-/** Parse a `READMO_ALLOWLIST` value into a normalized lookup set. An unset or
- * blank value yields an empty set, which {@link isAllowed} treats as "gate
- * disarmed → open to all". */
-export function parseAllowlist(raw: string | null | undefined): Set<string> {
-  if (!raw) return new Set();
-  return new Set(
-    raw
-      .split(/[\s,]+/)
-      .map((entry) => entry.trim().toLowerCase())
-      .filter((entry) => entry.length > 0),
-  );
-}
-
 export interface AllowlistIdentity {
   /** The caller's `auth.users` id (JWT `sub`). */
   id?: string | null;
@@ -47,11 +33,10 @@ export interface AllowlistIdentity {
 /**
  * Whether a caller may use a gated surface.
  *
- * An empty allowlist (the secret is unset) is "open to all" — arming the gate is
+ * An empty allowlist (the table is empty) is "open to all" — arming the gate is
  * a deliberate operator action, so an unconfigured deploy never sheds a feature
  * from existing users. Once the allowlist names anyone, a caller is allowed only
- * when their id or email is listed; matching mirrors {@link parseAllowlist}
- * (trimmed, case-insensitive).
+ * when their id or email is listed; matching is trimmed and case-insensitive.
  */
 export function isAllowed(
   identity: AllowlistIdentity,
@@ -78,7 +63,7 @@ export interface AllowlistDbClient {
 /**
  * Load the trusted-user allowlist (emails) from the `allowlist` table, returning
  * a lowercased Set ready for {@link isAllowed}. An empty Set means "disarmed →
- * open to all", same as an unset env var used to.
+ * open to all".
  *
  * THROWS on a read error rather than returning an empty Set, so the gate can
  * fail CLOSED on a transient DB failure (an empty Set would silently open the

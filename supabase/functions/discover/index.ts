@@ -44,7 +44,7 @@ import { parseFeed } from '../_shared/parser.ts';
 import { safeFetch, SsrfError } from '../_shared/ssrf.ts';
 import { corsHeaders, preflight } from '../_shared/cors.ts';
 import { redactUrl } from '../_shared/urlSafety.ts';
-import { loadAllowlistFromDb, parseAllowlist, isAllowed } from '../_shared/allowlist.ts';
+import { loadAllowlistFromDb, isAllowed } from '../_shared/allowlist.ts';
 import { isGoogleNewsFeedUrl } from '../_shared/googleNews.ts';
 
 Deno.serve(async (req: Request) => {
@@ -225,10 +225,6 @@ async function callerAllowsGoogleNews(req: Request): Promise<boolean> {
     console.error('discover: allowlist read failed — treating as not allowed:', err);
     return false; // fail closed → drop/block the Google News candidate
   }
-  // Transitional cutover safety: union with the legacy READMO_ALLOWLIST env var
-  // so an install that armed the old secret stays gated until it seeds the DB
-  // table and unsets the secret. (No-op once unset / never set.)
-  for (const e of parseAllowlist(Deno.env.get('READMO_ALLOWLIST'))) allowlist.add(e);
   if (allowlist.size === 0) return true; // disarmed → open to all
   const userClient = createClient(
     Deno.env.get('SUPABASE_URL')!,
