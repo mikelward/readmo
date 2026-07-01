@@ -14,7 +14,10 @@ export function formatAge(publishedAt: number, now: number = Date.now()): string
   if (day < 7) return `${day}d`;
   const wk = Math.floor(day / 7);
   if (wk < 52) return `${wk}w`;
-  const yr = Math.floor(day / 365);
+  // Day 364 reaches week 52 (past the week bucket) but floors to year 0 —
+  // roll it over to "1y" rather than render a nonsensical "0y" (same rollover
+  // format.ts's formatTimeAgo handles for its month bucket).
+  const yr = Math.max(1, Math.floor(day / 365));
   return `${yr}y`;
 }
 
@@ -36,7 +39,11 @@ export function formatDisplayDomain(url: string | null): string {
     const last = parts[parts.length - 1];
     const secondLast = parts[parts.length - 2];
     const ccSecondLevel = new Set(['co', 'com', 'org', 'net', 'gov', 'ac']);
-    if (last.length === 2 && ccSecondLevel.has(secondLast) && parts.length > 3) {
+    // A bare 3-label host under a ccTLD second level (smh.com.au) is already
+    // the registrable domain — trimming it to slice(-2) would render just the
+    // public suffix ("com.au"), so keep three labels whenever the last two
+    // form a multi-part ccTLD.
+    if (last.length === 2 && ccSecondLevel.has(secondLast)) {
       return parts.slice(-3).join('.');
     }
     return parts.slice(-2).join('.');
