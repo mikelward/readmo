@@ -20,6 +20,12 @@ describe('formatAge', () => {
   it('clamps future timestamps to "just now"', () => {
     expect(formatAge(now + 10_000, now)).toBe('just now');
   });
+
+  it('rolls day 364 over to "1y" instead of "0y"', () => {
+    // 364 days is week 52 (past the week bucket) but floors to year 0.
+    expect(formatAge(now - 364 * 24 * 60 * 60_000, now)).toBe('1y');
+    expect(formatAge(now - 363 * 24 * 60 * 60_000, now)).toBe('51w');
+  });
 });
 
 describe('formatDisplayDomain', () => {
@@ -30,6 +36,14 @@ describe('formatDisplayDomain', () => {
 
   it('keeps the extra label for multi-part ccTLDs', () => {
     expect(formatDisplayDomain('https://news.bbc.co.uk/story')).toBe('bbc.co.uk');
+  });
+
+  it('does not trim a bare multi-part-ccTLD host down to its public suffix', () => {
+    // Regression: a 3-label host (after www stripping) fell through to the
+    // two-label trim and rendered as "com.au".
+    expect(formatDisplayDomain('https://www.smh.com.au/politics/x')).toBe('smh.com.au');
+    expect(formatDisplayDomain('https://bbc.co.uk/news')).toBe('bbc.co.uk');
+    expect(formatDisplayDomain('https://data.gov.au/dataset')).toBe('data.gov.au');
   });
 
   it('returns empty for missing or unparseable URLs', () => {
@@ -64,6 +78,14 @@ describe('articleSourceDomain', () => {
 
   it('still surfaces the domain when the feed has no comparable site URL', () => {
     expect(articleSourceDomain('https://github.com/a/b', null)).toBe('github.com');
+  });
+
+  it('distinguishes two publishers under the same multi-part ccTLD', () => {
+    // Regression: both trimmed to "com.au", compared equal, and the genuinely
+    // different publisher domain was suppressed.
+    expect(
+      articleSourceDomain('https://www.theage.com.au/story', 'https://www.smh.com.au'),
+    ).toBe('theage.com.au');
   });
 });
 
