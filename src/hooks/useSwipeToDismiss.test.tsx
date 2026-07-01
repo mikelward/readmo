@@ -44,6 +44,49 @@ function makePointerEvent(
   } as unknown as React.PointerEvent<HTMLElement>;
 }
 
+/** A click event whose currentTarget is a row `<article>` containing an action
+ * button and a body link, with the clicked element as `target`. */
+function makeClickEvent(target: Element, currentTarget: Element) {
+  return {
+    type: 'click',
+    target,
+    currentTarget,
+    preventDefault: vi.fn(),
+    stopPropagation: vi.fn(),
+  } as unknown as React.MouseEvent<HTMLElement>;
+}
+
+/** Build a row `<article>` with a Pin button (icon span inside) and a body
+ * link, mirroring ItemRow's structure. */
+function makeRow() {
+  const article = document.createElement('article');
+  const button = document.createElement('button');
+  const buttonIcon = document.createElement('span');
+  button.appendChild(buttonIcon);
+  const link = document.createElement('a');
+  const linkText = document.createElement('span');
+  link.appendChild(linkText);
+  article.append(button, link);
+  return { article, button, buttonIcon, link, linkText };
+}
+
+/** Arm `justSwiped` via a below-threshold horizontal scrub (mirrors a pinned/
+ * library row where the swipe handlers are shielded but long-press keeps the
+ * gesture machinery active). */
+function armJustSwiped(handlers: ReturnType<typeof useSwipeToDismiss>['handlers']) {
+  act(() => {
+    handlers.onPointerDown(makePointerEvent('pointerdown', { clientX: 400, clientY: 24 }));
+  });
+  act(() => {
+    handlers.onPointerMove(makePointerEvent('pointermove', { clientX: 380, clientY: 24 }));
+  });
+  act(() => {
+    // 20px scrub is past START_THRESHOLD_PX (8) but under the commit threshold,
+    // so it snaps back yet still marks the gesture as a swipe.
+    handlers.onPointerUp(makePointerEvent('pointerup', { clientX: 380, clientY: 24 }));
+  });
+}
+
 describe('useSwipeToDismiss', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -161,5 +204,71 @@ describe('useSwipeToDismiss', () => {
     expect(onSwipeRight).toHaveBeenCalledTimes(1);
     expect(result.current.isDismissing).toBe(true);
     expect(result.current.offset).toBe(offBefore);
+  });
+
+  describe('onClickCapture', () => {
+    it('does NOT swallow a tap on an action button after a scrub armed the swipe guard', () => {
+      // Regression: a below-threshold scrub on the row body arms `justSwiped`;
+      // the row's Pin/Done buttons stop their own pointerdown from reaching this
+      // hook, so it never gets cleared by pressing them. Swallowing the button
+      // click here made "Unpin" a silent no-op until a second tap.
+      const { result } = renderHook(() =>
+        // Long-press only (no swipe handlers) mirrors a pinned/library row: the
+        // gesture machinery is still active, so a scrub still arms `justSwiped`.
+        useSwipeToDismiss({ onLongPress: vi.fn() }),
+      );
+      armJustSwiped(result.current.handlers);
+
+      const { article, button, buttonIcon } = makeRow();
+      const e = makeClickEvent(buttonIcon, article);
+      act(() => {
+        result.current.handlers.onClickCapture(e);
+      });
+
+      // The button's own click proceeds — the guard let it through.
+      expect(e.preventDefault).not.toHaveBeenCalled();
+      expect(e.stopPropagation).not.toHaveBeenCalled();
+      void button; // (button node participates via closest())
+    });
+
+    it('still swallows a tap on the row body link after a swipe', () => {
+      const { result } = renderHook(() =>
+        useSwipeToDismiss({ onLongPress: vi.fn() }),
+      );
+      armJustSwiped(result.current.handlers);
+
+      const { article, linkText } = makeRow();
+      const e = makeClickEvent(linkText, article);
+      act(() => {
+        result.current.handlers.onClickCapture(e);
+      });
+
+      // The body link's accidental post-swipe activation is still suppressed.
+      expect(e.preventDefault).toHaveBeenCalledTimes(1);
+      expect(e.stopPropagation).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears the guard after letting a button tap through so a later body tap works', () => {
+      const { result } = renderHook(() =>
+        useSwipeToDismiss({ onLongPress: vi.fn() }),
+      );
+      armJustSwiped(result.current.handlers);
+
+      const { article, buttonIcon, linkText } = makeRow();
+      // First: button tap passes through and disarms the guard.
+      const buttonClick = makeClickEvent(buttonIcon, article);
+      act(() => {
+        result.current.handlers.onClickCapture(buttonClick);
+      });
+      expect(buttonClick.preventDefault).not.toHaveBeenCalled();
+
+      // A subsequent body-link click is no longer swallowed (guard cleared),
+      // so a normal tap isn't collateral-damaged by the earlier scrub.
+      const bodyClick = makeClickEvent(linkText, article);
+      act(() => {
+        result.current.handlers.onClickCapture(bodyClick);
+      });
+      expect(bodyClick.preventDefault).not.toHaveBeenCalled();
+    });
   });
 });

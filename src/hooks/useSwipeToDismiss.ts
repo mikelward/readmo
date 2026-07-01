@@ -234,6 +234,20 @@ export function useSwipeToDismiss({
     if (currentTarget && target && !currentTarget.contains(target)) {
       return;
     }
+    // This guard exists to cancel an accidental activation of the row BODY (its
+    // link) at the tail of a swipe — not to eat a deliberate tap on an action
+    // control. The row's Pin/Done/menu buttons stop their own pointerdown from
+    // reaching this hook (TooltipButton.handlePointerDown), so `justSwiped`
+    // never gets cleared by pressing them the way a row-body tap clears it. If a
+    // prior row-body gesture (a shielded swipe on a pinned row, a below-
+    // threshold scrub, a long-press) left `justSwiped` armed, swallowing the
+    // click here would make the *next* button tap a silent no-op — e.g. tapping
+    // Unpin does nothing until a second tap. Let taps that land on a button
+    // through untouched (their own onClick handles them).
+    if (target instanceof Element && target.closest('button')) {
+      justSwipedRef.current = false;
+      return;
+    }
     e.preventDefault();
     e.stopPropagation();
     justSwipedRef.current = false;
