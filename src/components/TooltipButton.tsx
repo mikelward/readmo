@@ -342,8 +342,12 @@ export const TooltipButton = forwardRef<HTMLButtonElement, TooltipButtonProps>(
           return;
         }
         // If the long-press tooltip fired, the user was inspecting the
-        // button, not invoking it — swallow the click.
-        if (activatedRef.current) {
+        // button, not invoking it — swallow the click. Only a POINTER click
+        // can be that gesture's tail: a keyboard activation (Enter/Space,
+        // detail === 0) has no pointerdown to reset a latch left stale by an
+        // abandoned long-press (finger slid off before release), so it must
+        // never be swallowed — the same distinction usePopoverDismiss draws.
+        if (activatedRef.current && e.detail !== 0) {
           activatedRef.current = false;
           e.preventDefault();
           e.stopPropagation();

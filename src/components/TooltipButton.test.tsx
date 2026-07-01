@@ -403,10 +403,37 @@ describe('TooltipButton', () => {
     dispatch(btn, 'pointerup', { pointerType: 'touch' });
     act(() => {
       btn.dispatchEvent(
-        new MouseEvent('click', { bubbles: true, cancelable: true }),
+        // A pointer-driven click carries detail >= 1 (keyboard clicks are 0).
+        new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }),
       );
     });
     expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it('does not swallow a keyboard activation after an abandoned long-press', () => {
+    // Regression: a long-press with no click (finger slid off before release)
+    // leaves the latch set until the next POINTERDOWN clears it — but a
+    // keyboard activation (Enter/Space → click with detail === 0) has no
+    // pointerdown, so the first press was silently eaten.
+    const onClick = vi.fn();
+    render(
+      <TooltipButton tooltip="Pin" data-testid="btn" onClick={onClick}>
+        x
+      </TooltipButton>,
+    );
+    const btn = screen.getByTestId('btn');
+    dispatch(btn, 'pointerdown', { pointerType: 'touch' });
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    dispatch(btn, 'pointerup', { pointerType: 'touch' });
+
+    act(() => {
+      btn.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true, detail: 0 }),
+      );
+    });
+    expect(onClick).toHaveBeenCalledTimes(1);
   });
 
   it('does not swallow a later mouse click after a long-press with no click', () => {
