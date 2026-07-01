@@ -73,6 +73,37 @@ describe('parseFeed — Atom', () => {
       },
     ]);
   });
+
+  it('nulls the summary when a summary-only entry falls back to it as the body', () => {
+    // Regression: the dedup compared <summary> against the raw <content>
+    // (null here), not the effective body it becomes — storing identical text
+    // as both body and summary, rendered twice. Mirrors the RSS 2.0
+    // description/encoded suppression.
+    const xml = `<?xml version="1.0" encoding="utf-8"?>
+      <feed xmlns="http://www.w3.org/2005/Atom">
+        <title>Summary-only</title>
+        <entry>
+          <id>urn:x:1</id>
+          <title>Teaser entry</title>
+          <link rel="alternate" href="https://atom.example.com/entry/9"/>
+          <summary type="html">&lt;p&gt;The full teaser text.&lt;/p&gt;</summary>
+        </entry>
+        <entry>
+          <id>urn:x:2</id>
+          <title>Both present</title>
+          <link rel="alternate" href="https://atom.example.com/entry/10"/>
+          <summary type="text">Short form.</summary>
+          <content type="html">&lt;p&gt;The whole article.&lt;/p&gt;</content>
+        </entry>
+      </feed>`;
+    const p = parseFeed(xml, 'https://atom.example.com/feed.xml');
+    // Summary-only: it becomes the body and must not ALSO stay as the summary.
+    expect(p.items[0].contentHtml).toContain('The full teaser text.');
+    expect(p.items[0].summary).toBeNull();
+    // A distinct summary next to real content is preserved.
+    expect(p.items[1].contentHtml).toContain('The whole article.');
+    expect(p.items[1].summary).toBe('Short form.');
+  });
 });
 
 describe('parseFeed — comments / discussion URL', () => {
