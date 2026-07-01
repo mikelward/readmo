@@ -14,7 +14,7 @@ import { flushSync } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
-import { useFeedItems, type FetchPage } from '../hooks/useFeedItems';
+import { useFeedItems, dedupeFeedPages, type FetchPage } from '../hooks/useFeedItems';
 import type { ItemSort, Page } from '../lib/data/DataSource';
 import { useInViewIds } from '../hooks/useInViewIds';
 import { useHideOnScroll, useBottomBarPosition } from '../hooks/useReadingPrefs';
@@ -196,6 +196,7 @@ export function ItemList({
     isError,
     isFetching,
     hasMore,
+    pageCount,
     isFetchingMore,
     fetchMore,
     refetch,
@@ -542,17 +543,22 @@ export function ItemList({
     // exhausted, so "More" never lands the reader on a page that shows nothing.
     pendingAnchorId.current = items[items.length - 1]?.item.id ?? null;
     const baselineRendered = renderedCountOf(items);
-    let totalLoaded = items.length;
+    let pagesLoaded = pageCount;
     for (let i = 0; i < MAX_AUTO_SKIP_PAGES; i++) {
       const res = await fetchMore();
-      const all = res.data?.pages.flatMap((p) => p.items) ?? [];
+      const pages = res.data?.pages ?? [];
       // No new page appended (true end, or a fetch error) → stop.
-      if (all.length <= totalLoaded) break;
-      totalLoaded = all.length;
+      if (pages.length <= pagesLoaded) break;
+      pagesLoaded = pages.length;
+      // Measure progress on the same deduped view the list renders: an
+      // appended page can consist entirely of already-loaded items (offset
+      // drift re-serving the previous page's tail), which renders nothing —
+      // keep fetching past it just like a collapsed-only page.
+      const all = dedupeFeedPages(pages);
       // Something new rendered (a row or a new header), or nothing left → done.
       if (renderedCountOf(all) > baselineRendered || !(res.hasNextPage ?? false)) break;
     }
-  }, [pinnedBar, atListEnd, items, fetchMore, renderedCountOf]);
+  }, [pinnedBar, atListEnd, items, pageCount, fetchMore, renderedCountOf]);
 
   useEffect(() => {
     const anchorId = pendingAnchorId.current;

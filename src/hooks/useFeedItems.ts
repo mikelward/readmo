@@ -6,6 +6,27 @@ import type { Page } from '../lib/data/DataSource';
 
 export type FetchPage = (cursor: string | null) => Promise<Page<FeedItem>>;
 
+/** Flatten query pages into the rendered list, keeping the first occurrence of
+ * each item id. The server pages by offset over a newest-first list, so items
+ * inserted by the poller between page fetches shift the offsets and a "More"
+ * page can re-serve the tail of the previous page — without this, the flat
+ * list renders the same item twice (duplicate React keys). The
+ * grouped-windowed path dedupes on its own (ItemList's baseById/extrasById
+ * merge). Exported so ItemList's pager measures progress on the same deduped
+ * view the list renders. */
+export function dedupeFeedPages(pages: Array<Page<FeedItem>>): FeedItem[] {
+  const items: FeedItem[] = [];
+  const seen = new Set<string>();
+  for (const page of pages) {
+    for (const fi of page.items) {
+      if (seen.has(fi.item.id)) continue;
+      seen.add(fi.item.id);
+      items.push(fi);
+    }
+  }
+  return items;
+}
+
 /**
  * Drives a feed view (home / folder / single feed). Pages are fetched lazily
  * (explicit "More", no infinite scroll — SPEC.md *Feed views*). Feed query
@@ -28,7 +49,7 @@ export function useFeedItems(viewKey: string, fetchPage: FetchPage) {
     refetchOnWindowFocus: true,
   });
 
-  const items: FeedItem[] = query.data?.pages.flatMap((p) => p.items) ?? [];
+  const items: FeedItem[] = dedupeFeedPages(query.data?.pages ?? []);
 
   return {
     items,
@@ -45,6 +66,10 @@ export function useFeedItems(viewKey: string, fetchPage: FetchPage) {
     // instead of cancelling/duplicating it.
     isFetching: query.isFetching,
     hasMore: query.hasNextPage ?? false,
+    // Pages currently loaded — the pager's baseline for "did that fetch append
+    // a page", which the deduped `items` length can't answer (an appended page
+    // of re-served items adds nothing to it).
+    pageCount: query.data?.pages.length ?? 0,
     isFetchingMore: query.isFetchingNextPage,
     fetchMore: query.fetchNextPage,
     refetch: query.refetch,
