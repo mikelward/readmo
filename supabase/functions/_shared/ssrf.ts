@@ -172,6 +172,18 @@ function isBlockedV6(addr: string): boolean {
     return true;
   }
 
+  // 6to4 2002::/16 (RFC 3056): groups 1-2 embed the tunnel endpoint's IPv4
+  // address — classify THAT, like the NAT64 embedding above, so
+  // 2002:a9fe:a9fe:: (embeds 169.254.169.254) can't slip through as public on
+  // 6to4-routing egress. Largely deprecated transport, but the classification
+  // must not depend on the egress network's tunneling behavior.
+  if (first === 0x2002) {
+    const embedded =
+      `${(groups[1] >> 8) & 0xff}.${groups[1] & 0xff}.` +
+      `${(groups[2] >> 8) & 0xff}.${groups[2] & 0xff}`;
+    return isBlockedV4(embedded);
+  }
+
   // ::/8 reserved block other than the handled :: / ::1 (::ffff: mapped is
   // handled earlier): all-zero high bits → IPv4-compatible / reserved; block.
   if (groups.every((g, i) => (i < 5 ? g === 0 : true)) && groups[5] === 0) {
@@ -310,12 +322,15 @@ export async function safeFetch(
   const resolve = opts.resolve ?? defaultResolve;
 
   // Build a headers object that NEVER carries caller credentials. We only set
-  // what the caller explicitly passes plus a default UA if absent.
-  const baseHeaders: Record<string, string> = { ...(opts.headers ?? {}) };
-  delete baseHeaders.authorization;
-  delete baseHeaders.cookie;
-  delete baseHeaders.Authorization;
-  delete baseHeaders.Cookie;
+  // what the caller explicitly passes plus a default UA if absent. Header
+  // names are case-insensitive on the wire, so strip by lowercased key — an
+  // exact-key delete would let `AUTHORIZATION` through.
+  const baseHeaders: Record<string, string> = {};
+  for (const [key, value] of Object.entries(opts.headers ?? {})) {
+    const lower = key.toLowerCase();
+    if (lower === 'authorization' || lower === 'cookie') continue;
+    baseHeaders[key] = value;
+  }
   if (!hasHeader(baseHeaders, 'user-agent')) {
     baseHeaders['User-Agent'] = readmoUserAgent();
   }
