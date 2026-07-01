@@ -20,6 +20,14 @@ describe('<AboutPage>', () => {
     expect(authorLink).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
+  it('sets the document title', () => {
+    // Regression: every other routed page sets its title; About kept whatever
+    // the previous route left behind (e.g. "Settings · readmo").
+    document.title = 'Settings · readmo';
+    renderWithProviders(<AboutPage />, { route: '/about' });
+    expect(document.title).toBe('About · readmo');
+  });
+
   it('has a back link to Home', () => {
     renderWithProviders(<AboutPage />, { route: '/about' });
     expect(

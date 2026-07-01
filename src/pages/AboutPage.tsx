@@ -1,8 +1,10 @@
 import { Link } from 'react-router-dom';
 import { buildInfo, summarizeBuildAge } from '../lib/buildInfo';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import './AboutPage.css';
 
 export function AboutPage() {
+  useDocumentTitle('About · readmo');
   return (
     <article className="about-page">
       <h1 className="about-page__title">About Readmo</h1>
