@@ -121,8 +121,10 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   { name: 'Tom\'s Hardware', feedUrl: 'https://www.tomshardware.com/feeds/all', category: 'Technology' },
   { name: 'GSMArena', feedUrl: 'https://www.gsmarena.com/rss-news-reviews.php3', category: 'Technology' },
   { name: 'Android Authority', feedUrl: 'https://www.androidauthority.com/feed/', category: 'Technology' },
+  { name: 'Android Central', feedUrl: 'https://www.androidcentral.com/feeds.xml', category: 'Technology' },
   { name: 'Android Police', feedUrl: 'https://www.androidpolice.com/feed/', category: 'Technology' },
   { name: 'The Register', feedUrl: 'https://www.theregister.com/headlines.atom', category: 'Technology' },
+  { name: 'Windows Central', feedUrl: 'https://www.windowscentral.com/feeds.xml', category: 'Technology' },
   { name: 'Phoronix', feedUrl: 'https://www.phoronix.com/rss.php', category: 'Technology' },
   { name: 'OSNews', feedUrl: 'https://www.osnews.com/feed/', category: 'Technology' },
 
