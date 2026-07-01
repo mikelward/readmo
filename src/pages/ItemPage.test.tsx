@@ -37,11 +37,13 @@ function LocationProbe() {
 // has somewhere to pop back to, and `u` has a feed route to land on.
 function renderReaderWithHistory(
   source: MockDataSource,
-  { entries }: { entries: string[] },
+  { entries, queryClient: passedClient }: { entries: string[]; queryClient?: QueryClient },
 ) {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
-  });
+  const queryClient =
+    passedClient ??
+    new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
   return render(
     <QueryClientProvider client={queryClient}>
       <DataSourceProvider source={source}>
@@ -222,6 +224,72 @@ describe('ItemPage (reader)', () => {
     const state = source.stateStore.get('item-1');
     expect(state.done).toBe(true);
     expect(state.pinned).toBe(false);
+  });
+
+  it('Open original marks the item done and pops back when the feed opts into mark-done-when-opening', async () => {
+    const user = userEvent.setup();
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    const source = new MockDataSource(`test-${Math.random()}`);
+    await source.setMarkDoneOnOpen('feed-verge', true); // item-1's feed
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    // Prewarm the subscriptions query so useMarkDoneOnOpenFeeds has the flag by
+    // the time the button is clicked (deterministic, no timing race).
+    await queryClient.prefetchQuery({
+      queryKey: ['subscriptions'],
+      queryFn: () => source.getSubscriptions(),
+    });
+    renderReaderWithHistory(source, { entries: ['/', '/item/item-1'], queryClient });
+    const openOriginal = await screen.findByTestId('open-original');
+    await user.click(openOriginal);
+    // Opened the source in a new tab AND marked the item done (clearing pinned).
+    expect(openSpy).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(source.stateStore.get('item-1').done).toBe(true);
+    });
+    // …and dropped back to the previous page, the completion flow.
+    await waitFor(() => {
+      expect(screen.getByTestId('location-pathname')).toHaveTextContent('/');
+    });
+    openSpy.mockRestore();
+  });
+
+  it('Open original does NOT mark done for a normal feed (setting off)', async () => {
+    const user = userEvent.setup();
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReaderWithHistory(source, { entries: ['/', '/item/item-1'] });
+    const openOriginal = await screen.findByTestId('open-original');
+    await user.click(openOriginal);
+    expect(openSpy).toHaveBeenCalled();
+    // Opened, but not done — and still on the reader (no pop-back).
+    await waitFor(() => {
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+    });
+    expect(source.stateStore.get('item-1').done).toBe(false);
+    expect(screen.getByTestId('location-pathname')).toHaveTextContent('/item/item-1');
+    openSpy.mockRestore();
+  });
+
+  it('merely opening the article view never marks done, even when the feed opts in', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    await source.setMarkDoneOnOpen('feed-verge', true);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    await queryClient.prefetchQuery({
+      queryKey: ['subscriptions'],
+      queryFn: () => source.getSubscriptions(),
+    });
+    renderReaderWithHistory(source, { entries: ['/', '/item/item-1'], queryClient });
+    await screen.findByTestId('open-original');
+    // The reader open marks the item opened but must NOT mark it done — the
+    // setting is scoped to the outbound open-original / newshacker actions.
+    await waitFor(() => {
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+    });
+    expect(source.stateStore.get('item-1').done).toBe(false);
   });
 
   it('opens the shared overflow menu from the More button and dismisses it on an outside tap', async () => {

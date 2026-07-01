@@ -104,6 +104,13 @@ export interface Subscription {
    * but stored independently so an older client that only knows `openOriginal`
    * still works. Per-user, synced (SPEC.md *Open original / Open on newshacker*). */
   openNewshacker: boolean;
+  /** When true, opening one of this feed's items on the original source website
+   * (open-original mode or the reader's Open-original button) or the newshacker
+   * discussion (newshacker mode) also marks it Done. Deliberately does NOT fire
+   * for an in-app reader (article view) open — the setting is scoped to the
+   * outbound open actions. Independent of the open mode above; per-user, synced
+   * (SPEC.md *Mark done when opening*). */
+  markDoneOnOpen: boolean;
   sort: number;
 }
 

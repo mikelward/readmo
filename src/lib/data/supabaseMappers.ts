@@ -140,6 +140,10 @@ export interface SubscriptionRow {
    * `open_newshacker` column (0034) — loadSubscriptions falls back to the
    * pre-0034 column set. Defaults to false in {@link mapSubscription}. */
   open_newshacker?: boolean;
+  /** Optional: absent when read from a backend not yet migrated with the
+   * `mark_done_on_open` column (0037) — loadSubscriptions falls back to the
+   * pre-0037 column set. Defaults to false in {@link mapSubscription}. */
+  mark_done_on_open?: boolean;
   sort: number;
 }
 
@@ -221,6 +225,7 @@ export function mapSubscription(row: SubscriptionRow): Subscription {
     muted: row.muted,
     openOriginal: row.open_original ?? false,
     openNewshacker: row.open_newshacker ?? false,
+    markDoneOnOpen: row.mark_done_on_open ?? false,
     sort: row.sort,
   };
 }

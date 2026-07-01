@@ -366,7 +366,8 @@ items         (id, feed_id FK, guid, url, comments_url, title, author,
                enclosures, content_hash, created_at,
                sort_at = coalesce(published_at, created_at))          -- shared; UNIQUE(feed_id, guid), UNIQUE(feed_id, url) WHERE url IS NOT NULL
 subscriptions (user_id FK, feed_id FK, folder, title_override,
-               muted bool, open_original bool, sort, created_at)      -- user ↔ feed
+               muted bool, open_original bool, open_newshacker bool,
+               mark_done_on_open bool, sort, created_at)              -- user ↔ feed
 item_state    (user_id FK, item_id FK,
                pinned bool, pinned_at, favorite bool, favorite_at,
                done bool, done_at, hidden bool, hidden_at,
@@ -1073,6 +1074,18 @@ negligible and off every critical path. See the External services table in
      legacy `open_original`-only client writing `open_original=true`, which is an
      explicit "open original" choice, so honoring it as such (rather than letting
      the stale `open_newshacker` flag override) preserves that client's intent.
+   - **Mark done when opening** — a per-feed toggle (checkbox in the same overflow
+     menu, independent of the open mode above) that, when on, **marks an item Done
+     the moment it's opened on its original source or newshacker discussion** — the
+     `open-original`/`newshacker` row-body tap, the row's `o` shortcut, and the
+     reader's **Open original** button (which then also pops back to the list, the
+     same completion flow as Done). Deliberately **does not** fire for an in-app
+     **reader** (article view) open — the setting is scoped to the outbound open
+     actions, letting a "read the source and I'm done" feed clear items without a
+     second tap. Marking Done clears Pinned (the usual exclusivity). Per-user,
+     synced (stored on the subscription as `mark_done_on_open`, 0037, like
+     Mute/Rename); off by default. Feature-detected: hidden against a backend that
+     predates the column (guardrail #11).
    - **Feed-health badge** when the poller parks a feed, with "retry now".
 
 2. **Feed views (the lists)** — the chronological merge of subscription items,
@@ -1438,7 +1451,7 @@ negligible and off every critical path. See the External services table in
       within the **3-tap-zone cap** as drag handle (left), a non-interactive
       row body (title + URL), and a right-side **overflow (⋯) button** that
       opens a per-row menu with **Rename / Mute / open mode (Open original /
-      Open on newshacker) / Unsubscribe**. The menu drops below the ⋯ button,
+      Open on newshacker) / Mark done when opening / Unsubscribe**. The menu drops below the ⋯ button,
       but **flips above it** for a row near the bottom of the viewport so the
       menu is never clipped off-screen. The drag
       handle is both pointer-draggable (mouse + touch) and keyboard-operable
@@ -1459,7 +1472,11 @@ negligible and off every critical path. See the External services table in
       link to the item's Hacker News discussion on `newshacker.app`; both open in
       a new tab instead of the in-app reader. The newshacker option hides (the
       control degrades to the *Open original* checkbox) against a backend that
-      predates the `open_newshacker` column. The overflow menu dismisses via
+      predates the `open_newshacker` column. A separate **Mark done when opening**
+      checkbox (writing `subscriptions.mark_done_on_open`, 0037, independent of the
+      open mode) makes opening an item on its original source / newshacker target
+      also mark it Done — see *Feeds page → Mark done when opening* above; it hides
+      against a backend that predates the column. The overflow menu dismisses via
       the shared dropdown contract (`usePopoverDismiss`): Escape or an outside
       press closes it, and **the first press outside only dismisses** — its
       trailing click is swallowed, so dismissing the menu doesn't also activate

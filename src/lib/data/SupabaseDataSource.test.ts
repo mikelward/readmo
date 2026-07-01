@@ -1858,6 +1858,57 @@ describe('SupabaseDataSource dispatch + writes', () => {
     await expect(env.ds.setOpenOriginal('feed-a', true)).rejects.toThrow();
   });
 
+  it('setMarkDoneOnOpen persists the mark_done_on_open column and reads back', async () => {
+    const env = setup();
+    let subs = await env.ds.getSubscriptions();
+    expect(
+      subs.find((s) => s.subscription.feedId === 'feed-b')!.subscription.markDoneOnOpen,
+    ).toBe(false);
+    await env.ds.setMarkDoneOnOpen('feed-b', true);
+    subs = await env.ds.getSubscriptions();
+    expect(
+      subs.find((s) => s.subscription.feedId === 'feed-b')!.subscription.markDoneOnOpen,
+    ).toBe(true);
+    // Untouched feeds stay false; the flag is independent of the open-mode ones.
+    expect(
+      subs.find((s) => s.subscription.feedId === 'feed-a')!.subscription.markDoneOnOpen,
+    ).toBe(false);
+    expect(
+      subs.find((s) => s.subscription.feedId === 'feed-b')!.subscription.openOriginal,
+    ).toBe(false);
+  });
+
+  it('getSubscriptions falls back to the pre-0037 columns when only mark_done_on_open is missing', async () => {
+    const env = setup();
+    expect(env.ds.supportsMarkDoneOnOpen()).toBe(true);
+    // Model a backend with 0027/0034 but not 0037: only a projection naming
+    // mark_done_on_open errors, so the read drops just that column and keeps the
+    // open-mode columns.
+    env.fake.failSelectWhenColumns('subscriptions', 'mark_done_on_open', {
+      code: '42703',
+    });
+    const subs = await env.ds.getSubscriptions();
+    expect(subs.length).toBeGreaterThan(0);
+    expect(subs.every((s) => s.subscription.markDoneOnOpen === false)).toBe(true);
+    // The open-mode columns are still supported; only the mark-done control hides.
+    expect(env.ds.supportsMarkDoneOnOpen()).toBe(false);
+    expect(env.ds.supportsOpenOriginal()).toBe(true);
+    expect(env.ds.supportsOpenNewshacker()).toBe(true);
+  });
+
+  it('setMarkDoneOnOpen no-ops (no throw) and marks support false when the column is missing', async () => {
+    const env = setup();
+    env.fake.failUpdateOnce('subscriptions', { code: 'PGRST204' });
+    await expect(env.ds.setMarkDoneOnOpen('feed-a', true)).resolves.toBeUndefined();
+    expect(env.ds.supportsMarkDoneOnOpen()).toBe(false);
+  });
+
+  it('setMarkDoneOnOpen still throws on a genuine (non-missing-column) write error', async () => {
+    const env = setup();
+    env.fake.failUpdateOnce('subscriptions', { code: '500', message: 'boom' });
+    await expect(env.ds.setMarkDoneOnOpen('feed-a', true)).rejects.toThrow();
+  });
+
   it('threads sort + group options into the feed_items RPC', async () => {
     const env = setup();
     await env.ds.getHomeItems({ sort: 'oldest', groupByFeed: true });

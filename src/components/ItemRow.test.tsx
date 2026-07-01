@@ -236,6 +236,64 @@ describe('ItemRow', () => {
     });
   });
 
+  describe('mark done when opening', () => {
+    it('marks the item done when an open-original row body is tapped', async () => {
+      const user = userEvent.setup();
+      const { source } = renderWithProviders(
+        <ItemRow feedItem={FEED_ITEM} openOriginal markDoneOnOpen />,
+      );
+      await user.click(screen.getByTestId('item-title'));
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+      expect(source.stateStore.get('item-1').done).toBe(true);
+    });
+
+    it('marks the item done when a newshacker row body is tapped', async () => {
+      const user = userEvent.setup();
+      const hn: FeedItem = {
+        item: {
+          ...FEED_ITEM.item,
+          guid: 'https://news.ycombinator.com/item?id=42662903',
+          url: 'https://example.com/the-article',
+        },
+        feed: {
+          ...FEED_ITEM.feed,
+          url: 'https://news.ycombinator.com/rss',
+          siteUrl: 'https://news.ycombinator.com',
+          title: 'Hacker News',
+        },
+      };
+      const { source } = renderWithProviders(
+        <ItemRow feedItem={hn} openNewshacker markDoneOnOpen />,
+      );
+      // The row body links to the newshacker discussion (external target).
+      expect(screen.getByTestId('item-title')).toHaveAttribute('target', '_blank');
+      await user.click(screen.getByTestId('item-title'));
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+      expect(source.stateStore.get('item-1').done).toBe(true);
+    });
+
+    it('does NOT mark done when opening the in-app reader (reader-mode body tap)', async () => {
+      const user = userEvent.setup();
+      const { source } = renderWithProviders(<ItemRow feedItem={FEED_ITEM} markDoneOnOpen />);
+      // Reader-mode row body links to the in-app reader, not an external tab.
+      expect(screen.getByTestId('item-title')).toHaveAttribute('href', '/item/item-1');
+      await user.click(screen.getByTestId('item-title'));
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+      expect(source.stateStore.get('item-1').done).toBe(false);
+    });
+
+    it('unpins a pinned item when opening marks it done (mutation shield)', async () => {
+      const user = userEvent.setup();
+      const { source } = renderWithProviders(
+        <ItemRow feedItem={FEED_ITEM} openOriginal markDoneOnOpen />,
+      );
+      source.stateStore.set('item-1', 'pinned', true);
+      await user.click(screen.getByTestId('item-title'));
+      expect(source.stateStore.get('item-1').done).toBe(true);
+      expect(source.stateStore.get('item-1').pinned).toBe(false);
+    });
+  });
+
   describe('open on newshacker', () => {
     // A Hacker News feed item: guid is the HN discussion link, url the article.
     const HN_FEED_ITEM: FeedItem = {

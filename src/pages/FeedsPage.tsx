@@ -665,6 +665,16 @@ export function FeedsPage() {
           // (0034); a pre-0034 backend degrades the Hacker-News-feed choice to
           // the reader/original checkbox.
           showOpenNewshacker={ds.supportsOpenNewshacker?.() ?? true}
+          onSetMarkDoneOnOpen={async (feedId, markDoneOnOpen) => {
+            await ds.setMarkDoneOnOpen(feedId, markDoneOnOpen);
+            // Re-read subscriptions so useMarkDoneOnOpenFeeds (which backs the
+            // rows' open handlers and the reader's Open-original button) picks up
+            // the change on the next render.
+            invalidate();
+          }}
+          // Hide the toggle until the backend has the mark_done_on_open column
+          // (0037); a pre-0037 backend simply doesn't offer it.
+          showMarkDoneOnOpen={ds.supportsMarkDoneOnOpen?.() ?? true}
           onUnsubscribe={async (feedId) => {
             await ds.unsubscribe(feedId);
             invalidate();

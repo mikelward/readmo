@@ -83,6 +83,26 @@ describe('MockDataSource feed reads', () => {
     expect((await sub('feed-nasa')).openNewshacker).toBe(false);
   });
 
+  it('persists the per-feed mark-done-when-opening preference', async () => {
+    const before = await ds.getSubscriptions();
+    expect(
+      before.find((s) => s.feed.id === 'feed-verge')!.subscription.markDoneOnOpen,
+    ).toBe(false);
+    await ds.setMarkDoneOnOpen('feed-verge', true);
+    const after = await ds.getSubscriptions();
+    expect(
+      after.find((s) => s.feed.id === 'feed-verge')!.subscription.markDoneOnOpen,
+    ).toBe(true);
+    // Other feeds untouched, and it's independent of the open-mode flags.
+    expect(
+      after.find((s) => s.feed.id === 'feed-nasa')!.subscription.markDoneOnOpen,
+    ).toBe(false);
+    expect(
+      after.find((s) => s.feed.id === 'feed-verge')!.subscription.openOriginal,
+    ).toBe(false);
+    expect(ds.supportsMarkDoneOnOpen()).toBe(true);
+  });
+
   it('paginates with an explicit cursor', async () => {
     const page1 = await ds.getHomeItems({ limit: 3 });
     expect(page1.items).toHaveLength(3);

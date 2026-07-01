@@ -192,6 +192,7 @@ describe('mapSubscription', () => {
       muted: true,
       open_original: true,
       open_newshacker: true,
+      mark_done_on_open: true,
       sort: 3,
     };
     expect(mapSubscription(row)).toEqual({
@@ -201,11 +202,12 @@ describe('mapSubscription', () => {
       muted: true,
       openOriginal: true,
       openNewshacker: true,
+      markDoneOnOpen: true,
       sort: 3,
     });
   });
 
-  it('defaults openOriginal/openNewshacker to false when the columns are absent (pre-migration backend)', () => {
+  it('defaults openOriginal/openNewshacker/markDoneOnOpen to false when the columns are absent (pre-migration backend)', () => {
     const row: SubscriptionRow = {
       feed_id: 'feed-1',
       folder: null,
@@ -215,5 +217,6 @@ describe('mapSubscription', () => {
     };
     expect(mapSubscription(row).openOriginal).toBe(false);
     expect(mapSubscription(row).openNewshacker).toBe(false);
+    expect(mapSubscription(row).markDoneOnOpen).toBe(false);
   });
 });

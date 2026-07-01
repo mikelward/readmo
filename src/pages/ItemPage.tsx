@@ -9,6 +9,7 @@ import { useWideViewport } from '../hooks/useWideViewport';
 import { useShareItem } from '../hooks/useShareItem';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { useFullTextAllowed } from '../hooks/useCapabilities';
+import { useMarkDoneOnOpenFeeds } from '../hooks/useMarkDoneOnOpenFeeds';
 import {
   articleSourceDomain,
   formatAge,
@@ -299,6 +300,11 @@ export function ItemPage() {
   const online = status === 'online';
 
   const { state, set, toggle } = useItemState(id);
+  // Feeds set to "mark done when opening": opening the original (or newshacker)
+  // target also marks the item Done. Applies to the reader's Open-original button
+  // below — NOT to merely opening this article view, which is where the setting
+  // deliberately stops.
+  const markDoneOnOpenFeeds = useMarkDoneOnOpenFeeds();
   const queryClient = useQueryClient();
   // True while the persisted query cache is still hydrating at boot. The offline
   // fallback below scans that cache, so it must wait for (and recompute after)
@@ -431,8 +437,15 @@ export function ItemPage() {
     if (resolved && isSafeHttpUrl(resolved.item.url)) {
       set('opened', true);
       window.open(resolved.item.url, '_blank', 'noopener,noreferrer');
+      // "Mark done when opening" feeds: opening the original finishes the item,
+      // so mark it Done (which also clears pinned) and drop back to the list —
+      // the same completion flow as the Done action.
+      if (markDoneOnOpenFeeds.has(resolved.feed.id)) {
+        set('done', true);
+        navigate(-1);
+      }
     }
-  }, [resolved, set]);
+  }, [resolved, set, markDoneOnOpenFeeds, navigate]);
 
   const markDone = useCallback(() => {
     set('done', true); // also clears pinned via the mutation shield

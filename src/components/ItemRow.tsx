@@ -47,6 +47,12 @@ interface Props {
    * (see {@link openModeOf}). Ignored when the item has no derivable Hacker News
    * id — falls back to the reader. */
   openNewshacker?: boolean;
+  /** When true (the feed's "mark done when opening" preference), opening this
+   * row's external target — the original source (open-original mode or the `o`
+   * shortcut) or the newshacker discussion (newshacker mode) — also marks the
+   * item Done. Deliberately does NOT fire for an in-app reader open (the plain
+   * row-body tap on a reader-mode feed). */
+  markDoneOnOpen?: boolean;
   /** Show the feed's favicon at the start of the meta line. On in non-grouped
    * views (flat river, library, search, offline), where rows from different
    * feeds interleave with no section header to attribute them; off in
@@ -62,6 +68,7 @@ export function ItemRow({
   enableSwipe = true,
   openOriginal = false,
   openNewshacker = false,
+  markDoneOnOpen = false,
   showFavicon = false,
   onShare,
 }: Props) {
@@ -109,6 +116,16 @@ export function ItemRow({
   const handleMarkUnread = useCallback(() => set('opened', false), [set]);
   const handleShare = useCallback(() => onShare?.(feedItem), [onShare, feedItem]);
   const markOpened = useCallback(() => set('opened', true), [set]);
+  // Opening this row's EXTERNAL target — the original source (open-original mode
+  // or the `o` shortcut) or the newshacker discussion (newshacker mode) — marks
+  // the item Opened and, when the feed opts into "mark done when opening", also
+  // marks it Done (which clears pinned via the mutation shield). The plain
+  // reader-mode body tap uses `markOpened` above, so an in-app reader open never
+  // marks done.
+  const markOpenedExternal = useCallback(() => {
+    set('opened', true);
+    if (markDoneOnOpen) set('done', true);
+  }, [set, markDoneOnOpen]);
   // On an external-open row the body itself goes to the source/newshacker target,
   // so the dedicated row button is the one remaining path to the in-app reader:
   // it navigates to the reader and marks the item opened (same as a reader-mode
@@ -234,7 +251,8 @@ export function ItemRow({
         case 'o': {
           if (isSafeHttpUrl(item.url)) {
             e.preventDefault();
-            markOpened();
+            // `o` opens the original, so it honors "mark done when opening" too.
+            markOpenedExternal();
             window.open(item.url, '_blank', 'noopener,noreferrer');
           }
           break;
@@ -257,7 +275,7 @@ export function ItemRow({
       menuItems.length,
       openMenu,
       item.url,
-      markOpened,
+      markOpenedExternal,
       handleTogglePin,
       enableSwipe,
       pinned,
@@ -368,7 +386,7 @@ export function ItemRow({
             rel="noopener noreferrer"
             className="item-row__body"
             data-testid="item-title"
-            onClick={markOpened}
+            onClick={markOpenedExternal}
             onKeyDown={handleRowKeyDown}
           >
             {bodyContent}
