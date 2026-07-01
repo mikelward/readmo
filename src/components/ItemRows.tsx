@@ -8,6 +8,7 @@ import { faviconNeedsDarkInvert } from '../lib/faviconInvert';
 import { ItemRow, type RightAction } from './ItemRow';
 import { ChevronRight, Sweep, Undo } from './icons';
 import { TooltipButton } from './TooltipButton';
+import { LoadingState } from './States';
 import './ItemList.css';
 
 /** What to render as a feed-section header before a given row. */
@@ -23,10 +24,8 @@ interface Props {
   items: FeedItem[];
   /** Shown when there are no items and not loading. */
   emptyLabel: string;
-  /** Render skeleton placeholders instead of rows or the empty state. */
+  /** Render a loading indicator instead of rows or the empty state. */
   isLoading?: boolean;
-  /** How many skeletons to show while loading (feed views use 6). */
-  skeletonCount?: number;
   /** Feed views enable swipe (right=Hide, left=Pin); library/search/offline
    * disable it — every row there already holds the state the view represents. */
   enableSwipe?: boolean;
@@ -118,7 +117,6 @@ export function ItemRows({
   items,
   emptyLabel,
   isLoading = false,
-  skeletonCount = 4,
   enableSwipe = false,
   listRef,
   rightAction,
@@ -151,14 +149,11 @@ export function ItemRows({
   // the non-grouped path below; group-by-feed shows the icon on its header.
   const { showRowFavicon: showRowFaviconPref } = useShowRowFavicon();
 
+  // A subtle spinner with a visible "Loading…" label, rather than a run of
+  // blank shimmer rows — the wait reads as loading, not as an empty feed still
+  // painting in.
   if (isLoading) {
-    return (
-      <ul className="item-list__skeletons" aria-hidden="true">
-        {Array.from({ length: skeletonCount }).map((_, i) => (
-          <li key={i} className="item-list__skeleton" />
-        ))}
-      </ul>
-    );
+    return <LoadingState label="Loading…" showLabel />;
   }
 
   // Empty state only when there are *also* no phantom More-sections to show.

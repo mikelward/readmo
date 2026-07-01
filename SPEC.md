@@ -1218,6 +1218,13 @@ negligible and off every critical path. See the External services table in
      instead loads each feed's first **`PER_FEED_WINDOW` (10)** in one windowed
      read and grows per section. Further flat pages only via an explicit **More**
      button (no infinite scroll). Same pagination discipline.
+   - **Loading indicator.** While the first page is fetching — or an empty feed
+     is being re-validated (a reconnect/PTR/boot refetch) — the body shows a
+     centered spinner with a visible **"Loading…"** label (`LoadingState`, a
+     `role="status"` region), not blank placeholder rows. The wait reads as
+     loading rather than an empty or half-painted feed. Reduced-motion readers
+     get the label without the spin. The library and offline views use the same
+     indicator.
    - **Background refresh status strip** at the foot ("Checking for new
      items…" / "Couldn't refresh." + Retry), appearing only when rows are
      already on screen. Verbatim mirror.
@@ -1373,7 +1380,7 @@ negligible and off every critical path. See the External services table in
    Back-to-top only on library footers. Same slot order. **More lives in the
    bottom toolbar itself** (not a separate control above it): it stretches the
    middle slot between Back-to-top and the Undo/Sweep group. It appears once
-   the feed is **populated** (not during the loading skeletons, the error/retry
+   the feed is **populated** (not during the loading indicator, the error/retry
    state, or an empty result — those would otherwise flash a misleading
    exhausted message).
    - **Position is configurable** (`readmo:bottom-bar`, per-device — see

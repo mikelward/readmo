@@ -2200,7 +2200,7 @@ export function ItemList({
               items={visibleItems}
               sweepingIds={sweepingIds}
               onAnimationEnd={handleListAnimationEnd}
-              // Skeletons (not the caught-up label) whenever a fetch is
+              // Loading indicator (not the caught-up label) whenever a fetch is
               // validating an empty feed — the initial load, a reconnect
               // confirm, a boot-time cache-invalidation refetch over an empty
               // persisted page, or a focus/PTR refresh. Also covers the
@@ -2216,7 +2216,6 @@ export function ItemList({
                   visibleItems.length === 0 &&
                   !(emptyMoreSections && emptyMoreSections.length > 0))
               }
-              skeletonCount={6}
               enableSwipe
               listRef={listRef}
               getRowRef={getRowRef}
@@ -2270,10 +2269,10 @@ export function ItemList({
         placement="bottom"
         onUndo={handleUndoScroll}
         // Only offer More once the feed is populated. Until the first page
-        // lands (loading skeletons, error/retry, or an empty result) hasMore is
-        // false, so an unconditional More would flash a disabled "No more items"
-        // under the skeletons or retry UI even though the feed isn't actually
-        // exhausted. Matches newshacker, whose footer renders only on a
+        // lands (the loading indicator, error/retry, or an empty result) hasMore
+        // is false, so an unconditional More would flash a disabled "No more
+        // items" under the loading or retry UI even though the feed isn't
+        // actually exhausted. Matches newshacker, whose footer renders only on a
         // populated feed.
         more={
           // In the per-section-windowed grouped view the base read is normally a

@@ -41,11 +41,12 @@ describe('ItemRows', () => {
     resetReadingPrefsCacheForTest();
   });
 
-  it('shows skeletons while loading and no rows or empty state', () => {
-    const { container } = renderWithProviders(
+  it('shows a labeled loading indicator while loading, not rows or the empty state', () => {
+    renderWithProviders(
       <ItemRows items={[]} isLoading emptyLabel="Nothing here." />,
     );
-    expect(container.querySelectorAll('.item-list__skeleton').length).toBeGreaterThan(0);
+    const loading = screen.getByTestId('loading-state');
+    expect(loading).toHaveTextContent(/loading/i);
     expect(screen.queryByText('Nothing here.')).not.toBeInTheDocument();
     expect(screen.queryAllByTestId('item-row')).toHaveLength(0);
   });

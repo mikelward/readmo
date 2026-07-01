@@ -42,4 +42,17 @@ describe('<LoadingState>', () => {
     render(<LoadingState label="Fetching articles…" />);
     expect(screen.getByRole('status')).toHaveTextContent('Fetching articles…');
   });
+
+  it('keeps the label visually hidden by default', () => {
+    const { container } = render(<LoadingState label="Loading…" />);
+    expect(container.querySelector('.state__sr-only')).toHaveTextContent('Loading…');
+    expect(container.querySelector('.state__loading-label')).toBeNull();
+  });
+
+  it('renders the label as visible on-screen text when showLabel is set', () => {
+    const { container } = render(<LoadingState label="Loading…" showLabel />);
+    const visible = container.querySelector('.state__loading-label');
+    expect(visible).toHaveTextContent('Loading…');
+    expect(container.querySelector('.state__sr-only')).toBeNull();
+  });
 });
