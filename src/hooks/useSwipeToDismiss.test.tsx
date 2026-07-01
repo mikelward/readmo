@@ -206,6 +206,51 @@ describe('useSwipeToDismiss', () => {
     expect(result.current.offset).toBe(offBefore);
   });
 
+  it('ignores a second concurrent pointer so the first swipe still commits', () => {
+    // Regression: a second finger's pointerdown mid-swipe overwrote the
+    // tracked start state — the in-flight swipe froze at its current offset
+    // and the first finger's release was ignored.
+    const onSwipeRight = vi.fn();
+    const { result } = renderHook(() =>
+      useSwipeToDismiss({ onSwipeRight, dismissOnRight: true }),
+    );
+
+    act(() => {
+      result.current.handlers.onPointerDown(
+        makePointerEvent('pointerdown', { clientX: 100, clientY: 24, pointerId: 1 }),
+      );
+    });
+    act(() => {
+      result.current.handlers.onPointerMove(
+        makePointerEvent('pointermove', { clientX: 250, clientY: 24, pointerId: 1 }),
+      );
+    });
+    // Second finger lands and lifts elsewhere mid-swipe: both ignored.
+    act(() => {
+      result.current.handlers.onPointerDown(
+        makePointerEvent('pointerdown', { clientX: 50, clientY: 60, pointerId: 2 }),
+      );
+      result.current.handlers.onPointerUp(
+        makePointerEvent('pointerup', { clientX: 50, clientY: 60, pointerId: 2 }),
+      );
+    });
+    // The first finger's swipe continues and commits on release.
+    act(() => {
+      result.current.handlers.onPointerMove(
+        makePointerEvent('pointermove', { clientX: 300, clientY: 24, pointerId: 1 }),
+      );
+    });
+    act(() => {
+      result.current.handlers.onPointerUp(
+        makePointerEvent('pointerup', { clientX: 300, clientY: 24, pointerId: 1 }),
+      );
+    });
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+    expect(onSwipeRight).toHaveBeenCalledTimes(1);
+  });
+
   describe('unmount during the exit window', () => {
     function swipeRight(handlers: ReturnType<typeof useSwipeToDismiss>['handlers']) {
       act(() => {

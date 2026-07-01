@@ -139,6 +139,11 @@ export function usePullToRefresh({
       if (!enabled) return;
       if (phaseRef.current === 'refreshing' || phaseRef.current === 'settling') return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
+      // A pointer is already tracked (tracking or mid-pull): a second finger
+      // must not overwrite its start state — the first finger's pull would
+      // freeze, and the second finger's tap-release would reset an actively
+      // held pull back to idle out from under it.
+      if (startRef.current) return;
       if (!isAtTopRef.current()) return;
       startRef.current = {
         x: e.clientX,

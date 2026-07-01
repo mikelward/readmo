@@ -112,6 +112,10 @@ export function useSwipeToDismiss({
     (e: PointerEvent<HTMLElement>) => {
       if (!active || isDismissing) return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
+      // A pointer is already tracked: a second finger must not clobber the
+      // in-flight gesture's start state (the first finger's swipe would
+      // freeze at its current offset and its release would be ignored).
+      if (startRef.current) return;
       justSwipedRef.current = false;
       const rect = e.currentTarget.getBoundingClientRect();
       startRef.current = {

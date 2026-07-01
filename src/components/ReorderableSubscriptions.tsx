@@ -88,7 +88,9 @@ export function ReorderableSubscriptions({
 }: Props) {
   const propIds = subs.map((s) => s.feed.id);
   const [order, setOrder] = useState<FeedId[]>(propIds);
-  const dragging = useRef<{ id: FeedId; startOrder: FeedId[] } | null>(null);
+  const dragging = useRef<{ id: FeedId; startOrder: FeedId[]; pointerId: number } | null>(
+    null,
+  );
   const [draggingId, setDraggingId] = useState<FeedId | null>(null);
 
   // Local `order` is authoritative while the user is interacting. We re-sync from
@@ -365,22 +367,29 @@ export function ReorderableSubscriptions({
   function onHandlePointerDown(e: ReactPointerEvent<HTMLButtonElement>, id: FeedId) {
     // Primary button / touch / pen only; ignore right-click etc.
     if (e.button !== 0) return;
-    dragging.current = { id, startOrder: order };
+    // One drag at a time: a second finger landing on another handle mid-drag
+    // must not hijack the gesture — the first finger's moves would reorder
+    // the second feed by the first's Y position, and its release would
+    // persist that half-scrambled order.
+    if (dragging.current) return;
+    dragging.current = { id, startOrder: order, pointerId: e.pointerId };
     setDraggingId(id);
     e.currentTarget.setPointerCapture(e.pointerId);
   }
 
   function onHandlePointerMove(e: ReactPointerEvent<HTMLButtonElement>) {
     const drag = dragging.current;
-    if (!drag) return;
+    if (!drag || drag.pointerId !== e.pointerId) return;
     setOrder((cur) => orderForPointer(cur, drag.id, e.clientY, collectRects()));
   }
 
-  function endDrag() {
+  function endDrag(e: ReactPointerEvent<HTMLButtonElement>) {
     const drag = dragging.current;
+    // Only the dragging pointer ends the drag — a stray second finger lifting
+    // elsewhere must not commit (or cancel) the first finger's gesture.
+    if (!drag || drag.pointerId !== e.pointerId) return;
     dragging.current = null;
     setDraggingId(null);
-    if (!drag) return;
     // Persist only if the drag actually changed the order.
     setOrder((cur) => {
       if (cur.join(',') !== drag.startOrder.join(',')) schedulePersist(cur);
