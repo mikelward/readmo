@@ -2407,7 +2407,12 @@ keys differ; the strategies map one-to-one:
   reads at it rather than retry-storming. No app read then fires to notice
   recovery, so `networkStatus.ts` re-probes the SW-bypassing liveness endpoint
   (`confirmBackendReachable`, `/auth/v1/health`) every 30s, and immediately on
-  regained window focus / tab visibility. A probe that **reaches** the backend
+  regained window focus / tab visibility and on the browser `online` event —
+  reconnect is the traffic-free recovery moment, and without an immediate probe
+  a backend that recovered while the device was disconnected would keep the
+  Down pill (reads paused) for up to a full interval after connectivity
+  returned. Like focus, reconnect is rare and user-salient, so it may clear a
+  latched Down; machine-chatty connection-change events still may not. A probe that **reaches** the backend
   clears the doubt and flips us online (a read re-evaluates — if it 5xxes again we
   go straight back to "Down", so the load stays capped at ~one read per interval);
   a probe that **can't** reach it leaves us "Offline". The probe's lifecycle keys
