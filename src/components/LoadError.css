@@ -38,6 +38,19 @@
   white-space: pre-wrap;
 }
 
+/* The /offline pointer is interactive — 44px tap floor (guardrail #2). */
+.load-error__offline {
+  margin: 12px 0 0;
+}
+
+.load-error__offline-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--rm-tap);
+  color: var(--rm-accent);
+  font-weight: 600;
+}
+
 .load-error__retry {
   margin-top: 12px;
   padding: 10px 20px;

@@ -11,6 +11,13 @@ describe('loadFailureCopy', () => {
     expect(copy.detail).toBeNull();
   });
 
+  it('points at /offline (saved articles) only in the offline state', () => {
+    expect(loadFailureCopy('offline', null, FEED).offlineLink).toBe(true);
+    expect(loadFailureCopy('backend-unreachable', null, FEED).offlineLink).toBe(false);
+    expect(loadFailureCopy('online', new Error('boom'), FEED).offlineLink).toBe(false);
+    expect(loadFailureCopy('online', null, FEED).offlineLink).toBe(false);
+  });
+
   it('honors an offline override (the reader’s pin-for-offline copy)', () => {
     const copy = loadFailureCopy('offline', new Error('x'), {
       action: 'fetching this article',
@@ -18,6 +25,8 @@ describe('loadFailureCopy', () => {
       offline: 'This article isn’t saved offline. Pin it while online to keep a copy.',
     });
     expect(copy.headline).toMatch(/pin it while online/i);
+    // The override changes the headline, not the state: still point at /offline.
+    expect(copy.offlineLink).toBe(true);
   });
 
   it('says the server isn’t responding only when the backend is unreachable', () => {

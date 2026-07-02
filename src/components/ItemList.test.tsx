@@ -2847,6 +2847,10 @@ describe('ItemList', () => {
 
     await screen.findByText(/you’re offline/i);
     expect(screen.queryByText(/server isn’t responding/i)).toBeNull();
+    // The offline miss-state points at the one view that still works: /offline.
+    expect(
+      screen.getByRole('link', { name: 'View saved articles' }),
+    ).toHaveAttribute('href', '/offline');
   });
 
   it('does not claim "all caught up" on a successful empty result while offline', async () => {

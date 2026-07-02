@@ -62,6 +62,7 @@ export function LibraryItemList({
       <LoadError
         headline={copy.headline}
         detail={copy.detail}
+        offlineLink={copy.offlineLink}
         onRetry={() => query.refetch()}
       />
     );

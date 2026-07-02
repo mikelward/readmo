@@ -645,6 +645,7 @@ export function ItemPage() {
         <LoadError
           headline={copy.headline}
           detail={copy.detail}
+          offlineLink={copy.offlineLink}
           onRetry={status === 'offline' ? undefined : () => refetch()}
         />
       </div>

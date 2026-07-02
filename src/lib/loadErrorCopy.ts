@@ -8,6 +8,10 @@ import type { ConnectivityStatus } from './networkStatus';
 export interface LoadFailureCopy {
   headline: string;
   detail: string | null;
+  /** True only in the offline state: the panel should point at `/offline`
+   *  (articles saved on this device), since that's the one view that still
+   *  works without a connection. */
+  offlineLink: boolean;
 }
 
 export interface LoadFailureContext {
@@ -50,21 +54,24 @@ export function loadFailureCopy(
     return {
       headline: ctx.offline ?? `You’re offline. Reconnect to load ${ctx.noun}.`,
       detail: null,
+      offlineLink: true,
     };
   }
   if (status === 'backend-unreachable') {
     return {
       headline: 'Readmo’s server isn’t responding right now — it may be busy.',
       detail: null,
+      offlineLink: false,
     };
   }
   if (error != null) {
     return {
       headline: `Unexpected response ${ctx.action}.`,
       detail: presentableDetail(error),
+      offlineLink: false,
     };
   }
-  return { headline: `Couldn’t load ${ctx.noun}.`, detail: null };
+  return { headline: `Couldn’t load ${ctx.noun}.`, detail: null, offlineLink: false };
 }
 
 /** The pointer-at-the-cause shown behind the "Details" disclosure. This is the
