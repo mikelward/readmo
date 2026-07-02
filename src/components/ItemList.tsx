@@ -2185,12 +2185,17 @@ export function ItemList({
           // server problem to name (with a curated detail), not the connection
           // to blame; only a truly unreachable backend gets "isn't responding".
           (() => {
-            const { headline, detail } = loadFailureCopy(status, error, {
+            const { headline, detail, offlineLink } = loadFailureCopy(status, error, {
               action: 'fetching the feed list',
               noun: 'items',
             });
             return (
-              <LoadError headline={headline} detail={detail} onRetry={() => refetch()} />
+              <LoadError
+                headline={headline}
+                detail={detail}
+                offlineLink={offlineLink}
+                onRetry={() => refetch()}
+              />
             );
           })()
         ) : (

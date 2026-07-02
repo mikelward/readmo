@@ -2444,6 +2444,10 @@ keys differ; the strategies map one-to-one:
   busy."; *online with an error* (the server responded, with an error) →
   "Unexpected response fetching this article." plus the underlying message behind
   a "Details" disclosure; *online with no error* → "Couldn't load this article."
+  Every *offline* miss-state (reader and list views alike) also offers a
+  **"View saved articles" link to `/offline`** — the one view that still works
+  without a connection (`LoadError`'s `offlineLink`, decided by
+  `loadFailureCopy`).
 - **An empty feed view never claims "all caught up" unless online.** The
   caught-up empty state (e.g. Home's "You're all caught up.") implies the server
   confirmed there's nothing unread. A feed view shows it only when the device is
@@ -2451,7 +2455,8 @@ keys differ; the strategies map one-to-one:
   *backend-unreachable* — whether the read failed, or a stale cache / fresh-enough
   persisted-empty page returned empty without ever reaching the server — the view
   shows the same miss-state copy + Retry as a failed load (*offline* → "You're
-  offline. Reconnect to load items."; *backend-unreachable* → "Readmo's server
+  offline. Reconnect to load items." plus the "View saved articles" link to
+  `/offline`; *backend-unreachable* → "Readmo's server
   isn't responding right now — it may be busy."; *online with an error* → it
   names the action, "Unexpected response fetching the feed list.", with the
   underlying message behind a "Details" disclosure — never the "isn't responding"
