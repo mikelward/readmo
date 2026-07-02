@@ -107,31 +107,20 @@ export function pickStoredContent(src: SummarySource): StoredPick | null {
   return null;
 }
 
-/** Prompt for a short-paragraph summary — a few sentences capturing the
- * article's main points, not a single line. Mirrors newshacker's
- * article-summary steer (direct assertion, no "This article argues…"
- * meta-framing) but keeps readmo's short Markdown paragraph instead of
- * newshacker's single sentence, and aims for about three key points.
- *
- * Deliberately does NOT ask for "the voice of the author": that phrasing made
- * Gemini adopt the perspective of the article's *subject* (e.g. summarizing a
- * profile or interview in that person's voice). The explicit no-meta-framing
- * instruction below already delivers the direct-assertion steer on its own. */
+/** Prompt for the article summary: a bare tl;dr ask, with the title (when
+ * known) passed along as context and the article text between explicit
+ * delimiters. Deliberately unsteered — length/format/register instructions
+ * made the output longer and stiffer in practice, while the bare ask yields
+ * short, direct prose. If bullet output ever shows up (the inline MarkdownText
+ * renderer has no list support), add back a minimal plain-prose clause. */
 export function buildSummaryPrompt(
   title: string | null | undefined,
   content: string,
 ): string {
-  const titleLine = title ? `The article is titled "${title}". ` : '';
+  const titleLine = title ? `The article is titled "${title}".\n\n` : '';
   return (
-    `Summarize the article below in a few sentences — a short paragraph that captures its main points, aiming for about three key points. ` +
+    `Provide a tl;dr of the following article:\n\n` +
     titleLine +
-    `Write it as a direct assertion of the article's main points. ` +
-    `Format the response as Markdown — you may use **bold**, *italic*, or \`code\` for light emphasis — ` +
-    `but keep it as a flowing short paragraph, with no headings or bullet lists. ` +
-    `Do not refer to "the article", "the author", "the piece", "the post", "this story", or similar. ` +
-    `Do not begin with meta-framing such as "The article argues", "The author claims", "This piece explains", ` +
-    `"The post describes", or any variant. Just state the points. ` +
-    `Ignore navigation, boilerplate, and markup; focus on the main body.\n\n` +
     `--- BEGIN ARTICLE ---\n${content}\n--- END ARTICLE ---`
   );
 }
