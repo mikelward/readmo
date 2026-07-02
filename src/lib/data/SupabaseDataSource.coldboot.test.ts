@@ -37,13 +37,15 @@ describe('SupabaseDataSource cold-boot outbox replay', () => {
     _resetNetworkStatusForTests();
   });
 
-  it('holds a persisted no-base write at boot until the hydrate lands (no unchecked replay across reload)', async () => {
-    // A brand-new-row write made in a prior session persists with no base. On the
-    // next boot it must NOT replay unchecked before the boot hydrate starts —
-    // that would let a reload defeat the in-session hold and clobber a
-    // cross-device change. The constructor kicks the hydrate (marking it in
-    // flight) BEFORE the initial flush, so the no-base entry is held until the
-    // hydrate resolves its base.
+  it('drops a persisted pre-LWW (base-version) outbox entry at boot instead of replaying or retrying it', async () => {
+    // A pre-0023 client persisted boolean changed-fields with a base version —
+    // no per-field `at`. Replaying that against the LWW set_item_state would
+    // throw in the send serializer (`new Date(undefined).toISOString()`), which
+    // the drain classifies as TRANSIENT — so the entry would retry on backoff
+    // forever and pin its item in pendingIds() (the hydrate overlay). The LWW
+    // cutover discards old persisted state (0023 + the userCache `:v2` key
+    // bump); the outbox's load-time sanitization is the backstop for any such
+    // entry that still surfaces under a current key: drop it, don't wedge on it.
     window.localStorage.setItem(
       `${STATE_KEY}:outbox`,
       JSON.stringify([{ id: 'i6', changed: { pinned: true }, base: null }]),
@@ -68,14 +70,13 @@ describe('SupabaseDataSource cold-boot outbox replay', () => {
       STATE_KEY,
       fake.client as unknown as SupabaseClient,
     );
-    // The persisted write is held, not replayed: no set_item_state went out, and
-    // the entry is still queued (persisted), so it'll send with a real base once
-    // the boot hydrate lands.
-    void ds;
+    // The malformed write is dropped at load: nothing goes out, nothing stays
+    // queued (the boot flush persists the now-empty outbox), and the item is
+    // not pinned in the pending set forever.
     await new Promise((r) => setTimeout(r));
     await new Promise((r) => setTimeout(r));
     expect(setItemStateCalls).toBe(0);
-    const persisted = window.localStorage.getItem(`${STATE_KEY}:outbox`);
-    expect(persisted).toContain('i6'); // still queued, not sent + cleared
+    expect(window.localStorage.getItem(`${STATE_KEY}:outbox`)).toBeNull();
+    expect([...ds.pendingItemIds()]).toEqual([]);
   });
 });
