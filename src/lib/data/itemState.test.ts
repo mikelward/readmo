@@ -161,8 +161,12 @@ describe('ItemStateStore', () => {
     // The constructor migration uses real Date.now(), so the hidden timestamp
     // must be recent (un-expired) for it to fire.
     const now = Date.now();
+    // Strictly older than the constructor's own Date.now() stamp (a same-ms
+    // tie would be resolved to the server below — realistic hide actions are
+    // always older than the boot that migrates them).
+    const hiddenAt = now - 1000;
     let saved: Record<string, ItemState> = {
-      a: state({ hidden: true, hiddenAt: now }),
+      a: state({ hidden: true, hiddenAt }),
     };
     const store = new ItemStateStore({
       load: () => saved,
@@ -173,6 +177,13 @@ describe('ItemStateStore', () => {
     const a = store.get('a', now);
     expect(a.done).toBe(true);
     expect(a.hidden).toBe(false);
+    // The migration stamps the hidden-clear with its own clock, so a hydrate
+    // still carrying the server's (never-migrated) hidden row can't win LWW
+    // and resurrect hidden=true next to the migrated Done.
+    store.hydrate([['a', state({ hidden: true, hiddenAt })]], new Map(), now + 10);
+    const after = store.get('a', now + 10);
+    expect(after.done).toBe(true);
+    expect(after.hidden).toBe(false);
   });
 
   it('hidden→Done migration (hydrate) surfaces a legacy hidden server row in /done', () => {
@@ -182,6 +193,28 @@ describe('ItemStateStore', () => {
     const a = store.get('a', NOW);
     expect(a.done).toBe(true);
     expect(a.hidden).toBe(false);
+  });
+
+  it('hidden→Done migration sticks across repeated hydrates of the unchanged server row', () => {
+    // The migration is local-only (hydrate never fires the sink), so the server
+    // keeps hidden=true with its old clock. The migrated row must carry a NEWER
+    // hidden clock — a nulled one would lose the next resync's per-field LWW,
+    // resurrecting hidden=true alongside the migrated Done, and "Unmark done"
+    // would then strand the item invisible in every view until the hidden TTL.
+    const store = new ItemStateStore(memoryPersistence());
+    const serverRow = state({ hidden: true, hiddenAt: NOW });
+    store.hydrate([['a', serverRow]], new Map(), NOW + 10);
+    // The next focus/online resync re-delivers the same (never-migrated) row.
+    store.hydrate([['a', serverRow]], new Map(), NOW + 20);
+    const a = store.get('a', NOW + 20);
+    expect(a.done).toBe(true);
+    expect(a.hidden).toBe(false);
+    // The recovery path stays open: unmarking Done leaves the row fully
+    // visible rather than re-hiding it.
+    store.set('a', 'done', false, NOW + 30);
+    const restored = store.get('a', NOW + 30);
+    expect(restored.done).toBe(false);
+    expect(restored.hidden).toBe(false);
   });
 
   it('write-through sink fires the changed-field diff (set / hide / undo), not on hydrate', () => {

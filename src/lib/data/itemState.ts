@@ -240,12 +240,17 @@ export class ItemStateStore {
       if (state.hidden && !state.done && !expired(state.hiddenAt, now)) {
         // Skip rows whose hiddenAt is already past the TTL — they would have
         // expired and reappeared anyway; don't resurrect them as fresh Done.
-        // Also clear hidden/hiddenAt so "Unmark done" / "Forget all" on the
-        // Done page leaves the item fully visible again rather than re-hiding it.
+        // Clear hidden so "Unmark done" / "Forget all" on the Done page leaves
+        // the item fully visible again rather than re-hiding it — and stamp the
+        // clear with `now` (the same clock rule as applyMutation), NOT null. The
+        // migration never writes back to the server, so the server row keeps
+        // hidden=true with its old clock; a nulled local clock would lose the
+        // next hydrate's per-field LWW and resurrect hidden=true alongside the
+        // migrated Done (and "Unmark done" would then strand the item invisible).
         map[id] = {
           ...applyMutation(state, 'done', true, now),
           hidden: false,
-          hiddenAt: null,
+          hiddenAt: now,
         };
         migrated = true;
       } else {
@@ -393,12 +398,16 @@ export class ItemStateStore {
       }
       // Migrate pre-merge hidden rows that arrive from the server: same logic
       // as the constructor migration so Supabase-hydrated hidden=true/done=false
-      // rows don't stay invisible with /hidden removed.
+      // rows don't stay invisible with /hidden removed. As there, the hidden
+      // clear is stamped with `now` — the migration is local-only (hydrate never
+      // fires the sink), so the server row keeps hidden=true with its old clock,
+      // and only a newer local clock keeps the next hydrate's LWW from
+      // resurrecting it.
       if (merged.hidden && !merged.done && !expired(merged.hiddenAt, now)) {
         next[id] = {
           ...applyMutation(merged, 'done', true, now),
           hidden: false,
-          hiddenAt: null,
+          hiddenAt: now,
         };
       } else {
         next[id] = merged;
