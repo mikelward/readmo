@@ -2260,6 +2260,23 @@ keys differ; the strategies map one-to-one:
   device has a connection, so we don't blame our backend without evidence. The
   one failure that *is* evidence our backend is the problem is an HTTP **5xx**
   response (reachable but erroring), which shows **"Down"** — see *Offline UX*.
+- **An OS connection change triggers an immediate probe (never a label).**
+  `navigator.connection`'s `change` event (Network Information API — Android
+  Chrome, exactly where `navigator.onLine` lags worst; absent on iOS Safari,
+  where the listener is never registered) fires when the OS's view of the
+  connection shifts — entering a tunnel, wifi↔cellular — often long before
+  `navigator.onLine` flips, or when it never does. The event is treated only as
+  a **trigger** for the same liveness probe, never as truth, so labeling stays
+  evidence-based: a change that broke nothing is a no-op. This closes the
+  no-traffic detection gap (with nothing in flight, a signal loss otherwise
+  goes unnoticed until the user's next fetch eats the timeout+probe window at
+  the worst moment) and speeds recovery when a change fires as signal returns.
+  Coalesced to one probe in flight; skipped while the device reports offline,
+  when unconfigured (mock mode), **and while "Down"** — a 5xx means the backend
+  is already reachable, and clearing Down (which unpauses reads) is rate-owned
+  by the backed-off 30s recovery probe and the focus probe, not by
+  machine-chatty change events. Cost: one health-endpoint GET per OS network
+  transition — negligible.
 - `CACHE_BUSTER` wipes the persisted blob on schema change; the outbox and
   Supabase data are unaffected (server is canonical).
 - **All client caches are scoped to the signed-in user and purged on account
