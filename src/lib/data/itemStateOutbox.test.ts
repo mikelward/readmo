@@ -232,4 +232,42 @@ describe('ItemStateOutbox', () => {
     expect(h2.sent).toEqual([['a', { hidden: { value: true, at: 1000 } }]]);
     expect(h2.persistence.rows()).toEqual([]);
   });
+
+  it('drops malformed persisted entries instead of replaying them forever', async () => {
+    // localStorage contents are untrusted: a corrupted blob, or a stale shape
+    // that skipped a key bump. An entry with a missing/invalid `at` would make
+    // the send serializer throw (`new Date(undefined).toISOString()`), which the
+    // drain classifies as TRANSIENT — so one poisoned entry would retry on
+    // backoff forever and pin its item in pendingIds() (the hydrate overlay).
+    // Unknown field names would 404 the RPC (unknown p_<f> param) the same way.
+    const persistence = memPersistence();
+    persistence.save([
+      // Valid — must survive.
+      { id: 'good', changed: { pinned: { value: true, at: 1000 } } },
+      // Legacy boolean shape (pre-LWW): no per-field `at`.
+      { id: 'legacy', changed: { pinned: true } },
+      // Missing / non-finite `at`.
+      { id: 'no-at', changed: { done: { value: true } } },
+      { id: 'nan-at', changed: { done: { value: true, at: Number.NaN } } },
+      // Unknown field name.
+      { id: 'unknown-field', changed: { bogus: { value: true, at: 1000 } } },
+      // Mixed: the valid field survives, the invalid one is dropped.
+      {
+        id: 'mixed',
+        changed: { favorite: { value: true, at: 2000 }, done: { value: true } },
+      },
+      // Structurally broken entries.
+      { id: 42, changed: { pinned: { value: true, at: 1000 } } },
+      { id: 'null-changed', changed: null },
+      null,
+    ] as never);
+    const h2 = makeHarness(persistence);
+    expect(h2.outbox.pendingIds().sort()).toEqual(['good', 'mixed']);
+    await h2.outbox.flush();
+    expect(h2.sent).toEqual([
+      ['good', { pinned: { value: true, at: 1000 } }],
+      ['mixed', { favorite: { value: true, at: 2000 } }],
+    ]);
+    expect(h2.persistence.rows()).toEqual([]); // nothing poisoned left behind
+  });
 });

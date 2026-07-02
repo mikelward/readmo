@@ -72,6 +72,45 @@ function mergeStamped(base: StampedFields, next: StampedFields): StampedFields {
   return { ...base, ...next };
 }
 
+/** The item-state field names a persisted entry may carry. Unknown keys would
+ * be forwarded to the RPC as unknown `p_<f>` params and 404 every replay. */
+const VALID_FIELDS: ReadonlySet<string> = new Set([
+  'pinned',
+  'favorite',
+  'done',
+  'hidden',
+  'opened',
+]);
+
+/** Validate one persisted entry's changed-field map, dropping anything that
+ * isn't `{ value: boolean, at: finite number }` under a known field name.
+ * localStorage contents are untrusted (corruption, or a stale blob from a
+ * shape change that skipped a key bump): a field with a missing/invalid `at`
+ * would make the send serializer throw (`new Date(undefined).toISOString()`),
+ * which the drain classifies as *transient* — so one poisoned entry would
+ * retry on backoff forever and pin its item in `pendingIds()` (the hydrate
+ * overlay) for good. Returns null when nothing valid remains. */
+function sanitizeStampedFields(raw: unknown): StampedFields | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const out: StampedFields = {};
+  let any = false;
+  for (const [f, c] of Object.entries(raw)) {
+    if (!VALID_FIELDS.has(f)) continue;
+    const rec = c as { value?: unknown; at?: unknown } | null;
+    if (
+      rec !== null &&
+      typeof rec === 'object' &&
+      typeof rec.value === 'boolean' &&
+      typeof rec.at === 'number' &&
+      Number.isFinite(rec.at)
+    ) {
+      out[f as ItemStateField] = { value: rec.value, at: rec.at };
+      any = true;
+    }
+  }
+  return any ? out : null;
+}
+
 export class ItemStateOutbox {
   // Pending merged changes per item, in insertion order (Map preserves it).
   private readonly queue = new Map<ItemId, StampedFields>();
@@ -107,7 +146,14 @@ export class ItemStateOutbox {
      * landed. Optional — the mock source has no outbox. */
     private readonly onDrained?: () => void,
   ) {
-    for (const e of this.persistence.load()) this.queue.set(e.id, e.changed);
+    // Sanitize on load — see sanitizeStampedFields. An entry (or field) that
+    // doesn't validate is DROPPED rather than replayed: it can't be delivered,
+    // and keeping it would wedge that item's queue forever.
+    for (const e of this.persistence.load()) {
+      if (typeof (e as { id?: unknown } | null)?.id !== 'string') continue;
+      const changed = sanitizeStampedFields(e.changed);
+      if (changed) this.queue.set(e.id, changed);
+    }
   }
 
   /** Merged un-synced changed-fields per item — both queued and in-flight
