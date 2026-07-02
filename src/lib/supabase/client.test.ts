@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { supabaseFetch, _resetRequestBreakerForTests } from './client';
-import { _resetNetworkStatusForTests, getOnline } from '../networkStatus';
+import {
+  _resetNetworkStatusForTests,
+  getOnline,
+  setConnectivityProbeUrl,
+} from '../networkStatus';
 import { isRetriableError } from '../queryRetry';
 
 function setNavigatorOnline(value: boolean) {
@@ -81,6 +85,75 @@ describe('supabaseFetch', () => {
 
     await expect(promise).rejects.toMatchObject({ name: 'TimeoutError' });
     expect(getOnline()).toBe(false);
+  });
+
+  it('hedges a slow read with a liveness probe — a dead zone flips Offline before the 8s cap', async () => {
+    // Lie-fi: the read hangs (no fast failure), so without the hedge the first
+    // offline evidence waits out the full read cap plus the post-timeout probe.
+    // The hedge fires the probe at 3s, in parallel with the still-hanging read.
+    vi.useFakeTimers();
+    const PROBE = 'https://x.supabase.co/auth/v1/health';
+    setConnectivityProbeUrl(PROBE);
+    const urlOf = (input: RequestInfo | URL) =>
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      // The probe fails fast (genuinely unreachable); the read hangs until abort.
+      if (urlOf(input) === PROBE)
+        return Promise.reject(new TypeError('Failed to fetch'));
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal!.reason));
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const promise = supabaseFetch(
+      'https://x.supabase.co/rest/v1/rpc/feed_items',
+      { method: 'POST' },
+    );
+    promise.catch(() => undefined);
+
+    expect(getOnline()).toBe(true);
+    await vi.advanceTimersByTimeAsync(3_000);
+    // The pill flipped at hedge time — 5s before the read even times out.
+    expect(getOnline()).toBe(false);
+    expect(fetchMock).toHaveBeenCalledWith(
+      PROBE,
+      expect.objectContaining({ method: 'GET' }),
+    );
+
+    // The read cap is unaffected: the read itself still aborts at 8s.
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(promise).rejects.toMatchObject({ name: 'TimeoutError' });
+  });
+
+  it('does not hedge uncapped requests (auth) — only bounded reads adjudicate slowness', async () => {
+    // Auth/Edge/writes are deliberately uncapped; they must not fire hedge
+    // probes either (a long-running function invoke is normal, not lie-fi).
+    vi.useFakeTimers();
+    const PROBE = 'https://x.supabase.co/auth/v1/health';
+    setConnectivityProbeUrl(PROBE);
+    const fetchMock = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal!.reason));
+          setTimeout(() => resolve(new Response('{}', { status: 200 })), 20_000);
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const promise = supabaseFetch('https://x.supabase.co/auth/v1/token', {
+      method: 'POST',
+    });
+    await vi.advanceTimersByTimeAsync(19_000);
+    // No probe fired despite 19s in flight — only the auth request itself ran.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect((await promise).status).toBe(200);
+    expect(getOnline()).toBe(true);
   });
 
   it('does not abort before the 8s ceiling — a read at 7.9s still resolves', async () => {
