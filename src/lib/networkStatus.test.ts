@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { onlineManager } from '@tanstack/react-query';
 import {
+  _handleConnectionChangeForTests,
   _resetNetworkStatusForTests,
   confirmBackendReachable,
   getConnectivityStatus,
@@ -462,6 +463,99 @@ describe('networkStatus tracker', () => {
 
       expect(getConnectivityStatus()).toBe('backend-unreachable'); // Down kept
       expect(onlineManager.isOnline()).toBe(false); // reads stay paused — no refetch loop
+    });
+  });
+
+  describe('connection-change probe trigger (Network Information API)', () => {
+    const PROBE = 'https://x.supabase.co/auth/v1/health';
+
+    it('flips offline via a failed probe with zero app traffic (tunnel entry)', async () => {
+      setConnectivityProbeUrl(PROBE);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          throw new TypeError('Failed to fetch');
+        }),
+      );
+
+      await _handleConnectionChangeForTests();
+
+      expect(getConnectivityStatus()).toBe('offline');
+    });
+
+    it('keeps us online on a benign change (e.g. wifi→cellular) — the probe is trigger, not truth', async () => {
+      setConnectivityProbeUrl(PROBE);
+      const events: boolean[] = [];
+      subscribeOnline((v) => events.push(v));
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 200 })));
+
+      await _handleConnectionChangeForTests();
+
+      expect(getConnectivityStatus()).toBe('online');
+      expect(events).toEqual([]); // no transition emitted
+    });
+
+    it('speeds recovery: a change while latched offline probes and clears the pill', async () => {
+      setConnectivityProbeUrl(PROBE);
+      reportFetchFailure(new TypeError('Failed to fetch'));
+      expect(getConnectivityStatus()).toBe('offline');
+
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 200 })));
+      await _handleConnectionChangeForTests();
+
+      expect(getConnectivityStatus()).toBe('online');
+    });
+
+    it('does not probe (or clear Down) while Down — clearing Down is rate-owned by the recovery probe', async () => {
+      // "Down" means the backend is already reachable (we saw a 5xx), so
+      // reachability isn't the open question — and change events can be chatty
+      // (downlink/RTT estimate shifts), so letting each one optimistically
+      // clear Down would unpause the paused reads per event during a DB
+      // outage. The backed-off 30s recovery probe / focus probe own that.
+      setConnectivityProbeUrl(PROBE);
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 500 })));
+      await trackedFetch('/rest/v1/x'); // core 5xx → Down
+      expect(getConnectivityStatus()).toBe('backend-unreachable');
+
+      const probeMock = vi.fn(async () => new Response(null, { status: 200 }));
+      vi.stubGlobal('fetch', probeMock);
+      await _handleConnectionChangeForTests();
+
+      expect(probeMock).not.toHaveBeenCalled();
+      expect(getConnectivityStatus()).toBe('backend-unreachable');
+      expect(onlineManager.isOnline()).toBe(false); // reads stay paused
+    });
+
+    it('coalesces a burst of change events into one probe', async () => {
+      setConnectivityProbeUrl(PROBE);
+      let resolveProbe!: (r: Response) => void;
+      const fetchMock = vi.fn(
+        () => new Promise<Response>((r) => { resolveProbe = r; }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      const a = _handleConnectionChangeForTests();
+      const b = _handleConnectionChangeForTests();
+      resolveProbe(new Response(null, { status: 200 }));
+      await Promise.all([a, b]);
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not probe while the browser reports offline, or when unconfigured', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+
+      // Unconfigured (no probe URL): nothing to probe.
+      await _handleConnectionChangeForTests();
+
+      // Configured, but the device reports no network — the pill is already on.
+      setConnectivityProbeUrl(PROBE);
+      setNavigatorOnline(false);
+      window.dispatchEvent(new Event('offline'));
+      await _handleConnectionChangeForTests();
+
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 

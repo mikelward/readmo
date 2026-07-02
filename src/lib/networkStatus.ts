@@ -477,6 +477,50 @@ function handleRegainedFocus() {
   void confirmBackendReachable();
 }
 
+/**
+ * Network Information API trigger. `navigator.connection` fires `change` when
+ * the OS's view of the connection shifts — entering a tunnel, wifi↔cellular,
+ * the effective type dropping — often long before `navigator.onLine` flips
+ * (which can lag by tens of seconds, or never fire, or flap). The event is
+ * treated ONLY as a trigger for an immediate liveness probe, never as truth:
+ * labeling stays evidence-based, so a change that broke nothing is a no-op
+ * costing one tiny GET. This closes the no-traffic detection gap — with
+ * nothing in flight, a signal loss otherwise goes unnoticed until the user's
+ * next fetch eats the full timeout+probe window at the worst moment. A change
+ * while latched OFFLINE probes too (same stale-guards), which speeds recovery
+ * when the signal returns. Supported on Android Chrome — exactly where
+ * `navigator.onLine` lags worst; absent on iOS Safari, where the listener is
+ * simply never registered.
+ */
+let connectionProbeInFlight = false;
+async function handleConnectionChange(): Promise<void> {
+  // Device says it has no network at all → the pill is already on and the
+  // probe could only fail; the `online` event / recovery probe own that path.
+  // Unconfigured (mock) → no backend to probe. Coalesce bursts of change
+  // events into one probe at a time.
+  if (probeUrl == null || !browserOnline || connectionProbeInFlight) return;
+  // "Down" (a core 5xx) means the backend is already REACHABLE — reachability
+  // is not the open question, and a probe success would optimistically clear
+  // Down (reportProbeSuccess) and unpause reads. That clear is deliberately
+  // rate-owned by the backed-off 30s recovery probe and the (rare, user-
+  // salient) focus probe; connection-change events are machine-driven and can
+  // be chatty (Chrome fires them on downlink/RTT estimate shifts), so letting
+  // them re-test would defeat the paused-reads backoff during a DB outage.
+  if (backendErroring) return;
+  connectionProbeInFlight = true;
+  try {
+    await confirmBackendReachable();
+  } finally {
+    connectionProbeInFlight = false;
+  }
+}
+
+/** Test-only: drive the `navigator.connection` change handler directly —
+ * registration happens at module load, when jsdom exposes no `connection`. */
+export function _handleConnectionChangeForTests(): Promise<void> {
+  return handleConnectionChange();
+}
+
 function isTimeout(err: unknown): boolean {
   return err instanceof DOMException && err.name === 'TimeoutError';
 }
@@ -621,6 +665,18 @@ if (typeof window !== 'undefined') {
   // Returning to a tab that's showing "Down" re-checks the backend at once.
   window.addEventListener('focus', handleRegainedFocus);
 }
+if (typeof navigator !== 'undefined') {
+  // See handleConnectionChange. Optional-chained throughout: the API is absent
+  // on iOS Safari/jsdom, and older shapes may lack addEventListener.
+  const connection = (
+    navigator as Navigator & {
+      connection?: {
+        addEventListener?: (type: 'change', listener: () => void) => void;
+      };
+    }
+  ).connection;
+  connection?.addEventListener?.('change', () => void handleConnectionChange());
+}
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') handleRegainedFocus();
@@ -639,6 +695,7 @@ export function _resetNetworkStatusForTests() {
   lastStatus = computeStatus();
   probeUrl = null;
   probeInFlight = false;
+  connectionProbeInFlight = false;
   successSeq = 0;
   probeBaselineSeq = 0;
   livenessSeq = 0;
