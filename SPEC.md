@@ -898,6 +898,11 @@ negligible and off every critical path. See the External services table in
   value): a write the server read can't reflect yet must not be reverted by a
   millisecond-`at` tie (the server resolves the same tie its way via `>=`) or by
   a `null` clock an older client persisted on a cleared false field. The overlay
+  never overrides a **strictly newer** server clock, though: that is a
+  cross-device write the pending one will lose to (the server's `>=`) when it
+  lands — or one that already superseded a drained-and-won write before the
+  read executed, an ordering no loss re-pull covers — so the server value is
+  adopted. The overlay
   set is the union of the outbox's still-pending fields **and** any write that
   enqueued and drained entirely *within* the read window (tracked as a
   during-read note) — the latter included because its server-accepted tie leaves

@@ -362,11 +362,13 @@ export class ItemStateStore {
    * `pending` (the outbox's changed-fields per item) covers what LWW clocks
    * alone can't decide:
    *  - **Field overlay.** A field with an un-synced write keeps its LOCAL value
-   *    regardless of the clock compare — the write hasn't reached the server, so
-   *    the read can't reflect it, and it WILL win the server's `>=` when it
-   *    lands. This wins ms-`at` ties (a strict `>` would wrongly drop the
-   *    optimistic value) and rows upgraded from an older client whose
-   *    exclusivity-cleared false fields persisted with a `null` clock.
+   *    unless the server clock is strictly newer — the write hasn't reached the
+   *    server, so the read can't reflect it, and it will win the server's `>=`
+   *    when it lands. This wins ms-`at` ties (a strict `>` would wrongly drop
+   *    the optimistic value) and rows upgraded from an older client whose
+   *    exclusivity-cleared false fields persisted with a `null` clock. A
+   *    strictly NEWER server clock is a cross-device write the pending one will
+   *    lose to, so the server value is adopted (see the overlay note below).
    *  - **Absent-row protection.** A local row the server didn't return is kept
    *    only when it has a pending write (a brand-new row whose write hasn't
    *    reached the server, or raced this read); otherwise it's genuinely gone
@@ -386,13 +388,26 @@ export class ItemStateStore {
       let merged = local ? mergeByLww(srv, local) : srv;
       // Overlay the still-pending fields onto the LWW result, taking the local
       // value+clock so an un-synced write isn't reverted by a clock tie or a
-      // pre-write/sibling server field (see the `pending` note above).
+      // pre-write/sibling server field (see the `pending` note above). The
+      // overlay exists to win same-ms ties and null-local-clock upgrades ONLY —
+      // never a strictly newer server clock: that's a cross-device write this
+      // read already reflects and the pending write will LOSE the server's `>=`
+      // when it lands (e.g. a write that drained-and-won mid-read, then was
+      // superseded by another device before the read executed — no loss re-pull
+      // fires for that ordering, so adopting the server here is the only
+      // correction). A null local clock still overlays: a current client stamps
+      // every field it touches, so null means a legacy row whose pending write
+      // carries its own `at` and resolves server-side.
       const changed = local && pending.get(id);
       if (changed) {
         const overlaid: ItemState = { ...merged };
         for (const f of Object.keys(changed) as ItemStateField[]) {
+          const fAt = `${f}At` as const;
+          if (local[fAt] !== null && (local[fAt] as number) < (overlaid[fAt] ?? 0)) {
+            continue; // server clock strictly newer — the local write already lost
+          }
           overlaid[f] = local[f];
-          overlaid[`${f}At` as const] = local[`${f}At` as const];
+          overlaid[fAt] = local[fAt];
         }
         merged = overlaid;
       }

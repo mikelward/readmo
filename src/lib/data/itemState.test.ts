@@ -522,6 +522,26 @@ describe('ItemStateStore', () => {
       expect(store.get('a', NOW + 20).done).toBe(false);
     });
 
+    it('adopts a strictly newer server value over a pending field (superseding cross-device write)', () => {
+      // A pending write can be superseded by another device before the read
+      // executes: ours drains and WINS mid-read, then a newer foreign write
+      // lands, and the read returns the foreign value. No LWW-loss re-pull
+      // fires for that ordering (our own send echoed a win), so the overlay
+      // must not pin the stale local value — it exists to win ties and
+      // null-clock upgrades, never a strictly newer server clock, which the
+      // pending write would lose to server-side anyway.
+      const store = new ItemStateStore(memoryPersistence());
+      store.set('a', 'pinned', true, NOW); // local pin@NOW, still reported pending
+      const serverUnpinned = applyMutation(
+        state({ pinned: true, pinnedAt: NOW }),
+        'pinned',
+        false,
+        NOW + 10,
+      );
+      store.hydrate([['a', serverUnpinned]], new Map([['a', { pinned: true }]]), NOW + 10);
+      expect(store.get('a', NOW + 10).pinned).toBe(false); // newer foreign unpin wins
+    });
+
     it('overlays a pending field on a clock TIE instead of reverting to the server', () => {
       // A queued write whose `at` equals the stale server row's clock (same-ms
       // toggle / reduced-precision timer). Strict-`>` LWW would treat the tie as
@@ -538,9 +558,13 @@ describe('ItemStateStore', () => {
     it('overlays a pending closed field whose clock persisted null (older-client upgrade)', () => {
       // An older client persisted the pin's exclusivity-cleared `done` with a null
       // clock, but the outbox entry carries the real action. A hydrate returning a
-      // sibling server `done=true` would (clocks alone) adopt it AND keep the pin,
-      // leaving an invalid pinned+done row. Overlaying the pending closed fields
-      // keeps local done=false.
+      // sibling server `done=true` would (clocks alone) adopt it while the overlay
+      // kept the pin, leaving an invalid pinned+done row. Overlaying the pending
+      // null-clock closed fields keeps local done=false. The pin itself, whose
+      // clock IS comparable and strictly older than the server dismissal, is
+      // adopted from the server (the pending pin loses the server's `>=` when it
+      // lands, and the loss re-pull then converges the rest) — so no field pairing
+      // is ever left invalid.
       let saved: Record<string, ItemState> = {
         a: state({ pinned: true, pinnedAt: NOW }), // doneAt defaults to null (old shape)
       };
@@ -557,8 +581,8 @@ describe('ItemStateStore', () => {
         new Map([['a', { pinned: true, done: false, hidden: false }]]),
         NOW + 10,
       );
-      expect(store.get('a', NOW + 10).pinned).toBe(true);
-      expect(store.get('a', NOW + 10).done).toBe(false); // not left pinned+done
+      expect(store.get('a', NOW + 10).pinned).toBe(false); // newer server dismissal wins the comparable clock
+      expect(store.get('a', NOW + 10).done).toBe(false); // null-clock closed field still overlaid — not left pinned+done
     });
   });
 });
