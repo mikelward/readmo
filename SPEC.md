@@ -2244,8 +2244,16 @@ keys differ; the strategies map one-to-one:
   load — Retry" state. Only if the probe **also** fails (network error / its own
   timeout) do we flip to Offline. The probe is coalesced (one in flight at a
   time) and skipped when no project URL is configured (mock mode falls back to
-  treating a timeout as offline). Cost/reliability: same Supabase project (no new
-  third party), fires only on the rare timeout path, ~5s budget — negligible.
+  treating a timeout as offline). The same adjudication is **hedged**: a bounded
+  read still unsettled after 3s (`HEDGE_PROBE_MS`) fires the probe in parallel
+  with the still-hanging read (`reportFetchSlow`), so a genuine dead zone —
+  lie-fi, where requests hang rather than fail fast — flips the pill in
+  ~hedge+probe time instead of waiting out the full read cap first. A
+  slow-but-working read is unaffected: the probe reaching the backend changes
+  nothing, the read keeps its full cap, and any success landing meanwhile
+  (including the SW cache answering the hedged read) suppresses the probe
+  failure. Cost/reliability: same Supabase project (no new third party), fires
+  only on the timeout/slow-read paths, ~5s budget, coalesced — negligible.
   Hard network errors (`TypeError`/`NetworkError` — DNS, unreachable host,
   dropped connection) flip the **fetch** signal immediately (they fail fast) and,
   because a throw is no response, read as **"Offline"** — we can't prove the

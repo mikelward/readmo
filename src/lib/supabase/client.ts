@@ -1,5 +1,9 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { setConnectivityProbeUrl, trackedFetch } from '../networkStatus';
+import {
+  reportFetchSlow,
+  setConnectivityProbeUrl,
+  trackedFetch,
+} from '../networkStatus';
 import { buildInfo } from '../buildInfo';
 import { RequestCircuitBreaker } from '../data/requestCircuitBreaker';
 
@@ -23,6 +27,18 @@ import { RequestCircuitBreaker } from '../data/requestCircuitBreaker';
 // long-running). All of those still flow through trackedFetch, so a real failure
 // flips the Offline pill.
 const REQUEST_TIMEOUT_MS = 8_000;
+
+// Hedged liveness probe for lie-fi. A bounded read still unsettled after this
+// long fires `reportFetchSlow`, which runs the reachability probe IN PARALLEL
+// with the still-hanging read instead of waiting out the full cap first — so a
+// genuine dead zone (bars at zero, radio not yet given up, requests hang
+// rather than fail) flips the Offline pill in ~hedge+probe rather than
+// cap+probe. A slow-but-working read is unaffected: the probe reaching the
+// backend changes nothing, and the read keeps its full 8s. Keep the ordering
+// hedge < SW cache-fallback window (6s) < read cap (8s) — the hedge must fire
+// while the read is still genuinely undecided. Cost: one health-endpoint GET
+// per slow read, coalesced to one probe in flight — negligible.
+const HEDGE_PROBE_MS = 3_000;
 
 // Single browser Supabase client for the whole app. The URL + anon key are
 // public (RLS-gated); the service-role key never reaches the client. When the
@@ -226,9 +242,13 @@ function boundedReadFetch(
       ),
     REQUEST_TIMEOUT_MS,
   );
+  // Lie-fi hedge: adjudicate reachability while the read is still in flight
+  // (see HEDGE_PROBE_MS). Cleared with the cap timer when the read settles.
+  const hedgeTimer = setTimeout(() => reportFetchSlow(), HEDGE_PROBE_MS);
   return trackedFetch(input, { ...init, signal: controller.signal }).finally(
     () => {
       clearTimeout(timer);
+      clearTimeout(hedgeTimer);
       callerSignal?.removeEventListener('abort', forwardAbort);
     },
   );

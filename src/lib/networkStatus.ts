@@ -317,6 +317,17 @@ async function maybeProbeAfterTimeout(): Promise<void> {
       method: 'GET',
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
+    // A core 5xx may have landed while this probe was airborne — including from
+    // the very read whose slowness hedged it (reportFetchSlow): a slow-500
+    // backend answers AFTER the 3s hedge fires. That Down evidence is NEWER
+    // than this probe's information, and health-up ≠ reads-up (the health
+    // endpoint is in-process and stays up while the DB is failing). Clearing
+    // Down here would unpause React Query per slow-500 read and defeat the
+    // paused-reads backoff — so leave Down for the backed-off recovery probe
+    // (one re-test per 30s interval), which deliberately DOES clear it. This
+    // mirrors the failure path's stale-guard just below (a 5xx mid-probe blocks
+    // the Down→Offline relatch via successSeq).
+    if (backendErroring) return;
     // Reaching the backend is positive evidence of connectivity: keep us online,
     // and clear the pill if a prior hard failure had flipped it off. A genuine
     // probe success (not a cache hit), so it counts toward probeSuccessSeq too.
@@ -331,6 +342,32 @@ async function maybeProbeAfterTimeout(): Promise<void> {
   } finally {
     probeInFlight = false;
   }
+}
+
+/**
+ * Report a bounded read that has been in flight for a while without settling
+ * (supabaseFetch hedges at HEDGE_PROBE_MS — see client.ts). Lie-fi — signal
+ * bars at zero but the radio not yet given up — makes reads HANG rather than
+ * fail fast, so the first offline evidence would otherwise wait out the full
+ * 8s read cap *plus* the post-timeout probe. Kick the same reachability
+ * adjudication a timeout does, in parallel with the still-running read: the
+ * probe reaching the backend changes nothing (slow backend — the read may yet
+ * succeed), while a failed probe flips Offline now, a read-cap earlier than
+ * waiting it out. Reuses the timeout probe's coalescing (one in flight at a
+ * time) and its stale-success guard (any success landing after this hedge —
+ * including the SW's 6s cache fallback answering the very read being hedged —
+ * suppresses the probe failure), so hedging can't flap a slow-but-working
+ * connection offline.
+ *
+ * No-op when no probe is configured: the post-timeout path treats a TIMEOUT
+ * as offline conservatively in mock mode, but a merely-slow read that may
+ * still succeed proves nothing on its own. Also skipped while the browser
+ * already reports offline — the pill is already on and there's nothing to
+ * adjudicate.
+ */
+export function reportFetchSlow(): Promise<void> | void {
+  if (probeUrl == null || !browserOnline) return;
+  return maybeProbeAfterTimeout();
 }
 
 /**

@@ -6,6 +6,7 @@ import {
   getConnectivityStatus,
   getOnline,
   reportFetchFailure,
+  reportFetchSlow,
   reportFetchSuccess,
   setConnectivityProbeUrl,
   subscribeConnectivityStatus,
@@ -368,6 +369,99 @@ describe('networkStatus tracker', () => {
       expect(getConnectivityStatus()).toBe('offline');
       // goOffline arms the recovery timer but does not fire a probe synchronously.
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('hedged slow-read probe (reportFetchSlow)', () => {
+    const PROBE = 'https://x.supabase.co/auth/v1/health';
+
+    it('flips offline when the probe fails while the read still hangs (lie-fi)', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          throw new TypeError('Failed to fetch');
+        }),
+      );
+      setConnectivityProbeUrl(PROBE);
+
+      await reportFetchSlow();
+
+      expect(getConnectivityStatus()).toBe('offline');
+    });
+
+    it('stays online when the probe reaches the backend (the read is just slow)', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 200 })));
+      setConnectivityProbeUrl(PROBE);
+
+      await reportFetchSlow();
+
+      expect(getConnectivityStatus()).toBe('online');
+    });
+
+    it('is a no-op without a probe URL — a merely-slow read proves nothing (mock mode)', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+
+      await reportFetchSlow();
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(getOnline()).toBe(true);
+    });
+
+    it('is a no-op while the browser already reports offline', async () => {
+      setConnectivityProbeUrl(PROBE);
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      setNavigatorOnline(false);
+      window.dispatchEvent(new Event('offline'));
+
+      await reportFetchSlow();
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('a success landing after the hedge (e.g. the SW cache answering the read) suppresses the probe failure', async () => {
+      setConnectivityProbeUrl(PROBE);
+      let rejectProbe!: (e: unknown) => void;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(() => new Promise<Response>((_, rej) => { rejectProbe = rej; })),
+      );
+
+      const probe = reportFetchSlow();
+      reportFetchSuccess(); // the hedged read resolved after all
+      rejectProbe(new TypeError('Failed to fetch'));
+      await probe;
+
+      expect(getOnline()).toBe(true);
+    });
+
+    it('a probe success landing after a core 5xx keeps us Down — health-up is not reads-up', async () => {
+      // Slow-500 backend: the read hangs past the 3s hedge, the probe goes out,
+      // THEN the read resolves 5xx (goBackendDown). The in-process health
+      // endpoint answers 200 even while the DB is failing — that success is
+      // STALE relative to the 5xx and must not clear Down and unpause React
+      // Query per slow read (the backed-off 30s recovery probe owns clearing
+      // Down). Mirrors the failure path's existing stale-guard.
+      setConnectivityProbeUrl(PROBE);
+      let resolveProbe!: (r: Response) => void;
+      const fetchMock = vi
+        .fn()
+        .mockImplementationOnce(
+          () => new Promise<Response>((r) => { resolveProbe = r; }),
+        ) // the hedge's probe — held open
+        .mockResolvedValueOnce(new Response(null, { status: 500 })); // the slow read
+      vi.stubGlobal('fetch', fetchMock);
+
+      const probe = reportFetchSlow(); // hedge fires while the read hangs
+      await trackedFetch('/rest/v1/rpc/feed_items', { method: 'POST' }); // → Down
+      expect(getConnectivityStatus()).toBe('backend-unreachable');
+
+      resolveProbe(new Response(null, { status: 200 })); // health answers after the 5xx
+      await probe;
+
+      expect(getConnectivityStatus()).toBe('backend-unreachable'); // Down kept
+      expect(onlineManager.isOnline()).toBe(false); // reads stay paused — no refetch loop
     });
   });
 
