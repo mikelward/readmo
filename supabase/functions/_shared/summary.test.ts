@@ -103,30 +103,21 @@ describe('clampSummaryText', () => {
 });
 
 describe('buildSummaryPrompt', () => {
-  it('asks for a short paragraph and embeds the content', () => {
+  it('asks for a tl;dr and embeds the title and content', () => {
     const prompt = buildSummaryPrompt('A Title', 'the body text');
-    expect(prompt).toContain('few sentences');
-    expect(prompt).toContain('short paragraph');
-    expect(prompt).toContain('Markdown');
+    expect(prompt).toContain('Provide a tl;dr of the following article:');
     expect(prompt).toContain('A Title');
     expect(prompt).toContain('the body text');
     expect(prompt).toContain('--- BEGIN ARTICLE ---');
     expect(prompt).toContain('--- END ARTICLE ---');
   });
 
-  it('carries the direct-assertion, no-meta-framing, three-points steer', () => {
+  it('stays unsteered: no length, format, or register instructions beyond the tl;dr ask', () => {
     const prompt = buildSummaryPrompt('A Title', 'body');
-    expect(prompt).toContain('about three key points');
-    expect(prompt).toContain('direct assertion');
-    expect(prompt).toContain('Do not begin with meta-framing');
-    // No URL clause: readmo never passes the article URL to the prompt.
-    expect(prompt).not.toContain('fetched from');
-  });
-
-  it("drops the author-voice clause that made Gemini speak as the article's subject", () => {
-    const prompt = buildSummaryPrompt('A Title', 'body');
-    expect(prompt).not.toContain('voice of the author');
-    expect(prompt).not.toContain('on their behalf');
+    expect(prompt).not.toContain('sentences');
+    expect(prompt).not.toContain('bullet');
+    expect(prompt).not.toContain('Markdown');
+    expect(prompt).not.toContain('meta-framing');
   });
 
   it('omits the title clause when there is no title', () => {
