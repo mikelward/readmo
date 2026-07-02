@@ -648,6 +648,17 @@ function handleBrowserOnline() {
   // while the device was offline).
   updateRecoveryProbe();
   emitIfChanged();
+  // …and probe NOW, not at the interval's first tick 30s out. The reconnect
+  // event is rare and user-salient — the same trigger class as regained focus,
+  // so it may clear a latched Down/Offline immediately (unlike machine-chatty
+  // connection-change events, which must not touch Down). Without this, a
+  // backend that recovered while the device was disconnected keeps the Down
+  // pill (and paused reads) for up to a full recovery interval after
+  // connectivity returns: nothing else is guaranteed to re-test — the resync
+  // read the `online` event triggers is a cache-ambiguous GET whose success is
+  // deliberately suppressed while in doubt, and the outbox/refetch POSTs only
+  // fire if something happens to be queued or stale.
+  if (inDoubt()) void confirmBackendReachable();
 }
 
 function handleBrowserOffline() {

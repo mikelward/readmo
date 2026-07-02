@@ -870,6 +870,67 @@ describe('networkStatus tracker', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it('probes immediately on browser reconnect while Down — no 30s interval wait', async () => {
+      // Core 5xx latches Down, then the OS drops and reconnects. The backend
+      // recovered during the gap; without an immediate reconnect probe the pill
+      // would keep showing Down (reads paused) until the recovery interval's
+      // first tick, up to 30s after connectivity returned — the resync GET the
+      // `online` event fires can't clear it (cache-ambiguous while in doubt).
+      setConnectivityProbeUrl(PROBE);
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 500 })));
+      await trackedFetch('/rest/v1/x'); // → Down
+      expect(getConnectivityStatus()).toBe('backend-unreachable');
+
+      setNavigatorOnline(false);
+      window.dispatchEvent(new Event('offline'));
+      expect(getConnectivityStatus()).toBe('offline');
+
+      const probeMock = vi.fn(async () => new Response(null, { status: 200 }));
+      vi.stubGlobal('fetch', probeMock);
+      setNavigatorOnline(true);
+      window.dispatchEvent(new Event('online'));
+
+      await vi.waitFor(() => expect(getConnectivityStatus()).toBe('online'));
+      expect(probeMock).toHaveBeenCalledWith(
+        PROBE,
+        expect.objectContaining({ method: 'GET' }),
+      );
+      expect(onlineManager.isOnline()).toBe(true); // reads un-paused right away
+    });
+
+    it('probes immediately on browser reconnect while latched offline', async () => {
+      // Same reconnect-now rule for the plain offline latch (a hard fetch
+      // failure with navigator.onLine still true, then a real OS drop+return).
+      setConnectivityProbeUrl(PROBE);
+      reportFetchFailure(new TypeError('Failed to fetch'));
+      expect(getConnectivityStatus()).toBe('offline');
+
+      setNavigatorOnline(false);
+      window.dispatchEvent(new Event('offline'));
+
+      const probeMock = vi.fn(async () => new Response(null, { status: 200 }));
+      vi.stubGlobal('fetch', probeMock);
+      setNavigatorOnline(true);
+      window.dispatchEvent(new Event('online'));
+
+      await vi.waitFor(() => expect(getConnectivityStatus()).toBe('online'));
+      expect(probeMock).toHaveBeenCalled();
+    });
+
+    it('does not probe on reconnect when nothing is latched', () => {
+      setConnectivityProbeUrl(PROBE);
+      setNavigatorOnline(false);
+      window.dispatchEvent(new Event('offline'));
+
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      setNavigatorOnline(true);
+      window.dispatchEvent(new Event('online'));
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(getConnectivityStatus()).toBe('online');
+    });
+
     it('does not let a cache hit clear the pill while offline, and keeps probing', async () => {
       vi.useFakeTimers();
       try {
