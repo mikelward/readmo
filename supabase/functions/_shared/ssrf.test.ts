@@ -244,6 +244,25 @@ describe('safeFetch — with injected resolver/fetch', () => {
     expect(new TextDecoder().decode(res.body)).toBe('final-body');
   });
 
+  it('returns a 304 Not Modified rather than treating it as a redirect', async () => {
+    // A conditional GET (ETag/If-Modified-Since) replies 304 with no body and no
+    // Location. It's a 3xx but NOT a redirect — it must pass through to the
+    // caller (the poller checks for 304), not throw "Redirect 304 without
+    // Location header".
+    let calls = 0;
+    const res = await safeFetch('https://feed.example.com/rss', {
+      resolve: async () => ['8.8.8.8'],
+      fetchImpl: async () => {
+        calls++;
+        return new Response(null, { status: 304, headers: { etag: '"abc"' } });
+      },
+    });
+    expect(res.status).toBe(304);
+    expect(res.body.byteLength).toBe(0);
+    // Not followed as a redirect — a single fetch, no loop.
+    expect(calls).toBe(1);
+  });
+
   it('caps the number of redirects', async () => {
     const fetchImpl = async (): Promise<Response> =>
       new Response(null, {
