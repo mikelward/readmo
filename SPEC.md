@@ -1155,7 +1155,11 @@ negligible and off every critical path. See the External services table in
        header that lacks one (feed not yet resolved, or a phantom swept section)
        reserves a matching 16px placeholder in the icon slot, so every feed name
        in the list starts at the same left edge instead of snapping flush to the
-       chevron. Then the **empty space** up to the actions
+       chevron. A favicon that *fails to load* (a 404'd `/favicon.ico` guess, or a
+       bot-blocked host like ft.com whose icon won't render in the browser) keeps
+       its blank 16px box (hidden via `visibility`, not removed via `display`) so
+       the name stays aligned rather than snapping left — the broken-image glyph
+       is still suppressed. Then the **empty space** up to the actions
        is a second, pointer-only collapse region — so tapping *anywhere on the row
        except the feed name/icon/count and the Undo/Sweep buttons* toggles the
        section (see below). On the right sit two

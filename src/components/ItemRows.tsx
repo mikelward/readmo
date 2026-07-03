@@ -228,11 +228,15 @@ export function ItemRows({
     reserveFaviconSpace = false,
   ): ReactNode => {
     const collapsed = collapsedFeeds?.has(feedId) ?? false;
-    // Decorative site icon to the left of the name. Hidden on load error so a
-    // 404'd guess (e.g. a derived /favicon.ico) leaves no broken-image glyph.
-    // When this section has no favicon but siblings in the same list do
-    // (reserveFaviconSpace), stand a same-size placeholder in its slot so every
-    // feed name in the list starts at the same left edge.
+    // Decorative site icon to the left of the name. On load error — a 404'd
+    // guess (e.g. a derived /favicon.ico) or a bot-blocked favicon that won't
+    // load in the browser — hide the image so there's no broken-image glyph,
+    // but keep its 16px box (visibility, not display) so the feed name doesn't
+    // snap left out of alignment with the siblings whose icons did load. Any
+    // list rendering an <img> here already "uses favicons" (reserveFaviconSpace
+    // is true whenever a header has a URL), so the slot is always worth holding.
+    // A header with no favicon URL at all stands the same-size placeholder in
+    // that slot, so every feed name in the list starts at the same left edge.
     const favicon = faviconUrl ? (
       <img
         className={
@@ -245,7 +249,7 @@ export function ItemRows({
         width={16}
         height={16}
         onError={(e) => {
-          e.currentTarget.style.display = 'none';
+          e.currentTarget.style.visibility = 'hidden';
         }}
       />
     ) : reserveFaviconSpace ? (
