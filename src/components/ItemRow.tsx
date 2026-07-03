@@ -8,7 +8,7 @@ import {
   formatItemMetaTail,
   isSafeHttpUrl,
 } from '../lib/itemMeta';
-import { faviconNeedsDarkInvert } from '../lib/faviconInvert';
+import { FeedFavicon } from './FeedFavicon';
 import { usePointerDevice } from '../hooks/usePointerDevice';
 import { useWideViewport } from '../hooks/useWideViewport';
 import { useSwipeToDismiss } from '../hooks/useSwipeToDismiss';
@@ -316,25 +316,12 @@ export function ItemRow({
       <span className="item-row__meta" data-testid="item-meta">
         {/* Per-row favicon only in non-grouped views (showFavicon). In
             group-by-feed view the icon lives on the section header instead, so
-            it isn't repeated on every row. Decorative (alt=""); hides itself on
-            load error so a 404'd /favicon.ico guess leaves no broken glyph. */}
-        {showFavicon && feed.faviconUrl ? (
-          <img
-            className={
-              'item-row__favicon' +
-              (faviconNeedsDarkInvert(feed.faviconUrl)
-                ? ' favicon--invert-dark'
-                : '')
-            }
-            src={feed.faviconUrl}
-            alt=""
-            aria-hidden="true"
-            width={16}
-            height={16}
-            data-testid="item-favicon"
-            onError={(e) => {
-              e.currentTarget.style.display = 'none';
-            }}
+            it isn't repeated on every row. */}
+        {showFavicon ? (
+          <FeedFavicon
+            url={feed.faviconUrl}
+            className="item-row__favicon"
+            testId="item-favicon"
           />
         ) : null}
         {formatItemMetaTail({

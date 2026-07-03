@@ -17,7 +17,7 @@ import {
   isSafeHttpUrl,
 } from '../lib/itemMeta';
 import { fullTextStaleTime, looksTruncated } from '../lib/fullText';
-import { faviconNeedsDarkInvert } from '../lib/faviconInvert';
+import { FeedFavicon } from '../components/FeedFavicon';
 import type { FullTextResult } from '../lib/fullText';
 import type { Item, ItemState, ItemStateField } from '../lib/types';
 import { ArticleSummary } from '../components/ArticleSummary';
@@ -166,25 +166,12 @@ function ReaderToolbar({
         data-testid={`reader-feedname${sfx}`}
       >
         {/* Feed favicon between the leading button and the name, mirroring the
-            per-row icon. Decorative (alt=""); hides itself on load error so a
-            404'd /favicon.ico guess leaves no broken glyph. */}
-        {faviconUrl ? (
-          <img
-            className={
-              'reader__feedname-favicon' +
-              (faviconNeedsDarkInvert(faviconUrl) ? ' favicon--invert-dark' : '')
-            }
-            src={faviconUrl}
-            alt=""
-            aria-hidden="true"
-            width={16}
-            height={16}
-            data-testid={`reader-feedname-favicon${sfx}`}
-            onError={(e) => {
-              e.currentTarget.style.display = 'none';
-            }}
-          />
-        ) : null}
+            per-row icon. */}
+        <FeedFavicon
+          url={faviconUrl}
+          className="reader__feedname-favicon"
+          testId={`reader-feedname-favicon${sfx}`}
+        />
         <span className="reader__feedname-text">{source}</span>
       </Link>
 

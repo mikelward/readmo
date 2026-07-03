@@ -6,7 +6,7 @@ import { useOpenOriginalFeeds } from '../hooks/useOpenOriginalFeeds';
 import { useOpenNewshackerFeeds } from '../hooks/useOpenNewshackerFeeds';
 import { useMarkDoneOnOpenFeeds } from '../hooks/useMarkDoneOnOpenFeeds';
 import { useShowRowFavicon } from '../hooks/useReadingPrefs';
-import { faviconNeedsDarkInvert } from '../lib/faviconInvert';
+import { FeedFavicon } from './FeedFavicon';
 import { ItemRow, type RightAction } from './ItemRow';
 import { ChevronRight, Sweep, Undo } from './icons';
 import { TooltipButton } from './TooltipButton';
@@ -237,24 +237,14 @@ export function ItemRows({
     // is true whenever a header has a URL), so the slot is always worth holding.
     // A header with no favicon URL at all stands the same-size placeholder in
     // that slot, so every feed name in the list starts at the same left edge.
-    const favicon = faviconUrl ? (
-      <img
-        className={
-          'item-list__group-favicon' +
-          (faviconNeedsDarkInvert(faviconUrl) ? ' favicon--invert-dark' : '')
-        }
-        src={faviconUrl}
-        alt=""
-        aria-hidden="true"
-        width={16}
-        height={16}
-        onError={(e) => {
-          e.currentTarget.style.visibility = 'hidden';
-        }}
+    const favicon = (
+      <FeedFavicon
+        url={faviconUrl}
+        className="item-list__group-favicon"
+        reserveSpace={reserveFaviconSpace}
+        placeholderClassName="item-list__group-favicon-placeholder"
       />
-    ) : reserveFaviconSpace ? (
-      <span className="item-list__group-favicon-placeholder" aria-hidden="true" />
-    ) : null;
+    );
     const count =
       !phantom && groupCounts ? (groupCounts[feedId] ?? 0) : 0;
     const showCount = count > 0;

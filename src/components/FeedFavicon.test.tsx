@@ -1,0 +1,117 @@
+import { describe, expect, it } from 'vitest';
+import { fireEvent, render } from '@testing-library/react';
+import { FeedFavicon } from './FeedFavicon';
+
+describe('FeedFavicon', () => {
+  it('renders a decorative img with the base class and intrinsic size', () => {
+    const { container } = render(
+      <FeedFavicon
+        url="https://example.com/favicon.ico"
+        className="item-row__favicon"
+        testId="fav"
+      />,
+    );
+    const img = container.querySelector<HTMLImageElement>('img.item-row__favicon');
+    expect(img).not.toBeNull();
+    expect(img).toHaveAttribute('src', 'https://example.com/favicon.ico');
+    expect(img).toHaveAttribute('alt', '');
+    expect(img).toHaveAttribute('aria-hidden', 'true');
+    expect(img).toHaveAttribute('width', '16');
+    expect(img).toHaveAttribute('height', '16');
+    expect(img).toHaveAttribute('data-testid', 'fav');
+  });
+
+  it('honors a custom size on both dimensions', () => {
+    const { container } = render(
+      <FeedFavicon
+        url="https://example.com/favicon.ico"
+        className="page-header__favicon"
+        size={20}
+      />,
+    );
+    const img = container.querySelector<HTMLImageElement>('img');
+    expect(img).toHaveAttribute('width', '20');
+    expect(img).toHaveAttribute('height', '20');
+  });
+
+  it('adds the dark-invert class only for dark-monochrome favicons', () => {
+    const { container: plain } = render(
+      <FeedFavicon
+        url="https://www.theverge.com/favicon.ico"
+        className="item-row__favicon"
+      />,
+    );
+    expect(
+      plain.querySelector('.item-row__favicon'),
+    ).not.toHaveClass('favicon--invert-dark');
+
+    const { container: mono } = render(
+      <FeedFavicon
+        url="https://www.vox.com/favicon.ico"
+        className="item-row__favicon"
+      />,
+    );
+    expect(mono.querySelector('.item-row__favicon')).toHaveClass(
+      'favicon--invert-dark',
+    );
+  });
+
+  it('collapses to nothing when there is no URL and space is not reserved', () => {
+    const { container } = render(
+      <FeedFavicon url={null} className="item-row__favicon" />,
+    );
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('span')).toBeNull();
+  });
+
+  it('renders a reserved placeholder box when there is no URL and space is reserved', () => {
+    const { container } = render(
+      <FeedFavicon
+        url={null}
+        className="item-list__group-favicon"
+        reserveSpace
+        placeholderClassName="item-list__group-favicon-placeholder"
+      />,
+    );
+    expect(container.querySelector('img')).toBeNull();
+    const placeholder = container.querySelector(
+      '.item-list__group-favicon-placeholder',
+    );
+    expect(placeholder).not.toBeNull();
+    expect(placeholder).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('falls back to an inline-sized placeholder when no placeholder class is given', () => {
+    const { container } = render(
+      <FeedFavicon url={undefined} className="x" reserveSpace size={20} />,
+    );
+    const span = container.querySelector<HTMLSpanElement>('span');
+    expect(span).not.toBeNull();
+    expect(span!.style.width).toBe('20px');
+    expect(span!.style.height).toBe('20px');
+  });
+
+  it('collapses the img via display on a load error when space is not reserved', () => {
+    const { container } = render(
+      <FeedFavicon url="https://example.com/favicon.ico" className="x" />,
+    );
+    const img = container.querySelector<HTMLImageElement>('img')!;
+    fireEvent.error(img);
+    expect(img.style.display).toBe('none');
+    expect(img.style.visibility).toBe('');
+  });
+
+  it('hides the img but keeps its box on a load error when space is reserved', () => {
+    const { container } = render(
+      <FeedFavicon
+        url="https://example.com/favicon.ico"
+        className="x"
+        reserveSpace
+      />,
+    );
+    const img = container.querySelector<HTMLImageElement>('img')!;
+    fireEvent.error(img);
+    expect(img.style.visibility).toBe('hidden');
+    expect(img.style.display).toBe('');
+  });
+});
