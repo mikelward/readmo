@@ -44,6 +44,14 @@ export interface Item {
    * reader) omit it, so consumers must tolerate null there. */
   commentsUrl: string | null;
   title: string;
+  /** A spoiler-free rewrite of `title` for sports-result headlines, e.g.
+   * "EPL MNU vs ARS result" / "F1 Qualifying results" — the short competition
+   * name first, no scoreline/winner. Generated server-side (Gemini) at poll time
+   * for allowlisted-subscriber feeds and cached on the shared item; null when the
+   * headline isn't a sports-result spoiler, when it hasn't been processed, or
+   * against a backend predating the column. The original always stays in `title`,
+   * so display is reversible — see `lib/spoilerHeadline.ts`. */
+  spoilerFreeTitle: string | null;
   author: string | null;
   /** Epoch milliseconds. */
   publishedAt: number;

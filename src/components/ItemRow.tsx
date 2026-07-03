@@ -13,9 +13,12 @@ import { usePointerDevice } from '../hooks/usePointerDevice';
 import { useWideViewport } from '../hooks/useWideViewport';
 import { useSwipeToDismiss } from '../hooks/useSwipeToDismiss';
 import { useItemState } from '../hooks/useItemState';
+import { useHideSportsSpoilers } from '../hooks/useReadingPrefs';
+import { useCapabilities, canUseFullText } from '../hooks/useCapabilities';
+import { displayTitle } from '../lib/spoilerHeadline';
 import { ItemRowMenu, type ItemRowMenuItem } from './ItemRowMenu';
 import { TooltipButton } from './TooltipButton';
-import { Article, Check, PushPinFilled, PushPinOutline } from './icons';
+import { Article, Check, PushPinFilled, PushPinOutline, VisibilityOff } from './icons';
 import { newshackerUrlForItem } from '../lib/newshacker';
 import './ItemRow.css';
 
@@ -78,7 +81,26 @@ export function ItemRow({
   const opened = state.opened;
   const done = state.done;
 
-  const title = item.title || '[untitled]';
+  // Spoiler-free headline: for allowlisted callers with the setting on, show the
+  // server-cached rewrite of a sports-result headline instead of the original
+  // (see lib/spoilerHeadline). `title` is the DISPLAYED text, so every label /
+  // menu header below stays spoiler-free too; the original rides the marker's
+  // hover reveal.
+  const { hideSportsSpoilers } = useHideSportsSpoilers();
+  // Optimistic allowlist gate: OPEN while capabilities are still loading (default
+  // caps → allowed). For a spoiler-HIDING feature this is the safe pending state
+  // — showing the already-cached rewrite immediately avoids flashing the original
+  // (spoiler) headline before caps resolve. The rewrite is non-sensitive (it
+  // hides info, derived from a title the caller can already see), so an off-list
+  // user briefly seeing it before the gate closes is harmless. (This differs from
+  // the FETCH gate `useFullTextAllowed`, which must stay closed while loading to
+  // avoid firing Edge calls — here there's no request, just which text to paint.)
+  const spoilerAllowed = canUseFullText(useCapabilities());
+  const headline = displayTitle(item, {
+    hideSpoilers: hideSportsSpoilers,
+    allowed: spoilerAllowed,
+  });
+  const title = headline.text || '[untitled]';
   const source = feed.title || formatDisplayDomain(item.url);
   // Surface the article's domain next to the feed name on aggregator feeds
   // (Hacker News, Reddit) whose rows link out elsewhere. Only when there's a
@@ -312,7 +334,23 @@ export function ItemRow({
   // "open original" external anchor so the two only differ in where they go.
   const bodyContent = (
     <>
-      <span className="item-row__title-text">{title}</span>
+      <span className="item-row__title-text">
+        {title}
+        {headline.rewritten ? (
+          // Non-interactive marker (NOT a tap zone — guardrail #2): flags that the
+          // headline was rewritten to hide a sports result. role="img" + label so
+          // it's announced; native `title` reveals the original on hover/long-press.
+          <span
+            className="item-row__spoiler-flag"
+            role="img"
+            aria-label="Spoiler-free headline"
+            title={headline.original}
+            data-testid="item-spoiler-flag"
+          >
+            <VisibilityOff width={14} height={14} />
+          </span>
+        ) : null}
+      </span>
       <span className="item-row__meta" data-testid="item-meta">
         {/* Per-row favicon only in non-grouped views (showFavicon). In
             group-by-feed view the icon lives on the section header instead, so

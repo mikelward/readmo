@@ -2108,6 +2108,89 @@ page's discipline is unchanged.
     modes are all soft (no card): Jina down/blocked → fall back to stored content;
     Gemini down/unconfigured → no card. The article and reading mode are
     unaffected.
+- **Spoiler-free sports headlines (allowlisted).** A sports feed can spoil a
+  result in the headline itself ("Man Utd beat Arsenal 3-1"). For allowlisted
+  users, such a headline is replaced — in the list **and** the reader — with a
+  spoiler-free rewrite that leads with the short competition name and names only
+  *what* happened, never the result: **"EPL MNU vs ARS result"**, **"F1 British
+  GP qualifying result"**, **"World Cup AUS v EGY result"**. Opening the article
+  is unchanged (full content, spoilers and all). The **original headline always
+  stays in `items.title`** and the rewrite in a separate column, so display is
+  reversible and the choice is a pure client decision.
+  - **Generated eagerly at poll time (Gemini), so the *list* is de-spoilered.**
+    Unlike AI summaries (generated on open), the value here is *before* you open
+    anything, so the poller generates it: after a poll, for each polled feed that
+    has an **allowlisted subscriber**, it classifies+rewrites the feed's
+    unprocessed headlines and caches the result on the shared item. The gate is
+    the `feeds_with_allowlisted_subscriber` SQL function (subscriptions →
+    `auth.users.email` → the `allowlist` table). **Cost-safety deviation:** unlike
+    the app's usual "empty allowlist = open to all", an **empty allowlist here
+    generates for no one** (feature off) — poll-time generation for every feed on
+    an unseeded deploy would be an unbounded Gemini bill, so arming the allowlist
+    is what turns it on.
+  - **Title + stored RSS content only — no extra fetch.** The model sees the
+    headline plus the body we **already stored** from the feed (`content_html` ??
+    `summary`, stripped to text and clamped) to disambiguate league/teams. There
+    is **no Jina / full-text fetch** on this path (the classification is cheap and
+    adds nothing to the poll's outbound footprint).
+  - **Explicit spoiler flag.** The prompt asks Gemini for a small JSON object
+    `{ "spoiler": boolean, "headline": string }`. The rewrite is cached **only**
+    when `spoiler` is true and a non-empty headline is returned; a non-sports
+    headline, a sports headline that *doesn't* reveal a result (preview, injury,
+    transfer, schedule), or any unparseable reply → **keep the original**. So the
+    "is this even a spoiler?" decision is the model's explicit flag, and a parse
+    failure fails safe (never blanks a title).
+  - **Model:** Google **Gemini `gemini-2.5-flash-lite`** (the same model + key,
+    `GOOGLE_API_KEY`, as AI summaries), `thinkingBudget: 0`, JSON response mode.
+    Unset key → the poller silently skips the pass. Fixed Google host (the
+    headline is in the request body, never a URL → no SSRF surface).
+  - **Cached on the shared item** (`items.spoiler_free_title` +
+    `spoiler_free_title_generated_at`, 0045): one poll's generation serves every
+    subscriber's list. `generated_at` non-null marks an item **processed** (rewrite
+    or not), so "needs a pass" is `generated_at is null` — which bounds work to new
+    /changed items, and re-queues an item when its title/body changes (the poller's
+    `upsert_feed_items` nulls both, exactly like `ai_summary`). **Unlike
+    `ai_summary`, it is deliberately NOT gated at the DB / scrubbed from the list
+    RPC:** it's a list feature (the point is the river), and it's non-sensitive —
+    it *hides* information and is derived from a title the caller can already see.
+    So it rides the normal `feed_items` payload and the `ITEM_COLS` read; who
+    *sees* the rewrite is gated **client-side** (below). The poller's
+    "next unprocessed items" lookup is served by a **partial index**
+    (`items_feed_unspoiled_idx (feed_id, sort_at desc) where
+    spoiler_free_title_generated_at is null`), which shrinks as items are
+    processed — so steady-state cron work scales with *unprocessed* items, not
+    the feed's archive size.
+  - **Bounded per poll.** The whole pass is capped at `SPOILER_MAX_ITEMS_PER_RUN`
+    (40) classifications and a `SPOILER_BUDGET_MS` (60s) wall-clock budget across
+    all feeds, so a batch full of allowlisted feeds — or a Gemini slowdown where
+    each call hits its timeout — can't keep the Edge Function busy for minutes or
+    overlap the next scheduled poll. Whatever's skipped stays `generated_at IS
+    NULL` and is picked up next poll.
+  - **Display gate (client).** The rewrite shows only when the caller is
+    allowlisted (`canUseFullText(useCapabilities())`, the shared reading-mode gate)
+    **and** the per-user **"Hide sports spoilers"** setting is on
+    (`useHideSportsSpoilers`, a per-device preference, **default on**, in the
+    Settings → Reading section; the toggle is hidden for off-list users). Off-list,
+    setting-off, or no rewrite cached → the original headline, untouched. The
+    rewritten row/headline carries a **subtle, non-interactive marker**
+    (`VisibilityOff` glyph, no tap zone — guardrail #2) whose native tooltip
+    reveals the original. **Share** (row and reader) sends the *displayed*
+    headline too, so it never leaks the hidden scoreline into the share sheet.
+    TODO: make it per-feed as well as per-user.
+  - **Backwards compatible (guardrail #11).** The client ships first and safe:
+    `mapItem` defaults `spoilerFreeTitle` to null, the `ITEM_COLS` read steps down
+    past a missing column on a pre-0045 backend, and display falls back to the
+    original — nothing shows until `make migrate` + `make deploy` land and the
+    poller populates the column. Server changes are additive.
+  - **Cost & reliability (guardrail #5):** one Gemini Flash-Lite call per **new
+    item in an allowlisted-subscriber feed** — a headline + short RSS body in, a
+    headline out — cached forever on the shared item, regenerated only on
+    title/content change. Bounded by *new items in family feeds*; smaller input
+    than a summary and **no Jina**, so **effectively $0**. All failure modes are
+    soft: no key → pass skipped; a gate-read error → generate for no one (fail
+    closed); a Gemini error/timeout → that item keeps its original headline and is
+    retried next poll. Items are already stored before the pass runs, so it never
+    fails or delays the poll.
 - **Reading affordances:** comfortable measure, paper surface, light/dark,
   `prefers-reduced-motion`.
 
