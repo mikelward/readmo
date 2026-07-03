@@ -383,6 +383,51 @@ describe('MockDataSource fetchFullText', () => {
   });
 });
 
+describe('MockDataSource listFeedStatuses', () => {
+  it('samples the feed’s most recent download attempt and its outcome', async () => {
+    const ds = fresh();
+    // Two Verge articles (item-1, item-5): a blocked older attempt and a newer
+    // robots-empty one; the newer attempt wins.
+    ds.recordFulltextStatus('item-1', {
+      status: 'auth',
+      httpStatus: 403,
+      attemptedAt: '2024-01-01T00:00:00.000Z',
+    });
+    ds.recordFulltextStatus('item-5', {
+      status: 'empty',
+      error: 'disallowed by robots.txt (User-agent: *)',
+      robotsRule: 'Disallow: /',
+      attemptedAt: '2024-02-01T00:00:00.000Z',
+    });
+
+    const statuses = await ds.listFeedStatuses();
+    expect(statuses.find((f) => f.id === 'feed-verge')?.sample).toMatchObject({
+      id: 'item-5',
+      downloadStatus: 'empty',
+      downloadRobotsRule: 'Disallow: /',
+    });
+    // A feed with no recorded attempt has no sample.
+    expect(statuses.find((f) => f.id === 'feed-nasa')?.sample).toBeNull();
+  });
+
+  it('records ok with the cached body when fetchFullText runs', async () => {
+    const ds = fresh();
+    await ds.fetchFullText('item-2'); // a NASA article
+    const nasa = (await ds.listFeedStatuses()).find((f) => f.id === 'feed-nasa');
+    expect(nasa?.sample).toMatchObject({
+      id: 'item-2',
+      downloadStatus: 'ok',
+      hasFullContent: true,
+    });
+  });
+
+  it('reports fetchFailed/parked from the feed error count', async () => {
+    const ds = fresh();
+    const park = (await ds.listFeedStatuses()).find((f) => f.id === 'feed-park');
+    expect(park).toMatchObject({ fetchFailed: true, errorCount: 7 });
+  });
+});
+
 describe('MockDataSource sort order', () => {
   // Seed publish order (newest→oldest): item-1 … item-10 (see seed.ts).
   it('defaults to newest-first', async () => {

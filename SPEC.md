@@ -1560,15 +1560,59 @@ negligible and off every critical path. See the External services table in
       the page never offers a button whose RPC would 404. The family
       promote/demote toggle (the `0028` allowlist RPCs) stays available.
 
+    A third section, **Feeds**, links to the feed-status console at
+    `/admin/feeds` (below).
+
     A non-admin who reaches the route sees a short no-access message and nothing
     else — the gate is client convenience only; the server re-checks
     `is_admin()` on every admin RPC (`list_users`, `list/add/remove_allowlist`,
-    `admin_delete_user`, `admin_set_user_blocked`, `get/set_signups_enabled`)
+    `admin_delete_user`, `admin_set_user_blocked`, `get/set_signups_enabled`,
+    `admin_list_feeds`)
     and fails closed (`42501`). Admin identity lives in the `admin_users` table
     (bootstrapped via SQL — there's no UI to grant admin); the allowlist itself
     gates full-text reading mode and Google News feeds (see *Full-text reading
     mode* and *Feed discovery*). Single-word menu label, no explanatory copy
     (guardrail #12).
+
+    - **Feed status** — `/admin/feeds`: an operator console listing **every
+      system feed** (not just the admin's own subscriptions), reached from the
+      Admin page's *Feeds* link. Each row shows the feed (favicon + title), the
+      sampled article's title, a single derived **status** pill, and a muted
+      **server-response** line. Only display-safe feed metadata leaves the server
+      — the `feeds.url` fetch URL (possibly subscriber-tokenized) is never
+      returned to the browser. The
+      status is derived in priority order: **Poll failed** (the feed's last poll
+      errored — `error_count > 0`, with `last_error`) → **Not tried** (no
+      reading-mode download has been attempted for any of the feed's articles) →
+      then, for the feed's **most recent reading-mode download attempt**:
+      **Downloaded** (full body cached), **Blocked** (publisher gated it 401/403,
+      Jina couldn't help), **Unreachable** (fetch failed), or **Empty** (fetched
+      but nothing extractable — paywall/teaser or robots-disallowed). The
+      response line surfaces the publisher's HTTP code and the reason — including,
+      for a robots block, the **denial reason and the exact matching directive**
+      (e.g. "Publisher blocked the fetch (HTTP 403)"; "disallowed by robots.txt
+      (User-agent: \*) — Disallow: /news/"). A segmented **All / Unhealthy**
+      filter narrows to the active failures (Poll failed / Blocked / Unreachable),
+      and a **Refresh** re-reads. Rows carry no per-row actions yet
+      (delete/refresh a feed are a planned follow-up), so the row stays within the
+      tap-target rule.
+
+      The sample is simply the feed's latest recorded attempt: a reading-mode
+      attempt only ever runs for an **allowlisted** caller (the `fulltext` gate
+      refuses everyone else before any fetch), so no pin/allowlist filter is
+      needed here — any recorded row already reflects an entitled fetch.
+
+      The "why the download failed" is **persisted**: the `fulltext` function
+      records each terminal attempt (status, publisher HTTP code, reason, and the
+      matching robots.txt rule) to the server-only **`item_fulltext_status`**
+      table (one row per shared item, keyed on `item_id`), and the admin read
+      takes the most recent row per feed. That table is RLS-locked with no
+      `authenticated` grant — it never reaches a client read; the service role
+      writes it and the admin-gated `admin_list_feeds` (SECURITY DEFINER) reads
+      it. The record is **forward-only**: a feed whose articles were all last
+      opened before this shipped shows *Not tried* until one is next opened.
+      Backed by the admin-only `admin_list_feeds` RPC (migration `0039`), which
+      fails closed (`42501`) for non-admins like every other admin RPC.
 
 13. **Keyboard shortcuts** — same letter scheme (see below).
 
@@ -1812,6 +1856,15 @@ page's discipline is unchanged.
     precedence, `*`/`$` wildcards, and path normalization are handled by a vetted
     implementation. Cost/reliability (guardrail #5): negligible — an in-process
     pure-JS dependency, no new external call beyond the one robots.txt fetch.
+  - **Every attempt is recorded** for operator visibility: on each terminal
+    outcome the function upserts `{ status, http_status, error, robots_rule,
+    attempted_at }` to the server-only `item_fulltext_status` table (keyed on
+    `item_id`) — for a robots block, `robots_rule` holds the exact matching
+    directive and `error` names the user-agent group,
+    best-effort (a write failure is logged and never changes the caller's
+    result). This is what powers the `/admin/feeds` download-status console (see
+    *Admin*); it's operational metadata, kept off every client read (RLS-locked,
+    no `authenticated` grant) and read only by the admin-gated `admin_list_feeds`.
   - **Outcomes** (the function returns `{ status, contentHtml, retryable?,
     viaFallback? }`): `ok`,
     `empty` (nothing article-like found), `auth` (publisher gated the page even

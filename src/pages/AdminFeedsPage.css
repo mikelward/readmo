@@ -1,0 +1,143 @@
+/* Feed-status console (`/admin/feeds`). Reuses the `admin` wrapper + shared
+   empty/retry/back helpers from AdminPage.css; this file adds the filter row,
+   feed rows, and the status pills. */
+
+.admin-feeds__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 8px;
+}
+
+/* Segmented All / Unhealthy filter. */
+.admin-feeds__filter {
+  display: inline-flex;
+  border: 1px solid var(--rm-border);
+  border-radius: var(--rm-radius);
+  overflow: hidden;
+}
+
+.admin-feeds__filter-btn {
+  min-height: var(--rm-tap);
+  padding: 0 16px;
+  background: none;
+  border: none;
+  color: var(--rm-text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.admin-feeds__filter-btn + .admin-feeds__filter-btn {
+  border-left: 1px solid var(--rm-border);
+}
+
+.admin-feeds__filter-btn--on {
+  background: var(--rm-accent);
+  color: var(--rm-accent-contrast);
+}
+
+@media (hover: hover) {
+  .admin-feeds__filter-btn:not(.admin-feeds__filter-btn--on):hover {
+    background: var(--rm-bg);
+  }
+}
+
+.admin-feeds__filter-btn:active {
+  background: var(--rm-bg);
+}
+
+.admin-feeds__filter-btn--on:active {
+  background: var(--rm-accent);
+}
+
+.admin-feeds__reload {
+  margin-left: auto;
+}
+
+/* A feed row: favicon + title/detail on the left, a status pill on the right. */
+.admin-feeds__row {
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.admin-feeds__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.admin-feeds__favicon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border-radius: 3px;
+  object-fit: contain;
+}
+
+.admin-feeds__text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.admin-feeds__title {
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+/* The sample article the status is about, under the feed title. */
+.admin-feeds__article {
+  font-size: 0.82rem;
+  color: var(--rm-text);
+  overflow-wrap: anywhere;
+}
+
+.admin-feeds__detail {
+  font-size: 0.78rem;
+  color: var(--rm-meta);
+  overflow-wrap: anywhere;
+}
+
+/* Status pill. Solid danger = the poll itself failed (worst); outlined danger =
+   an active download failure (blocked / unreachable); muted outline = an
+   informational state (empty / not tried / no pinned); solid success = the
+   article downloaded. */
+.admin-feeds__status {
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.admin-feeds__status--poll-failed {
+  background: var(--rm-danger);
+  color: var(--rm-danger-fg);
+}
+
+.admin-feeds__status--blocked,
+.admin-feeds__status--unreachable {
+  border-color: var(--rm-danger);
+  color: var(--rm-danger);
+}
+
+.admin-feeds__status--empty,
+.admin-feeds__status--not-tried {
+  border-color: var(--rm-border-strong);
+  color: var(--rm-meta);
+}
+
+.admin-feeds__status--downloaded {
+  background: var(--rm-success);
+  color: var(--rm-danger-fg);
+}

@@ -61,7 +61,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { extractArticle } from '../_shared/fulltext.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
-import { robotsAllows } from '../_shared/robots.ts';
+import { robotsCheck } from '../_shared/robots.ts';
 import { looksTokenized, redactUrl } from '../_shared/urlSafety.ts';
 import { corsHeaders, preflight } from '../_shared/cors.ts';
 import { loadAllowlistFromDb, isAllowed } from '../_shared/allowlist.ts';
@@ -182,7 +182,10 @@ async function handle(req: Request): Promise<Response> {
       ...(item.full_content_via_fallback ? { viaFallback: true } : {}),
     });
   }
-  if (!item.url) return json({ status: 'empty', contentHtml: null });
+  if (!item.url) {
+    await recordAttempt(service, itemId, 'empty', { error: 'item has no URL' });
+    return json({ status: 'empty', contentHtml: null });
+  }
 
   // Reading mode crawls the article's OWN page (beyond the syndicated feed), so
   // ask the publisher's robots.txt first. Fail OPEN: a missing/unreachable/
@@ -190,8 +193,13 @@ async function handle(req: Request): Promise<Response> {
   // robots.txt that explicitly disallows our crawler blocks it — reported as the
   // silent `empty` outcome (reader keeps the feed body + Open original), the same
   // UX as a paywall/teaser, so no new wire status for older clients to choke on.
-  if (!(await robotsAllows(item.url))) {
+  const robots = await robotsCheck(item.url);
+  if (!robots.allowed) {
     console.log(`fulltext: item ${itemId} (${redactUrl(item.url)}) disallowed by robots.txt`);
+    await recordAttempt(service, itemId, 'empty', {
+      error: robotsReason(robots.matchedUserAgent),
+      robotsRule: robots.rule,
+    });
     return json({ status: 'empty', contentHtml: null });
   }
 
@@ -202,11 +210,15 @@ async function handle(req: Request): Promise<Response> {
   // than a direct fetch — recorded on the cached row and surfaced to the reader
   // as a "via fallback" provenance label.
   let viaFallback = false;
+  // The publisher's direct-fetch HTTP status, captured for the persisted
+  // download-attempt record (/admin/feeds). Null until we get a response.
+  let directHttp: number | null = null;
   try {
     const res = await safeFetch(item.url, {
       timeoutMs: 12_000,
       maxBytes: FETCH_MAX_BYTES,
     });
+    directHttp = res.status;
     console.log(`fulltext: item ${itemId} responded HTTP ${res.status}`);
     // Re-check robots.txt on the FINAL URL after redirects, for EVERY status
     // branch and BEFORE the Jina fallback. safeFetch follows redirects
@@ -217,9 +229,17 @@ async function handle(req: Request): Promise<Response> {
     // destination drops everything (no Jina, no extract, no cache), reported as
     // the silent `empty`. (The accepted residual is only that the direct GET to
     // res.url already happened — we never store or serve it.)
-    if (res.url !== item.url && !(await robotsAllows(res.url))) {
-      console.log(`fulltext: item ${itemId} final URL (${redactUrl(res.url)}) disallowed by robots.txt`);
-      return json({ status: 'empty', contentHtml: null });
+    if (res.url !== item.url) {
+      const finalRobots = await robotsCheck(res.url);
+      if (!finalRobots.allowed) {
+        console.log(`fulltext: item ${itemId} final URL (${redactUrl(res.url)}) disallowed by robots.txt`);
+        await recordAttempt(service, itemId, 'empty', {
+          httpStatus: res.status,
+          error: `redirect destination ${robotsReason(finalRobots.matchedUserAgent)}`,
+          robotsRule: finalRobots.rule,
+        });
+        return json({ status: 'empty', contentHtml: null });
+      }
     }
     if (res.status === 401 || res.status === 403) {
       // Login/bot wall. Retry via Jina ONLY for public feeds (no secret_url),
@@ -228,12 +248,14 @@ async function handle(req: Request): Promise<Response> {
       const jinaHtml = await maybeFetchViaJina(service, item.feed_id, item.url);
       if (jinaHtml === null) {
         console.log(`fulltext: item ${itemId} — Jina unavailable or URL tokenized`);
+        await recordAttempt(service, itemId, 'auth', { httpStatus: res.status });
         return json({ status: 'auth', contentHtml: null });
       }
       console.log(`fulltext: item ${itemId} — Jina returned HTML`);
       body = jinaHtml;
       viaFallback = true;
     } else if (res.status >= 400) {
+      await recordAttempt(service, itemId, 'unreachable', { httpStatus: res.status });
       return json({ status: 'unreachable', contentHtml: null });
     } else {
       body = new TextDecoder().decode(res.body);
@@ -245,6 +267,10 @@ async function handle(req: Request): Promise<Response> {
     // Article URLs can embed a subscriber token (the file-level comment calls
     // this out for the Jina path); redact to scheme://host before logging.
     console.warn(`fulltext: fetch for item ${itemId} (${redactUrl(item.url)}) failed:`, err);
+    await recordAttempt(service, itemId, 'unreachable', {
+      httpStatus: directHttp,
+      error: err instanceof Error ? err.message : String(err),
+    });
     return json({ status: 'unreachable', contentHtml: null });
   }
 
@@ -253,6 +279,10 @@ async function handle(req: Request): Promise<Response> {
   const extracted = extractArticle(body, finalUrl, item.title ?? undefined);
   if (!extracted) {
     console.log(`fulltext: item ${itemId} — no article body extracted (paywall/teaser?)`);
+    await recordAttempt(service, itemId, 'empty', {
+      httpStatus: directHttp,
+      error: 'no article body extracted (paywall/teaser?)',
+    });
     return json({ status: 'empty', contentHtml: null });
   }
 
@@ -260,6 +290,10 @@ async function handle(req: Request): Promise<Response> {
   const clean = sanitizeContent(extracted.contentHtml, finalUrl);
   if (!clean) {
     console.log(`fulltext: item ${itemId} — sanitized body empty`);
+    await recordAttempt(service, itemId, 'empty', {
+      httpStatus: directHttp,
+      error: 'sanitized body empty',
+    });
     return json({ status: 'empty', contentHtml: null });
   }
   console.log(`fulltext: item ${itemId} — extracted ${clean.length} chars, caching`);
@@ -273,6 +307,12 @@ async function handle(req: Request): Promise<Response> {
       full_content_via_fallback: viaFallback,
     })
     .eq('id', itemId);
+  // Record the successful download. On the Jina fallback path the direct fetch
+  // was a 401/403, so its status would misrepresent the (successful) outcome —
+  // omit the HTTP code there; the reader/admin see 'ok' regardless.
+  await recordAttempt(service, itemId, 'ok', {
+    httpStatus: viaFallback ? null : directHttp,
+  });
   const okBody = {
     status: 'ok',
     contentHtml: clean,
@@ -353,6 +393,49 @@ async function fetchViaJina(target: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/** Persist the outcome of one full-text download attempt on the shared item, for
+ * the /admin/feeds download-status console. Best-effort and service-role (client
+ * writes are RLS-locked): a failure here must never change the caller's result,
+ * so it's logged and swallowed. Upsert keyed on item_id so the row always holds
+ * the LATEST attempt. */
+async function recordAttempt(
+  service: any,
+  itemId: string,
+  status: 'ok' | 'auth' | 'unreachable' | 'empty',
+  opts: {
+    httpStatus?: number | null;
+    error?: string | null;
+    robotsRule?: string | null;
+  } = {},
+): Promise<void> {
+  try {
+    const { error } = await service.from('item_fulltext_status').upsert(
+      {
+        item_id: itemId,
+        status,
+        http_status: opts.httpStatus ?? null,
+        error: opts.error ?? null,
+        robots_rule: opts.robotsRule ?? null,
+        attempted_at: new Date().toISOString(),
+      },
+      { onConflict: 'item_id' },
+    );
+    if (error) {
+      console.error(`fulltext: recording ${status} for item ${itemId} failed:`, error);
+    }
+  } catch (err) {
+    console.error(`fulltext: recording ${status} for item ${itemId} threw:`, err);
+  }
+}
+
+/** Human reason for a robots.txt disallow, naming the matched user-agent group
+ * when known (the specific matching rule is recorded separately). */
+function robotsReason(matchedUserAgent: string | null): string {
+  return matchedUserAgent
+    ? `disallowed by robots.txt (User-agent: ${matchedUserAgent})`
+    : 'disallowed by robots.txt';
 }
 
 function json(body: unknown, status = 200): Response {

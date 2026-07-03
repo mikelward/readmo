@@ -395,6 +395,13 @@ export function AdminPage() {
         )}
       </section>
 
+      <section className="settings__section">
+        <h2 className="settings__heading">Feeds</h2>
+        <p className="admin__link-row">
+          <Link to="/admin/feeds">Feed status &rarr;</Link>
+        </p>
+      </section>
+
       <p className="admin__back">
         <Link to="/">&larr; Back to Home</Link>
       </p>
