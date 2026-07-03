@@ -224,3 +224,14 @@
 .admin__back {
   padding: 16px 12px 0;
 }
+
+.admin__link-row {
+  padding: 8px 0;
+}
+
+.admin__link-row a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--rm-tap);
+  color: var(--rm-accent);
+}

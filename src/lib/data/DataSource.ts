@@ -55,6 +55,63 @@ export interface RegisteredUser {
   blocked: boolean;
 }
 
+/** One system feed as shown on the admin `/admin/feeds` status console
+ * (admin-only read). Pairs the feed's fetch-health fields with a single
+ * representative "sample" item so the operator can see, per feed, whether the
+ * last poll failed and whether the shared full-text / AI-summary caches have
+ * warmed for a real article. */
+export interface AdminFeedStatus {
+  id: FeedId;
+  title: string;
+  siteUrl: string | null;
+  faviconUrl: string | null;
+  /** ISO timestamp of the last successful/attempted poll, or null (never
+   * fetched, or an older backend that doesn't report it). */
+  lastFetchedAt: string | null;
+  /** Consecutive poll failures — 0 once a poll succeeds, so `> 0` means the most
+   * recent fetch failed. */
+  errorCount: number;
+  lastError: string | null;
+  /** `errorCount > 0` — the most recent poll failed. */
+  fetchFailed: boolean;
+  /** Circuit breaker tripped (`errorCount >= 8`); the poller has stopped
+   * retrying until a manual refresh clears it. */
+  parked: boolean;
+  /** The most-recently-pinned article in this feed, or null when nothing in the
+   * feed is pinned (→ the "no pinned" status). */
+  sample: AdminFeedSampleItem | null;
+}
+
+/** The last reading-mode download outcome recorded for an article
+ * (`item_fulltext_status.status`), or null when the pipeline never ran. */
+export type FulltextDownloadStatus = 'ok' | 'auth' | 'unreachable' | 'empty';
+
+/** The article in a feed with the most recent reading-mode download attempt, for
+ * `/admin/feeds`. A recorded attempt only exists for an allowlisted fetch.
+ * Carries the cached-body presence plus that attempt — status, the publisher's
+ * HTTP code, the failure reason, and (for a robots block) the matching rule — so
+ * the operator can see whether the download failed and why. Never the body. */
+export interface AdminFeedSampleItem {
+  id: ItemId;
+  title: string | null;
+  /** The shared `full_content_html` cache is populated — a definitive success,
+   * even for articles fetched before attempts were recorded. */
+  hasFullContent: boolean;
+  /** The recorded attempt's outcome (always set for a sample — a sample exists
+   * only because an attempt was recorded). */
+  downloadStatus: FulltextDownloadStatus | null;
+  /** The publisher's HTTP status from that attempt (e.g. 403), or null. */
+  downloadHttpStatus: number | null;
+  /** A short reason for a non-`ok` outcome (e.g. 'disallowed by robots.txt
+   * (User-agent: *)'), or null. */
+  downloadError: string | null;
+  /** The exact robots.txt directive that blocked the fetch (e.g.
+   * 'Disallow: /news/'), when the outcome was a robots disallow; else null. */
+  downloadRobotsRule: string | null;
+  /** ISO timestamp of that attempt, or null. */
+  downloadAttemptedAt: string | null;
+}
+
 export interface Page<T> {
   items: T[];
   /** Opaque cursor for the next page, or null when exhausted. A non-null
@@ -275,6 +332,11 @@ export interface DataSource {
   /** Admin-only: suspend (`blocked = true`) or restore an account by email.
    * The server refuses to block the calling admin. */
   setUserBlocked(email: string, blocked: boolean): Promise<void>;
+  /** Admin-only: system-wide feed status for `/admin/feeds` — every feed's
+   * fetch health plus a sample article's cache state. Feature-detects a backend
+   * that predates the RPC and returns `[]` so an old backend just shows an empty
+   * list rather than crashing (guardrail #11). */
+  listFeedStatuses(): Promise<AdminFeedStatus[]>;
   /** Admin-only: whether new sign-ups are currently allowed. Feature-detects a
    * backend that predates the switch and returns `true` (the default-open
    * state) so an old backend just reports sign-ups on (guardrail #11). */

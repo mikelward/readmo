@@ -56,24 +56,38 @@ export interface RobotsAllowsOptions {
 const ROBOTS_MAX_BYTES = 512 * 1024;
 const DEFAULT_ROBOTS_TIMEOUT_MS = 5_000;
 
+/** The outcome of a robots.txt check. On a disallow it also carries the
+ * matching directive + its user-agent group, so the operator can see WHY a
+ * fetch was blocked (surfaced on `/admin/feeds`). `rule`/`matchedUserAgent` are
+ * null when allowed or when the matching line couldn't be recovered. */
+export interface RobotsMatch {
+  allowed: boolean;
+  /** The matched `Disallow:` directive text, e.g. `Disallow: /news/`. */
+  rule: string | null;
+  /** The `User-agent:` group the rule belongs to (our token or `*`). */
+  matchedUserAgent: string | null;
+}
+
+const ALLOWED: RobotsMatch = { allowed: true, rule: null, matchedUserAgent: null };
+
 /**
  * Fetch and consult `<origin>/robots.txt` for `targetUrl`, returning whether our
- * crawler may fetch it. Fails OPEN (returns true) on any error, non-2xx, or
- * unparseable body — see the module header.
+ * crawler may fetch it — and, on a disallow, the matching rule. Fails OPEN
+ * (allowed) on any error, non-2xx, or unparseable body — see the module header.
  */
-export async function robotsAllows(
+export async function robotsCheck(
   targetUrl: string,
   opts: RobotsAllowsOptions = {},
-): Promise<boolean> {
+): Promise<RobotsMatch> {
   let origin: string;
   try {
     const u = new URL(targetUrl);
     // Only http(s) is governed by robots.txt; anything else is out of scope and
     // safeFetch would reject it anyway — allow and let the real fetch decide.
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return true;
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return ALLOWED;
     origin = u.origin;
   } catch {
-    return true; // unparseable URL — let the real fetch surface the error
+    return ALLOWED; // unparseable URL — let the real fetch surface the error
   }
 
   const fetcher = opts.fetcher ?? safeFetch;
@@ -89,20 +103,56 @@ export async function robotsAllows(
     // Per RFC 9309: a 4xx (incl. 404 "no robots.txt") means unrestricted. We
     // additionally fail open on 5xx and anything else non-2xx (the user-chosen
     // policy), so only a body we actually got back gets parsed.
-    if (res.status < 200 || res.status >= 300) return true;
+    if (res.status < 200 || res.status >= 300) return ALLOWED;
     text = new TextDecoder().decode(res.body);
   } catch {
-    return true; // network error / SSRF block / timeout / oversized → fail open
+    return ALLOWED; // network error / SSRF block / timeout / oversized → fail open
   }
 
-  return isUrlAllowed(robotsUrl, text, targetUrl, userAgent);
+  return evaluateRobots(robotsUrl, text, targetUrl, userAgent);
+}
+
+/**
+ * Fetch and consult `<origin>/robots.txt` for `targetUrl`, returning whether our
+ * crawler may fetch it. Thin boolean wrapper over {@link robotsCheck}.
+ */
+export async function robotsAllows(
+  targetUrl: string,
+  opts: RobotsAllowsOptions = {},
+): Promise<boolean> {
+  return (await robotsCheck(targetUrl, opts)).allowed;
 }
 
 /**
  * Pure rule evaluation: given the robots.txt URL + body, does it allow
- * `targetUrl` for `userAgent`? Delegates to `robots-parser`. Returns true when
- * no rule applies (`isAllowed` → undefined) or the body can't be parsed —
- * the fail-open default. Exported for unit tests (no network needed).
+ * `targetUrl` for `userAgent`, and if not, which rule blocked it? Delegates to
+ * `robots-parser`. Allowed when no rule applies (`isAllowed` → undefined) or the
+ * body can't be parsed — the fail-open default. Exported for unit tests.
+ */
+export function evaluateRobots(
+  robotsUrl: string,
+  robotsTxt: string,
+  targetUrl: string,
+  userAgent: string = ROBOTS_USER_AGENT,
+): RobotsMatch {
+  try {
+    const parser = robotsParser(robotsUrl, robotsTxt);
+    // `isAllowed` returns undefined when no group/rule matches (or the URL host
+    // differs from the robots host) — treat that as allowed (the default).
+    if (parser.isAllowed(targetUrl, userAgent) !== false) return ALLOWED;
+    // Disallowed → recover the matching directive (1-based line number) so the
+    // operator can see exactly which rule blocked the fetch.
+    const lineNumber = parser.getMatchingLineNumber(targetUrl, userAgent);
+    const { rule, matchedUserAgent } = extractRule(robotsTxt, lineNumber);
+    return { allowed: false, rule, matchedUserAgent };
+  } catch {
+    return ALLOWED; // parser error → fail open
+  }
+}
+
+/**
+ * Whether a robots.txt allows `targetUrl` (boolean). Retained for callers/tests
+ * that only need the verdict; delegates to {@link evaluateRobots}.
  */
 export function isUrlAllowed(
   robotsUrl: string,
@@ -110,13 +160,53 @@ export function isUrlAllowed(
   targetUrl: string,
   userAgent: string = ROBOTS_USER_AGENT,
 ): boolean {
-  let allowed: boolean | undefined;
-  try {
-    allowed = robotsParser(robotsUrl, robotsTxt).isAllowed(targetUrl, userAgent);
-  } catch {
-    return true; // parser error → fail open
+  return evaluateRobots(robotsUrl, robotsTxt, targetUrl, userAgent).allowed;
+}
+
+/** The directive key (`user-agent` / `disallow` / …) of a robots.txt line,
+ * lowercased, or null for a blank/comment line. */
+function directiveKey(line: string): string | null {
+  const beforeComment = line.split('#')[0];
+  const colon = beforeComment.indexOf(':');
+  if (colon === -1) return null;
+  const key = beforeComment.slice(0, colon).trim().toLowerCase();
+  return key || null;
+}
+
+/** Given the 1-based line number of the matching directive, recover its text
+ * and the `User-agent:` group it belongs to (scanning upward past the group's
+ * other rule lines to its user-agent header). Best-effort: returns nulls if the
+ * line can't be recovered. */
+function extractRule(
+  robotsTxt: string,
+  lineNumber: number,
+): { rule: string | null; matchedUserAgent: string | null } {
+  if (!Number.isInteger(lineNumber) || lineNumber < 1) {
+    return { rule: null, matchedUserAgent: null };
   }
-  // `isAllowed` returns undefined when no group/rule matches (or the URL host
-  // differs from the robots host) — treat that as allowed (the default).
-  return allowed !== false;
+  const lines = robotsTxt.split(/\r\n|\r|\n/);
+  const raw = lines[lineNumber - 1];
+  if (raw == null) return { rule: null, matchedUserAgent: null };
+  const rule = raw.split('#')[0].trim() || null;
+
+  // Walk upward: skip this group's other rule lines, collect the contiguous
+  // `User-agent:` header above them, then stop.
+  const agents: string[] = [];
+  for (let i = lineNumber - 2; i >= 0; i--) {
+    const key = directiveKey(lines[i]);
+    if (key === null) continue; // blank / comment
+    if (key === 'user-agent') {
+      const value = lines[i].split('#')[0].split(':').slice(1).join(':').trim();
+      if (value) agents.unshift(value);
+      continue;
+    }
+    if (agents.length > 0) break; // header ended → previous group's rules
+  }
+  // Mirror robots-parser's precedence: our specific token wins over `*`.
+  const preferred =
+    agents.find((a) => a.toLowerCase() === ROBOTS_USER_AGENT.toLowerCase()) ??
+    agents.find((a) => a === '*') ??
+    agents[0] ??
+    null;
+  return { rule, matchedUserAgent: preferred };
 }

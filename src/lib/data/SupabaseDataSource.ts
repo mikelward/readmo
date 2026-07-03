@@ -27,6 +27,9 @@ import {
   type ChangedFields,
 } from './itemStateOutbox';
 import {
+  type AdminFeedSampleItem,
+  type AdminFeedStatus,
+  type FulltextDownloadStatus,
   type AllowlistEntry,
   type Capabilities,
   type DataSource,
@@ -49,6 +52,7 @@ import {
   mapSubscription,
   isPermanentWriteError,
   toRequestError,
+  PARKED_ERROR_THRESHOLD,
 } from './supabaseMappers';
 
 /** The display-safe columns of `feeds_public` (and of `feeds` for clients —
@@ -241,6 +245,22 @@ async function classifyFunctionError(error: unknown): Promise<AddFeedError> {
  * mock); each page is the bounded slice of the combined pinned-then-body
  * sequence the `feed_items` RPC returns.
  */
+/** Narrow a raw `item_fulltext_status.status` string to the known enum, or null
+ * (absent, or an unexpected value from a newer backend). */
+function normalizeDownloadStatus(
+  value: string | null,
+): FulltextDownloadStatus | null {
+  switch (value) {
+    case 'ok':
+    case 'auth':
+    case 'unreachable':
+    case 'empty':
+      return value;
+    default:
+      return null;
+  }
+}
+
 export class SupabaseDataSource implements DataSource {
   readonly stateStore: ItemStateStore;
 
@@ -1693,6 +1713,61 @@ export class SupabaseDataSource implements DataSource {
   async removeFromAllowlist(email: string): Promise<void> {
     const { error } = await this.sb.rpc('remove_from_allowlist', { p_email: email });
     if (error) throw error instanceof Error ? error : new Error(String(error));
+  }
+
+  async listFeedStatuses(): Promise<AdminFeedStatus[]> {
+    const { data, error } = await this.sb.rpc('admin_list_feeds');
+    if (error) {
+      // Feature-detect a backend that predates the RPC (PostgREST PGRST202) →
+      // empty list, so an old backend just shows no feeds rather than crashing
+      // (guardrail #11). Other errors propagate so the page shows its retry UI.
+      if ((error as { code?: string }).code === 'PGRST202') return [];
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+    const rows = (data ?? []) as Array<{
+      id: string;
+      title: string | null;
+      site_url: string | null;
+      favicon_url: string | null;
+      last_fetched_at: string | null;
+      error_count: number | null;
+      last_error: string | null;
+      sample_item_id: string | null;
+      sample_item_title: string | null;
+      sample_has_full_content: boolean | null;
+      sample_download_status: string | null;
+      sample_download_http: number | null;
+      sample_download_error: string | null;
+      sample_download_robots_rule: string | null;
+      sample_download_at: string | null;
+    }>;
+    return rows.map((r) => {
+      const errorCount = r.error_count ?? 0;
+      const sample: AdminFeedSampleItem | null = r.sample_item_id
+        ? {
+            id: r.sample_item_id,
+            title: r.sample_item_title,
+            hasFullContent: r.sample_has_full_content === true,
+            downloadStatus: normalizeDownloadStatus(r.sample_download_status),
+            downloadHttpStatus: r.sample_download_http ?? null,
+            downloadError: r.sample_download_error ?? null,
+            downloadRobotsRule: r.sample_download_robots_rule ?? null,
+            downloadAttemptedAt: r.sample_download_at ?? null,
+          }
+        : null;
+      return {
+        id: r.id,
+        title: r.title ?? r.site_url ?? 'Untitled feed',
+        siteUrl: r.site_url,
+        faviconUrl: r.favicon_url,
+        lastFetchedAt: r.last_fetched_at ?? null,
+        errorCount,
+        lastError: r.last_error ?? null,
+        fetchFailed: errorCount > 0,
+        parked: errorCount >= PARKED_ERROR_THRESHOLD,
+        sample,
+      };
+    });
   }
 
   async listUsers(): Promise<RegisteredUser[]> {

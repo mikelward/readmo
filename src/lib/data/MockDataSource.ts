@@ -19,6 +19,9 @@ import { escapeXml, decodeXmlEntities } from './xmlEntities';
 import type { FullTextResult } from '../fullText';
 import type { SummaryResult } from '../summary';
 import {
+  type AdminFeedSampleItem,
+  type AdminFeedStatus,
+  type FulltextDownloadStatus,
   type AllowlistEntry,
   type Capabilities,
   type DataSource,
@@ -40,6 +43,16 @@ function decodeCursor(cursor: string | null | undefined): number {
   if (!cursor) return 0;
   const n = Number.parseInt(cursor, 10);
   return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** One recorded full-text download attempt, mirroring an `item_fulltext_status`
+ * row (the shape `/admin/feeds` reads). */
+interface FulltextStatusEntry {
+  status: FulltextDownloadStatus;
+  httpStatus: number | null;
+  error: string | null;
+  robotsRule: string | null;
+  attemptedAt: string;
 }
 
 /**
@@ -67,6 +80,11 @@ export class MockDataSource implements DataSource {
   /** In-memory AI-summary cache, mirroring the shared `items.ai_summary` column
    * (one generation serves every later pin of the same item). */
   private summaries = new Map<ItemId, string>();
+  /** In-memory record of the last full-text download attempt per item, mirroring
+   * the server's `item_fulltext_status` table (written by the fulltext function).
+   * Powers `/admin/feeds`; `fetchFullText` records a success, and tests inject
+   * failures via {@link recordFulltextStatus}. */
+  private fulltextStatus = new Map<ItemId, FulltextStatusEntry>();
   /** Global "allow new sign-ups" switch (mock-only; defaults open). */
   private signupsEnabled = true;
   private readonly homeWindowMs: number;
@@ -369,7 +387,37 @@ export class MockDataSource implements DataSource {
       `feed only carried a short excerpt. It continues well past what the feed ` +
       `provided, with the complete body of “${item.title}”.</p>`;
     item.fullContentHtml = full;
+    this.fulltextStatus.set(id, {
+      status: 'ok',
+      httpStatus: 200,
+      error: null,
+      robotsRule: null,
+      attemptedAt: new Date().toISOString(),
+    });
     return { status: 'ok', contentHtml: full };
+  }
+
+  /** Test/demo seam: record a full-text download outcome for an item, mirroring
+   * what the `fulltext` Edge Function writes to `item_fulltext_status`. Lets a
+   * test set a failed download (403 / unreachable / robots-empty) so the
+   * `/admin/feeds` statuses are exercisable without a real fetch. */
+  recordFulltextStatus(
+    id: ItemId,
+    entry: {
+      status: FulltextDownloadStatus;
+      httpStatus?: number | null;
+      error?: string | null;
+      robotsRule?: string | null;
+      attemptedAt?: string;
+    },
+  ): void {
+    this.fulltextStatus.set(id, {
+      status: entry.status,
+      httpStatus: entry.httpStatus ?? null,
+      error: entry.error ?? null,
+      robotsRule: entry.robotsRule ?? null,
+      attemptedAt: entry.attemptedAt ?? new Date().toISOString(),
+    });
   }
 
   async getSummary(id: ItemId): Promise<SummaryResult> {
@@ -673,6 +721,57 @@ export class MockDataSource implements DataSource {
     { email: 'alex@example.com', createdAt: '2024-03-15T00:00:00.000Z', lastSignInAt: '2024-05-20T00:00:00.000Z', blocked: false },
     { email: 'sam@example.com', createdAt: '2024-02-10T00:00:00.000Z', lastSignInAt: null, blocked: false },
   ];
+
+  async listFeedStatuses(): Promise<AdminFeedStatus[]> {
+    // Sample = the item in each feed with the most recent recorded reading-mode
+    // attempt (mirrors admin_list_feeds taking the latest item_fulltext_status
+    // row per feed). `fetchFullText` records 'ok'; `recordFulltextStatus`
+    // injects other outcomes. No pin/allowlist logic — a recorded attempt only
+    // exists for an allowlisted fetch.
+    const itemsById = new Map(this.items.map((it) => [it.id, it] as const));
+    const latestByFeed = new Map<
+      FeedId,
+      { item: Item; entry: FulltextStatusEntry }
+    >();
+    for (const [itemId, entry] of this.fulltextStatus) {
+      const item = itemsById.get(itemId);
+      if (!item) continue;
+      const cur = latestByFeed.get(item.feedId);
+      // ISO timestamps compare chronologically as strings.
+      if (!cur || entry.attemptedAt > cur.entry.attemptedAt) {
+        latestByFeed.set(item.feedId, { item, entry });
+      }
+    }
+    const statuses: AdminFeedStatus[] = [];
+    for (const feed of this.feeds.values()) {
+      const latest = latestByFeed.get(feed.id);
+      const sample: AdminFeedSampleItem | null = latest
+        ? {
+            id: latest.item.id,
+            title: latest.item.title,
+            hasFullContent: Boolean(latest.item.fullContentHtml),
+            downloadStatus: latest.entry.status,
+            downloadHttpStatus: latest.entry.httpStatus,
+            downloadError: latest.entry.error,
+            downloadRobotsRule: latest.entry.robotsRule,
+            downloadAttemptedAt: latest.entry.attemptedAt,
+          }
+        : null;
+      statuses.push({
+        id: feed.id,
+        title: feed.title,
+        siteUrl: feed.siteUrl,
+        faviconUrl: feed.faviconUrl,
+        lastFetchedAt: null,
+        errorCount: feed.errorCount,
+        lastError: feed.lastError,
+        fetchFailed: feed.errorCount > 0,
+        parked: feed.parked,
+        sample,
+      });
+    }
+    return statuses.sort((a, b) => a.title.localeCompare(b.title));
+  }
 
   async listUsers(): Promise<RegisteredUser[]> {
     return this.registeredUsers.map((u) => ({

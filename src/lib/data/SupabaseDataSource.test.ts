@@ -1546,6 +1546,104 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(await env.ds.listUsers()).toEqual([]);
   });
 
+  it('listFeedStatuses maps rows and feature-detects a backend without the RPC', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'admin_list_feeds') {
+        return Promise.resolve({
+          data: [
+            {
+              id: 'feed-1',
+              title: 'A Feed',
+              site_url: 'https://a.example',
+              favicon_url: null,
+              last_fetched_at: '2024-06-01T00:00:00Z',
+              error_count: 9,
+              last_error: 'boom',
+              sample_item_id: 'item-1',
+              sample_item_title: 'An article',
+              sample_has_full_content: false,
+              sample_download_status: 'auth',
+              sample_download_http: 403,
+              sample_download_error: null,
+              sample_download_robots_rule: null,
+              sample_download_at: '2024-06-02T00:00:00Z',
+            },
+            {
+              // No pinned sample, no recorded status, clean poll.
+              id: 'feed-2',
+              title: 'Quiet Feed',
+              site_url: null,
+              favicon_url: null,
+              last_fetched_at: null,
+              error_count: 0,
+              last_error: null,
+              sample_item_id: null,
+              sample_item_title: null,
+              sample_has_full_content: null,
+              sample_download_status: null,
+              sample_download_http: null,
+              sample_download_error: null,
+              sample_download_robots_rule: null,
+              sample_download_at: null,
+            },
+          ],
+          error: null,
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+
+    expect(await env.ds.listFeedStatuses()).toEqual([
+      {
+        id: 'feed-1',
+        title: 'A Feed',
+        siteUrl: 'https://a.example',
+        faviconUrl: null,
+        lastFetchedAt: '2024-06-01T00:00:00Z',
+        errorCount: 9,
+        lastError: 'boom',
+        fetchFailed: true,
+        parked: true, // errorCount >= 8
+        sample: {
+          id: 'item-1',
+          title: 'An article',
+          hasFullContent: false,
+          downloadStatus: 'auth',
+          downloadHttpStatus: 403,
+          downloadError: null,
+          downloadRobotsRule: null,
+          downloadAttemptedAt: '2024-06-02T00:00:00Z',
+        },
+      },
+      {
+        id: 'feed-2',
+        title: 'Quiet Feed',
+        siteUrl: null,
+        faviconUrl: null,
+        lastFetchedAt: null,
+        errorCount: 0,
+        lastError: null,
+        fetchFailed: false,
+        parked: false,
+        sample: null,
+      },
+    ]);
+
+    // An old backend without the RPC (PGRST202) → empty list, no throw.
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'admin_list_feeds') {
+        return Promise.resolve({
+          data: null,
+          error: { code: 'PGRST202', message: 'unknown function' },
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    expect(await env.ds.listFeedStatuses()).toEqual([]);
+  });
+
   it('deleteUser calls admin_delete_user with the email', async () => {
     const env = setup();
     const realRpc = env.fake.client.rpc.bind(env.fake.client);
