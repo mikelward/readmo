@@ -1746,6 +1746,7 @@ export class SupabaseDataSource implements DataSource {
       last_fetched_at: string | null;
       error_count: number | null;
       last_error: string | null;
+      paused: boolean | null;
       subscriber_count: number | null;
       sample_item_id: string | null;
       sample_item_title: string | null;
@@ -1778,6 +1779,10 @@ export class SupabaseDataSource implements DataSource {
         lastFetchedAt: r.last_fetched_at ?? null,
         errorCount,
         lastError: r.last_error ?? null,
+        // Feature-detect a backend that predates the paused column: absent →
+        // null ("pausing not supported yet"), so the console hides Pause rather
+        // than offering a control whose RPC isn't deployed. Present → the flag.
+        paused: typeof r.paused === 'boolean' ? r.paused : null,
         // Feature-detect a backend that predates the subscriber-count column:
         // absent → null ("unknown"), not a false 0. A present 0 stays 0.
         subscriberCount:
@@ -1795,6 +1800,14 @@ export class SupabaseDataSource implements DataSource {
     // The feed (and its items) are gone — drop any cached copy so a later
     // getFeed() doesn't serve the deleted row.
     this.feedCache.clear();
+  }
+
+  async setFeedPaused(feedId: FeedId, paused: boolean): Promise<void> {
+    const { error } = await this.sb.rpc('admin_set_feed_paused', {
+      p_feed_id: feedId,
+      p_paused: paused,
+    });
+    if (error) throw error instanceof Error ? error : new Error(String(error));
   }
 
   async listUsers(): Promise<RegisteredUser[]> {

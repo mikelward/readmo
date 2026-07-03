@@ -30,6 +30,7 @@ function feed(over: Partial<AdminFeedStatus> = {}): AdminFeedStatus {
     lastFetchedAt: null,
     errorCount: 0,
     lastError: null,
+    paused: false,
     subscriberCount: 0,
     fetchFailed: false,
     parked: false,
@@ -39,6 +40,19 @@ function feed(over: Partial<AdminFeedStatus> = {}): AdminFeedStatus {
 }
 
 describe('feedHealth', () => {
+  it('reports paused first, overriding poll failure and any sample', () => {
+    expect(
+      feedHealth(
+        feed({
+          paused: true,
+          fetchFailed: true,
+          errorCount: 5,
+          sample: sample({ downloadStatus: 'auth' }),
+        }),
+      ),
+    ).toBe('paused');
+  });
+
   it('reports poll-failed first, even with a healthy sample', () => {
     expect(
       feedHealth(
@@ -89,8 +103,8 @@ describe('isUnhealthy', () => {
     expect(isUnhealthy('unreachable')).toBe(true);
   });
 
-  it('treats informational and success states as healthy', () => {
-    for (const h of ['empty', 'not-tried', 'downloaded'] as const) {
+  it('treats informational, paused, and success states as healthy', () => {
+    for (const h of ['empty', 'not-tried', 'paused', 'downloaded'] as const) {
       expect(isUnhealthy(h)).toBe(false);
     }
   });
@@ -99,6 +113,7 @@ describe('isUnhealthy', () => {
 describe('FEED_HEALTH_LABEL', () => {
   it('has a US-English label for every status', () => {
     expect(FEED_HEALTH_LABEL).toMatchObject({
+      paused: 'Paused',
       'poll-failed': 'Poll failed',
       'not-tried': 'Not tried',
       downloaded: 'Downloaded',

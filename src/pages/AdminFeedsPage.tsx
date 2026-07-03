@@ -101,6 +101,19 @@ export function AdminFeedsPage() {
       showToast({ message: 'Couldn’t delete that feed.', detail: String(err) }),
   });
 
+  // Per-feed Pause / Unpause — stops (or resumes) all server-side work for the
+  // feed. Re-read so the row reflects the new state.
+  const pauseFeed = useMutation({
+    mutationFn: ({ feedId, paused }: { feedId: FeedId; paused: boolean }) =>
+      ds.setFeedPaused(feedId, paused),
+    onSuccess: (_data, { paused }) => {
+      void queryClient.invalidateQueries({ queryKey: FEEDS_KEY });
+      showToast({ message: paused ? 'Feed paused.' : 'Feed unpaused.' });
+    },
+    onError: (err) =>
+      showToast({ message: 'Couldn’t change that feed.', detail: String(err) }),
+  });
+
   // Derive each feed's status once, then filter. Sorting worst-first surfaces
   // problems at the top; healthy feeds sink to the bottom.
   const rows = useMemo(() => {
@@ -113,7 +126,8 @@ export function AdminFeedsPage() {
       unreachable: 2,
       empty: 3,
       'not-tried': 4,
-      downloaded: 5,
+      paused: 5,
+      downloaded: 6,
     };
     withHealth.sort((a, b) => order[a.health] - order[b.health]);
     return filter === 'unhealthy'
@@ -126,16 +140,43 @@ export function AdminFeedsPage() {
     [feeds],
   );
 
-  // The feed whose overflow menu is open, and its actions. "Refresh" is the
-  // first (only, for now) entry — a per-feed server-side poll.
+  // The feed whose overflow menu is open, and its actions:
+  //   - paused (true)  → Unpause (no Refresh — it's paused)
+  //   - active (false) → Refresh + Pause
+  //   - unsupported (null, backend predates the paused flag) → Refresh only, so
+  //     we never offer a Pause whose RPC isn't deployed (guardrail #11).
   const menuFeed = menuFor ? feeds.find((f) => f.id === menuFor) ?? null : null;
+  const pauseActions: ItemRowMenuItem[] =
+    menuFeed == null
+      ? []
+      : menuFeed.paused === true
+        ? [
+            {
+              key: 'unpause',
+              label: 'Unpause',
+              onSelect: () => pauseFeed.mutate({ feedId: menuFeed.id, paused: false }),
+            },
+          ]
+        : [
+            {
+              key: 'refresh',
+              label: 'Refresh',
+              onSelect: () => refreshFeed.mutate(menuFeed.id),
+            },
+            ...(menuFeed.paused === false
+              ? [
+                  {
+                    key: 'pause',
+                    label: 'Pause',
+                    onSelect: () =>
+                      pauseFeed.mutate({ feedId: menuFeed.id, paused: true }),
+                  },
+                ]
+              : []),
+          ];
   const menuItems: ItemRowMenuItem[] = menuFeed
     ? [
-        {
-          key: 'refresh',
-          label: 'Refresh',
-          onSelect: () => refreshFeed.mutate(menuFeed.id),
-        },
+        ...pauseActions,
         {
           key: 'delete',
           label: 'Delete…',
@@ -242,7 +283,11 @@ export function AdminFeedsPage() {
                 feed={feed}
                 health={health}
                 menuOpen={menuFor === feed.id}
-                busy={refreshFeed.isPending || deleteFeed.isPending}
+                busy={
+                  refreshFeed.isPending ||
+                  deleteFeed.isPending ||
+                  pauseFeed.isPending
+                }
                 onOpenMenu={(anchor) => {
                   if (menuFor === feed.id) {
                     closeMenu();
@@ -345,6 +390,8 @@ function detailFor(feed: AdminFeedStatus, health: FeedHealth): string {
   const err = sample?.downloadError;
   const rule = sample?.downloadRobotsRule;
   switch (health) {
+    case 'paused':
+      return 'Paused — no polling, downloads, or summaries';
     case 'poll-failed':
       return feed.lastError
         ? `Last poll failed: ${feed.lastError}`

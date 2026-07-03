@@ -1626,11 +1626,21 @@ negligible and off every critical path. See the External services table in
       subscribe to (admin status resolved server-side via the existing
       `get_capabilities()` RPC — a SECURITY DEFINER function that checks
       `is_admin()` from the caller's JWT; a no-`feedId` call is never widened into
-      an all-system poll). The menu's second entry is **Delete** — a confirm-gated,
-      irreversible system-wide hard delete of the shared feed (the admin-only
-      `admin_delete_feed` RPC, migration `0040`): a single `delete from feeds`
-      cascades to its items — and their `item_state` / `item_fulltext_status` —
-      and to every user's subscription, via the existing ON DELETE CASCADE FKs.
+      an all-system poll). The menu also offers **Pause / Unpause** (the admin-only
+      `admin_set_feed_paused` RPC + a `feeds.paused` flag, migration `0046`): while
+      a feed is paused the **poller and refresh skip it** and **full-text and AI
+      summaries are declined for its items** (each enforced in its own Edge
+      Function — `feeds_due_for_poll()` excludes paused feeds from the cron batch,
+      and refresh/fulltext/summary check the flag and no-op/`empty`), while
+      already-stored articles
+      stay readable — pause only halts NEW fetching/enrichment. A paused feed
+      shows a **Paused** status pill (which overrides the health cascade, since
+      nothing else runs) and its menu offers Unpause instead of Refresh + Pause.
+      Finally, **Delete** — a confirm-gated, irreversible system-wide hard delete
+      of the shared feed (the admin-only `admin_delete_feed` RPC, migration
+      `0040`): a single `delete from feeds` cascades to its items — and their
+      `item_state` / `item_fulltext_status` — and to every user's subscription,
+      via the existing ON DELETE CASCADE FKs.
 
       The sample is simply the feed's latest recorded attempt: a reading-mode
       attempt only ever runs for an **allowlisted** caller (the `fulltext` gate

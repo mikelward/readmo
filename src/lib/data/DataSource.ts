@@ -76,6 +76,12 @@ export interface AdminFeedStatus {
    * the backend doesn't report it yet (a client deployed ahead of the migration
    * that added the count — shown as unknown rather than a false 0). */
   subscriberCount: number | null;
+  /** The feed is paused: the poller/refresh skip it and full-text/summaries are
+   * declined for its items. Stored articles stay readable. `null` when the
+   * backend doesn't report it yet (a client deployed ahead of the migration that
+   * added the flag) — the console then hides Pause/Unpause rather than offering a
+   * control whose RPC would 404. */
+  paused: boolean | null;
   /** `errorCount > 0` — the most recent poll failed. */
   fetchFailed: boolean;
   /** Circuit breaker tripped (`errorCount >= 8`); the poller has stopped
@@ -345,6 +351,10 @@ export interface DataSource {
    * every user's subscription to it). Irreversible; callers confirm first. The
    * server re-checks `is_admin()`. */
   deleteFeed(feedId: FeedId): Promise<void>;
+  /** Admin-only: pause/unpause a feed. While paused the poller and refresh skip
+   * it and full-text/summaries are declined for its items; stored articles stay
+   * readable. The server re-checks `is_admin()`. */
+  setFeedPaused(feedId: FeedId, paused: boolean): Promise<void>;
   /** Admin-only: whether new sign-ups are currently allowed. Feature-detects a
    * backend that predates the switch and returns `true` (the default-open
    * state) so an old backend just reports sign-ups on (guardrail #11). */

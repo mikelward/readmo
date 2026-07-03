@@ -1561,6 +1561,7 @@ describe('SupabaseDataSource dispatch + writes', () => {
               last_fetched_at: '2024-06-01T00:00:00Z',
               error_count: 9,
               last_error: 'boom',
+              paused: true,
               subscriber_count: 4,
               sample_item_id: 'item-1',
               sample_item_title: 'An article',
@@ -1580,6 +1581,7 @@ describe('SupabaseDataSource dispatch + writes', () => {
               last_fetched_at: null,
               error_count: 0,
               last_error: null,
+              paused: false,
               subscriber_count: 0,
               sample_item_id: null,
               sample_item_title: null,
@@ -1606,6 +1608,7 @@ describe('SupabaseDataSource dispatch + writes', () => {
         lastFetchedAt: '2024-06-01T00:00:00Z',
         errorCount: 9,
         lastError: 'boom',
+        paused: true,
         subscriberCount: 4,
         fetchFailed: true,
         parked: true, // errorCount >= 8
@@ -1628,6 +1631,7 @@ describe('SupabaseDataSource dispatch + writes', () => {
         lastFetchedAt: null,
         errorCount: 0,
         lastError: null,
+        paused: false,
         subscriberCount: 0,
         fetchFailed: false,
         parked: false,
@@ -1663,6 +1667,9 @@ describe('SupabaseDataSource dispatch + writes', () => {
     }) as typeof env.fake.client.rpc;
     const [feed] = await env.ds.listFeedStatuses();
     expect(feed.subscriberCount).toBeNull();
+    // Same rollout window: an absent `paused` maps to null ("pausing not
+    // supported yet"), not a false that would offer a Pause with no RPC.
+    expect(feed.paused).toBeNull();
   });
 
   it('deleteFeed calls admin_delete_feed with the feed id', async () => {
@@ -1678,6 +1685,21 @@ describe('SupabaseDataSource dispatch + writes', () => {
     }) as typeof env.fake.client.rpc;
     await env.ds.deleteFeed('feed-9');
     expect(captured).toEqual({ p_feed_id: 'feed-9' });
+  });
+
+  it('setFeedPaused calls admin_set_feed_paused with the id and flag', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    let captured: Record<string, unknown> | undefined;
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'admin_set_feed_paused') {
+        captured = params;
+        return Promise.resolve({ data: null, error: null });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    await env.ds.setFeedPaused('feed-9', true);
+    expect(captured).toEqual({ p_feed_id: 'feed-9', p_paused: true });
   });
 
   it('deleteUser calls admin_delete_user with the email', async () => {

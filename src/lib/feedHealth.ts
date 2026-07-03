@@ -2,6 +2,8 @@ import type { AdminFeedStatus } from './data/DataSource';
 
 /** The single at-a-glance status shown per feed on `/admin/feeds`, derived in
  * priority order (first match wins):
+ *   0. `paused`       — the operator paused the feed (no polling/downloads);
+ *                       overrides everything else, since nothing else runs;
  *   1. `poll-failed`  — the feed's most recent poll errored (nothing downstream
  *                       matters until the feed itself refreshes);
  *   2. `not-tried`    — no reading-mode download has been attempted for any of
@@ -12,6 +14,7 @@ import type { AdminFeedStatus } from './data/DataSource';
  *   5. `unreachable`  — the fetch failed (network / SSRF-blocked / non-2xx);
  *   6. `empty`        — fetched but nothing extractable (paywall / robots / teaser). */
 export type FeedHealth =
+  | 'paused'
   | 'poll-failed'
   | 'not-tried'
   | 'downloaded'
@@ -23,6 +26,7 @@ export type FeedHealth =
  * recorded `ok`) is treated as `downloaded`, so an article fetched before
  * attempts were recorded still reads as a success. */
 export function feedHealth(feed: AdminFeedStatus): FeedHealth {
+  if (feed.paused) return 'paused';
   if (feed.fetchFailed) return 'poll-failed';
   const sample = feed.sample;
   if (!sample) return 'not-tried';
@@ -41,6 +45,7 @@ export function feedHealth(feed: AdminFeedStatus): FeedHealth {
 
 /** Human-readable label for each status (US English). */
 export const FEED_HEALTH_LABEL: Record<FeedHealth, string> = {
+  paused: 'Paused',
   'poll-failed': 'Poll failed',
   'not-tried': 'Not tried',
   downloaded: 'Downloaded',
