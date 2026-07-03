@@ -619,8 +619,18 @@ export class MockDataSource implements DataSource {
     if (sub) sub.titleOverride = title;
   }
 
-  async refresh(): Promise<void> {
-    // No-op in the mock; the real source triggers a server-side fetch.
+  async refresh(feedId?: FeedId): Promise<void> {
+    // The real source triggers a server-side fetch; the mock simulates a
+    // successful poll of the named feed (clears the error / circuit breaker,
+    // like a 2xx or 304), so an admin "Fetch now" has a visible effect. Refresh
+    // of all feeds (no id) stays a no-op.
+    if (!feedId) return;
+    const feed = this.feeds.get(feedId);
+    if (feed) {
+      feed.errorCount = 0;
+      feed.lastError = null;
+      feed.parked = false;
+    }
   }
 
   async retryParkedFeed(feedId: FeedId): Promise<void> {

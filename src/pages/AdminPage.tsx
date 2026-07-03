@@ -379,7 +379,7 @@ export function AdminPage() {
                       }
                     }}
                   >
-                    ⋯
+                    ⋮
                   </button>
                 </li>
               ))}

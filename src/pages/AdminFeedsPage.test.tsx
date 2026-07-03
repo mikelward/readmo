@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AdminFeedsPage } from './AdminFeedsPage';
 import { MockDataSource } from '../lib/data/MockDataSource';
@@ -112,6 +112,32 @@ describe('AdminFeedsPage', () => {
     expect(screen.getByTestId('feed-status-feed-park')).toBeInTheDocument();
     // A not-tried feed is informational, not a failure → hidden.
     expect(screen.queryByTestId('feed-status-feed-css')).not.toBeInTheDocument();
+  });
+
+  it('refreshes a feed from its overflow menu, clearing the poll failure', async () => {
+    const user = userEvent.setup();
+    render(); // default mock: "Occasionally Down Blog" is poll-failed (errorCount 7)
+
+    expect(await screen.findByTestId('feed-status-feed-park')).toHaveTextContent(
+      'Poll failed',
+    );
+
+    // Open the row's overflow menu → first entry is Refresh.
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Occasionally Down Blog' }),
+    );
+    const menu = within(await screen.findByTestId('item-row-menu'));
+    expect(menu.getByTestId('item-row-menu-refresh')).toHaveTextContent('Refresh');
+
+    await user.click(menu.getByTestId('item-row-menu-refresh'));
+
+    // The mock's refresh clears the feed's error → the re-read drops it out of
+    // "Poll failed" (no recorded attempt → Not tried).
+    await waitFor(() =>
+      expect(screen.getByTestId('feed-status-feed-park')).toHaveTextContent(
+        'Not tried',
+      ),
+    );
   });
 
   it('links back to the admin page', async () => {
