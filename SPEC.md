@@ -1593,9 +1593,19 @@ negligible and off every critical path. See the External services table in
       (e.g. "Publisher blocked the fetch (HTTP 403)"; "disallowed by robots.txt
       (User-agent: \*) — Disallow: /news/"). A segmented **All / Unhealthy**
       filter narrows to the active failures (Poll failed / Blocked / Unreachable),
-      and a **Refresh** re-reads. Rows carry no per-row actions yet
-      (delete/refresh a feed are a planned follow-up), so the row stays within the
-      tap-target rule.
+      and a **Reload** button re-reads the list. Each row has an overflow (**⋯**)
+      menu — the row's single tap zone (guardrail #2, shared `ItemRowMenu`:
+      anchored popover on pointer, bottom sheet on touch) — whose first entry is
+      **Refresh**: an on-demand server-side poll of that one feed (the `refresh`
+      Edge Function, server-debounced 60 s), after which the list re-reads so the
+      feed's status reflects the result. Distinct from the top **Reload**, which
+      only re-reads. The `refresh` function is normally scoped to the caller's
+      own subscriptions; because this console lists **every** system feed, it
+      also lets an **admin** refresh one specifically-named feed they don't
+      subscribe to (admin status resolved server-side via the existing
+      `get_capabilities()` RPC — a SECURITY DEFINER function that checks
+      `is_admin()` from the caller's JWT; a no-`feedId` call is never widened into
+      an all-system poll).
 
       The sample is simply the feed's latest recorded attempt: a reading-mode
       attempt only ever runs for an **allowlisted** caller (the `fulltext` gate

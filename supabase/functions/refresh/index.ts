@@ -14,6 +14,7 @@ import { parseFeedBody } from '../_shared/parser.ts';
 import { resolveStoredFavicon } from '../_shared/poller.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
+import { feedsToRefresh } from '../_shared/refreshScope.ts';
 import { corsHeaders, preflight } from '../_shared/cors.ts';
 import { RateLimiter, rateLimitKey } from '../_shared/rateLimit.ts';
 import { CLIENT_BUILD_HEADER, checkClientBuild } from '../_shared/clientVersion.ts';
@@ -112,13 +113,35 @@ async function handle(req: Request): Promise<Response> {
     return json({ error: error.message }, 400);
   }
 
-  const subCount = subs?.length ?? 0;
-  console.log(`refresh: ${subCount} subscription(s) to refresh`);
+  const subscribedFeedIds = (subs ?? []).map((s) => s.feed_id);
+  // The /admin/feeds console lists every system feed, so an admin may refresh a
+  // specific feed they don't subscribe to. Only pay for the admin check when it
+  // could matter (a named feed with no matching subscription). Use the existing
+  // `get_capabilities()` RPC — a SECURITY DEFINER function granted to
+  // `authenticated` that resolves `is_admin()` from the caller's JWT — rather
+  // than reading `admin_users` directly (service_role has no grant on that table;
+  // it's read only through the DEFINER path, per 0028/0009).
+  let isAdmin = false;
+  if (feedId && subscribedFeedIds.length === 0) {
+    const { data: caps, error: capsError } = await userClient.rpc('get_capabilities');
+    if (capsError) {
+      console.error('refresh: capability lookup failed:', capsError);
+    } else {
+      const row = Array.isArray(caps) ? caps[0] : caps;
+      isAdmin = row?.admin === true;
+    }
+  }
+
+  const feedIds = feedsToRefresh({ subscribedFeedIds, feedId, isAdmin });
+  console.log(
+    `refresh: ${feedIds.length} feed(s) to refresh` +
+      (isAdmin ? ' (admin)' : ''),
+  );
 
   let refreshed = 0;
   let debounced = 0;
   let failed = 0;
-  for (const { feed_id } of subs ?? []) {
+  for (const feed_id of feedIds) {
     try {
       // refreshOne enforces the DEBOUNCE_S throttle and reports whether it
       // actually hit the publisher, so spamming refresh doesn't inflate counts.
