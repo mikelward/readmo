@@ -1804,7 +1804,18 @@ string param, timestamp) is rejected — so no per-subscriber query leaks into
 `shortcut icon`, `apple-touch-icon`, or `mask-icon`, in that preference order),
 fetched once through the SSRF-hardened path and run through the same screen —
 this rescues publishers whose feed names no icon *and* whose `/favicon.ico`
-guess 404s (e.g. `ft.com`). The homepage fetch is a **one-shot cost per feed**:
+guess 404s (e.g. `ft.com`). When that direct homepage GET is **bot-blocked**
+(an auth/bot-wall **401/403** — the same publishers, `ft.com` / `economist.com`,
+that 403 a plain server-side fetch), discovery retries the homepage once through
+**Jina Reader** (`r.jina.ai`, the same headless-browser fallback `/api/discover`
+uses on 403) — sending only the **origin root**, and never for a `secret_url`
+feed — so a real icon behind the bot wall is still found. Only 401/403 retry:
+a 429 (publisher rate-limit) or 5xx (transient) falls back to the guess rather
+than proxying around the throttle/outage and burning Jina quota, a thrown fetch
+(SSRF-refused host / DNS / timeout) never reaches Jina, and a reachable homepage
+that merely advertises no icon is *not* retried (the `/favicon.ico` guess is the
+answer there, and ordinary sites never spend a Jina call). The
+homepage fetch is a **one-shot cost per feed**:
 discovery runs only on the first poll that finds no favicon stored yet, and
 every later poll reuses the stored value — a discovered icon, or the
 `/favicon.ico` guess it settled on — without re-fetching the page. Else, finally, the

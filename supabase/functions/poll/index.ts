@@ -18,6 +18,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { pollOne, recordFailure } from '../_shared/poller.ts';
 import { reapOrphanFeeds } from '../_shared/reap.ts';
+import { fetchViaJinaHtml } from '../_shared/jina.ts';
 import { redactUrl } from '../_shared/urlSafety.ts';
 import {
   buildSpoilerPrompt,
@@ -127,7 +128,10 @@ async function handle(req: Request): Promise<Response> {
   const processedFeedIds: string[] = [];
   for (const feed of feeds ?? []) {
     try {
-      await pollOne(supabase, feed);
+      // safeFetch for the feed + direct homepage GET; fetchViaJinaHtml is the
+      // bot-block fallback for homepage favicon discovery (ft.com etc.), used
+      // once per feed only when the direct homepage GET is blocked.
+      await pollOne(supabase, feed, undefined, fetchViaJinaHtml);
       processed++;
       processedFeedIds.push(feed.id);
     } catch (err) {

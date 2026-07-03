@@ -12,6 +12,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { parseFeedBody } from '../_shared/parser.ts';
 import { resolveStoredFavicon } from '../_shared/poller.ts';
+import { fetchViaJinaHtml } from '../_shared/jina.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
 import { feedsToRefresh } from '../_shared/refreshScope.ts';
@@ -203,7 +204,15 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
   // Same favicon resolution as the cron poller: reuse an already-discovered
   // icon, else discover from the homepage <link rel="icon"> once, else the
   // /favicon.ico guess — so a manual refresh never clobbers a real icon.
-  const faviconUrl = await resolveStoredFavicon(parsed, feed.favicon_url, safeFetch);
+  // Skip the third-party Jina fallback for secret-backed feeds — parsed.siteUrl
+  // can resolve under the tokenized secret_url path, so forwarding it could leak
+  // a secret (guardrail #6; matches the cron poller and the article Jina paths).
+  const faviconUrl = await resolveStoredFavicon(
+    parsed,
+    feed.favicon_url,
+    safeFetch,
+    feed.secret_url ? null : fetchViaJinaHtml,
+  );
   const { error: metaError } = await service
     .from('feeds')
     .update({
