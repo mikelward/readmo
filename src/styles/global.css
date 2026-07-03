@@ -89,6 +89,10 @@
   --rm-font-size: 17px;
 }
 
+:root[data-font-size='18'] {
+  --rm-font-size: 18px;
+}
+
 /* Typeface (settings "Font" picker). Orthogonal to mode/palette/size, so it
    lives in its own attribute and only overrides the font token. Roboto is the
    default and owns the bare :root above (no attribute); "System" drops the

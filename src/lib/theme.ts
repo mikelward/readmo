@@ -15,7 +15,7 @@ export type Palette = 'ink' | 'grape';
 // `data-font-size` attribute; `global.css` maps each to `--rm-font-size`. `16`
 // is the default (Medium) and owns the bare `:root` block (no attribute),
 // matching the theme/palette default pattern.
-export type FontSize = '15' | '16' | '17';
+export type FontSize = '15' | '16' | '17' | '18';
 
 // Body typeface. Each non-system option is a self-hosted webfont (Fontsource)
 // chosen so the app renders identically on every platform — the previous
@@ -33,7 +33,7 @@ export type FontFamily =
 
 const THEMES: readonly Theme[] = ['light', 'dark', 'system'];
 const PALETTES: readonly Palette[] = ['ink', 'grape'];
-const FONT_SIZES: readonly FontSize[] = ['15', '16', '17'];
+const FONT_SIZES: readonly FontSize[] = ['15', '16', '17', '18'];
 const FONTS: readonly FontFamily[] = [
   'roboto',
   'inter',
@@ -87,6 +87,7 @@ export const FONT_SIZE_LABELS: Record<FontSize, string> = {
   '15': 'Small',
   '16': 'Medium',
   '17': 'Large',
+  '18': 'Extra Large',
 };
 
 // Display names for each palette, used by the drawer/settings pickers.

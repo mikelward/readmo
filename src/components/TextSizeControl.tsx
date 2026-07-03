@@ -10,6 +10,7 @@ const FONT_SIZE_OPTIONS: Array<{ value: FontSize; label: string; glyph: number }
   { value: '15', label: FONT_SIZE_LABELS['15'], glyph: 14 },
   { value: '16', label: FONT_SIZE_LABELS['16'], glyph: 18 },
   { value: '17', label: FONT_SIZE_LABELS['17'], glyph: 22 },
+  { value: '18', label: FONT_SIZE_LABELS['18'], glyph: 26 },
 ];
 
 /** Text-size picker as a segmented row of capital-A glyphs. Shared by the

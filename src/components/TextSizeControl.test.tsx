@@ -12,11 +12,11 @@ describe('TextSizeControl', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders Small, Medium, Large A-glyph buttons as a Text size radiogroup', () => {
+  it('renders Small, Medium, Large, Extra Large A-glyph buttons as a Text size radiogroup', () => {
     renderWithProviders(<TextSizeControl />);
     const group = screen.getByRole('radiogroup', { name: 'Text size' });
     expect(group).toBeInTheDocument();
-    for (const name of ['Small', 'Medium', 'Large']) {
+    for (const name of ['Small', 'Medium', 'Large', 'Extra Large']) {
       const btn = screen.getByRole('radio', { name });
       expect(btn).toBeInTheDocument();
       // Accessible name comes from aria-label; the visible glyph is just "A".
@@ -37,5 +37,7 @@ describe('TextSizeControl', () => {
     renderWithProviders(<TextSizeControl />);
     await user.click(screen.getByRole('radio', { name: 'Small' }));
     expect(setSpy).toHaveBeenCalledWith('15');
+    await user.click(screen.getByRole('radio', { name: 'Extra Large' }));
+    expect(setSpy).toHaveBeenCalledWith('18');
   });
 });
