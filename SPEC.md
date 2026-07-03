@@ -708,6 +708,21 @@ loopback/link-local/private/metadata targets and redirects to them.
 - A scheduled Edge Function runs ~every 5 min, selecting feeds with
   `next_fetch_at <= now()` **and** ≥1 subscriber, in batches: conditional GET,
   parse, upsert new items, schedule `next_fetch_at`.
+- **Reap feeds with no subscribers.** Each run first calls `reap_orphan_feeds()`
+  (a service-role SQL function, migration 0042), which deletes every feed that
+  has **no `subscriptions` row AND no permanent (pinned/favorite/done)
+  `item_state`** on any of its items — cascading its items and their sparse
+  per-user rows away. This is the GC for feeds abandoned by unsubscribe, account
+  deletion, or an admin deleting a user (all cascade `subscriptions` away),
+  so the poller stops fetching them and we stop retaining content no one can
+  read. The permanent-state exemption **mirrors the `feeds_select` RLS test
+  (branch (b))** so a feed kept alive solely by someone's pin/favorite/done is
+  preserved and their kept items are never GC'd out from under them; once the
+  last such flag is cleared and the feed still has no subscribers, the next run
+  reaps it. Cost: one set-based `DELETE` per run — negligible at reader scale.
+  `subscribe_to_feed` takes a `FOR KEY SHARE` lock on the feed row it resolves
+  (migration 0043) so a concurrent reap can't delete a just-abandoned feed out
+  from under an in-flight re-subscribe (which would FK-fail the "Add feed").
 - **Adaptive & polite:** honor `Cache-Control`/`ttl`/`<sy:updatePeriod>`; back
   off on `429`/`Retry-After`; exponential backoff + jitter on errors
   (`error_count`), capped ~6h; circuit-breaker parks a feed after N failures

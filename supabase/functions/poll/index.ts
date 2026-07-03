@@ -17,6 +17,7 @@
 // it imports ARE type-checked + unit-tested.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { pollOne, recordFailure } from '../_shared/poller.ts';
+import { reapOrphanFeeds } from '../_shared/reap.ts';
 import { redactUrl } from '../_shared/urlSafety.ts';
 
 const BATCH_SIZE = 25;
@@ -67,6 +68,18 @@ async function handle(req: Request): Promise<Response> {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
+  // Reap feeds nobody subscribes to anymore before selecting the batch, so an
+  // abandoned feed is deleted rather than polled (and stops retaining content
+  // no one can read). A feed kept alive only by someone's pinned/favorite/done
+  // item is preserved — see reap_orphan_feeds() (0042). GC is not the fetch:
+  // a reap failure is logged but never aborts the poll run.
+  try {
+    const reaped = await reapOrphanFeeds(supabase);
+    if (reaped > 0) console.log(`poll: reaped ${reaped} orphan feed(s)`);
+  } catch (err) {
+    console.error('poll: reap_orphan_feeds failed:', err);
+  }
+
   // Select feeds due for a poll that have >= 1 subscriber. Doing the
   // subscriber check keeps poll cost proportional to *subscribed distinct
   // feeds*, not all feeds ever added.
@@ -92,13 +105,13 @@ async function handle(req: Request): Promise<Response> {
   let processed = 0;
   let failed = 0;
   for (const feed of feeds ?? []) {
-    // TODO(PR2, P2 — subscriber filter): the SELECT above must also require
-    // EXISTS (subscriptions for this feed). Without it, feeds keep being polled
-    // after their last subscriber leaves — for abandoned private/tokenized
-    // feeds the server keeps calling the publisher and retaining content no one
-    // can read, and poll cost scales with all feeds ever added instead of the
-    // distinct *subscribed* feeds the spec promises. Move the join into the
-    // query (or a SQL view) when this goes live. See PR #1 review (codex P2).
+    // TODO(PR2, P2 — subscriber filter): the SELECT above could also require
+    // EXISTS (subscriptions for this feed). The reap pass above now deletes the
+    // common abandoned case (no subscribers AND nothing kept), so the remaining
+    // gap is only a feed with no subscribers that survives reaping because a
+    // user still pins/favorites/dones one of its items — we keep polling that
+    // until the last kept item is cleared. Folding an EXISTS-subscriptions join
+    // into the query (or a SQL view) would skip those too. See PR #1 (codex P2).
     try {
       await pollOne(supabase, feed);
       processed++;
