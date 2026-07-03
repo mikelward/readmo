@@ -387,8 +387,13 @@ export async function safeFetch(
             signal: controller.signal,
           });
 
-      // Handle redirects ourselves so each Location is re-validated.
-      if (res.status >= 300 && res.status < 400) {
+      // Handle redirects ourselves so each Location is re-validated. 304 Not
+      // Modified is a 3xx but NOT a redirect — it's the conditional-GET reply
+      // (ETag/If-Modified-Since) meaning "unchanged, no body", and it carries no
+      // Location. It must pass through to the caller (the poller/refresh check
+      // for 304 to skip re-parsing); treating it as a redirect throws
+      // "Redirect 304 without Location header" and fails every unchanged poll.
+      if (res.status >= 300 && res.status < 400 && res.status !== 304) {
         // Release the socket backing this redirect response up front — we never
         // read a redirect body, and in the pinned path it owns the conn. Do this
         // before any throw so an invalid/oversized 3xx can't leak the connection.
