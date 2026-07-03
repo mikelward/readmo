@@ -46,6 +46,15 @@ describe('AppDrawer', () => {
     expect(screen.queryByRole('radiogroup', { name: 'Color theme' })).toBeNull();
   });
 
+  it('lays out the drawer text-size picker as a two-row grid', () => {
+    renderDrawer();
+    // The grid variant keeps the six sizes as two even rows of three in the
+    // narrow drawer panel instead of wrapping unpredictably.
+    expect(screen.getByRole('radiogroup', { name: 'Text size' })).toHaveClass(
+      'text-size--grid',
+    );
+  });
+
   it('has an App section linking to Settings, About, and Legal (Debug lives on About)', () => {
     renderDrawer();
     expect(screen.getByText('App')).toBeInTheDocument();

@@ -12,11 +12,18 @@ describe('TextSizeControl', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders Small, Medium, Large, Extra Large A-glyph buttons as a Text size radiogroup', () => {
+  it('renders Extra Small through Huge A-glyph buttons as a Text size radiogroup', () => {
     renderWithProviders(<TextSizeControl />);
     const group = screen.getByRole('radiogroup', { name: 'Text size' });
     expect(group).toBeInTheDocument();
-    for (const name of ['Small', 'Medium', 'Large', 'Extra Large']) {
+    for (const name of [
+      'Extra Small',
+      'Small',
+      'Medium',
+      'Large',
+      'Extra Large',
+      'Huge',
+    ]) {
       const btn = screen.getByRole('radio', { name });
       expect(btn).toBeInTheDocument();
       // Accessible name comes from aria-label; the visible glyph is just "A".
@@ -35,9 +42,9 @@ describe('TextSizeControl', () => {
     const user = userEvent.setup();
     const setSpy = vi.spyOn(themeLib, 'setStoredFontSize').mockImplementation(() => {});
     renderWithProviders(<TextSizeControl />);
-    await user.click(screen.getByRole('radio', { name: 'Small' }));
-    expect(setSpy).toHaveBeenCalledWith('15');
-    await user.click(screen.getByRole('radio', { name: 'Extra Large' }));
-    expect(setSpy).toHaveBeenCalledWith('18');
+    await user.click(screen.getByRole('radio', { name: 'Extra Small' }));
+    expect(setSpy).toHaveBeenCalledWith('14');
+    await user.click(screen.getByRole('radio', { name: 'Huge' }));
+    expect(setSpy).toHaveBeenCalledWith('19');
   });
 });
