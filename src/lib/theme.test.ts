@@ -254,8 +254,10 @@ describe('font size', () => {
   it('reads a stored font size and ignores garbage', () => {
     window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '17');
     expect(getStoredFontSize()).toBe('17');
-    // '18' is no longer an offered size, so it's rejected like any garbage.
     window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '18');
+    expect(getStoredFontSize()).toBe('18');
+    // '19' isn't an offered size, so it's rejected like any garbage.
+    window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '19');
     expect(getStoredFontSize()).toBe('16');
     window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '99');
     expect(getStoredFontSize()).toBe('16');

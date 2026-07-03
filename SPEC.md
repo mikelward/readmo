@@ -165,15 +165,16 @@ Everything else about the visual system mirrors newshacker.
   In Settings the **Color Theme** picker renders each option as a two-tone
   color **swatch** (paper background + accent, split on the diagonal), with the
   active palette's swatch ringed.
-- **Text size:** a third orthogonal appearance axis with three steps — Small
-  (15px), Medium (16px, default), Large (17px). Selectable in Settings
-  ("Text size" section) as a segmented row of capital-**A** glyphs sized
-  small/medium/large (accessible name from each button's label). The choice drives the `data-font-size`
+- **Text size:** a third orthogonal appearance axis with four steps — Small
+  (15px), Medium (16px, default), Large (17px), Extra Large (18px). Selectable
+  in Settings
+  ("Text size" section) as a segmented row of capital-**A** glyphs of
+  increasing size (accessible name from each button's label). The choice drives the `data-font-size`
   attribute on
   `<html>` (Medium = 16px owns the bare `:root`, no attribute), which maps to
   the `--rm-font-size` token; the token sets the **root** (`html`) font-size so
   the `rem`-based type throughout the UI — including the reader article body —
-  scales with it. The picker stays at three tap zones, within the per-row cap.
+  scales with it.
   Persisted in `localStorage` under `readmo:fontSize`, applied before first
   paint (alongside theme/palette) to avoid a flash, and synced across tabs/hook
   instances via the shared `readmo:themeChanged` event.
@@ -1468,7 +1469,7 @@ negligible and off every critical path. See the External services table in
 
 10. **Settings** — `/settings`: **Reading**, **Sort order**, **Bottom toolbar**,
     **Color Theme** (Ink/Grape swatches), **Dark/Light Mode** (light/dark/system
-    icons), **Text size** (Small/Medium/Large A-glyphs) — all symbolic segmented
+    icons), **Text size** (Small/Medium/Large/Extra Large A-glyphs) — all symbolic segmented
     pickers — font, account/sign-out, and an **About** link. Reached
     from the **account menu** (top-right avatar → Settings). Feed management
     lives on the Feeds page, not here, but an **Edit feeds** button at the top
