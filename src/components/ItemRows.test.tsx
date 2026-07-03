@@ -165,6 +165,42 @@ describe('ItemRows', () => {
     expect(placeholders[0]).toHaveAttribute('aria-hidden', 'true');
   });
 
+  it('keeps a favicon box (not display:none) when its image fails to load and a sibling has an icon', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    const items = await sampleItems(2);
+    const headers = new Map([
+      [
+        items[0].item.id,
+        {
+          feedId: items[0].item.feedId,
+          title: 'Working Icon',
+          faviconUrl: 'https://example.com/favicon.ico',
+        },
+      ],
+      // Has a favicon URL, but it 404s / is bot-blocked and won't load. With a
+      // sibling showing an icon, the box must stay (blank) to hold alignment
+      // rather than collapse and snap the name left.
+      [
+        items[1].item.id,
+        {
+          feedId: items[1].item.feedId,
+          title: 'Broken Icon',
+          faviconUrl: 'https://blocked.example/favicon.ico',
+        },
+      ],
+    ]);
+    const { container } = renderWithProviders(
+      <ItemRows items={items} emptyLabel="Nothing here." groupHeaders={headers} />,
+    );
+    const broken = container.querySelector<HTMLImageElement>(
+      'img.item-list__group-favicon[src="https://blocked.example/favicon.ico"]',
+    )!;
+    fireEvent.error(broken);
+    // Box preserved (space kept), image content hidden — no left snap, no glyph.
+    expect(broken.style.visibility).toBe('hidden');
+    expect(broken.style.display).not.toBe('none');
+  });
+
   it('renders no favicon placeholder when no header in the list has an icon', async () => {
     const items = await sampleItems(2);
     const headers = new Map([
