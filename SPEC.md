@@ -707,7 +707,10 @@ loopback/link-local/private/metadata targets and redirects to them.
 
 - A scheduled Edge Function runs ~every 5 min, selecting feeds with
   `next_fetch_at <= now()` **and** ≥1 subscriber, in batches: conditional GET,
-  parse, upsert new items, schedule `next_fetch_at`.
+  parse, upsert new items, schedule `next_fetch_at`. The ≥1-subscriber predicate
+  is enforced in SQL by `feeds_due_for_poll()` (migration 0044), so a feed with
+  no subscribers is never polled — including one the reaper preserved because a
+  pin/favorite/done keeps its items alive (we keep the items but stop fetching).
 - **Reap feeds with no subscribers.** Each run first calls `reap_orphan_feeds()`
   (a service-role SQL function, migration 0042), which deletes every feed that
   has **no `subscriptions` row AND no permanent (pinned/favorite/done)
