@@ -164,6 +164,7 @@ export const POPULAR_FEEDS: PopularFeed[] = [
 
   // Business & Finance
   { name: 'Wall Street Journal', feedUrl: 'https://feeds.a.dj.com/rss/RSSWorldNews.xml', category: 'Business & Finance' },
+  { name: 'Financial Times', feedUrl: 'https://www.ft.com/rss/home', category: 'Business & Finance' },
   { name: 'Bloomberg Markets', feedUrl: 'https://feeds.bloomberg.com/markets/news.rss', category: 'Business & Finance' },
   { name: 'MarketWatch', feedUrl: 'https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines', category: 'Business & Finance' },
   { name: 'Business Insider', feedUrl: 'https://www.businessinsider.com/rss', category: 'Business & Finance' },
