@@ -7,10 +7,12 @@ import './TextSizeControl.css';
 // (small / medium / large), echoing the conventional font-size control. The
 // accessible name still comes from the label.
 const FONT_SIZE_OPTIONS: Array<{ value: FontSize; label: string; glyph: number }> = [
+  { value: '14', label: FONT_SIZE_LABELS['14'], glyph: 10 },
   { value: '15', label: FONT_SIZE_LABELS['15'], glyph: 14 },
   { value: '16', label: FONT_SIZE_LABELS['16'], glyph: 18 },
   { value: '17', label: FONT_SIZE_LABELS['17'], glyph: 22 },
   { value: '18', label: FONT_SIZE_LABELS['18'], glyph: 26 },
+  { value: '19', label: FONT_SIZE_LABELS['19'], glyph: 30 },
 ];
 
 /** Text-size picker as a segmented row of capital-A glyphs. Shared by the

@@ -86,11 +86,18 @@ describe('SettingsPage — Appearance (symbolic controls)', () => {
   });
 
   describe('Text size', () => {
-    it('renders Small, Medium, Large, Extra Large A-glyph buttons in one segmented row', () => {
+    it('renders Extra Small through Huge A-glyph buttons in one segmented row', () => {
       renderWithProviders(<SettingsPage />);
       const group = screen.getByRole('radiogroup', { name: 'Text size' });
       expect(group).toHaveClass('text-size');
-      for (const name of ['Small', 'Medium', 'Large', 'Extra Large']) {
+      for (const name of [
+        'Extra Small',
+        'Small',
+        'Medium',
+        'Large',
+        'Extra Large',
+        'Huge',
+      ]) {
         const btn = screen.getByRole('radio', { name });
         expect(btn).toBeInTheDocument();
         // Accessible name comes from aria-label; the visible glyph is just "A".

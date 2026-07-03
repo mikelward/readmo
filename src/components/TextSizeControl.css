@@ -10,6 +10,13 @@
   border-radius: 8px;
 }
 
+/* Drawer variant: a fixed 3-column grid so the six sizes lay out as two even
+   rows of three, rather than wrapping unpredictably in the narrow drawer panel. */
+.text-size--grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+}
+
 .text-size__btn {
   /* min-width holds the 44px tap floor; flex-grow shares the row evenly. */
   flex: 1 1 var(--rm-tap);

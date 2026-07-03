@@ -81,6 +81,10 @@
 
 /* Text-size scale (settings "Text size" picker). Orthogonal to mode/palette, so
    it lives in its own attribute and only overrides the one token. */
+:root[data-font-size='14'] {
+  --rm-font-size: 14px;
+}
+
 :root[data-font-size='15'] {
   --rm-font-size: 15px;
 }
@@ -91,6 +95,10 @@
 
 :root[data-font-size='18'] {
   --rm-font-size: 18px;
+}
+
+:root[data-font-size='19'] {
+  --rm-font-size: 19px;
 }
 
 /* Typeface (settings "Font" picker). Orthogonal to mode/palette/size, so it
