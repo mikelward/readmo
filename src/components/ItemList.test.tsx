@@ -1273,17 +1273,17 @@ describe('ItemList', () => {
     expect(scroll.getScrollY()).toBe(0);
   });
 
-  it('keeps the reader in place when sweeping the bottom group leaves a sub-viewport document', async () => {
+  it('settles to the top (all content visible) when sweeping the bottom group leaves a sub-viewport document', async () => {
     // Regression (reported): sweeping the bottom feed group while scrolled to the
-    // bottom of an otherwise-collapsed list snapped the whole page to the top.
-    // Once the swept rows are gone the surviving document is SHORTER THAN ONE
-    // VIEWPORT, and the browser floors documentElement.scrollHeight at the
-    // viewport height — so the release's old scrollHeight-based deficit read 0,
-    // under-provisioned the min-height, and the document couldn't hold the offset:
-    // scrollY clamped to 0. The release now sizes the hold from the body's
-    // (unclamped) document-space top instead, so a sub-viewport document is held
-    // tall enough and the reader stays put. Big innerHeight so the post-sweep
-    // document (chrome + survivors) sits below one viewport.
+    // bottom left the reader parked in blank space. Once the swept rows are gone
+    // the surviving document is SHORTER THAN ONE VIEWPORT, so there is no scroll
+    // offset left worth preserving — but the release used to hold the reader's old
+    // offset anyway (min-height slack), pushing the surviving rows up above the
+    // fold with a blank tail below. When the whole document now fits on screen the
+    // release instead drops the hold and rests at the natural top, so every
+    // remaining row is visible at once. (The taller-than-viewport case still holds
+    // — see "group headers do not slide down" above.) Big innerHeight so the
+    // post-sweep document (chrome + survivors) sits below one viewport.
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
     const fetchPage = vi.fn((cursor: string | null) =>
@@ -1312,8 +1312,7 @@ describe('ItemList', () => {
     const sweeps = screen.getAllByTestId('group-sweep');
     // Reader is at the very bottom of the loaded list.
     scroll.setScrollY(scroll.maxScroll());
-    const before = scroll.getScrollY();
-    expect(before).toBeGreaterThan(0);
+    expect(scroll.getScrollY()).toBeGreaterThan(0);
 
     // Sweep the LAST (bottom) feed section.
     await user.click(sweeps[sweeps.length - 1]);
@@ -1324,21 +1323,12 @@ describe('ItemList', () => {
         rowsBefore,
       ),
     );
-    // ...and the post-sweep document is shorter than one viewport (the condition
-    // that used to trip the clamp): natural max scroll is 0.
+    // ...and the post-sweep document is shorter than one viewport.
     const survivors = container.querySelectorAll('[data-item-id]').length;
     expect(100 + survivors * 100).toBeLessThan(1000);
-    // The reader did NOT snap to the top: the hold kept the offset exactly.
-    await waitFor(() => expect(body.style.minHeight).not.toBe(''));
-    expect(scroll.getScrollY()).toBe(before);
-
-    // On the reader's next scroll up to the top, the slack clears — no blank tail.
-    scroll.setScrollY(0);
-    act(() => {
-      window.dispatchEvent(new Event('scroll'));
-    });
+    // The reader settled to the natural top — no held slack, all content visible.
+    await waitFor(() => expect(scroll.getScrollY()).toBe(0));
     expect(body.style.minHeight).toBe('');
-    expect(scroll.getScrollY()).toBe(0);
   });
 
   it('counts trailing in-flow content (the relative bottom bar) when releasing the deferred hold', async () => {
@@ -1415,15 +1405,17 @@ describe('ItemList', () => {
     expect(scroll.getScrollY()).toBe(target);
   });
 
-  it('counts the footer even when the post-sweep document is sub-viewport (scrollHeight floored)', async () => {
-    // Codex P2 on #321 (follow-up): when the surviving body PLUS the relative
-    // bottom toolbar is still shorter than one viewport, documentElement's
-    // scrollHeight reports exactly innerHeight — floored — so a scrollHeight-based
-    // trailing measurement can't see the footer and would leave a toolbar-height
-    // of extra scroll range below the reader. Measuring the footer floor-free from
-    // the layout boxes (`.item-list` root bottom − body bottom) counts it even
-    // here, so the hold is exact. Viewport is taller than the post-sweep content
-    // so the document is sub-viewport, but pre-sweep it overflows (before > 0).
+  it('settles to the top with a trailing footer when the post-sweep document is sub-viewport (scrollHeight floored)', async () => {
+    // Codex P2 on #321 (follow-up), reframed for the settle-to-top behavior: when
+    // the surviving body PLUS the relative bottom toolbar is still shorter than one
+    // viewport, documentElement's scrollHeight reports exactly innerHeight —
+    // floored — so a scrollHeight-based measurement can't see the footer. The
+    // release measures the natural document floor-free (body document-space top +
+    // the `.item-list` root's trailing footer), so it correctly reads the whole
+    // document as sub-viewport (natural max scroll 0) even with the footer present
+    // and settles to the top instead of holding a floored, bogus offset. Viewport
+    // is taller than the post-sweep content so the document is sub-viewport, but
+    // pre-sweep it overflows (before > 0).
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
     const fetchPage = vi.fn((cursor: string | null) =>
@@ -1451,8 +1443,7 @@ describe('ItemList', () => {
     const rowsBefore = container.querySelectorAll('[data-item-id]').length;
     const sweeps = screen.getAllByTestId('group-sweep');
     scroll.setScrollY(scroll.maxScroll());
-    const before = scroll.getScrollY();
-    expect(before).toBeGreaterThan(0);
+    expect(scroll.getScrollY()).toBeGreaterThan(0);
 
     await user.click(sweeps[sweeps.length - 1]);
     await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
@@ -1462,13 +1453,12 @@ describe('ItemList', () => {
       ),
     );
     const survivors = container.querySelectorAll('[data-item-id]').length;
-    // Post-sweep document is genuinely sub-viewport (content < innerHeight).
+    // Post-sweep document is genuinely sub-viewport (content + footer < innerHeight).
     expect(survivors * 100 + 100).toBeLessThan(1000);
-    // Held exactly at the offset — the floored scrollHeight didn't hide the footer,
-    // so there's no toolbar-height of extra scrollable slack.
-    await waitFor(() => expect(body.style.minHeight).not.toBe(''));
-    expect(scroll.getScrollY()).toBe(before);
-    expect(scroll.maxScroll()).toBe(before);
+    // Settled to the natural top — the floor-free footer measurement let the
+    // release see the document is sub-viewport, so it dropped the hold entirely.
+    await waitFor(() => expect(scroll.getScrollY()).toBe(0));
+    expect(body.style.minHeight).toBe('');
   });
 
   it('folds the held offset into a fresh lock when a second in-viewport Done lands before the reader scrolls', async () => {
@@ -2306,6 +2296,50 @@ describe('ItemList', () => {
       expect(
         screen.getByTestId('item-list-body').style.overflowAnchor,
       ).not.toBe('none');
+    });
+
+    it('does not snap to the top when an auto-hide leaves a sub-viewport document', async () => {
+      // The sub-viewport settle-to-top release is gated to IN-VIEWPORT removals
+      // (Sweep / visible Done). Auto-hide removes rows the reader scrolled PAST, so
+      // even when the surviving document ends up shorter than one viewport the
+      // release must NOT settle to the top and lose their place — it keeps holding.
+      // Sub-viewport geometry (body top far above the fold, scrollY well past a
+      // now-tiny document) plus a scrollTo spy that must never be told to go home.
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      const scrollToSpy = vi.fn();
+      vi.stubGlobal('scrollTo', scrollToSpy);
+      Object.defineProperty(window, 'scrollY', { value: 1000, configurable: true });
+      const rectSpy = vi
+        .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+        .mockReturnValue({
+          top: -500,
+          bottom: 0,
+          left: 0,
+          right: 0,
+          width: 0,
+          height: 0,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        } as DOMRect);
+      try {
+        const source = new MockDataSource(`test-${Math.random()}`);
+        renderHome(source);
+        const firstRow = (await screen.findAllByTestId('item-row'))[0];
+        const titleText = within(firstRow).getByTestId('item-title').textContent;
+        act(() => setVisibilityForTest(firstRow.closest('li')!, 0));
+        await waitFor(() =>
+          expect(
+            screen.queryAllByTestId('item-title').map((n) => n.textContent),
+          ).not.toContain(titleText),
+        );
+        // The release ran (background refresh settled) but never scrolled the
+        // reader to the top — a Sweep would, an auto-hide must not.
+        expect(scrollToSpy).not.toHaveBeenCalledWith(0, 0);
+      } finally {
+        rectSpy.mockRestore();
+      }
     });
 
     it('defers an auto-hide while a touch is in progress, committing it on release', async () => {

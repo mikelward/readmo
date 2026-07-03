@@ -1308,16 +1308,25 @@ negligible and off every critical path. See the External services table in
      scroll** — the held slack shrinks in lockstep as they scroll up and clears
      the instant the natural document can hold the offset, so the headers never
      move and no blank tail persists. The needed height is sized from the body's
-     *document-space top* (its `getBoundingClientRect().top + scrollY`), **not**
-     `documentElement.scrollHeight` — the browser floors that at the viewport
-     height, so when the post-sweep survivors are shorter than one viewport (a
-     bottom group swept out of an otherwise-collapsed list) a scrollHeight-based
-     deficit reads as zero, under-provisions the hold, and the page still snaps to
-     the top. The body-top measurement isn't clamped, so a sub-viewport document
-     is held correctly too. (The clear-to-measure momentarily clamps `scrollY` and
-     the browser fires a `scroll` event for it; the deferred release ignores a
-     scroll that lands back on the offset it is already holding, so its own reflow
-     echo can't be mistaken for the reader scrolling to the top.)
+     *document-space top* (its `getBoundingClientRect().top + scrollY`) plus the
+     floor-free trailing footer, **not** `documentElement.scrollHeight` — the
+     browser floors that at the viewport height, so a scrollHeight-based
+     measurement can't tell how tall a sub-viewport document really is. The
+     body-top measurement isn't clamped, so the release reads the true natural
+     height (and its max scroll) correctly even when the survivors are shorter than
+     one viewport. **When the whole surviving document fits within one viewport
+     there's no offset worth preserving** — holding the reader's old (now
+     past-content) offset would just park them in the blank tail with the top
+     survivors pushed above the fold. So a sub-viewport result from an in-viewport
+     removal (Sweep or visible Done) **settles to the natural top instead**, making
+     every remaining row visible at once; only the still-taller-than-viewport case
+     keeps the anti-header-slide hold above. (This settle is gated to in-viewport
+     removals: **auto-hide-on-scroll**, which removes rows the reader scrolled
+     *past*, keeps holding even sub-viewport so it never snaps them away from where
+     they were reading.) (The clear-to-measure momentarily clamps `scrollY` and the
+     browser fires a `scroll` event for it; the deferred release ignores a scroll
+     that lands back on the offset it is already holding, so its own reflow echo
+     can't be mistaken for the reader scrolling to the top.)
      **Marking a single article Done** (the row's Done action, the `d`
      shortcut, or a swipe-right — a Sweep of one) takes the same anchor opt-out:
      it removes one row the reader can currently see, so without it the browser

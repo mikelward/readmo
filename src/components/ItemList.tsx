@@ -1545,6 +1545,18 @@ export function ItemList({
   // by scrolling during that refetch (those remove rows above the viewport and
   // depend on anchoring to hold the first still-visible row steady).
   const anchorLockedRef = useRef(false);
+  // Whether the current height lock was taken because an IN-VIEWPORT row left the
+  // DOM (a Sweep or a single visible Done — the `lockBodyHeight` callers), as
+  // opposed to a background refresh that didn't remove a visible row (pin,
+  // dismiss-off-screen, auto-hide-on-scroll, poll, PTR — the isRefreshing-edge
+  // lock). It decides what the release does when the surviving document ends up
+  // SHORTER THAN ONE VIEWPORT: an in-viewport removal settles to the natural top
+  // so every remaining row is visible (there's no offset worth preserving once
+  // everything fits), while a background refresh keeps holding the offset — most
+  // importantly auto-hide, which removes rows the reader scrolled PAST and must
+  // keep them reading where they are rather than snapping to the top. Read by
+  // holdFor's sub-viewport branch; reset when the lock releases.
+  const releaseSettlesToTopRef = useRef(false);
   // A deferred height-lock release armed on the reader's next scroll — see
   // releaseBodyHeight. Held here so it can be torn down on unmount and whenever
   // a fresh lock is taken.
@@ -1611,6 +1623,11 @@ export function ItemList({
     // already-shrunken mid-refresh list too short).
     el.style.overflowAnchor = 'none';
     anchorLockedRef.current = true;
+    // An in-viewport row is leaving, so a sub-viewport result should settle to the
+    // top. Set before the early return so a sweep landing mid-refresh (when a
+    // background lock is already held) still marks the release settle-to-top —
+    // the reader's own removal wins over the background refresh that preceded it.
+    releaseSettlesToTopRef.current = true;
     if (heightLockedRef.current) return;
     // Stop a deferred release from later clearing this fresh lock out from under
     // us, but DON'T clear its held slack first: when a prior bottom-sweep release
@@ -1661,13 +1678,12 @@ export function ItemList({
     //
     // The body height needed to keep `target` scrollable is derived from the
     // body's *document-space top* (`getBoundingClientRect().top + scrollY`) — the
-    // fixed chrome above it — NOT from `document.documentElement.scrollHeight`.
-    // The browser clamps `scrollHeight` UP to the viewport height, so when the
-    // post-sweep document is shorter than one viewport (a bottom group swept out
-    // of an otherwise-collapsed list) a scrollHeight-based deficit reads as 0 and
-    // under-provisions the min-height — the document then can't hold `target` and
-    // the reader snaps to the top. The body-top measurement isn't clamped, so the
-    // needed height is correct even for a sub-viewport document.
+    // fixed chrome above it — NOT from `document.documentElement.scrollHeight`
+    // (which the browser floors UP to the viewport height). The body-top and the
+    // floor-free `trailing` measurements together give the true natural document
+    // height even when it's shorter than one viewport, so `naturalMax` correctly
+    // reads 0 there and the sub-viewport branch below settles to the top rather
+    // than misreading a floored deficit and holding a bogus offset.
     const holdFor = (target: number): number => {
       el.style.minHeight = '';
       // Fixed chrome above the body, in document coordinates (invariant across
@@ -1697,6 +1713,24 @@ export function ItemList({
       if (target <= naturalMax) {
         // The natural (unlocked) document already holds `target`.
         heldReleaseScrollYRef.current = null;
+        return 0;
+      }
+      // The surviving document is shorter than one viewport (`naturalMax === 0`,
+      // so `target` can only be past it): everything now fits on screen and there
+      // is no scroll offset worth preserving. Holding `target` here would park the
+      // reader in the blank tail below the content with the top survivors pushed
+      // above the fold, forcing them to scroll up to read what's left. When the
+      // shrink came from an in-viewport removal (Sweep / visible Done — the reader
+      // deliberately cleared what they were looking at) release fully and let the
+      // page rest at its natural top, so every remaining row is visible at once.
+      // Auto-hide and other background refreshes keep holding (ref false): they
+      // remove rows the reader scrolled PAST, so snapping to the top would lose
+      // their place. The taller-than-viewport branch below always holds — there the
+      // offset is real content and dropping it would slide the pinned group headers
+      // down (the jump this whole mechanism guards against).
+      if (naturalMax === 0 && releaseSettlesToTopRef.current) {
+        heldReleaseScrollYRef.current = null;
+        if (Math.round(window.scrollY) !== 0) window.scrollTo(0, 0);
         return 0;
       }
       // Body height that keeps the document tall enough to scroll to `target`.
@@ -2142,6 +2176,11 @@ export function ItemList({
       detachHeightRelease();
       el.style.minHeight = `${el.offsetHeight}px`;
       heightLockedRef.current = true;
+      // A fresh lock with no in-viewport removal: hold (not settle) on a
+      // sub-viewport result. A sweep/visible-Done that took the lock first
+      // already flipped this true and skips this branch (heightLockedRef set), so
+      // its settle-to-top intent survives.
+      releaseSettlesToTopRef.current = false;
     } else if (!isRefreshing && heightLockedRef.current) {
       // Release without letting the now-shorter post-sweep document clamp the
       // scroll (which would slide every pinned group header down).
@@ -2154,6 +2193,7 @@ export function ItemList({
         anchorLockedRef.current = false;
       }
       heightLockedRef.current = false;
+      releaseSettlesToTopRef.current = false;
     }
   }, [isRefreshing, showMissState, releaseBodyHeight, detachHeightRelease]);
 
@@ -2177,6 +2217,7 @@ export function ItemList({
         anchorLockedRef.current = false;
       }
       heightLockedRef.current = false;
+      releaseSettlesToTopRef.current = false;
     }
   }, [isRefreshing, visibleItems.length, releaseBodyHeight]);
 
