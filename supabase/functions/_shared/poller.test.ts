@@ -293,6 +293,189 @@ describe('resolveStoredFavicon', () => {
     expect(url).toBe('https://example.com/favicon.ico');
     expect(requests).toEqual([]);
   });
+
+  // A recording Jina fake: serves canned HTML per URL and records the URLs hit.
+  const jinaFake = (routes: Record<string, string | null>) => {
+    const targets: string[] = [];
+    const jinaFetch = (target: string) => {
+      targets.push(target);
+      return Promise.resolve(routes[target] ?? null);
+    };
+    return { jinaFetch, targets };
+  };
+
+  it('retries a bot-blocked (403) homepage through Jina and stores the discovered icon', async () => {
+    // The exact ft.com case: /favicon.ico guess would 404, and the homepage that
+    // advertises the real icon 403s a plain GET but loads via Jina Reader.
+    const { fetchFn } = routedFetch({ 'https://example.com/': { status: 403 } });
+    const { jinaFetch, targets } = jinaFake({
+      'https://example.com/': '<head><link rel="icon" href="/real.png"></head>',
+    });
+    const url = await resolveStoredFavicon(
+      { faviconUrl: 'https://example.com/favicon.ico', faviconAdvertised: false, siteUrl: 'https://example.com/' },
+      null,
+      fetchFn,
+      jinaFetch,
+    );
+    expect(url).toBe('https://example.com/real.png');
+    expect(targets).toEqual(['https://example.com/']);
+  });
+
+  it('does NOT retry via Jina when the direct homepage fetch THROWS (SSRF/DNS/timeout)', async () => {
+    // A thrown fetch is indistinguishable from safeFetch failing closed on an
+    // SSRF-unsafe host (loopback/link-local/private/metadata) — we must not hand
+    // such a URL to a third party, so a throw falls back to the guess, never Jina.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchFn: PollerFetch = () => Promise.reject(new Error('SSRF: link-local address'));
+    const { jinaFetch, targets } = jinaFake({
+      'https://example.com/': '<head><link rel="apple-touch-icon" href="/apple.png"></head>',
+    });
+    const url = await resolveStoredFavicon(
+      { faviconUrl: 'https://example.com/favicon.ico', faviconAdvertised: false, siteUrl: 'https://example.com/' },
+      null,
+      fetchFn,
+      jinaFetch,
+    );
+    expect(url).toBe('https://example.com/favicon.ico');
+    expect(targets).toEqual([]);
+    vi.restoreAllMocks();
+  });
+
+  it('absolutizes the Jina-discovered icon against the post-redirect homepage host', async () => {
+    // example.com -> www.example.com then 403: safeFetch resolves to the www
+    // host; the Jina retry must target/parse against that, so a relative
+    // <link rel="icon" href="/real.png"> lands on www.example.com, not example.com.
+    const requested: string[] = [];
+    const fetchFn: PollerFetch = (url) => {
+      requested.push(url);
+      return Promise.resolve({
+        status: 403,
+        headers: new Headers(),
+        url: 'https://www.example.com/', // post-redirect final URL
+        body: new TextEncoder().encode(''),
+      });
+    };
+    const jinaTargets: string[] = [];
+    const jinaFetch = (target: string) => {
+      jinaTargets.push(target);
+      return Promise.resolve('<head><link rel="icon" href="/real.png"></head>');
+    };
+    const url = await resolveStoredFavicon(
+      { faviconUrl: 'https://example.com/favicon.ico', faviconAdvertised: false, siteUrl: 'https://example.com/' },
+      null,
+      fetchFn,
+      jinaFetch,
+    );
+    expect(url).toBe('https://www.example.com/real.png');
+    expect(jinaTargets).toEqual(['https://www.example.com/']);
+  });
+
+  it('forwards only the origin root to Jina, never a tokenized homepage path', async () => {
+    // A feed with a token in feeds.url (secret_url null, per 0004) can resolve
+    // siteUrl under the token path; the Jina target must be the bare origin so a
+    // short token can't ride into the third-party request.
+    const { fetchFn } = routedFetch({ 'https://example.com/member/abc123/': { status: 403 } });
+    const { jinaFetch, targets } = jinaFake({
+      'https://example.com/': '<head><link rel="icon" href="/real.png"></head>',
+    });
+    const url = await resolveStoredFavicon(
+      { faviconUrl: 'https://example.com/favicon.ico', faviconAdvertised: false, siteUrl: 'https://example.com/member/abc123/' },
+      null,
+      fetchFn,
+      jinaFetch,
+    );
+    expect(url).toBe('https://example.com/real.png');
+    expect(targets).toEqual(['https://example.com/']); // origin root, token stripped
+  });
+
+  it('does NOT spend a Jina call when the homepage is reachable but advertises no icon', async () => {
+    // A reachable, iconless page → the /favicon.ico guess is the right answer;
+    // an ordinary site must not burn a third-party fetch on every poll.
+    const { fetchFn } = routedFetch({
+      'https://example.com/': { ct: 'text/html', body: '<html><head><title>x</title></head></html>' },
+    });
+    const { jinaFetch, targets } = jinaFake({
+      'https://example.com/': '<head><link rel="icon" href="/real.png"></head>',
+    });
+    const url = await resolveStoredFavicon(
+      { faviconUrl: 'https://example.com/favicon.ico', faviconAdvertised: false, siteUrl: 'https://example.com/' },
+      null,
+      fetchFn,
+      jinaFetch,
+    );
+    expect(url).toBe('https://example.com/favicon.ico');
+    expect(targets).toEqual([]);
+  });
+
+  it('does NOT proxy a rate-limited (429) or server-error (5xx) homepage through Jina', async () => {
+    // Only 401/403 (auth/bot-wall) warrant a Jina retry; a 429 throttle or a
+    // transient 5xx falls back to the guess without burning Jina quota.
+    for (const status of [429, 503]) {
+      const { fetchFn } = routedFetch({ 'https://example.com/': { status } });
+      const { jinaFetch, targets } = jinaFake({
+        'https://example.com/': '<head><link rel="icon" href="/real.png"></head>',
+      });
+      const url = await resolveStoredFavicon(
+        { faviconUrl: 'https://example.com/favicon.ico', faviconAdvertised: false, siteUrl: 'https://example.com/' },
+        null,
+        fetchFn,
+        jinaFetch,
+      );
+      expect(url).toBe('https://example.com/favicon.ico');
+      expect(targets).toEqual([]);
+    }
+  });
+
+  it('retries via Jina on a 401 (auth-wall), like a 403', async () => {
+    const { fetchFn } = routedFetch({ 'https://example.com/': { status: 401 } });
+    const { jinaFetch, targets } = jinaFake({
+      'https://example.com/': '<head><link rel="icon" href="/real.png"></head>',
+    });
+    const url = await resolveStoredFavicon(
+      { faviconUrl: 'https://example.com/favicon.ico', faviconAdvertised: false, siteUrl: 'https://example.com/' },
+      null,
+      fetchFn,
+      jinaFetch,
+    );
+    expect(url).toBe('https://example.com/real.png');
+    expect(targets).toEqual(['https://example.com/']);
+  });
+
+  it('falls back to the guess when a blocked homepage yields nothing from Jina either', async () => {
+    const { fetchFn } = routedFetch({ 'https://example.com/': { status: 403 } });
+    const { jinaFetch, targets } = jinaFake({ 'https://example.com/': null });
+    const url = await resolveStoredFavicon(
+      { faviconUrl: 'https://example.com/favicon.ico', faviconAdvertised: false, siteUrl: 'https://example.com/' },
+      null,
+      fetchFn,
+      jinaFetch,
+    );
+    expect(url).toBe('https://example.com/favicon.ico');
+    expect(targets).toEqual(['https://example.com/']);
+  });
+
+  it('never lets a Jina failure fail resolution', async () => {
+    const { fetchFn } = routedFetch({ 'https://example.com/': { status: 403 } });
+    const jinaFetch = () => Promise.reject(new Error('jina exploded'));
+    const url = await resolveStoredFavicon(
+      { faviconUrl: 'https://example.com/favicon.ico', faviconAdvertised: false, siteUrl: 'https://example.com/' },
+      null,
+      fetchFn,
+      jinaFetch,
+    );
+    expect(url).toBe('https://example.com/favicon.ico');
+  });
+
+  it('does not reach for Jina at all when none is supplied (blocked → guess)', async () => {
+    // Preserves the pre-fallback behavior for callers that pass no Jina fetcher.
+    const { fetchFn } = routedFetch({ 'https://example.com/': { status: 403 } });
+    const url = await resolveStoredFavicon(
+      { faviconUrl: 'https://example.com/favicon.ico', faviconAdvertised: false, siteUrl: 'https://example.com/' },
+      null,
+      fetchFn,
+    );
+    expect(url).toBe('https://example.com/favicon.ico');
+  });
 });
 
 describe('pollOne favicon discovery', () => {
@@ -329,5 +512,27 @@ describe('pollOne favicon discovery', () => {
 
     expect(faviconOf(calls)).toBe('https://cdn.example.com/ft.ico');
     expect(requests).toEqual(['https://example.com/feed.xml']);
+  });
+
+  it('never uses the Jina fallback for a secret-backed feed (guardrail #6)', async () => {
+    // parseFeedBody resolves against the tokenized secret_url, so siteUrl can
+    // land under the secret path — the homepage must not be forwarded to Jina.
+    const { client, calls } = makeClient();
+    const jinaTargets: string[] = [];
+    const jinaFetch = (t: string) => {
+      jinaTargets.push(t);
+      return Promise.resolve('<head><link rel="icon" href="/real.png"></head>');
+    };
+    const { fetchFn } = routedFetch({
+      'https://example.com/feed.xml?token=SECRET': { ct: 'application/rss+xml', body: RSS_BODY },
+      'https://example.com/': { status: 403 }, // homepage bot-blocked
+    });
+    const feed = { ...FEED, secret_url: 'https://example.com/feed.xml?token=SECRET' };
+
+    await pollOne(client, feed, fetchFn, jinaFetch);
+
+    // Jina was never called; favicon fell back to the origin-root guess.
+    expect(jinaTargets).toEqual([]);
+    expect(faviconOf(calls)).toBe('https://example.com/favicon.ico');
   });
 });

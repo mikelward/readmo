@@ -10,6 +10,7 @@ import { discoverIconFromHtml } from './discover.ts';
 import { sanitizeContent } from './sanitize.ts';
 import { safeFetch } from './ssrf.ts';
 import type { SafeFetchOptions, SafeFetchResult } from './ssrf.ts';
+import type { JinaHtmlFetch } from './jina.ts';
 import { redactUrl } from './urlSafety.ts';
 
 export const USER_AGENT = 'Readmo/1.0 (+https://readmo.app)';
@@ -58,6 +59,7 @@ export async function pollOne(
   supabase: PollerDbClient,
   feed: PollerFeedRow,
   fetchFn: PollerFetch = safeFetch,
+  jinaFetch: JinaHtmlFetch | null = null,
 ): Promise<void> {
   // The fetchable URL is secret_url when present (tokenized feeds), else url.
   const fetchUrl: string = feed.secret_url ?? feed.url;
@@ -103,7 +105,13 @@ export async function pollOne(
   // guessed /favicon.ico — which 404s for some publishers (e.g. ft.com). Try to
   // discover a real icon from the site homepage's <link rel="icon">, once, and
   // reuse it on later polls so this stays a one-time extra fetch per feed.
-  const faviconUrl = await resolveStoredFavicon(parsed, feed.favicon_url, fetchFn);
+  // Never hand a secret-backed feed's homepage to the third-party Jina fallback:
+  // parseFeedBody resolved against the tokenized secret_url, so parsed.siteUrl can
+  // land under the secret path, and a short token might slip the URL screen. The
+  // article Jina paths skip secret_url feeds for the same reason (guardrail #6);
+  // favicon discovery still falls back to the origin-root /favicon.ico guess.
+  const jina = feed.secret_url ? null : jinaFetch;
+  const faviconUrl = await resolveStoredFavicon(parsed, feed.favicon_url, fetchFn, jina);
 
   // Upsert feed-level metadata (title, site_url, favicon). The new validators
   // (etag/last_modified) are NOT written here — they're persisted by
@@ -191,11 +199,21 @@ export async function pollOne(
  * advertising one in its body still updates through the first branch.
  *
  * A discovery fetch failure never fails the poll — the guess is used.
+ *
+ * When a `jinaFetch` is supplied and the direct homepage GET is bot-blocked
+ * (non-2xx / network error — ft.com, economist.com and other publishers 403 a
+ * plain server-side GET), discovery retries the homepage through Jina Reader
+ * before falling back to the guess, mirroring `/api/discover`'s Jina-on-403
+ * path. That's the case this whole fallback exists for: the guessed
+ * `/favicon.ico` 404s AND the homepage that advertises the real icon is behind
+ * the bot wall. The retry is still one-shot per feed (gated on "nothing stored
+ * yet") and only fires on the blocked path, so it never touches the common feed.
  */
 export async function resolveStoredFavicon(
   parsed: Pick<ParsedFeed, 'faviconUrl' | 'faviconAdvertised' | 'siteUrl'>,
   storedFaviconUrl: string | null,
   fetchFn: PollerFetch,
+  jinaFetch: JinaHtmlFetch | null = null,
 ): Promise<string | null> {
   if (parsed.faviconAdvertised) return parsed.faviconUrl;
   const guess = parsed.faviconUrl;
@@ -203,18 +221,106 @@ export async function resolveStoredFavicon(
   // is reused — discovery is one-shot, so later polls never re-fetch the page.
   if (storedFaviconUrl != null) return storedFaviconUrl;
   if (!parsed.siteUrl) return guess;
-  const discovered = await discoverHomepageIcon(parsed.siteUrl, fetchFn);
+  const discovered = await discoverHomepageIcon(parsed.siteUrl, fetchFn, jinaFetch);
   return discovered ?? guess;
 }
 
 /** Fetch a site homepage and return the screened favicon URL it advertises via
- * `<link rel="icon">`, or null. Swallows every fetch/parse failure (returns
- * null) so icon discovery is never able to fail a poll — the article data is
- * already parsed by the time this runs. */
+ * `<link rel="icon">`, or null. Tries a direct, polite GET first; if that is
+ * bot-blocked — a real non-2xx HTTP *status* from a host `safeFetch` actually
+ * reached (ft.com/economist.com answer 403 to a plain server-side GET) — and a
+ * `jinaFetch` is available, retries once through Jina Reader (the headless-
+ * browser proxy) before giving up, so the real icon behind the bot wall is still
+ * found. Two cases deliberately do NOT retry via Jina:
+ *   - A reachable homepage (2xx) that simply advertises no usable icon — the
+ *     `/favicon.ico` guess is the answer there, and every ordinary site would
+ *     otherwise spend a needless third-party fetch.
+ *   - A fetch that THREW rather than returning a status — an SSRF rejection
+ *     (`safeFetch` fails closed on loopback/link-local/private/metadata hosts),
+ *     DNS failure, or timeout. We must not hand a URL `safeFetch` refused for
+ *     SSRF reasons to a third party, so a throw never triggers the Jina path
+ *     (guardrail #6). `fetchViaJinaHtml` also screens the URL itself as a second
+ *     layer.
+ * Swallows every fetch/parse failure (returns null) so icon discovery is never
+ * able to fail a poll — the article data is already parsed by the time this
+ * runs. */
 async function discoverHomepageIcon(
   pageUrl: string,
   fetchFn: PollerFetch,
+  jinaFetch: JinaHtmlFetch | null,
 ): Promise<string | null> {
+  const direct = await directHomepageHtml(pageUrl, fetchFn);
+  if (direct.html !== null) {
+    const icon = pickHomepageIcon(direct.html, direct.finalUrl);
+    if (icon) return icon;
+  }
+  // Only an auth/bot-wall status (401/403) is worth a Jina retry — the same gate
+  // /api/discover uses. Other non-2xx are deliberately NOT worked around: a 429
+  // is an explicit publisher rate-limit (the feed-fetch path backs off on it;
+  // proxying through a third party would bypass the throttle and burn Jina
+  // quota), a 404/410 is dead, and a 5xx is transient. A 2xx (reachable), a
+  // thrown fetch (SSRF/DNS/timeout — status null), or no Jina configured also
+  // fall back to the guess without a Jina call.
+  const botBlocked = direct.status === 401 || direct.status === 403;
+  if (!botBlocked || !jinaFetch) return null;
+  // Forward only the ORIGIN ROOT to the third party, never the full resolved
+  // path. A feed whose fetch URL is tokenized — `secret_url`, or a token in
+  // `feeds.url` with `secret_url` null (migration 0004) — can resolve
+  // `parsed.siteUrl` under that token path, and a short token evades the URL
+  // screen; the origin root carries no path secret (guardrail #6). The favicon
+  // `<link>` is origin-wide, so the root is the right page to read anyway. We
+  // take the origin of the POST-REDIRECT URL (`direct.finalUrl`), so a homepage
+  // that redirects before blocking still probes — and absolutizes against — the
+  // redirected host.
+  let target: string;
+  try {
+    target = new URL(direct.finalUrl).origin + '/';
+  } catch {
+    return null;
+  }
+  let jinaHtml: string | null;
+  try {
+    jinaHtml = await jinaFetch(target);
+  } catch {
+    return null; // Jina failure never fails the poll.
+  }
+  if (jinaHtml === null) return null;
+  console.log(`poll: homepage favicon discovery used Jina for ${redactUrl(target)}`);
+  return pickHomepageIcon(jinaHtml, target);
+}
+
+/** Screen a homepage's advertised icons best-first and return the first URL that
+ * survives {@link cleanFaviconUrl}, or null. Taking the first *survivor* (not
+ * just the top pick) means a rejected candidate — a `data:` icon, a tokenized
+ * `?v=…` URL — doesn't mask a later safe one and force the guess. */
+function pickHomepageIcon(html: string, baseUrl: string): string | null {
+  for (const candidate of discoverIconFromHtml(html, baseUrl)) {
+    const cleaned = cleanFaviconUrl(candidate);
+    if (cleaned) return cleaned;
+  }
+  return null;
+}
+
+interface DirectHomepage {
+  /** The page HTML when we got a 2xx HTML response; null otherwise. */
+  html: string | null;
+  /** The final URL after redirects (for absolutizing hrefs). */
+  finalUrl: string;
+  /** The HTTP status when the fetch returned a response, or null when it THREW
+   * (SSRF rejection / DNS failure / timeout). Only a non-2xx status marks a
+   * bot-block worth a Jina retry; a null status must never reach Jina — the URL
+   * may be one safeFetch refused for SSRF reasons (guardrail #6). */
+  status: number | null;
+}
+
+/** Directly fetch a homepage and classify the result for {@link
+ * discoverHomepageIcon}. Never throws — a fetch error is reported as a null
+ * status (distinct from a real non-2xx, so an SSRF-refused URL is not treated as
+ * a bot-block and forwarded to Jina). */
+async function directHomepageHtml(
+  pageUrl: string,
+  fetchFn: PollerFetch,
+): Promise<DirectHomepage> {
   try {
     // No custom maxBytes: safeFetch's cap is a hard reject on the WHOLE
     // response (it even pre-checks Content-Length), not a prefix read, so a
@@ -229,26 +335,26 @@ async function discoverHomepageIcon(
       },
       timeoutMs: 8_000,
     });
-    if (res.status < 200 || res.status >= 300) return null;
-    const ct = res.headers.get('content-type') ?? '';
-    // Only parse HTML; a non-HTML homepage (rare) has no <link rel="icon">.
-    if (ct && !/html/i.test(ct)) return null;
-    const html = new TextDecoder().decode(res.body);
-    // Absolutize against the final URL after redirects, not the request URL.
-    // Screen candidates best-first and take the first that survives, so a
-    // rejected top pick (data: icon, tokenized ?v=…) doesn't mask a later safe
-    // one and force the /favicon.ico fallback.
-    for (const candidate of discoverIconFromHtml(html, res.url || pageUrl)) {
-      const cleaned = cleanFaviconUrl(candidate);
-      if (cleaned) return cleaned;
+    if (res.status < 200 || res.status >= 300) {
+      // Keep the post-redirect URL even on a bot-block: safeFetch already
+      // followed + vetted every hop, and a homepage that redirects
+      // (example.com -> www.example.com) before returning 403 must hand the
+      // FINAL host to the Jina retry, so a relative <link rel="icon" href="/…">
+      // in Jina's HTML absolutizes against the right origin.
+      return { html: null, finalUrl: res.url || pageUrl, status: res.status };
     }
-    return null;
+    const finalUrl = res.url || pageUrl;
+    const ct = res.headers.get('content-type') ?? '';
+    // Only parse HTML; a non-HTML 2xx homepage (rare) has no <link rel="icon">,
+    // but it IS reachable — a Jina retry wouldn't help, so don't spend one.
+    if (ct && !/html/i.test(ct)) return { html: null, finalUrl, status: res.status };
+    return { html: new TextDecoder().decode(res.body), finalUrl, status: res.status };
   } catch (err) {
     console.warn(
       `poll: homepage favicon discovery failed for ${redactUrl(pageUrl)}:`,
       err instanceof Error ? err.message : String(err),
     );
-    return null;
+    return { html: null, finalUrl: pageUrl, status: null };
   }
 }
 
