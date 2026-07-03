@@ -7,7 +7,7 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useToast } from '../hooks/useToast';
 import { usePointerDevice } from '../hooks/usePointerDevice';
 import { ItemRowMenu, type ItemRowMenuItem } from '../components/ItemRowMenu';
-import { faviconNeedsDarkInvert } from '../lib/faviconInvert';
+import { FeedFavicon } from '../components/FeedFavicon';
 import {
   feedHealth,
   isUnhealthy,
@@ -243,22 +243,15 @@ function FeedStatusRow({
   return (
     <li className="admin__row admin-feeds__row">
       <div className="admin-feeds__main">
-        {feed.faviconUrl ? (
-          <img
-            className={
-              'admin-feeds__favicon' +
-              (faviconNeedsDarkInvert(feed.faviconUrl) ? ' favicon--invert-dark' : '')
-            }
-            src={feed.faviconUrl}
-            alt=""
-            aria-hidden="true"
-            width={16}
-            height={16}
-            onError={(e) => {
-              e.currentTarget.style.display = 'none';
-            }}
-          />
-        ) : null}
+        {/* Reserve the icon slot so feeds the poller hasn't resolved an icon for
+            (or whose icon 404s) still line their title up with the rest of the
+            list, instead of snapping flush to the row's left edge. */}
+        <FeedFavicon
+          url={feed.faviconUrl}
+          className="admin-feeds__favicon"
+          reserveSpace
+          placeholderClassName="admin-feeds__favicon-placeholder"
+        />
         <div className="admin-feeds__text">
           <span className="admin-feeds__title">{feed.title}</span>
           {feed.sample?.title ? (

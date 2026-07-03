@@ -1578,7 +1578,9 @@ negligible and off every critical path. See the External services table in
       system feed** (not just the admin's own subscriptions), reached from the
       Admin page's *Feeds* link. Each row shows the feed (favicon + title), the
       sampled article's title, a single derived **status** pill, and a muted
-      **server-response** line. Only display-safe feed metadata leaves the server
+      **server-response** line. As in the grouped list headers, a feed with no
+      resolved favicon (or one whose icon fails to load) reserves a matching
+      16px slot so every title lines up at the same left edge. Only display-safe feed metadata leaves the server
       — the `feeds.url` fetch URL (possibly subscriber-tokenized) is never
       returned to the browser. The
       status is derived in priority order: **Poll failed** (the feed's last poll

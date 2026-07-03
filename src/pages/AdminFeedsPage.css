@@ -79,6 +79,16 @@
   object-fit: contain;
 }
 
+/* Empty stand-in holding the favicon's 16px box (matching .admin-feeds__favicon)
+   for feeds with no resolved icon, so every title lines up at the same left edge
+   whether or not its favicon loaded. Invisible: it only reserves space. */
+.admin-feeds__favicon-placeholder {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+}
+
 .admin-feeds__text {
   min-width: 0;
   display: flex;
