@@ -163,6 +163,21 @@ async function handle(req: Request): Promise<Response> {
     return json({ status: 'ok', summary: item.ai_summary });
   }
 
+  // Paused feed → decline generation (operator paused it from /admin/feeds). A
+  // cached summary still serves via the hit above; this only blocks a new Gemini
+  // call. Silent `empty`, retryable so unpausing later re-checks.
+  {
+    const { data: feed } = await service
+      .from('feeds')
+      .select('paused')
+      .eq('id', item.feed_id)
+      .maybeSingle();
+    if (feed?.paused) {
+      console.log(`summary: item ${itemId} — feed paused, declining generation`);
+      return json({ status: 'empty', summary: null, retryable: true });
+    }
+  }
+
   const apiKey = Deno.env.get('GOOGLE_API_KEY');
   if (!apiKey) {
     // Not configured. Retryable so the reader re-checks once the operator sets

@@ -162,6 +162,13 @@
   color: var(--rm-meta);
 }
 
+/* Paused: a deliberate operator state, not a failure. Filled-accent so it reads
+   as a distinct, intentional badge rather than an error or a plain info pill. */
+.admin-feeds__status--paused {
+  background: var(--rm-accent);
+  color: var(--rm-accent-contrast);
+}
+
 .admin-feeds__status--downloaded {
   background: var(--rm-success);
   color: var(--rm-danger-fg);

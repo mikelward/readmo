@@ -85,6 +85,8 @@ export class MockDataSource implements DataSource {
    * Powers `/admin/feeds`; `fetchFullText` records a success, and tests inject
    * failures via {@link recordFulltextStatus}. */
   private fulltextStatus = new Map<ItemId, FulltextStatusEntry>();
+  /** Feeds paused from /admin/feeds — the poller/refresh skip them. */
+  private pausedFeeds = new Set<FeedId>();
   /** Global "allow new sign-ups" switch (mock-only; defaults open). */
   private signupsEnabled = true;
   private readonly homeWindowMs: number;
@@ -378,6 +380,13 @@ export class MockDataSource implements DataSource {
     if (item.fullContentHtml) {
       return { status: 'ok', contentHtml: item.fullContentHtml };
     }
+    // Paused feed → decline a NEW download (mirrors the fulltext Edge Function).
+    // Cache hits above still serve; this only blocks fresh extraction. `retryable`
+    // so the reader re-checks after Unpause instead of caching the stub as
+    // terminal (fullTextStaleTime only retries unreachable/retryable results).
+    if (this.pausedFeeds.has(item.feedId)) {
+      return { status: 'empty', contentHtml: null, retryable: true };
+    }
     // Simulate server-side extraction: expand the feed stub into a fuller body
     // and cache it on the (shared) item, mirroring how the real source persists
     // the extracted HTML so a second open is served from cache.
@@ -431,6 +440,10 @@ export class MockDataSource implements DataSource {
     // Cache hit — one generation serves every later pin of the same item.
     const cached = this.summaries.get(id);
     if (cached) return { status: 'ok', summary: cached };
+    // Paused feed → decline generation (mirrors the summary Edge Function).
+    if (this.pausedFeeds.has(item.feedId)) {
+      return { status: 'empty', summary: null, retryable: true };
+    }
     // Simulate generation with a deterministic one-sentence gist of the title.
     const summary = `${item.title.replace(/[.?!]+$/, '')} — the key takeaway in one sentence.`;
     this.summaries.set(id, summary);
@@ -625,6 +638,8 @@ export class MockDataSource implements DataSource {
     // like a 2xx or 304), so an admin "Fetch now" has a visible effect. Refresh
     // of all feeds (no id) stays a no-op.
     if (!feedId) return;
+    // Paused feeds are skipped server-side, so the mock no-ops too.
+    if (this.pausedFeeds.has(feedId)) return;
     const feed = this.feeds.get(feedId);
     if (feed) {
       feed.errorCount = 0;
@@ -775,6 +790,7 @@ export class MockDataSource implements DataSource {
         lastFetchedAt: null,
         errorCount: feed.errorCount,
         lastError: feed.lastError,
+        paused: this.pausedFeeds.has(feed.id),
         // The mock store is single-user, so this is 0 or 1 per feed.
         subscriberCount: this.subs.has(feed.id) ? 1 : 0,
         fetchFailed: feed.errorCount > 0,
@@ -794,10 +810,16 @@ export class MockDataSource implements DataSource {
     this.feeds.delete(feedId);
     this.items = this.items.filter((it) => it.feedId !== feedId);
     this.subs.delete(feedId);
+    this.pausedFeeds.delete(feedId);
     for (const id of removed) {
       this.fulltextStatus.delete(id);
       this.summaries.delete(id);
     }
+  }
+
+  async setFeedPaused(feedId: FeedId, paused: boolean): Promise<void> {
+    if (paused) this.pausedFeeds.add(feedId);
+    else this.pausedFeeds.delete(feedId);
   }
 
   async listUsers(): Promise<RegisteredUser[]> {

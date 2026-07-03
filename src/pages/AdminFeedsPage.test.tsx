@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { AdminFeedsPage } from './AdminFeedsPage';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import { renderWithProviders } from '../test/renderWithProviders';
-import type { Capabilities } from '../lib/data/DataSource';
+import type { AdminFeedStatus, Capabilities } from '../lib/data/DataSource';
 
 class CapsSource extends MockDataSource {
   constructor(private readonly caps: Capabilities) {
@@ -184,6 +184,58 @@ describe('AdminFeedsPage', () => {
       'li',
     ) as HTMLElement;
     expect(within(row).getByText('1 subscriber')).toBeInTheDocument();
+  });
+
+  it('pauses a feed from its menu, then offers Unpause', async () => {
+    const user = userEvent.setup();
+    render();
+
+    // Active feed → menu offers Refresh + Pause.
+    await screen.findByTestId('feed-status-feed-park');
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Occasionally Down Blog' }),
+    );
+    let menu = within(await screen.findByTestId('item-row-menu'));
+    expect(menu.getByTestId('item-row-menu-refresh')).toBeInTheDocument();
+    await user.click(menu.getByTestId('item-row-menu-pause'));
+
+    // The row now reads Paused.
+    await waitFor(() =>
+      expect(screen.getByTestId('feed-status-feed-park')).toHaveTextContent(
+        'Paused',
+      ),
+    );
+
+    // Reopen the menu → it now offers Unpause and no Refresh.
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Occasionally Down Blog' }),
+    );
+    menu = within(await screen.findByTestId('item-row-menu'));
+    expect(menu.getByTestId('item-row-menu-unpause')).toBeInTheDocument();
+    expect(menu.queryByTestId('item-row-menu-refresh')).not.toBeInTheDocument();
+  });
+
+  it('hides Pause when the backend does not report the paused flag', async () => {
+    const user = userEvent.setup();
+    // A backend that predates migration 0042 → paused is null (unsupported).
+    class NoPauseSource extends MockDataSource {
+      async listFeedStatuses(): Promise<AdminFeedStatus[]> {
+        const feeds = await super.listFeedStatuses();
+        return feeds.map((f) => ({ ...f, paused: null }));
+      }
+    }
+    render(new NoPauseSource(`test-${Math.random()}`));
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Actions for Occasionally Down Blog',
+      }),
+    );
+    const menu = within(await screen.findByTestId('item-row-menu'));
+    // Refresh + Delete stay; Pause/Unpause are omitted (no RPC to call).
+    expect(menu.getByTestId('item-row-menu-refresh')).toBeInTheDocument();
+    expect(menu.queryByTestId('item-row-menu-pause')).not.toBeInTheDocument();
+    expect(menu.queryByTestId('item-row-menu-unpause')).not.toBeInTheDocument();
   });
 
   it('links back to the admin page', async () => {

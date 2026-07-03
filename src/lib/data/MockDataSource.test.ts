@@ -427,6 +427,47 @@ describe('MockDataSource listFeedStatuses', () => {
     expect(park).toMatchObject({ fetchFailed: true, errorCount: 7 });
   });
 
+  it('setFeedPaused flips the paused flag and refresh no-ops while paused', async () => {
+    const ds = fresh();
+    await ds.setFeedPaused('feed-park', true); // errorCount 7 → poll-failed normally
+    const paused = (await ds.listFeedStatuses()).find((f) => f.id === 'feed-park');
+    expect(paused?.paused).toBe(true);
+
+    // A refresh while paused must not clear the error (it's a no-op).
+    await ds.refresh('feed-park');
+    expect(
+      (await ds.listFeedStatuses()).find((f) => f.id === 'feed-park'),
+    ).toMatchObject({ paused: true, errorCount: 7 });
+
+    // Unpause → refresh works again (clears the error).
+    await ds.setFeedPaused('feed-park', false);
+    await ds.refresh('feed-park');
+    expect(
+      (await ds.listFeedStatuses()).find((f) => f.id === 'feed-park'),
+    ).toMatchObject({ paused: false, errorCount: 0 });
+  });
+
+  it('declines full-text and summaries for a paused feed', async () => {
+    const ds = fresh();
+    await ds.setFeedPaused('feed-nasa', true); // item-2 is a NASA item
+
+    expect(await ds.fetchFullText('item-2')).toEqual({
+      status: 'empty',
+      contentHtml: null,
+      retryable: true, // so the reader re-checks after Unpause
+    });
+    expect(await ds.getSummary('item-2')).toMatchObject({
+      status: 'empty',
+      summary: null,
+    });
+
+    // A cached body still serves even while paused (only NEW work is blocked).
+    await ds.setFeedPaused('feed-nasa', false);
+    await ds.fetchFullText('item-2'); // caches
+    await ds.setFeedPaused('feed-nasa', true);
+    expect((await ds.fetchFullText('item-2')).status).toBe('ok');
+  });
+
   it('deleteFeed removes the feed and cascades its items', async () => {
     const ds = fresh();
     expect(await ds.getItem('item-1')).not.toBeNull(); // a feed-verge item

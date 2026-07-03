@@ -182,6 +182,24 @@ async function handle(req: Request): Promise<Response> {
       ...(item.full_content_via_fallback ? { viaFallback: true } : {}),
     });
   }
+  // Paused feed → decline a NEW download (operator paused it from /admin/feeds).
+  // Already-cached bodies still serve via the cache-hit return above; this only
+  // blocks a fresh fetch. Silent `empty` (reader keeps the feed body), flagged
+  // retryable so unpausing later re-checks. Not recorded as an attempt — the
+  // feed's row already shows Paused, and we don't want to clobber its last real
+  // download outcome.
+  {
+    const { data: feed } = await service
+      .from('feeds')
+      .select('paused')
+      .eq('id', item.feed_id)
+      .maybeSingle();
+    if (feed?.paused) {
+      console.log(`fulltext: item ${itemId} — feed paused, declining download`);
+      return json({ status: 'empty', contentHtml: null, retryable: true });
+    }
+  }
+
   if (!item.url) {
     await recordAttempt(service, itemId, 'empty', { error: 'item has no URL' });
     return json({ status: 'empty', contentHtml: null });

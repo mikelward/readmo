@@ -164,10 +164,17 @@ async function handle(req: Request): Promise<Response> {
 async function refreshOne(service: any, feedId: string): Promise<boolean> {
   const { data: feed } = await service
     .from('feeds')
-    .select('id, url, secret_url, last_fetched_at, fetch_interval_s, favicon_url')
+    .select('id, url, secret_url, last_fetched_at, fetch_interval_s, favicon_url, paused')
     .eq('id', feedId)
     .single();
   if (!feed) return false;
+
+  // Paused feeds do no server-side work (operator paused them from
+  // /admin/feeds); a manual refresh is a no-op until they're unpaused.
+  if (feed.paused) {
+    console.log(`refresh: feed ${feedId} is paused — skipping`);
+    return false;
+  }
 
   // Server-side debounce: skip a feed fetched within the last DEBOUNCE_S so a
   // user spamming pull-to-refresh / add-feed can't bypass the throttle and
