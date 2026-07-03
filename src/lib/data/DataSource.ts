@@ -337,6 +337,10 @@ export interface DataSource {
    * that predates the RPC and returns `[]` so an old backend just shows an empty
    * list rather than crashing (guardrail #11). */
   listFeedStatuses(): Promise<AdminFeedStatus[]>;
+  /** Admin-only: hard-delete a shared feed system-wide (cascades its items and
+   * every user's subscription to it). Irreversible; callers confirm first. The
+   * server re-checks `is_admin()`. */
+  deleteFeed(feedId: FeedId): Promise<void>;
   /** Admin-only: whether new sign-ups are currently allowed. Feature-detects a
    * backend that predates the switch and returns `true` (the default-open
    * state) so an old backend just reports sign-ups on (guardrail #11). */

@@ -1607,7 +1607,11 @@ negligible and off every critical path. See the External services table in
       subscribe to (admin status resolved server-side via the existing
       `get_capabilities()` RPC — a SECURITY DEFINER function that checks
       `is_admin()` from the caller's JWT; a no-`feedId` call is never widened into
-      an all-system poll).
+      an all-system poll). The menu's second entry is **Delete** — a confirm-gated,
+      irreversible system-wide hard delete of the shared feed (the admin-only
+      `admin_delete_feed` RPC, migration `0040`): a single `delete from feeds`
+      cascades to its items — and their `item_state` / `item_fulltext_status` —
+      and to every user's subscription, via the existing ON DELETE CASCADE FKs.
 
       The sample is simply the feed's latest recorded attempt: a reading-mode
       attempt only ever runs for an **allowlisted** caller (the `fulltext` gate

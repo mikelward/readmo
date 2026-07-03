@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AdminFeedsPage } from './AdminFeedsPage';
@@ -138,6 +138,43 @@ describe('AdminFeedsPage', () => {
         'Not tried',
       ),
     );
+  });
+
+  it('deletes a feed from its overflow menu after confirmation', async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render();
+
+    expect(await screen.findByTestId('feed-status-feed-park')).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Occasionally Down Blog' }),
+    );
+    const menu = within(await screen.findByTestId('item-row-menu'));
+    await user.click(menu.getByTestId('item-row-menu-delete'));
+
+    expect(confirmSpy).toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.queryByTestId('feed-status-feed-park')).not.toBeInTheDocument(),
+    );
+    confirmSpy.mockRestore();
+  });
+
+  it('does not delete when the confirmation is dismissed', async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render();
+
+    await screen.findByTestId('feed-status-feed-park');
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Occasionally Down Blog' }),
+    );
+    const menu = within(await screen.findByTestId('item-row-menu'));
+    await user.click(menu.getByTestId('item-row-menu-delete'));
+
+    // Cancelled → the feed is still listed.
+    expect(screen.getByTestId('feed-status-feed-park')).toBeInTheDocument();
+    confirmSpy.mockRestore();
   });
 
   it('links back to the admin page', async () => {

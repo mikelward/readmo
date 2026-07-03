@@ -1770,6 +1770,14 @@ export class SupabaseDataSource implements DataSource {
     });
   }
 
+  async deleteFeed(feedId: FeedId): Promise<void> {
+    const { error } = await this.sb.rpc('admin_delete_feed', { p_feed_id: feedId });
+    if (error) throw error instanceof Error ? error : new Error(String(error));
+    // The feed (and its items) are gone — drop any cached copy so a later
+    // getFeed() doesn't serve the deleted row.
+    this.feedCache.clear();
+  }
+
   async listUsers(): Promise<RegisteredUser[]> {
     const { data, error } = await this.sb.rpc('list_users');
     if (error) {

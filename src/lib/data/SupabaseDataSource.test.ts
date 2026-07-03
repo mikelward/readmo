@@ -1644,6 +1644,21 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(await env.ds.listFeedStatuses()).toEqual([]);
   });
 
+  it('deleteFeed calls admin_delete_feed with the feed id', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    let captured: Record<string, unknown> | undefined;
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'admin_delete_feed') {
+        captured = params;
+        return Promise.resolve({ data: null, error: null });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    await env.ds.deleteFeed('feed-9');
+    expect(captured).toEqual({ p_feed_id: 'feed-9' });
+  });
+
   it('deleteUser calls admin_delete_user with the email', async () => {
     const env = setup();
     const realRpc = env.fake.client.rpc.bind(env.fake.client);
