@@ -1549,6 +1549,12 @@ export function ItemList({
   // releaseBodyHeight. Held here so it can be torn down on unmount and whenever
   // a fresh lock is taken.
   const heightReleaseScrollRef = useRef<(() => void) | null>(null);
+  // The scroll offset the deferred release is currently holding via min-height.
+  // The clear/re-apply inside holdFor momentarily clamps window.scrollY and the
+  // browser fires a `scroll` event for it; this lets the deferred listener tell
+  // that self-induced echo (scrollY back on this value) from a real reader
+  // scroll, so it never mistakes its own reflow for the reader scrolling up.
+  const heldReleaseScrollYRef = useRef<number | null>(null);
   // Tear down a deferred height-lock release (the scroll listener armed by
   // releaseBodyHeight). Safe to call when none is pending.
   const detachHeightRelease = useCallback(() => {
@@ -1556,6 +1562,7 @@ export function ItemList({
       window.removeEventListener('scroll', heightReleaseScrollRef.current);
       heightReleaseScrollRef.current = null;
     }
+    heldReleaseScrollYRef.current = null;
   }, []);
   // Freeze the body at its current rendered height. Idempotent: a no-op if the
   // lock is already held (so a sweep landing mid-refresh doesn't re-measure at a
@@ -1647,20 +1654,68 @@ export function ItemList({
       el.style.minHeight = '';
       return;
     }
-    // Natural max scroll once min-height is cleared.
-    const naturalMax = () =>
-      Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
     // Hold the document just tall enough that `target` stays a valid scroll
     // offset, restoring the scroll the clear may have already clamped — measured
     // and corrected synchronously, before paint, so no clamp is ever shown.
     // Returns the leftover slack (0 once the natural document holds `target`).
+    //
+    // The body height needed to keep `target` scrollable is derived from the
+    // body's *document-space top* (`getBoundingClientRect().top + scrollY`) — the
+    // fixed chrome above it — NOT from `document.documentElement.scrollHeight`.
+    // The browser clamps `scrollHeight` UP to the viewport height, so when the
+    // post-sweep document is shorter than one viewport (a bottom group swept out
+    // of an otherwise-collapsed list) a scrollHeight-based deficit reads as 0 and
+    // under-provisions the min-height — the document then can't hold `target` and
+    // the reader snaps to the top. The body-top measurement isn't clamped, so the
+    // needed height is correct even for a sub-viewport document.
     const holdFor = (target: number): number => {
       el.style.minHeight = '';
-      const deficit = target - naturalMax();
-      if (deficit <= 0) return 0;
-      el.style.minHeight = `${el.offsetHeight + deficit}px`;
+      // Fixed chrome above the body, in document coordinates (invariant across
+      // scroll — the +scrollY cancels the clear-induced clamp).
+      const bodyRect = el.getBoundingClientRect();
+      const bodyTopDoc = bodyRect.top + window.scrollY;
+      const naturalBody = el.offsetHeight;
+      // In-flow content below the body — the relative-mode bottom `ListToolbar`
+      // and the refresh strip render after `.item-list__body` inside the
+      // `.item-list` root. Measure it floor-free from the layout boxes
+      // (`getBoundingClientRect`), NOT from `documentElement.scrollHeight` (which
+      // the browser floors UP to the viewport height, hiding the footer whenever
+      // the surviving document is sub-viewport). Bounding the measurement to the
+      // list root means any content BELOW the root is conservatively ignored, so
+      // `trailing` can only be under-counted — which over-provisions the hold
+      // (harmless) rather than under-provisioning it (which would reintroduce the
+      // snap-to-top this fix exists to prevent).
+      const root = el.closest('.item-list');
+      const trailing = root
+        ? Math.max(0, root.getBoundingClientRect().bottom - bodyRect.bottom)
+        : 0;
+      // The unlocked document's true content height and max scroll, used to decide
+      // whether the natural document already holds `target` (i.e. whether to
+      // release). Floor-free: chrome above + body + trailing footer below.
+      const naturalDocHeight = bodyTopDoc + naturalBody + trailing;
+      const naturalMax = Math.max(0, naturalDocHeight - window.innerHeight);
+      if (target <= naturalMax) {
+        // The natural (unlocked) document already holds `target`.
+        heldReleaseScrollYRef.current = null;
+        return 0;
+      }
+      // Body height that keeps the document tall enough to scroll to `target`.
+      // The trailing footer sits below the body, so the body needs `trailing` LESS
+      // height to put `target` at the document's max scroll — without subtracting
+      // it the footer is pushed a toolbar's height below the fold and that much
+      // extra slack stays scrollable until the release clears.
+      const neededBody = target + window.innerHeight - bodyTopDoc - trailing;
+      el.style.minHeight = `${neededBody}px`;
+      // Force the just-applied min-height to reflow BEFORE restoring the scroll,
+      // so window.scrollTo clamps against the new (taller) max rather than the
+      // momentarily-shrunken one from the clear above — otherwise the restore
+      // silently no-ops and the reader is left at the clamped-to-top offset.
+      void document.documentElement.scrollHeight;
       if (Math.round(window.scrollY) !== target) window.scrollTo(0, target);
-      return deficit;
+      // Remember the offset we're now holding, so the deferred listener below
+      // can tell our own reflow-induced scroll events from the reader's.
+      heldReleaseScrollYRef.current = Math.round(window.scrollY);
+      return neededBody - naturalBody;
     };
     // Capture the offset BEFORE clearing — clearing reflows synchronously and
     // the browser clamps window.scrollY toward the top, so reading it after the
@@ -1672,6 +1727,20 @@ export function ItemList({
     const onScroll = () => {
       if (!bodyRef.current) {
         detachHeightRelease();
+        return;
+      }
+      // Clearing then re-applying min-height inside holdFor momentarily clamps
+      // window.scrollY (the document shrinks for one synchronous beat), and the
+      // browser fires a `scroll` event for that clamp even though holdFor
+      // restores the offset in the same frame. Ignore a scroll that lands back
+      // on the offset we're already holding: it's our own reflow echo, not the
+      // reader. Acting on it would run holdFor(clampedTop) and drop the slack —
+      // snapping the reader to the top after a bottom-group sweep, the very jump
+      // this whole mechanism exists to prevent.
+      if (
+        heldReleaseScrollYRef.current !== null &&
+        Math.round(window.scrollY) === heldReleaseScrollYRef.current
+      ) {
         return;
       }
       if (holdFor(Math.round(window.scrollY)) <= 0) detachHeightRelease();
