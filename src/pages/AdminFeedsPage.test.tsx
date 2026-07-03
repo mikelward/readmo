@@ -177,6 +177,15 @@ describe('AdminFeedsPage', () => {
     confirmSpy.mockRestore();
   });
 
+  it('shows each feed’s subscriber count', async () => {
+    render();
+    // Every seeded feed has exactly one subscription in the mock.
+    const row = (await screen.findByTestId('feed-status-feed-verge')).closest(
+      'li',
+    ) as HTMLElement;
+    expect(within(row).getByText('1 subscriber')).toBeInTheDocument();
+  });
+
   it('links back to the admin page', async () => {
     render();
     const back = await screen.findByRole('link', { name: /Back to Admin/i });

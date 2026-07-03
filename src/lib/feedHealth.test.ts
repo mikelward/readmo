@@ -30,6 +30,7 @@ function feed(over: Partial<AdminFeedStatus> = {}): AdminFeedStatus {
     lastFetchedAt: null,
     errorCount: 0,
     lastError: null,
+    subscriberCount: 0,
     fetchFailed: false,
     parked: false,
     sample: null,

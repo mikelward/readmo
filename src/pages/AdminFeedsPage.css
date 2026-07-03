@@ -96,9 +96,24 @@
   gap: 2px;
 }
 
+/* Title + subscriber count share a line, wrapping on narrow screens. */
+.admin-feeds__titleline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+}
+
 .admin-feeds__title {
   font-size: 0.95rem;
   overflow-wrap: anywhere;
+}
+
+.admin-feeds__subs {
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  color: var(--rm-meta);
+  white-space: nowrap;
 }
 
 /* The sample article the status is about, under the feed title. */

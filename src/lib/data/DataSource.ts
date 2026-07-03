@@ -72,6 +72,10 @@ export interface AdminFeedStatus {
    * recent fetch failed. */
   errorCount: number;
   lastError: string | null;
+  /** How many users subscribe to this feed (across all accounts), or `null` when
+   * the backend doesn't report it yet (a client deployed ahead of the migration
+   * that added the count — shown as unknown rather than a false 0). */
+  subscriberCount: number | null;
   /** `errorCount > 0` — the most recent poll failed. */
   fetchFailed: boolean;
   /** Circuit breaker tripped (`errorCount >= 8`); the poller has stopped

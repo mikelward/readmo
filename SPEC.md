@@ -1576,9 +1576,10 @@ negligible and off every critical path. See the External services table in
 
     - **Feed status** — `/admin/feeds`: an operator console listing **every
       system feed** (not just the admin's own subscriptions), reached from the
-      Admin page's *Feeds* link. Each row shows the feed (favicon + title), the
-      sampled article's title, a single derived **status** pill, and a muted
-      **server-response** line. As in the grouped list headers, a feed with no
+      Admin page's *Feeds* link. Each row shows the feed (favicon + title), its
+      **subscriber count** (users subscribed, across all accounts — counted by
+      the admin RPC, which sees every subscription), the sampled article's title,
+      a single derived **status** pill, and a muted **server-response** line. As in the grouped list headers, a feed with no
       resolved favicon (or one whose icon fails to load) reserves a matching
       16px slot so every title lines up at the same left edge. Only display-safe feed metadata leaves the server
       — the `feeds.url` fetch URL (possibly subscriber-tokenized) is never

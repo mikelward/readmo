@@ -299,7 +299,15 @@ function FeedStatusRow({
           placeholderClassName="admin-feeds__favicon-placeholder"
         />
         <div className="admin-feeds__text">
-          <span className="admin-feeds__title">{feed.title}</span>
+          <span className="admin-feeds__titleline">
+            <span className="admin-feeds__title">{feed.title}</span>
+            {feed.subscriberCount != null ? (
+              <span className="admin-feeds__subs">
+                {feed.subscriberCount}{' '}
+                {feed.subscriberCount === 1 ? 'subscriber' : 'subscribers'}
+              </span>
+            ) : null}
+          </span>
           {feed.sample?.title ? (
             <span className="admin-feeds__article">{feed.sample.title}</span>
           ) : null}

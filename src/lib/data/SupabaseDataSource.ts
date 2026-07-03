@@ -1732,6 +1732,7 @@ export class SupabaseDataSource implements DataSource {
       last_fetched_at: string | null;
       error_count: number | null;
       last_error: string | null;
+      subscriber_count: number | null;
       sample_item_id: string | null;
       sample_item_title: string | null;
       sample_has_full_content: boolean | null;
@@ -1763,6 +1764,10 @@ export class SupabaseDataSource implements DataSource {
         lastFetchedAt: r.last_fetched_at ?? null,
         errorCount,
         lastError: r.last_error ?? null,
+        // Feature-detect a backend that predates the subscriber-count column:
+        // absent → null ("unknown"), not a false 0. A present 0 stays 0.
+        subscriberCount:
+          typeof r.subscriber_count === 'number' ? r.subscriber_count : null,
         fetchFailed: errorCount > 0,
         parked: errorCount >= PARKED_ERROR_THRESHOLD,
         sample,
