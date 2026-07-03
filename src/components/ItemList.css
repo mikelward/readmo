@@ -171,6 +171,16 @@
   object-fit: contain;
 }
 
+/* Empty stand-in for the favicon box, shown in a header that has no favicon
+   when other headers in the same list do — holds the 16px slot (matching
+   .item-list__group-favicon) so every feed name lines up at the same left
+   edge. Invisible: it only reserves space. */
+.item-list__group-favicon-placeholder {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+}
+
 /* Collapse control, far left: a fixed 44px chevron button. It's the keyboard-
    focusable toggle for the section; the count + empty space to the right of the
    name is a second, pointer-only collapse region (group-collapse-rest below).
