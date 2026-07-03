@@ -138,6 +138,47 @@ describe('ItemRows', () => {
     expect(favicons[0]).toHaveAttribute('aria-hidden', 'true');
   });
 
+  it('reserves a favicon-sized placeholder in headers without an icon when a sibling has one', async () => {
+    const items = await sampleItems(2);
+    const headers = new Map([
+      [
+        items[0].item.id,
+        {
+          feedId: items[0].item.feedId,
+          title: 'Iconned Feed',
+          faviconUrl: 'https://example.com/favicon.ico',
+        },
+      ],
+      // No favicon of its own → gets a placeholder so its name lines up with
+      // the iconned sibling above.
+      [items[1].item.id, { feedId: items[1].item.feedId, title: 'Plain Feed' }],
+    ]);
+    const { container } = renderWithProviders(
+      <ItemRows items={items} emptyLabel="Nothing here." groupHeaders={headers} />,
+    );
+    // The iconned feed shows a real <img>; the plain one a decorative spacer.
+    expect(container.querySelectorAll('.item-list__group-favicon')).toHaveLength(1);
+    const placeholders = container.querySelectorAll(
+      '.item-list__group-favicon-placeholder',
+    );
+    expect(placeholders).toHaveLength(1);
+    expect(placeholders[0]).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('renders no favicon placeholder when no header in the list has an icon', async () => {
+    const items = await sampleItems(2);
+    const headers = new Map([
+      [items[0].item.id, { feedId: items[0].item.feedId, title: 'First Feed' }],
+      [items[1].item.id, { feedId: items[1].item.feedId, title: 'Second Feed' }],
+    ]);
+    const { container } = renderWithProviders(
+      <ItemRows items={items} emptyLabel="Nothing here." groupHeaders={headers} />,
+    );
+    expect(
+      container.querySelectorAll('.item-list__group-favicon-placeholder'),
+    ).toHaveLength(0);
+  });
+
   it('tags a dark-monochrome group favicon (vox.com) for dark-mode inversion', async () => {
     const items = await sampleItems(2);
     const headers = new Map([

@@ -225,10 +225,14 @@ export function ItemRows({
     headerForId: string,
     phantom: boolean,
     faviconUrl?: string | null,
+    reserveFaviconSpace = false,
   ): ReactNode => {
     const collapsed = collapsedFeeds?.has(feedId) ?? false;
     // Decorative site icon to the left of the name. Hidden on load error so a
     // 404'd guess (e.g. a derived /favicon.ico) leaves no broken-image glyph.
+    // When this section has no favicon but siblings in the same list do
+    // (reserveFaviconSpace), stand a same-size placeholder in its slot so every
+    // feed name in the list starts at the same left edge.
     const favicon = faviconUrl ? (
       <img
         className={
@@ -244,6 +248,8 @@ export function ItemRows({
           e.currentTarget.style.display = 'none';
         }}
       />
+    ) : reserveFaviconSpace ? (
+      <span className="item-list__group-favicon-placeholder" aria-hidden="true" />
     ) : null;
     const count =
       !phantom && groupCounts ? (groupCounts[feedId] ?? 0) : 0;
@@ -408,6 +414,12 @@ export function ItemRows({
     }
   }
 
+  // Once any header in this list shows a favicon, reserve the icon slot in the
+  // headers that lack one (feeds the poller hasn't resolved yet, or phantom
+  // swept sections) so every feed name lines up at the same left edge instead
+  // of some snapping flush to the chevron.
+  const anyFavicon = sections.some((s) => !!s.header?.faviconUrl);
+
   const renderFeedSection = (section: Section): ReactNode => {
     const { feedId } = section;
     const collapsed = collapsedFeeds?.has(feedId) ?? false;
@@ -422,6 +434,7 @@ export function ItemRows({
               section.headerForId!,
               false,
               section.header.faviconUrl,
+              anyFavicon,
             )
           : null}
         {collapsed ? null : (
@@ -438,7 +451,7 @@ export function ItemRows({
     const collapsed = collapsedFeeds?.has(p.feedId) ?? false;
     return (
       <li className="item-list__section" key={`empty-more:${p.feedId}`}>
-        {renderHeader(p.feedId, p.title, `empty-more:${p.feedId}`, true)}
+        {renderHeader(p.feedId, p.title, `empty-more:${p.feedId}`, true, null, anyFavicon)}
         {collapsed || !onFeedMore ? null : renderMore(p.feedId, p.title)}
       </li>
     );
