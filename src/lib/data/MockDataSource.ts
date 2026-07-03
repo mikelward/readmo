@@ -783,6 +783,21 @@ export class MockDataSource implements DataSource {
     return statuses.sort((a, b) => a.title.localeCompare(b.title));
   }
 
+  async deleteFeed(feedId: FeedId): Promise<void> {
+    // Mirror the server cascade: drop the feed, its items, and the caller's
+    // subscription (the mock is single-user). Prune per-item caches too.
+    const removed = new Set(
+      this.items.filter((it) => it.feedId === feedId).map((it) => it.id),
+    );
+    this.feeds.delete(feedId);
+    this.items = this.items.filter((it) => it.feedId !== feedId);
+    this.subs.delete(feedId);
+    for (const id of removed) {
+      this.fulltextStatus.delete(id);
+      this.summaries.delete(id);
+    }
+  }
+
   async listUsers(): Promise<RegisteredUser[]> {
     return this.registeredUsers.map((u) => ({
       email: u.email,

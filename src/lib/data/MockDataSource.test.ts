@@ -426,6 +426,16 @@ describe('MockDataSource listFeedStatuses', () => {
     const park = (await ds.listFeedStatuses()).find((f) => f.id === 'feed-park');
     expect(park).toMatchObject({ fetchFailed: true, errorCount: 7 });
   });
+
+  it('deleteFeed removes the feed and cascades its items', async () => {
+    const ds = fresh();
+    expect(await ds.getItem('item-1')).not.toBeNull(); // a feed-verge item
+
+    await ds.deleteFeed('feed-verge');
+
+    expect((await ds.listFeedStatuses()).find((f) => f.id === 'feed-verge')).toBeUndefined();
+    expect(await ds.getItem('item-1')).toBeNull(); // its items are gone too
+  });
 });
 
 describe('MockDataSource sort order', () => {

@@ -70,6 +70,37 @@ export function AdminFeedsPage() {
       showToast({ message: 'Couldn’t refresh that feed.', detail: String(err) }),
   });
 
+  // Per-feed Delete — a system-wide hard delete (the feed, its items, and every
+  // user's subscription to it). Confirm-gated in the menu; the server re-checks
+  // is_admin().
+  const deleteFeed = useMutation({
+    mutationFn: (feedId: FeedId) => ds.deleteFeed(feedId),
+    onSuccess: (_data, feedId) => {
+      // The feed, its items, and the caller's subscription are all gone. An admin
+      // who was subscribed to (or had loaded) it must not keep seeing the deleted
+      // subscription/articles from cache until the 5-min stale window. Invalidate
+      // the same reader buckets unsubscribe does — subscriptions/folders/feed —
+      // plus the item-bearing buckets (library/search/offline/item + feed-meta),
+      // since a delete removes items too (mirrors the rename handler's sweep).
+      for (const queryKey of [
+        FEEDS_KEY,
+        ['subscriptions'],
+        ['folders'],
+        ['feed'],
+        ['feed-meta', feedId],
+        ['library'],
+        ['search'],
+        ['offline'],
+        ['item'],
+      ] as const) {
+        void queryClient.invalidateQueries({ queryKey });
+      }
+      showToast({ message: 'Feed deleted.' });
+    },
+    onError: (err) =>
+      showToast({ message: 'Couldn’t delete that feed.', detail: String(err) }),
+  });
+
   // Derive each feed's status once, then filter. Sorting worst-first surfaces
   // problems at the top; healthy feeds sink to the bottom.
   const rows = useMemo(() => {
@@ -104,6 +135,21 @@ export function AdminFeedsPage() {
           key: 'refresh',
           label: 'Refresh',
           onSelect: () => refreshFeed.mutate(menuFeed.id),
+        },
+        {
+          key: 'delete',
+          label: 'Delete…',
+          onSelect: () => {
+            if (
+              window.confirm(
+                `Delete “${menuFeed.title}”? This removes the feed and all its ` +
+                  `stored articles for everyone, and unsubscribes every user. ` +
+                  `This can’t be undone.`,
+              )
+            ) {
+              deleteFeed.mutate(menuFeed.id);
+            }
+          },
         },
       ]
     : [];
@@ -196,7 +242,7 @@ export function AdminFeedsPage() {
                 feed={feed}
                 health={health}
                 menuOpen={menuFor === feed.id}
-                busy={refreshFeed.isPending}
+                busy={refreshFeed.isPending || deleteFeed.isPending}
                 onOpenMenu={(anchor) => {
                   if (menuFor === feed.id) {
                     closeMenu();
