@@ -1561,6 +1561,7 @@ describe('SupabaseDataSource dispatch + writes', () => {
               last_fetched_at: '2024-06-01T00:00:00Z',
               error_count: 9,
               last_error: 'boom',
+              subscriber_count: 4,
               sample_item_id: 'item-1',
               sample_item_title: 'An article',
               sample_has_full_content: false,
@@ -1579,6 +1580,7 @@ describe('SupabaseDataSource dispatch + writes', () => {
               last_fetched_at: null,
               error_count: 0,
               last_error: null,
+              subscriber_count: 0,
               sample_item_id: null,
               sample_item_title: null,
               sample_has_full_content: null,
@@ -1604,6 +1606,7 @@ describe('SupabaseDataSource dispatch + writes', () => {
         lastFetchedAt: '2024-06-01T00:00:00Z',
         errorCount: 9,
         lastError: 'boom',
+        subscriberCount: 4,
         fetchFailed: true,
         parked: true, // errorCount >= 8
         sample: {
@@ -1625,6 +1628,7 @@ describe('SupabaseDataSource dispatch + writes', () => {
         lastFetchedAt: null,
         errorCount: 0,
         lastError: null,
+        subscriberCount: 0,
         fetchFailed: false,
         parked: false,
         sample: null,
@@ -1642,6 +1646,23 @@ describe('SupabaseDataSource dispatch + writes', () => {
       return realRpc(name, params);
     }) as typeof env.fake.client.rpc;
     expect(await env.ds.listFeedStatuses()).toEqual([]);
+  });
+
+  it('listFeedStatuses reports an absent subscriber_count as unknown (null), not 0', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'admin_list_feeds') {
+        // A backend that predates migration 0041 → rows omit subscriber_count.
+        return Promise.resolve({
+          data: [{ id: 'feed-1', title: 'A Feed', error_count: 0 }],
+          error: null,
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    const [feed] = await env.ds.listFeedStatuses();
+    expect(feed.subscriberCount).toBeNull();
   });
 
   it('deleteFeed calls admin_delete_feed with the feed id', async () => {

@@ -775,6 +775,8 @@ export class MockDataSource implements DataSource {
         lastFetchedAt: null,
         errorCount: feed.errorCount,
         lastError: feed.lastError,
+        // The mock store is single-user, so this is 0 or 1 per feed.
+        subscriberCount: this.subs.has(feed.id) ? 1 : 0,
         fetchFailed: feed.errorCount > 0,
         parked: feed.parked,
         sample,
