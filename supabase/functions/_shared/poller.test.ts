@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { pollOne } from './poller.ts';
+import { pollOne, resolveStoredFavicon } from './poller.ts';
 import type { PollerDbClient, PollerFeedRow, PollerFetch } from './poller.ts';
 import type { SafeFetchResult } from './ssrf.ts';
 
@@ -12,6 +12,7 @@ const FEED: PollerFeedRow = {
   last_modified: null,
   fetch_interval_s: 1800,
   error_count: 0,
+  favicon_url: null,
 };
 
 const RSS_BODY = `<?xml version="1.0" encoding="UTF-8"?>
@@ -149,5 +150,184 @@ describe('pollOne validator ordering', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ kind: 'update', values: { error_count: 0 } });
     expect((calls[0] as { values: Record<string, unknown> }).values).toHaveProperty('last_fetched_at');
+  });
+});
+
+// A fetchFn that serves a canned response per URL and records the URLs hit.
+function routedFetch(routes: Record<string, { status?: number; ct?: string; body?: string }>) {
+  const requests: string[] = [];
+  const fetchFn: PollerFetch = (url) => {
+    requests.push(url);
+    const r = routes[url] ?? { status: 404 };
+    return Promise.resolve({
+      status: r.status ?? 200,
+      headers: new Headers(r.ct ? { 'content-type': r.ct } : {}),
+      url,
+      body: new TextEncoder().encode(r.body ?? ''),
+    } satisfies SafeFetchResult);
+  };
+  return { fetchFn, requests };
+}
+
+const faviconOf = (calls: RecordedCall[]): unknown => {
+  const meta = calls.find(
+    (c) => c.kind === 'update' && 'favicon_url' in c.values,
+  ) as { values: Record<string, unknown> } | undefined;
+  return meta?.values.favicon_url;
+};
+
+describe('resolveStoredFavicon', () => {
+  const HTML_ICON = '<html><head><link rel="icon" href="/brand/icon.png"></head></html>';
+
+  it('returns the advertised icon without any fetch', async () => {
+    const { fetchFn, requests } = routedFetch({});
+    const url = await resolveStoredFavicon(
+      { faviconUrl: 'https://cdn.example.com/adv.png', faviconAdvertised: true, siteUrl: 'https://example.com/' },
+      null,
+      fetchFn,
+    );
+    expect(url).toBe('https://cdn.example.com/adv.png');
+    expect(requests).toEqual([]);
+  });
+
+  it('reuses a stored real icon without fetching', async () => {
+    const { fetchFn, requests } = routedFetch({});
+    const url = await resolveStoredFavicon(
+      { faviconUrl: 'https://example.com/favicon.ico', faviconAdvertised: false, siteUrl: 'https://example.com/' },
+      'https://example.com/brand/icon.png',
+      fetchFn,
+    );
+    expect(url).toBe('https://example.com/brand/icon.png');
+    expect(requests).toEqual([]);
+  });
+
+  it('discovers the homepage <link rel="icon"> when nothing is advertised or stored', async () => {
+    const { fetchFn, requests } = routedFetch({
+      'https://example.com/': { ct: 'text/html', body: HTML_ICON },
+    });
+    const url = await resolveStoredFavicon(
+      { faviconUrl: 'https://example.com/favicon.ico', faviconAdvertised: false, siteUrl: 'https://example.com/' },
+      null,
+      fetchFn,
+    );
+    expect(url).toBe('https://example.com/brand/icon.png');
+    expect(requests).toEqual(['https://example.com/']);
+  });
+
+  it('is one-shot: never re-fetches the homepage once any favicon (even the guess) is stored', async () => {
+    // Regression for the "rediscover favicons that match the guess" case: a
+    // homepage advertising <link rel="icon" href="/favicon.ico"> stores a URL
+    // equal to the guess — later polls must still reuse it, not re-fetch.
+    const { fetchFn, requests } = routedFetch({
+      'https://example.com/': { ct: 'text/html', body: HTML_ICON },
+    });
+    const url = await resolveStoredFavicon(
+      { faviconUrl: 'https://example.com/favicon.ico', faviconAdvertised: false, siteUrl: 'https://example.com/' },
+      'https://example.com/favicon.ico',
+      fetchFn,
+    );
+    expect(url).toBe('https://example.com/favicon.ico');
+    expect(requests).toEqual([]);
+  });
+
+  it('skips a candidate rejected by the favicon screen and takes a later safe one', async () => {
+    // The first advertised icon is a data: URL (rejected by cleanFaviconUrl);
+    // a second, safe icon follows. Discovery must not stop at the first.
+    const { fetchFn } = routedFetch({
+      'https://example.com/': {
+        ct: 'text/html',
+        body:
+          '<head><link rel="icon" href="data:image/png;base64,AAAA">' +
+          '<link rel="icon" href="/real.png"></head>',
+      },
+    });
+    const url = await resolveStoredFavicon(
+      { faviconUrl: 'https://example.com/favicon.ico', faviconAdvertised: false, siteUrl: 'https://example.com/' },
+      null,
+      fetchFn,
+    );
+    expect(url).toBe('https://example.com/real.png');
+  });
+
+  it('falls back to the guess when the homepage advertises no icon', async () => {
+    const { fetchFn } = routedFetch({
+      'https://example.com/': { ct: 'text/html', body: '<html><head><title>x</title></head></html>' },
+    });
+    const url = await resolveStoredFavicon(
+      { faviconUrl: 'https://example.com/favicon.ico', faviconAdvertised: false, siteUrl: 'https://example.com/' },
+      null,
+      fetchFn,
+    );
+    expect(url).toBe('https://example.com/favicon.ico');
+  });
+
+  it('falls back to the guess when the homepage fetch is non-2xx', async () => {
+    const { fetchFn } = routedFetch({ 'https://example.com/': { status: 503 } });
+    const url = await resolveStoredFavicon(
+      { faviconUrl: 'https://example.com/favicon.ico', faviconAdvertised: false, siteUrl: 'https://example.com/' },
+      null,
+      fetchFn,
+    );
+    expect(url).toBe('https://example.com/favicon.ico');
+  });
+
+  it('never lets a homepage fetch error fail resolution', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchFn: PollerFetch = () => Promise.reject(new Error('network down'));
+    const url = await resolveStoredFavicon(
+      { faviconUrl: 'https://example.com/favicon.ico', faviconAdvertised: false, siteUrl: 'https://example.com/' },
+      null,
+      fetchFn,
+    );
+    expect(url).toBe('https://example.com/favicon.ico');
+    vi.restoreAllMocks();
+  });
+
+  it('skips discovery (uses the guess) when there is no site URL', async () => {
+    const { fetchFn, requests } = routedFetch({});
+    const url = await resolveStoredFavicon(
+      { faviconUrl: 'https://example.com/favicon.ico', faviconAdvertised: false, siteUrl: null },
+      null,
+      fetchFn,
+    );
+    expect(url).toBe('https://example.com/favicon.ico');
+    expect(requests).toEqual([]);
+  });
+});
+
+describe('pollOne favicon discovery', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('stores a homepage-discovered icon for a feed that advertises none', async () => {
+    const { client, calls } = makeClient();
+    const { fetchFn, requests } = routedFetch({
+      'https://example.com/feed.xml': { ct: 'application/rss+xml', body: RSS_BODY },
+      'https://example.com/': {
+        ct: 'text/html',
+        body: '<html><head><link rel="shortcut icon" href="https://cdn.example.com/ft.ico"></head></html>',
+      },
+    });
+
+    await pollOne(client, FEED, fetchFn);
+
+    expect(faviconOf(calls)).toBe('https://cdn.example.com/ft.ico');
+    expect(requests).toContain('https://example.com/');
+  });
+
+  it('does not re-fetch the homepage when a real icon is already stored', async () => {
+    const { client, calls } = makeClient();
+    const { fetchFn, requests } = routedFetch({
+      'https://example.com/feed.xml': { ct: 'application/rss+xml', body: RSS_BODY },
+    });
+
+    await pollOne(client, { ...FEED, favicon_url: 'https://cdn.example.com/ft.ico' }, fetchFn);
+
+    expect(faviconOf(calls)).toBe('https://cdn.example.com/ft.ico');
+    expect(requests).toEqual(['https://example.com/feed.xml']);
   });
 });

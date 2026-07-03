@@ -75,6 +75,60 @@ export function discoverFromHtml(html: string, baseUrl: string): FeedCandidate[]
   return candidates;
 }
 
+/** <link rel> tokens that name a site icon, in preference order: the standard
+ * `icon`/`shortcut icon` favicon first, then the (usually higher-res PNG)
+ * apple-touch variants, then Safari's `mask-icon`. `shortcut icon` splits into
+ * the `icon` token, so tier 0 matches both. */
+const ICON_REL_TIERS: readonly (readonly string[])[] = [
+  ['icon'],
+  ['apple-touch-icon', 'apple-touch-icon-precomposed'],
+  ['mask-icon'],
+];
+
+/**
+ * Every site icon a page advertises via `<link rel="icon" href="…">` (or an
+ * apple-touch / mask-icon variant), absolutized against `baseUrl`, ordered
+ * best-first: standard `icon`s before apple-touch before mask-icon, and within
+ * a tier in document order. Empty when the page names none. This is the poller's
+ * homepage-discovery fallback for the common case where a feed advertises no
+ * icon of its own and the guessed `/favicon.ico` 404s (e.g. ft.com) but the
+ * site's HTML head still points at a real icon.
+ *
+ * Scans only the `<head>` (icons live there) so a `<link>` in the body can't
+ * masquerade as the favicon and the regex work stays bounded on large pages.
+ * The returned URLs are NOT screened here — the caller runs each through the
+ * same `cleanFaviconUrl` scheme/tokenization gate every stored favicon passes,
+ * taking the first that survives. Returning the full list (not just the top
+ * pick) lets the caller skip past a rejected candidate — a `data:` icon or a
+ * tokenized `?v=…` URL — to a later safe one instead of giving up.
+ */
+export function discoverIconFromHtml(html: string, baseUrl: string): string[] {
+  const headEnd = html.search(/<\/head\s*>/i);
+  const head = headEnd === -1 ? html : html.slice(0, headEnd);
+  // Advertised hrefs per tier, in document order.
+  const perTier: string[][] = ICON_REL_TIERS.map(() => []);
+  for (const tag of iterateLinkTags(head)) {
+    const rels = (attr(tag, 'rel') ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+    if (rels.length === 0) continue;
+    const href = attr(tag, 'href');
+    if (!href) continue;
+    for (let tier = 0; tier < ICON_REL_TIERS.length; tier++) {
+      if (ICON_REL_TIERS[tier].some((r) => rels.includes(r))) {
+        perTier[tier].push(href);
+        break; // a tag belongs to its highest-priority matching tier only
+      }
+    }
+  }
+  const candidates: string[] = [];
+  for (const tier of perTier) {
+    for (const href of tier) {
+      const abs = absolutize(href, baseUrl);
+      if (abs) candidates.push(abs);
+    }
+  }
+  return candidates;
+}
+
 // ---------------------------------------------------------------------------
 // Deep-link & last-resort fallbacks
 // ---------------------------------------------------------------------------

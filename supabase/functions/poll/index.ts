@@ -77,7 +77,7 @@ async function handle(req: Request): Promise<Response> {
   // ordering — a bounded index range scan instead of a full-table scan + sort.
   const { data: feeds, error } = await supabase
     .from('feeds')
-    .select('id, url, secret_url, etag, last_modified, fetch_interval_s, error_count')
+    .select('id, url, secret_url, etag, last_modified, fetch_interval_s, error_count, favicon_url')
     .lte('next_fetch_at', new Date().toISOString())
     .order('next_fetch_at', { ascending: true })
     .limit(BATCH_SIZE);

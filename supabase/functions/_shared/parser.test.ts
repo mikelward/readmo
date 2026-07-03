@@ -271,6 +271,22 @@ describe('parseFeed — favicon', () => {
     ).toBe('https://json.example.com/favicon.ico');
   });
 
+  it('reports faviconAdvertised: false for a derived /favicon.ico, true for an advertised icon', () => {
+    // No advertised icon → the /favicon.ico guess → not advertised.
+    expect(
+      parseFeed(fixture('rss2.xml'), 'https://example.com/feed.xml').faviconAdvertised,
+    ).toBe(false);
+    // RSS <image><url> present → advertised.
+    const withImage =
+      '<?xml version="1.0"?><rss version="2.0"><channel><title>T</title>' +
+      '<link>https://ex.com/</link>' +
+      '<image><url>https://cdn.ex.com/logo.png</url></image>' +
+      '<item><title>i</title><guid>g1</guid></item></channel></rss>';
+    const parsed = parseFeed(withImage, 'https://ex.com/feed.xml');
+    expect(parsed.faviconAdvertised).toBe(true);
+    expect(parsed.faviconUrl).toBe('https://cdn.ex.com/logo.png');
+  });
+
   it('falls back to the FEED origin when there is no site link', () => {
     const raw =
       '<?xml version="1.0"?><rss version="2.0"><channel><title>No link</title>' +
