@@ -2,6 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   discoverFromHtml,
+  discoverIconFromHtml,
   googleNewsFeedFor,
   homePageUrl,
   redditFeedFor,
@@ -196,5 +197,72 @@ describe('googleNewsFeedFor', () => {
     expect(googleNewsFeedFor('http://localhost/page')).toBeNull();
     expect(googleNewsFeedFor('ftp://example.com/file')).toBeNull();
     expect(googleNewsFeedFor('not a url')).toBeNull();
+  });
+});
+
+describe('discoverIconFromHtml', () => {
+  const base = 'https://ft.com/';
+
+  it('finds <link rel="icon"> and absolutizes a relative href', () => {
+    const html = '<html><head><link rel="icon" href="/brand/ft.png"></head></html>';
+    expect(discoverIconFromHtml(html, base)).toEqual(['https://ft.com/brand/ft.png']);
+  });
+
+  it('matches rel="shortcut icon" (the icon token)', () => {
+    const html = '<head><link rel="shortcut icon" href="https://cdn.ft.com/f.ico"></head>';
+    expect(discoverIconFromHtml(html, base)).toEqual(['https://cdn.ft.com/f.ico']);
+  });
+
+  it('orders the standard icon ahead of an apple-touch-icon', () => {
+    const html = `<head>
+      <link rel="apple-touch-icon" href="/apple.png">
+      <link rel="icon" href="/std.png">
+    </head>`;
+    expect(discoverIconFromHtml(html, base)).toEqual([
+      'https://ft.com/std.png',
+      'https://ft.com/apple.png',
+    ]);
+  });
+
+  it('falls back to apple-touch-icon when no standard icon is present', () => {
+    const html = '<head><link rel="apple-touch-icon" href="/apple.png"></head>';
+    expect(discoverIconFromHtml(html, base)).toEqual(['https://ft.com/apple.png']);
+  });
+
+  it('orders mask-icon last', () => {
+    const html = `<head>
+      <link rel="mask-icon" href="/mask.svg" color="#000">
+      <link rel="apple-touch-icon" href="/apple.png">
+    </head>`;
+    expect(discoverIconFromHtml(html, base)).toEqual([
+      'https://ft.com/apple.png',
+      'https://ft.com/mask.svg',
+    ]);
+  });
+
+  it('keeps every icon in a tier, in document order', () => {
+    const html = `<head>
+      <link rel="icon" href="/first.png">
+      <link rel="icon" href="/second.png">
+    </head>`;
+    expect(discoverIconFromHtml(html, base)).toEqual([
+      'https://ft.com/first.png',
+      'https://ft.com/second.png',
+    ]);
+  });
+
+  it('ignores <link> tags outside the <head>', () => {
+    const html =
+      '<head><title>x</title></head><body><link rel="icon" href="/body.png"></body>';
+    expect(discoverIconFromHtml(html, base)).toEqual([]);
+  });
+
+  it('returns [] when no icon link is advertised', () => {
+    const html = '<head><link rel="stylesheet" href="/s.css"><link rel="alternate" href="/f"></head>';
+    expect(discoverIconFromHtml(html, base)).toEqual([]);
+  });
+
+  it('ignores an icon link with no href', () => {
+    expect(discoverIconFromHtml('<head><link rel="icon"></head>', base)).toEqual([]);
   });
 });

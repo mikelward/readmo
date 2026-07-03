@@ -1637,7 +1637,16 @@ short-integer value. Numeric image-resize queries are kept
 aren't thrown away, while a credential-named param even with an integer value
 (`?subscriber_id=1234`, `?token=1234`) or any non-integer value (token, base64,
 string param, timestamp) is rejected — so no per-subscriber query leaks into
-`feeds_public`. Else the site origin's `/favicon.ico`. It's decorative (`alt=""`) and the `<img>` hides itself on load
+`feeds_public`. When the feed advertises no icon, the poller next tries to
+**discover a real one from the site homepage's `<link rel="icon">`** (also
+`shortcut icon`, `apple-touch-icon`, or `mask-icon`, in that preference order),
+fetched once through the SSRF-hardened path and run through the same screen —
+this rescues publishers whose feed names no icon *and* whose `/favicon.ico`
+guess 404s (e.g. `ft.com`). The homepage fetch is a **one-shot cost per feed**:
+discovery runs only on the first poll that finds no favicon stored yet, and
+every later poll reuses the stored value — a discovered icon, or the
+`/favicon.ico` guess it settled on — without re-fetching the page. Else, finally, the
+site origin's `/favicon.ico`. It's decorative (`alt=""`) and the `<img>` hides itself on load
 error, so a guessed `/favicon.ico` that 404s leaves no broken glyph. The URL is
 display-safe metadata (like `title`/`site_url`), so `feeds_public` exposes it;
 the client loads it directly (not via the image proxy). A handful of publishers

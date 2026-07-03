@@ -60,6 +60,12 @@ export interface ParsedFeed {
    * /favicon.ico. Display-only; the client <img> loads it directly and hides
    * it on error, so a guessed /favicon.ico that 404s costs nothing. */
   faviconUrl: string | null;
+  /** True when {@link faviconUrl} came from an icon the feed *advertised*
+   * (Atom <icon>/<logo>, RSS/RDF <image>, JSON Feed favicon/icon); false when
+   * it's the derived /favicon.ico guess (or null). The poller uses this to
+   * decide whether to bother discovering a real icon from the site homepage —
+   * an advertised icon is authoritative and needs no extra fetch. */
+  faviconAdvertised: boolean;
   items: NormalizedItem[];
 }
 
@@ -158,7 +164,7 @@ const MAX_FAVICON_URL_LEN = 2048;
  * subscriber via `feeds_public`, so a genuinely secret-bearing icon URL must not
  * leak; failing closed here makes the caller fall back to the derived
  * /favicon.ico. */
-function cleanFaviconUrl(href: string | null): string | null {
+export function cleanFaviconUrl(href: string | null): string | null {
   if (!href) return null;
   let u: URL;
   try {
@@ -194,16 +200,16 @@ function deriveFavicon(siteUrl: string | null, feedUrl: string): string | null {
 
 /** Resolve a feed's favicon: prefer the feed-advertised icon (absolutized,
  * scheme-checked) since it's intentional and won't 404, else fall back to the
- * derived `/favicon.ico`. */
+ * derived `/favicon.ico`. Reports which of the two it used via `advertised` so
+ * the poller can skip homepage icon discovery when the feed already names one. */
 function resolveFavicon(
   explicit: string | null,
   siteUrl: string | null,
   feedUrl: string,
-): string | null {
-  return (
-    cleanFaviconUrl(absolutizeUrl(explicit, siteUrl ?? feedUrl)) ??
-    deriveFavicon(siteUrl, feedUrl)
-  );
+): { url: string | null; advertised: boolean } {
+  const advertised = cleanFaviconUrl(absolutizeUrl(explicit, siteUrl ?? feedUrl));
+  if (advertised) return { url: advertised, advertised: true };
+  return { url: deriveFavicon(siteUrl, feedUrl), advertised: false };
 }
 
 /** Parse a date into an ISO string, tolerating RFC 822 (RSS) and RFC 3339
@@ -289,7 +295,11 @@ function parseRss2(rss: Record<string, unknown>, feedUrl: string): ParsedFeed {
   const siteUrl = absolutizeUrl(text(channel.link), feedUrl);
   // RSS 2.0 channel logo: <image><url>.
   const channelImage = (channel.image as Record<string, unknown>) ?? {};
-  const faviconUrl = resolveFavicon(text(channelImage.url), siteUrl, feedUrl);
+  const { url: faviconUrl, advertised: faviconAdvertised } = resolveFavicon(
+    text(channelImage.url),
+    siteUrl,
+    feedUrl,
+  );
   const rawItems = (channel.item as Record<string, unknown>[]) ?? [];
 
   const items = rawItems.map((it) => {
@@ -321,7 +331,7 @@ function parseRss2(rss: Record<string, unknown>, feedUrl: string): ParsedFeed {
     });
   });
 
-  return { feedTitle: decodeText(text(channel.title)), siteUrl, faviconUrl, items };
+  return { feedTitle: decodeText(text(channel.title)), siteUrl, faviconUrl, faviconAdvertised, items };
 }
 
 // ---------------------------------------------------------------------------
@@ -333,7 +343,11 @@ function parseRdf(rdf: Record<string, unknown>, feedUrl: string): ParsedFeed {
   const siteUrl = absolutizeUrl(text(channel.link), feedUrl);
   // RDF <image> is a sibling of <channel> under the RDF root, with a <url>.
   const rdfImage = (rdf.image as Record<string, unknown>) ?? {};
-  const faviconUrl = resolveFavicon(text(rdfImage.url), siteUrl, feedUrl);
+  const { url: faviconUrl, advertised: faviconAdvertised } = resolveFavicon(
+    text(rdfImage.url),
+    siteUrl,
+    feedUrl,
+  );
   // In RDF, <item> elements are siblings of <channel> under the RDF root.
   const rawItems = (rdf.item as Record<string, unknown>[]) ?? [];
 
@@ -362,7 +376,7 @@ function parseRdf(rdf: Record<string, unknown>, feedUrl: string): ParsedFeed {
     });
   });
 
-  return { feedTitle: decodeText(text(channel.title)), siteUrl, faviconUrl, items };
+  return { feedTitle: decodeText(text(channel.title)), siteUrl, faviconUrl, faviconAdvertised, items };
 }
 
 // ---------------------------------------------------------------------------
@@ -372,7 +386,7 @@ function parseRdf(rdf: Record<string, unknown>, feedUrl: string): ParsedFeed {
 function parseAtom(feed: Record<string, unknown>, feedUrl: string): ParsedFeed {
   const siteUrl = pickAtomLink(feed.link, feedUrl, ['alternate', '']);
   // Atom <icon> is a square site icon (ideal favicon); <logo> a wider banner.
-  const faviconUrl = resolveFavicon(
+  const { url: faviconUrl, advertised: faviconAdvertised } = resolveFavicon(
     firstOf(text(feed.icon), text(feed.logo)),
     siteUrl,
     feedUrl,
@@ -406,7 +420,7 @@ function parseAtom(feed: Record<string, unknown>, feedUrl: string): ParsedFeed {
     });
   });
 
-  return { feedTitle: decodeText(atomText(feed.title)), siteUrl, faviconUrl, items };
+  return { feedTitle: decodeText(atomText(feed.title)), siteUrl, faviconUrl, faviconAdvertised, items };
 }
 
 /** Atom <title>/<summary> can be {@_type, #text} or carry inline markup. */
@@ -513,7 +527,7 @@ function parseJsonFeed(json: unknown, feedUrl: string): ParsedFeed {
 
   const siteUrl = absolutizeUrl(asStr(feed.home_page_url), feedUrl);
   // JSON Feed `favicon` is the small square icon; `icon` the larger image.
-  const faviconUrl = resolveFavicon(
+  const { url: faviconUrl, advertised: faviconAdvertised } = resolveFavicon(
     firstOf(asStr(feed.favicon), asStr(feed.icon)),
     siteUrl,
     feedUrl,
@@ -536,7 +550,7 @@ function parseJsonFeed(json: unknown, feedUrl: string): ParsedFeed {
     });
   });
 
-  return { feedTitle: decodeText(asStr(feed.title)), siteUrl, faviconUrl, items };
+  return { feedTitle: decodeText(asStr(feed.title)), siteUrl, faviconUrl, faviconAdvertised, items };
 }
 
 function jsonAuthor(node: unknown): string | null {

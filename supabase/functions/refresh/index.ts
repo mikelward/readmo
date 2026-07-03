@@ -11,6 +11,7 @@
 // @ts-nocheck — runs under Deno, not node/tsc.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { parseFeedBody } from '../_shared/parser.ts';
+import { resolveStoredFavicon } from '../_shared/poller.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
 import { corsHeaders, preflight } from '../_shared/cors.ts';
@@ -140,7 +141,7 @@ async function handle(req: Request): Promise<Response> {
 async function refreshOne(service: any, feedId: string): Promise<boolean> {
   const { data: feed } = await service
     .from('feeds')
-    .select('id, url, secret_url, last_fetched_at, fetch_interval_s')
+    .select('id, url, secret_url, last_fetched_at, fetch_interval_s, favicon_url')
     .eq('id', feedId)
     .single();
   if (!feed) return false;
@@ -169,12 +170,16 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
   const ct = res.headers.get('content-type') ?? '';
   const parsed = parseFeedBody(new TextDecoder().decode(res.body), feed.url, ct);
   console.log(`refresh: feed ${feedId} parsed — ${parsed.items.length} item(s)`);
+  // Same favicon resolution as the cron poller: reuse an already-discovered
+  // icon, else discover from the homepage <link rel="icon"> once, else the
+  // /favicon.ico guess — so a manual refresh never clobbers a real icon.
+  const faviconUrl = await resolveStoredFavicon(parsed, feed.favicon_url, safeFetch);
   const { error: metaError } = await service
     .from('feeds')
     .update({
       title: parsed.feedTitle,
       site_url: parsed.siteUrl,
-      favicon_url: parsed.faviconUrl,
+      favicon_url: faviconUrl,
     })
     .eq('id', feed.id);
   if (metaError) throw new Error(`feed meta update failed: ${metaError.message}`);

@@ -4,7 +4,9 @@
 // entrypoint (supabase/functions/poll/index.ts) stays a thin auth + batch
 // loop. See SPEC.md "Polling (the cron)".
 
-import { parseFeedBody } from './parser.ts';
+import { cleanFaviconUrl, parseFeedBody } from './parser.ts';
+import type { ParsedFeed } from './parser.ts';
+import { discoverIconFromHtml } from './discover.ts';
 import { sanitizeContent } from './sanitize.ts';
 import { safeFetch } from './ssrf.ts';
 import type { SafeFetchOptions, SafeFetchResult } from './ssrf.ts';
@@ -25,6 +27,10 @@ export interface PollerFeedRow {
   last_modified: string | null;
   fetch_interval_s: number;
   error_count: number | null;
+  /** The favicon currently stored for this feed, if any. Lets homepage icon
+   * discovery skip the extra fetch once a real icon has been found (see
+   * {@link resolveStoredFavicon}). */
+  favicon_url: string | null;
 }
 
 /** Minimal shape of the Supabase client the poller needs — feed-row updates
@@ -93,6 +99,12 @@ export async function pollOne(
   const parsed = parseFeedBody(body, fetchUrl, ct);
   console.log(`poll: feed ${feed.id} parsed — ${parsed.items.length} item(s)`);
 
+  // When the feed advertises no icon of its own, the parser hands back the
+  // guessed /favicon.ico — which 404s for some publishers (e.g. ft.com). Try to
+  // discover a real icon from the site homepage's <link rel="icon">, once, and
+  // reuse it on later polls so this stays a one-time extra fetch per feed.
+  const faviconUrl = await resolveStoredFavicon(parsed, feed.favicon_url, fetchFn);
+
   // Upsert feed-level metadata (title, site_url, favicon). The new validators
   // (etag/last_modified) are NOT written here — they're persisted by
   // scheduleNext only after the item upsert succeeds. Writing them first would
@@ -105,7 +117,7 @@ export async function pollOne(
     .update({
       title: parsed.feedTitle,
       site_url: parsed.siteUrl,
-      favicon_url: parsed.faviconUrl,
+      favicon_url: faviconUrl,
       last_fetched_at: new Date().toISOString(),
     })
     .eq('id', feed.id);
@@ -153,6 +165,91 @@ export async function pollOne(
       last_modified: res.headers.get('last-modified'),
     },
   });
+}
+
+// --- Favicon: homepage <link rel="icon"> discovery -------------------------
+
+/**
+ * The favicon URL to store for this feed.
+ *
+ * Priority: a feed-advertised icon (authoritative, already screened by the
+ * parser) → a real icon discovered on the site homepage → the guessed
+ * `/favicon.ico`. Homepage discovery is the fallback for feeds that advertise
+ * no icon *and* whose `/favicon.ico` guess may 404 (e.g. ft.com), and it costs
+ * one extra HTTP GET — so it runs at most **once per feed**:
+ *
+ *   - Advertised icon present → use it; no fetch.
+ *   - Otherwise, if *any* favicon is already stored → reuse it; no fetch.
+ *   - Otherwise (nothing stored yet — the first poll) → fetch the homepage once
+ *     and discover; fall back to the guess if nothing usable is found.
+ *
+ * Gating on "nothing stored yet" rather than "stored differs from the guess" is
+ * deliberate: a homepage whose advertised icon *is* `/favicon.ico` discovers a
+ * URL equal to the guess, and keying off inequality would re-fetch that
+ * homepage on every subsequent poll forever. Once anything is stored we leave
+ * it — favicons effectively never change, and a feed that later starts
+ * advertising one in its body still updates through the first branch.
+ *
+ * A discovery fetch failure never fails the poll — the guess is used.
+ */
+export async function resolveStoredFavicon(
+  parsed: Pick<ParsedFeed, 'faviconUrl' | 'faviconAdvertised' | 'siteUrl'>,
+  storedFaviconUrl: string | null,
+  fetchFn: PollerFetch,
+): Promise<string | null> {
+  if (parsed.faviconAdvertised) return parsed.faviconUrl;
+  const guess = parsed.faviconUrl;
+  // Anything already stored (a discovered icon, or the guess we settled on)
+  // is reused — discovery is one-shot, so later polls never re-fetch the page.
+  if (storedFaviconUrl != null) return storedFaviconUrl;
+  if (!parsed.siteUrl) return guess;
+  const discovered = await discoverHomepageIcon(parsed.siteUrl, fetchFn);
+  return discovered ?? guess;
+}
+
+/** Fetch a site homepage and return the screened favicon URL it advertises via
+ * `<link rel="icon">`, or null. Swallows every fetch/parse failure (returns
+ * null) so icon discovery is never able to fail a poll — the article data is
+ * already parsed by the time this runs. */
+async function discoverHomepageIcon(
+  pageUrl: string,
+  fetchFn: PollerFetch,
+): Promise<string | null> {
+  try {
+    // No custom maxBytes: safeFetch's cap is a hard reject on the WHOLE
+    // response (it even pre-checks Content-Length), not a prefix read, so a
+    // tight cap would throw on a large homepage before we ever reach its
+    // <head> — exactly the big publisher pages this fallback should rescue.
+    // Rely on safeFetch's default whole-response bound (the same one the feed
+    // fetch uses); discoverIconFromHtml then slices at </head> to bound parsing.
+    const res = await fetchFn(pageUrl, {
+      headers: {
+        'User-Agent': USER_AGENT,
+        'Accept': 'text/html, application/xhtml+xml, */*;q=0.8',
+      },
+      timeoutMs: 8_000,
+    });
+    if (res.status < 200 || res.status >= 300) return null;
+    const ct = res.headers.get('content-type') ?? '';
+    // Only parse HTML; a non-HTML homepage (rare) has no <link rel="icon">.
+    if (ct && !/html/i.test(ct)) return null;
+    const html = new TextDecoder().decode(res.body);
+    // Absolutize against the final URL after redirects, not the request URL.
+    // Screen candidates best-first and take the first that survives, so a
+    // rejected top pick (data: icon, tokenized ?v=…) doesn't mask a later safe
+    // one and force the /favicon.ico fallback.
+    for (const candidate of discoverIconFromHtml(html, res.url || pageUrl)) {
+      const cleaned = cleanFaviconUrl(candidate);
+      if (cleaned) return cleaned;
+    }
+    return null;
+  } catch (err) {
+    console.warn(
+      `poll: homepage favicon discovery failed for ${redactUrl(pageUrl)}:`,
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  }
 }
 
 // --- Scheduling, backoff, circuit breaker ----------------------------------
