@@ -102,6 +102,11 @@ export interface ItemRow {
    * Defaults to null in {@link mapItem}. */
   comments_url?: string | null;
   title: string | null;
+  /** Optional: the spoiler-free rewrite of `title`. Rides the `feed_items` RPC
+   * (list rows) and the ITEM_COLS direct reads, but is absent against a backend
+   * predating the `spoiler_free_title` column (0045) — defaults to null in
+   * {@link mapItem}. */
+  spoiler_free_title?: string | null;
   author: string | null;
   published_at: string | null;
   content_html: string | null;
@@ -192,6 +197,7 @@ export function mapItem(row: ItemRow): Item {
     url: row.url ?? '',
     commentsUrl: row.comments_url ?? null,
     title: row.title ?? '(untitled)',
+    spoilerFreeTitle: row.spoiler_free_title ?? null,
     author: row.author ?? null,
     publishedAt: tsToMs(row.published_at) ?? tsToMs(row.created_at) ?? 0,
     contentHtml: row.content_html ?? '',

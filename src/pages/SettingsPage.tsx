@@ -6,9 +6,11 @@ import {
   useItemSort,
   useGroupByFeed,
   useShowRowFavicon,
+  useHideSportsSpoilers,
   type BottomBarPosition,
 } from '../hooks/useReadingPrefs';
 import type { ItemSort } from '../lib/data/DataSource';
+import { useCapabilities, canUseFullText } from '../hooks/useCapabilities';
 import { useAuth } from '../hooks/useAuth';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { ThemeModeControl } from '../components/ThemeModeControl';
@@ -29,6 +31,11 @@ export function SettingsPage() {
   const { itemSort, setItemSort } = useItemSort();
   const { groupByFeed, setGroupByFeed } = useGroupByFeed();
   const { showRowFavicon, setShowRowFavicon } = useShowRowFavicon();
+  const { hideSportsSpoilers, setHideSportsSpoilers } = useHideSportsSpoilers();
+  // The spoiler-free rewrite only shows for allowlisted callers, so the toggle is
+  // a no-op for anyone off the list — hide it there rather than offer a dead
+  // control (disarmed allowlist → open to all, so it shows).
+  const spoilerToggleVisible = canUseFullText(useCapabilities());
   const { user, signOut } = useAuth();
   useDocumentTitle('Settings · readmo');
 
@@ -124,6 +131,23 @@ export function SettingsPage() {
               </span>
             </label>
           </li>
+          {spoilerToggleVisible ? (
+            <li className="settings__toggle">
+              <label className="settings__toggle-label">
+                <input
+                  type="checkbox"
+                  className="settings__toggle-check"
+                  checked={hideSportsSpoilers}
+                  onChange={(e) => setHideSportsSpoilers(e.target.checked)}
+                />
+                <span className="settings__toggle-text">
+                  <span className="settings__toggle-title">
+                    Hide sports spoilers
+                  </span>
+                </span>
+              </label>
+            </li>
+          ) : null}
         </ul>
       </section>
 

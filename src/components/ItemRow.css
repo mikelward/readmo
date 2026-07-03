@@ -71,6 +71,18 @@
   font-weight: 400;
 }
 
+/* Spoiler-free marker: a small muted glyph trailing a rewritten headline. Inline
+ * and non-interactive — it's not a control (no handler/href/focus), so it adds no
+ * tap zone (guardrail #2); a click just falls through to the row-body link it
+ * sits inside, and hovering it reveals the original headline via the native
+ * title tooltip. The icon baseline-aligns with the title text. */
+.item-row__spoiler-flag {
+  display: inline-flex;
+  vertical-align: -0.15em;
+  margin-inline-start: 0.35em;
+  color: var(--rm-read);
+}
+
 .item-row__meta {
   display: flex;
   align-items: center;

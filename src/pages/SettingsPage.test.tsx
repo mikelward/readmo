@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/renderWithProviders';
+import { MockDataSource } from '../lib/data/MockDataSource';
 import {
   BOTTOM_BAR_KEY,
   GROUP_BY_FEED_KEY,
   HIDE_ON_SCROLL_KEY,
+  HIDE_SPORTS_SPOILERS_KEY,
   ITEM_SORT_KEY,
   SHOW_ROW_FAVICON_KEY,
   resetReadingPrefsCacheForTest,
@@ -175,6 +177,35 @@ describe('SettingsPage — Reading & Bottom toolbar', () => {
     await user.click(toggle);
     expect(toggle).toBeChecked();
     expect(window.localStorage.getItem(HIDE_ON_SCROLL_KEY)).toBe('1');
+  });
+
+  it('shows "Hide sports spoilers" (on by default) for an allowed user and toggles it off', async () => {
+    const user = userEvent.setup();
+    // Default provider stack: signed-out → default capabilities → allowed.
+    renderWithProviders(<SettingsPage />);
+    const toggle = screen.getByRole('checkbox', { name: /hide sports spoilers/i });
+    expect(toggle).toBeChecked(); // default ON
+    await user.click(toggle);
+    expect(toggle).not.toBeChecked();
+    expect(window.localStorage.getItem(HIDE_SPORTS_SPOILERS_KEY)).toBe('0');
+  });
+
+  it('hides the "Hide sports spoilers" toggle for an off-allowlist user', async () => {
+    // Sign in and arm the allowlist WITHOUT the demo user, so capabilities
+    // resolve to family:false → the gated toggle is not offered.
+    window.localStorage.setItem('readmo:mock-signed-in', '1');
+    const source = new MockDataSource('test-offlist');
+    await source.removeFromAllowlist('demo@readmo.app');
+    await source.addToAllowlist('someone-else@example.com');
+    renderWithProviders(<SettingsPage />, { source });
+    // Other Reading toggles confirm the section rendered; the spoiler one is gone
+    // once capabilities resolve.
+    await screen.findByRole('checkbox', { name: /group by feed/i });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('checkbox', { name: /hide sports spoilers/i }),
+      ).toBeNull();
+    });
   });
 
   it('defaults the bottom toolbar to "Bottom of list"', () => {

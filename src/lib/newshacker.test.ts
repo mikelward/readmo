@@ -30,6 +30,7 @@ function item(over: Partial<Item> = {}): Item {
     url: 'https://example.com/the-article',
     commentsUrl: null,
     title: 'A post',
+    spoilerFreeTitle: null,
     author: null,
     publishedAt: 0,
     contentHtml: '',

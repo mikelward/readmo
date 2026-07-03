@@ -68,6 +68,10 @@ interface SeedSpec {
   /** External link target, for aggregator-style posts that point off-site.
    * Omitted items default to a link on their own feed's site. */
   url?: string;
+  /** The server-generated spoiler-free headline (as the poller's Gemini pass
+   * would cache on the shared item), for sports-result fixtures. Omitted = the
+   * headline isn't a sports-result spoiler, so `spoilerFreeTitle` stays null. */
+  spoilerFreeTitle?: string;
 }
 
 const SPECS: SeedSpec[] = [
@@ -156,6 +160,7 @@ export const SEED_ITEMS: Item[] = SPECS.map((spec, i) => ({
   url: spec.url ?? `${SITE_BY_FEED.get(spec.feedId) ?? 'https://example.com'}/article/${i + 1}`,
   commentsUrl: null,
   title: spec.title,
+  spoilerFreeTitle: spec.spoilerFreeTitle ?? null,
   author: spec.author,
   publishedAt: Date.now() - spec.agoHours * HOUR,
   contentHtml: spec.body,

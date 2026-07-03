@@ -5,7 +5,9 @@ import { useShareItem } from '../hooks/useShareItem';
 import { useOpenOriginalFeeds } from '../hooks/useOpenOriginalFeeds';
 import { useOpenNewshackerFeeds } from '../hooks/useOpenNewshackerFeeds';
 import { useMarkDoneOnOpenFeeds } from '../hooks/useMarkDoneOnOpenFeeds';
-import { useShowRowFavicon } from '../hooks/useReadingPrefs';
+import { useShowRowFavicon, useHideSportsSpoilers } from '../hooks/useReadingPrefs';
+import { useCapabilities, canUseFullText } from '../hooks/useCapabilities';
+import { displayTitle } from '../lib/spoilerHeadline';
 import { FeedFavicon } from './FeedFavicon';
 import { ItemRow, type RightAction } from './ItemRow';
 import { ChevronRight, Sweep, Undo } from './icons';
@@ -140,6 +142,11 @@ export function ItemRows({
   onAnimationEnd,
 }: Props) {
   const share = useShareItem();
+  // Share the DISPLAYED headline, not the raw title, so a spoiler-hidden row
+  // doesn't leak the original scoreline into the share sheet (same gate the row
+  // renders with — see ItemRow / lib/spoilerHeadline).
+  const { hideSportsSpoilers } = useHideSportsSpoilers();
+  const spoilerAllowed = canUseFullText(useCapabilities());
   // Feeds the user set to "open original" — their rows link straight to the
   // source website instead of the in-app reader. One shared subscriptions read
   // backs every row, deduped via React Query.
@@ -198,7 +205,15 @@ export function ItemRows({
         openNewshacker={openNewshackerFeeds.has(fi.item.feedId)}
         markDoneOnOpen={markDoneOnOpenFeeds.has(fi.item.feedId)}
         showFavicon={showRowFavicon}
-        onShare={() => share({ title: fi.item.title, url: fi.item.url })}
+        onShare={() =>
+          share({
+            title: displayTitle(fi.item, {
+              hideSpoilers: hideSportsSpoilers,
+              allowed: spoilerAllowed,
+            }).text,
+            url: fi.item.url,
+          })
+        }
         rightAction={rightAction?.(fi)}
       />
     </li>

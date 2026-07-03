@@ -66,10 +66,18 @@ const FEED_COLS =
 const FEED_COLS_LEGACY =
   'id, site_url, title, last_fetched_at, next_fetch_at, fetch_interval_s, error_count, last_error, created_at';
 const ITEM_COLS =
+  'id, feed_id, guid, url, comments_url, title, spoiler_free_title, author, published_at, content_html, summary, enclosures, content_hash, created_at';
+// Pre-0045 backend (no `spoiler_free_title`): item reads step down to this set on
+// an undefined-column error so a sports headline just shows its original form
+// rather than 400-ing every item read (guardrail #11). Unlike the gated
+// full-text/summary columns, spoiler_free_title IS read by the client (it's a
+// list feature, not allowlist-gated at the DB); the allowlist only gates who
+// SEES the rewrite, client-side. See selectItemRows.
+const ITEM_COLS_NO_SPOILER =
   'id, feed_id, guid, url, comments_url, title, author, published_at, content_html, summary, enclosures, content_hash, created_at';
-// Pre-0033 backend (no `comments_url`): item reads step down to this column set
-// on an undefined-column error so the reader's Comments button degrades to "no
-// button" rather than 400-ing every item read (guardrail #11). See selectItemRows.
+// Pre-0033 backend (no `comments_url`): item reads step down further so the
+// reader's Comments button degrades to "no button" rather than 400-ing every
+// item read (guardrail #11). See selectItemRows.
 const ITEM_COLS_LEGACY =
   'id, feed_id, guid, url, title, author, published_at, content_html, summary, enclosures, content_hash, created_at';
 // No client read selects the cached full-article body (`full_content_html`) or
@@ -471,9 +479,10 @@ export class SupabaseDataSource implements DataSource {
     return res.data as T;
   }
 
-  /** Run an `items` read with the full ITEM_COLS, retrying once with the
-   * pre-0033 legacy column set (no `comments_url`) when the backend hasn't got
-   * that column yet — so the reader's Comments button degrades gracefully
+  /** Run an `items` read with the full ITEM_COLS, stepping down through the
+   * pre-0045 (no `spoiler_free_title`) and pre-0033 (no `comments_url`) column
+   * sets on an undefined-column error when the backend hasn't got a column yet —
+   * so a new client degrades gracefully (original headline / no Comments button)
    * instead of 400-ing every item read against an older backend (guardrail #11).
    * `build(cols)` returns the PostgREST query for a given column projection. */
   private async selectItemRows<T>(
@@ -490,7 +499,12 @@ export class SupabaseDataSource implements DataSource {
       return await run(ITEM_COLS);
     } catch (err) {
       if (!isMissingColumnError(err)) throw err;
-      return await run(ITEM_COLS_LEGACY);
+      try {
+        return await run(ITEM_COLS_NO_SPOILER);
+      } catch (err2) {
+        if (!isMissingColumnError(err2)) throw err2;
+        return await run(ITEM_COLS_LEGACY);
+      }
     }
   }
 

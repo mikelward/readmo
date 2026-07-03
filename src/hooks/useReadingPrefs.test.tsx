@@ -4,12 +4,14 @@ import {
   BOTTOM_BAR_KEY,
   GROUP_BY_FEED_KEY,
   HIDE_ON_SCROLL_KEY,
+  HIDE_SPORTS_SPOILERS_KEY,
   ITEM_SORT_KEY,
   SHOW_ROW_FAVICON_KEY,
   resetReadingPrefsCacheForTest,
   useBottomBarPosition,
   useGroupByFeed,
   useHideOnScroll,
+  useHideSportsSpoilers,
   useItemSort,
   useShowRowFavicon,
 } from './useReadingPrefs';
@@ -175,6 +177,42 @@ describe('useReadingPrefs', () => {
       act(() => screen.getByRole('button').click());
       expect(screen.getByRole('button')).toHaveTextContent('on');
       expect(window.localStorage.getItem(SHOW_ROW_FAVICON_KEY)).toBe('1');
+    });
+  });
+
+  describe('hide sports spoilers', () => {
+    function SpoilerProbe() {
+      const { hideSportsSpoilers, setHideSportsSpoilers } = useHideSportsSpoilers();
+      return (
+        <button
+          type="button"
+          onClick={() => setHideSportsSpoilers(!hideSportsSpoilers)}
+        >
+          {hideSportsSpoilers ? 'on' : 'off'}
+        </button>
+      );
+    }
+
+    it('defaults to ON (opt-out, unlike the other flags)', () => {
+      render(<SpoilerProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent('on');
+    });
+
+    it("reads a persisted '0' (opted out) on mount", () => {
+      window.localStorage.setItem(HIDE_SPORTS_SPOILERS_KEY, '0');
+      resetReadingPrefsCacheForTest();
+      render(<SpoilerProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent('off');
+    });
+
+    it('persists turning it off and back on', () => {
+      render(<SpoilerProbe />);
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('off');
+      expect(window.localStorage.getItem(HIDE_SPORTS_SPOILERS_KEY)).toBe('0');
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('on');
+      expect(window.localStorage.getItem(HIDE_SPORTS_SPOILERS_KEY)).toBe('1');
     });
   });
 

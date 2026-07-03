@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useLocation } from 'react-router-dom';
@@ -6,6 +6,10 @@ import { renderWithProviders } from '../test/renderWithProviders';
 import { ItemRow } from './ItemRow';
 import { PushPinFilled } from './icons';
 import { MockDataSource } from '../lib/data/MockDataSource';
+import {
+  HIDE_SPORTS_SPOILERS_KEY,
+  resetReadingPrefsCacheForTest,
+} from '../hooks/useReadingPrefs';
 import type { FeedItem } from '../lib/types';
 
 /** Surfaces the router's current path so a test can assert in-app navigation
@@ -40,6 +44,7 @@ const FEED_ITEM: FeedItem = {
     url: 'https://example.com/post',
     commentsUrl: null,
     title: 'A test headline',
+    spoilerFreeTitle: null,
     author: 'Jane Doe',
     publishedAt: Date.now() - 2 * 60 * 60 * 1000,
     contentHtml: '<p>Body</p>',
@@ -630,6 +635,53 @@ describe('ItemRow', () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe('spoiler-free headline', () => {
+    const SPOILER_ITEM: FeedItem = {
+      ...FEED_ITEM,
+      item: {
+        ...FEED_ITEM.item,
+        title: 'Man Utd beat Arsenal 3-1 to go top',
+        spoilerFreeTitle: 'EPL MNU vs ARS result',
+      },
+    };
+
+    beforeEach(() => {
+      window.localStorage.clear();
+      resetReadingPrefsCacheForTest();
+    });
+    afterEach(() => {
+      window.localStorage.clear();
+      resetReadingPrefsCacheForTest();
+    });
+
+    it('shows the rewrite and a marker when the setting is on (default) and caller allowed', () => {
+      // Default provider stack: signed-out → default capabilities → allowed;
+      // the setting defaults on.
+      renderWithProviders(<ItemRow feedItem={SPOILER_ITEM} />);
+      expect(screen.getByTestId('item-title')).toHaveTextContent('EPL MNU vs ARS result');
+      expect(screen.getByTestId('item-title')).not.toHaveTextContent('3-1');
+      const flag = screen.getByTestId('item-spoiler-flag');
+      expect(flag).toHaveAttribute('title', 'Man Utd beat Arsenal 3-1 to go top');
+      // The marker is not an interactive control (adds no tap zone — guardrail #2).
+      expect(within(flag).queryByRole('button')).toBeNull();
+      expect(within(flag).queryByRole('link')).toBeNull();
+    });
+
+    it('shows the original headline and no marker when the setting is off', () => {
+      window.localStorage.setItem(HIDE_SPORTS_SPOILERS_KEY, '0');
+      resetReadingPrefsCacheForTest();
+      renderWithProviders(<ItemRow feedItem={SPOILER_ITEM} />);
+      expect(screen.getByTestId('item-title')).toHaveTextContent('Man Utd beat Arsenal 3-1 to go top');
+      expect(screen.queryByTestId('item-spoiler-flag')).toBeNull();
+    });
+
+    it('shows the original headline (no marker) when no rewrite is cached', () => {
+      renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
+      expect(screen.getByTestId('item-title')).toHaveTextContent('A test headline');
+      expect(screen.queryByTestId('item-spoiler-flag')).toBeNull();
     });
   });
 });

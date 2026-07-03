@@ -8,8 +8,10 @@ import { useItemState } from '../hooks/useItemState';
 import { useWideViewport } from '../hooks/useWideViewport';
 import { useShareItem } from '../hooks/useShareItem';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
-import { useFullTextAllowed } from '../hooks/useCapabilities';
+import { useFullTextAllowed, useCapabilities, canUseFullText } from '../hooks/useCapabilities';
+import { useHideSportsSpoilers } from '../hooks/useReadingPrefs';
 import { useMarkDoneOnOpenFeeds } from '../hooks/useMarkDoneOnOpenFeeds';
+import { displayTitle } from '../lib/spoilerHeadline';
 import {
   articleSourceDomain,
   formatAge,
@@ -37,6 +39,7 @@ import {
   PushPinOutline,
   Share as ShareIcon,
   VerticalAlignTop,
+  VisibilityOff,
 } from '../components/icons';
 import {
   NEWSHACKER_ORIGIN,
@@ -97,6 +100,9 @@ interface ReaderToolbarProps {
   set: (field: ItemStateField, value: boolean) => void;
   markDone: () => void;
   share: (item: { title: string; url: string }) => void;
+  /** The DISPLAYED headline (spoiler-free when the row is rewritten), so Share
+   * doesn't leak the original scoreline that the reader is hiding. */
+  shareTitle: string;
   /** Whether the shared overflow menu is currently open (drives the More
    * button's aria-expanded). The menu itself lives at the page level so
    * the top and bottom bars share one instance — see newshacker's Thread. */
@@ -123,6 +129,7 @@ function ReaderToolbar({
   set,
   markDone,
   share,
+  shareTitle,
   menuOpen,
   onOpenMenu,
 }: ReaderToolbarProps) {
@@ -207,7 +214,7 @@ function ReaderToolbar({
               className="reader__action"
               tooltip="Share"
               aria-label="Share"
-              onClick={() => share({ title: item.title, url: item.url })}
+              onClick={() => share({ title: shareTitle, url: item.url })}
               data-testid={`reader-share${sfx}`}
             >
               <ShareIcon />
@@ -365,6 +372,14 @@ export function ItemPage() {
   // off-list request amplification (see useOfflineCacheLock). The server still
   // enforces the gate; this is purely the client not asking.
   const allowFull = useFullTextAllowed();
+  // Spoiler-free headline display gate. Uses the OPTIMISTIC allowlist gate (open
+  // while capabilities load), NOT `allowFull` — the conservative gate would paint
+  // the original (spoiler) headline until caps resolve, flashing the result. This
+  // is display-only (which text to paint), so unlike the full-text FETCH it can
+  // stay open while loading; the rewrite is non-sensitive. Resolved to text after
+  // `item` is in hand below.
+  const spoilerAllowed = canUseFullText(useCapabilities());
+  const { hideSportsSpoilers } = useHideSportsSpoilers();
   const wantFull =
     !!resolved && !cachedFull && online && allowFull && (truncated || manualTrigger);
 
@@ -535,7 +550,16 @@ export function ItemPage() {
       items.push({
         key: 'share',
         label: 'Share',
-        onSelect: () => share({ title: it.title, url: it.url }),
+        // Share the displayed (spoiler-free when rewritten) headline, not the
+        // raw title, so Share doesn't leak the scoreline the reader is hiding.
+        onSelect: () =>
+          share({
+            title: displayTitle(it, {
+              hideSpoilers: hideSportsSpoilers,
+              allowed: spoilerAllowed,
+            }).text,
+            url: it.url,
+          }),
       });
     }
     if (showReading && it.contentHtml) {
@@ -561,6 +585,8 @@ export function ItemPage() {
     share,
     navigate,
     showReading,
+    hideSportsSpoilers,
+    spoilerAllowed,
   ]);
 
   // Reader keyboard shortcuts: o open original, c comments, p pin, f favorite,
@@ -641,6 +667,13 @@ export function ItemPage() {
 
   const { item, feed } = resolved;
   const source = feed.title || formatDisplayDomain(item.url);
+  // The headline to show: the spoiler-free rewrite for an allowlisted caller with
+  // the setting on, else the original. Article body + link target are unchanged —
+  // opening still gives the full piece (see lib/spoilerHeadline).
+  const headline = displayTitle(item, {
+    hideSpoilers: hideSportsSpoilers,
+    allowed: spoilerAllowed,
+  });
   // Article's publisher domain next to the feed name, for aggregator feeds
   // (Hacker News, Reddit) whose items link out elsewhere; same rule as the row.
   const domain = feed.title
@@ -686,6 +719,7 @@ export function ItemPage() {
     set,
     markDone,
     share,
+    shareTitle: headline.text,
   } as const;
 
   return (
@@ -698,7 +732,7 @@ export function ItemPage() {
       />
       <ItemRowMenu
         open={menuOpen}
-        title={item.title}
+        title={headline.text}
         items={menuItems}
         anchorEl={menuAnchor}
         onClose={closeMenu}
@@ -713,11 +747,25 @@ export function ItemPage() {
               rel="noopener noreferrer"
               onClick={() => set('opened', true)}
             >
-              {item.title}
+              {headline.text}
             </a>
           ) : (
-            item.title
+            headline.text
           )}
+          {headline.rewritten ? (
+            // Non-interactive marker (guardrail #2 — not a control, adds no tap
+            // zone): flags the rewritten headline; native title reveals the
+            // original on hover. The article itself is unchanged below.
+            <span
+              className="reader__spoiler-flag"
+              role="img"
+              aria-label="Spoiler-free headline"
+              title={headline.original}
+              data-testid="reader-spoiler-flag"
+            >
+              <VisibilityOff width={18} height={18} />
+            </span>
+          ) : null}
         </h1>
         {/* Meta line below the title. The feed name now lives only on the
             reader bars (next to Back), so this carries author · age, plus the

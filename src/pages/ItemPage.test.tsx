@@ -315,6 +315,47 @@ describe('ItemPage (reader)', () => {
       expect(screen.queryByTestId('item-row-menu')).toBeNull();
     });
   });
+
+  it('shares the spoiler-free headline, not the original scoreline', async () => {
+    // Overlay a rewritten sports headline onto the resolved item.
+    class SpoilerSource extends MockDataSource {
+      async getItem(id: ItemId): Promise<FeedItem | null> {
+        const fi = await super.getItem(id);
+        if (!fi) return null;
+        return {
+          ...fi,
+          item: {
+            ...fi.item,
+            title: 'Man Utd beat Arsenal 3-1 to go top',
+            spoilerFreeTitle: 'EPL MNU vs ARS result',
+          },
+        };
+      }
+    }
+    const user = userEvent.setup();
+    const shareFn = vi.fn().mockResolvedValue(undefined);
+    const prev = Object.getOwnPropertyDescriptor(window.navigator, 'share');
+    Object.defineProperty(window.navigator, 'share', {
+      value: shareFn,
+      configurable: true,
+    });
+    try {
+      renderReader(new SpoilerSource(`test-${Math.random()}`));
+      // Default (allowlisted-by-default caps + setting on) shows the rewrite.
+      const more = await screen.findByTestId('reader-more');
+      await user.click(more);
+      await screen.findByTestId('item-row-menu');
+      await user.click(screen.getByTestId('item-row-menu-share'));
+
+      expect(shareFn).toHaveBeenCalledTimes(1);
+      const payload = shareFn.mock.calls[0][0] as { title: string; text: string };
+      expect(payload.title).toBe('EPL MNU vs ARS result');
+      expect(payload.text).not.toContain('3-1');
+    } finally {
+      if (prev) Object.defineProperty(window.navigator, 'share', prev);
+      else delete (window.navigator as { share?: unknown }).share;
+    }
+  });
 });
 
 describe('ItemPage comments button', () => {

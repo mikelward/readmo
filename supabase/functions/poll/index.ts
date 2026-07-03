@@ -19,8 +19,33 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { pollOne, recordFailure } from '../_shared/poller.ts';
 import { reapOrphanFeeds } from '../_shared/reap.ts';
 import { redactUrl } from '../_shared/urlSafety.ts';
+import {
+  buildSpoilerPrompt,
+  generateSpoilerTitles,
+  parseSpoilerResult,
+  type SpoilerGeneration,
+} from '../_shared/spoilerTitle.ts';
 
 const BATCH_SIZE = 25;
+
+// Spoiler-title generation (Gemini) — mirrors summary/index.ts's caller.
+const SPOILER_MODEL = 'gemini-2.5-flash-lite';
+const SPOILER_ENDPOINT =
+  `https://generativelanguage.googleapis.com/v1beta/models/${SPOILER_MODEL}:generateContent`;
+const SPOILER_TIMEOUT_MS = 20_000;
+// Cap the unprocessed items we classify per feed per poll — new/changed items
+// carry a null generated_at, so steady state is just the poll's new items; this
+// bounds the first-run backfill of a freshly-migrated backend.
+const SPOILER_ITEMS_PER_FEED = 20;
+// Global bounds on the whole spoiler pass (across all feeds this poll), so a
+// batch full of allowlisted feeds can't fan out into hundreds of serial Gemini
+// calls — the pass runs AFTER the items are stored, but it still shares the Edge
+// Function's wall-clock, so an unbounded pass (worst case during a Gemini
+// slowdown, each call taking its full timeout) could keep the function busy for
+// minutes and overlap the next scheduled poll. Whatever we skip stays
+// generated_at NULL and is picked up next poll.
+const SPOILER_MAX_ITEMS_PER_RUN = 40;
+const SPOILER_BUDGET_MS = 60_000;
 
 Deno.serve(async (req: Request) => {
   // Every failure path below logs through console.error — Supabase ships those
@@ -99,10 +124,12 @@ async function handle(req: Request): Promise<Response> {
 
   let processed = 0;
   let failed = 0;
+  const processedFeedIds: string[] = [];
   for (const feed of feeds ?? []) {
     try {
       await pollOne(supabase, feed);
       processed++;
+      processedFeedIds.push(feed.id);
     } catch (err) {
       failed++;
       // Log BEFORE recordFailure: a feed that's been hard-broken for hours
@@ -116,8 +143,137 @@ async function handle(req: Request): Promise<Response> {
     }
   }
 
-  console.log(`poll: done — processed=${processed} failed=${failed} considered=${considered}`);
-  return json({ processed, failed, considered });
+  // Spoiler-free sports headlines: for the feeds we just polled that have an
+  // allowlisted subscriber, classify+rewrite any unprocessed headlines (Gemini,
+  // title + stored RSS body only — no new fetch) and cache the result on the
+  // shared item. Soft + off the critical path: a failure here never fails the
+  // poll (items are already stored), and it no-ops when GOOGLE_API_KEY is unset.
+  const spoiler = await runSpoilerTitles(supabase, processedFeedIds).catch((err) => {
+    console.error('poll: spoiler-title pass failed:', err);
+    return null;
+  });
+
+  console.log(
+    `poll: done — processed=${processed} failed=${failed} considered=${considered}` +
+      (spoiler
+        ? ` spoilerProcessed=${spoiler.processed} spoilerRewritten=${spoiler.rewritten}` +
+          ` spoilerFailed=${spoiler.failed}${spoiler.budgetHit ? ' spoilerBudgetHit' : ''}`
+        : ''),
+  );
+  return json({ processed, failed, considered, spoiler });
+}
+
+/** Run the Gemini spoiler-title pass over the polled feeds. Wires the real
+ * Supabase (RPC / item read / write) and Gemini calls into the injectable
+ * orchestrator in _shared/spoilerTitle.ts (unit-tested there). No-ops silently
+ * without a Gemini key, exactly like the summary function. */
+async function runSpoilerTitles(
+  supabase: any,
+  feedIds: string[],
+): Promise<{ processed: number; rewritten: number; failed: number; budgetHit: boolean } | null> {
+  const apiKey = Deno.env.get('GOOGLE_API_KEY');
+  if (!apiKey) {
+    console.warn('poll: GOOGLE_API_KEY not set — skipping spoiler-title pass');
+    return null;
+  }
+  const startedAt = Date.now();
+  return generateSpoilerTitles(feedIds, {
+    async allowlistedFeeds(ids) {
+      const { data, error } = await supabase.rpc('feeds_with_allowlisted_subscriber', {
+        p_feed_ids: ids,
+      });
+      if (error) {
+        // Fail closed (generate for no one) on a gate-read error, so we never
+        // spend Gemini for feeds we couldn't confirm are allowlisted.
+        console.error('poll: allowlisted-feeds gate read failed:', error);
+        return [];
+      }
+      // `returns setof uuid` comes back as scalars or single-key rows depending
+      // on PostgREST version — normalize both to a string id.
+      return (data ?? []).map((row: unknown) =>
+        typeof row === 'string' ? row : String(Object.values(row as object)[0]),
+      );
+    },
+    async unprocessedItems(feedId) {
+      const { data, error } = await supabase
+        .from('items')
+        .select('id, title, content_html, summary, spoiler_free_title_generated_at')
+        .eq('feed_id', feedId)
+        .is('spoiler_free_title_generated_at', null)
+        // Order by sort_at (not published_at): it matches items_feed_sort_idx
+        // (feed_id, sort_at desc) from 0005, so taking the newest unprocessed
+        // items is an index range scan — the same hot path the feed reads use —
+        // rather than sorting the feed's whole unprocessed backlog.
+        .order('sort_at', { ascending: false })
+        .limit(SPOILER_ITEMS_PER_FEED);
+      if (error) {
+        console.error(`poll: unprocessed-items read for feed ${feedId} failed:`, error);
+        return [];
+      }
+      return data ?? [];
+    },
+    async generate(title, content) {
+      return classifyHeadline(apiKey, title, content);
+    },
+    async write(itemId, spoilerFreeTitle) {
+      const { error } = await supabase
+        .from('items')
+        .update({
+          spoiler_free_title: spoilerFreeTitle,
+          spoiler_free_title_generated_at: new Date().toISOString(),
+        })
+        .eq('id', itemId);
+      if (error) {
+        console.error(`poll: spoiler-title write for item ${itemId} failed:`, error);
+      }
+    },
+  }, {
+    // Bound the pass per poll: at most SPOILER_MAX_ITEMS_PER_RUN classifications,
+    // and stop starting new ones once the wall-clock budget is spent (guards the
+    // Gemini-slowdown worst case). Leftovers stay unprocessed for the next poll.
+    maxItems: SPOILER_MAX_ITEMS_PER_RUN,
+    withinBudget: () => Date.now() - startedAt < SPOILER_BUDGET_MS,
+  });
+}
+
+/** One Gemini call to classify a headline. Fixed Google host (the headline is in
+ * the request body, never a URL → no SSRF surface); `thinkingBudget: 0` and JSON
+ * response mode keep it fast and parseable. Returns a `SpoilerGeneration`:
+ *   - `rewrite`/`none` on a completed classification (a 200 we parsed) — the
+ *     caller caches it (rewrite or null) so it isn't re-billed;
+ *   - `failed` on a TRANSIENT failure (non-2xx, timeout, network throw) — the
+ *     caller leaves the item unprocessed so the next poll retries it, instead of
+ *     letting one outage permanently skip the headline. */
+async function classifyHeadline(
+  apiKey: string,
+  title: string | null,
+  content: string,
+): Promise<SpoilerGeneration> {
+  try {
+    const res = await fetch(`${SPOILER_ENDPOINT}?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: buildSpoilerPrompt(title, content) }] }],
+        generationConfig: {
+          thinkingConfig: { thinkingBudget: 0 },
+          responseMimeType: 'application/json',
+        },
+      }),
+      signal: AbortSignal.timeout(SPOILER_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      console.warn(`poll: spoiler Gemini responded HTTP ${res.status} — retry next poll`);
+      return { status: 'failed' };
+    }
+    // A parsed 200 is a completed classification (a spoiler:false or garbage body
+    // → no rewrite, cached so we don't re-bill it). Only a failed CALL retries.
+    const { spoilerFreeTitle } = parseSpoilerResult(await res.json());
+    return spoilerFreeTitle ? { status: 'rewrite', title: spoilerFreeTitle } : { status: 'none' };
+  } catch (err) {
+    console.warn('poll: spoiler Gemini call failed — retry next poll:', err);
+    return { status: 'failed' };
+  }
 }
 
 function json(body: unknown, status = 200): Response {

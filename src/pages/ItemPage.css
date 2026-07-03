@@ -200,6 +200,16 @@
   color: var(--rm-text);
 }
 
+/* Spoiler-free marker next to the reader headline — a small muted glyph,
+ * non-interactive (no handler/href/focus → no tap zone, guardrail #2); hovering
+ * reveals the original headline via the native title tooltip. */
+.reader__spoiler-flag {
+  display: inline-flex;
+  vertical-align: -0.1em;
+  margin-inline-start: 0.35em;
+  color: var(--rm-meta);
+}
+
 .reader__byline {
   font-size: 0.85rem;
   color: var(--rm-meta);

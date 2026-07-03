@@ -1,0 +1,241 @@
+import { describe, it, expect, vi } from 'vitest';
+import {
+  MAX_SPOILER_CONTENT_CHARS,
+  buildSpoilerPrompt,
+  generateSpoilerTitles,
+  parseSpoilerResult,
+  selectItemsNeedingSpoilerTitle,
+  spoilerContentText,
+  type SpoilerDeps,
+  type SpoilerItemRow,
+} from './spoilerTitle';
+
+const gemini = (text: string) => ({
+  candidates: [{ content: { parts: [{ text }] } }],
+});
+
+describe('spoilerContentText', () => {
+  it('strips the RSS body to text and prefers content_html over summary', () => {
+    expect(
+      spoilerContentText({ content_html: '<p>Two late goals</p>', summary: 'other' }),
+    ).toBe('Two late goals');
+  });
+
+  it('falls back to summary when there is no content_html', () => {
+    expect(spoilerContentText({ content_html: null, summary: '<p>teaser</p>' })).toBe('teaser');
+  });
+
+  it('returns empty string when there is no body at all', () => {
+    expect(spoilerContentText({ content_html: null, summary: null })).toBe('');
+  });
+
+  it('clamps a long body to the content cap', () => {
+    const huge = `<p>${'x'.repeat(MAX_SPOILER_CONTENT_CHARS + 500)}</p>`;
+    expect(spoilerContentText({ content_html: huge }).length).toBeLessThanOrEqual(
+      MAX_SPOILER_CONTENT_CHARS,
+    );
+  });
+});
+
+describe('buildSpoilerPrompt', () => {
+  it('asks for the JSON contract and embeds the headline', () => {
+    const prompt = buildSpoilerPrompt('Man Utd beat Arsenal 3-1', 'body text');
+    expect(prompt).toContain('{"spoiler": boolean, "headline": string}');
+    expect(prompt).toContain('Man Utd beat Arsenal 3-1');
+    expect(prompt).toContain('body text');
+    expect(prompt).toContain('--- BEGIN ARTICLE ---');
+  });
+
+  it('omits the article block when there is no content', () => {
+    const prompt = buildSpoilerPrompt('Some headline', '');
+    expect(prompt).not.toContain('BEGIN ARTICLE');
+    expect(prompt).toContain('Some headline');
+  });
+
+  it('tolerates a null title', () => {
+    expect(() => buildSpoilerPrompt(null, 'body')).not.toThrow();
+  });
+});
+
+describe('parseSpoilerResult', () => {
+  it('returns the rewrite when spoiler is true and a headline is given', () => {
+    const out = parseSpoilerResult(
+      gemini('{"spoiler": true, "headline": "EPL MNU vs ARS result"}'),
+    );
+    expect(out).toEqual({ spoilerFreeTitle: 'EPL MNU vs ARS result' });
+  });
+
+  it('returns null when spoiler is false (keep the original)', () => {
+    expect(
+      parseSpoilerResult(gemini('{"spoiler": false, "headline": ""}')),
+    ).toEqual({ spoilerFreeTitle: null });
+  });
+
+  it('returns null when spoiler is true but the headline is empty', () => {
+    expect(
+      parseSpoilerResult(gemini('{"spoiler": true, "headline": "  "}')),
+    ).toEqual({ spoilerFreeTitle: null });
+  });
+
+  it('unwraps a ```json fenced object', () => {
+    const out = parseSpoilerResult(
+      gemini('```json\n{"spoiler": true, "headline": "F1 GP qualifying result"}\n```'),
+    );
+    expect(out.spoilerFreeTitle).toBe('F1 GP qualifying result');
+  });
+
+  it('returns null for non-JSON / empty / malformed responses', () => {
+    expect(parseSpoilerResult(gemini('not json at all')).spoilerFreeTitle).toBeNull();
+    expect(parseSpoilerResult(gemini('')).spoilerFreeTitle).toBeNull();
+    expect(parseSpoilerResult(null).spoilerFreeTitle).toBeNull();
+    expect(parseSpoilerResult(gemini('{"headline": "x"}')).spoilerFreeTitle).toBeNull();
+    expect(parseSpoilerResult(gemini('42')).spoilerFreeTitle).toBeNull();
+  });
+});
+
+describe('selectItemsNeedingSpoilerTitle', () => {
+  const rows: SpoilerItemRow[] = [
+    { id: 'a', title: 'Result headline' },
+    { id: 'b', title: 'Already done', spoiler_free_title_generated_at: '2026-07-03T00:00:00Z' },
+    { id: 'c', title: '   ' },
+    { id: 'd', title: null },
+  ];
+
+  it('keeps only unprocessed items that have a non-blank title', () => {
+    expect(selectItemsNeedingSpoilerTitle(rows).map((r) => r.id)).toEqual(['a']);
+  });
+});
+
+describe('generateSpoilerTitles', () => {
+  function makeDeps(over: Partial<SpoilerDeps> = {}): {
+    deps: SpoilerDeps;
+    writes: Array<{ id: string; title: string | null }>;
+    generateCalls: number;
+  } {
+    const writes: Array<{ id: string; title: string | null }> = [];
+    let generateCalls = 0;
+    const deps: SpoilerDeps = {
+      allowlistedFeeds: async (ids) => ids,
+      unprocessedItems: async (feedId) => [
+        { id: `${feedId}-1`, title: 'Man Utd beat Arsenal 3-1' },
+        { id: `${feedId}-2`, title: 'Wimbledon final preview' },
+      ],
+      generate: async (title) => {
+        generateCalls++;
+        return title?.includes('beat')
+          ? { status: 'rewrite', title: 'EPL MNU vs ARS result' }
+          : { status: 'none' };
+      },
+      write: async (id, spoilerFreeTitle) => {
+        writes.push({ id, title: spoilerFreeTitle });
+      },
+      ...over,
+    };
+    return { deps, writes, get generateCalls() { return generateCalls; } };
+  }
+
+  it('writes a rewrite for a spoiler and null for a non-spoiler, with counts', async () => {
+    const h = makeDeps();
+    const result = await generateSpoilerTitles(['feed-x'], h.deps);
+    expect(result).toEqual({ processed: 2, rewritten: 1, failed: 0, budgetHit: false });
+    expect(h.writes).toEqual([
+      { id: 'feed-x-1', title: 'EPL MNU vs ARS result' },
+      { id: 'feed-x-2', title: null },
+    ]);
+  });
+
+  it('does NOT persist a transient Gemini failure (leaves it for the next poll)', async () => {
+    const h = makeDeps({
+      unprocessedItems: async () => [
+        { id: 'ok', title: 'A beat B 2-0' },
+        { id: 'boom', title: 'C beat D 1-0' },
+      ],
+      generate: async (title) =>
+        title?.includes('C beat')
+          ? { status: 'failed' }
+          : { status: 'rewrite', title: 'REW' },
+    });
+    const result = await generateSpoilerTitles(['feed-x'], h.deps);
+    expect(result).toEqual({ processed: 1, rewritten: 1, failed: 1, budgetHit: false });
+    // The failed item is never written, so its generated_at stays null (retried).
+    expect(h.writes).toEqual([{ id: 'ok', title: 'REW' }]);
+  });
+
+  it('does nothing when no feed has an allowlisted subscriber (empty allowlist → off)', async () => {
+    const generate = vi.fn(async () => ({ status: 'rewrite' as const, title: 'x' }));
+    const h = makeDeps({ allowlistedFeeds: async () => [], generate });
+    const result = await generateSpoilerTitles(['feed-x', 'feed-y'], h.deps);
+    expect(result).toEqual({ processed: 0, rewritten: 0, failed: 0, budgetHit: false });
+    expect(generate).not.toHaveBeenCalled();
+    expect(h.writes).toEqual([]);
+  });
+
+  it('processes only allowlisted-subscriber feeds', async () => {
+    const seen: string[] = [];
+    const h = makeDeps({
+      allowlistedFeeds: async () => ['feed-x'],
+      unprocessedItems: async (feedId) => {
+        seen.push(feedId);
+        return [{ id: `${feedId}-1`, title: 'A beat B 2-0' }];
+      },
+    });
+    await generateSpoilerTitles(['feed-x', 'feed-y'], h.deps);
+    expect(seen).toEqual(['feed-x']);
+  });
+
+  it('skips already-processed items', async () => {
+    const h = makeDeps({
+      unprocessedItems: async () => [
+        { id: 'done', title: 'A beat B', spoiler_free_title_generated_at: '2026-07-03T00:00:00Z' },
+        { id: 'fresh', title: 'C beat D 1-0' },
+      ],
+    });
+    const result = await generateSpoilerTitles(['feed-x'], h.deps);
+    expect(result.processed).toBe(1);
+    expect(h.writes.map((w) => w.id)).toEqual(['fresh']);
+  });
+
+  it('returns zero for an empty feed list without calling deps', async () => {
+    const allowlistedFeeds = vi.fn(async () => []);
+    const h = makeDeps({ allowlistedFeeds });
+    const result = await generateSpoilerTitles([], h.deps);
+    expect(result).toEqual({ processed: 0, rewritten: 0, failed: 0, budgetHit: false });
+    expect(allowlistedFeeds).not.toHaveBeenCalled();
+  });
+
+  it('stops at the item cap, leaving the rest for the next poll (budgetHit)', async () => {
+    const generate = vi.fn(async () => ({ status: 'none' as const }));
+    const h = makeDeps({
+      allowlistedFeeds: async () => ['feed-x', 'feed-y'],
+      unprocessedItems: async (feedId) => [
+        { id: `${feedId}-1`, title: 'A beat B' },
+        { id: `${feedId}-2`, title: 'C beat D' },
+      ],
+      generate,
+    });
+    // 2 feeds × 2 items = 4 available; cap at 3.
+    const result = await generateSpoilerTitles(['feed-x', 'feed-y'], h.deps, { maxItems: 3 });
+    expect(result.processed).toBe(3);
+    expect(result.budgetHit).toBe(true);
+    expect(generate).toHaveBeenCalledTimes(3);
+  });
+
+  it('stops when the wall-clock budget is spent (no further Gemini calls)', async () => {
+    const generate = vi.fn(async () => ({ status: 'none' as const }));
+    const h = makeDeps({
+      unprocessedItems: async () => [
+        { id: 'a', title: 'A beat B' },
+        { id: 'b', title: 'C beat D' },
+        { id: 'c', title: 'E beat F' },
+      ],
+      generate,
+    });
+    // Budget allows exactly one item, then reports "over budget".
+    let calls = 0;
+    const withinBudget = () => calls++ < 1;
+    const result = await generateSpoilerTitles(['feed-x'], h.deps, { withinBudget });
+    expect(result.processed).toBe(1);
+    expect(result.budgetHit).toBe(true);
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+});
