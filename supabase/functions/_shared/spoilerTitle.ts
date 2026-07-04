@@ -1,10 +1,11 @@
 // Readmo spoiler-free sports headlines — pure logic.
 //
-// A sports feed can spoil a result in the headline itself ("Man Utd beat Arsenal
-// 3-1"). At poll time, for feeds that have an allowlisted subscriber, we ask
-// Gemini to CLASSIFY each new headline and, when it gives away a result, rewrite
-// it spoiler-free with the short competition name first ("EPL MNU vs ARS
-// result", "F1 Qualifying results"). The rewrite is cached on the shared item's
+// A sports feed can spoil a result — OR an in-game moment (a goal, a red card, a
+// crash, an injury) — in the headline itself ("Man Utd beat Arsenal 3-1"). At
+// poll time, for feeds that have an allowlisted subscriber, we ask Gemini to
+// CLASSIFY each new headline and, when it gives away a result or in-play event,
+// rewrite it spoiler-free with the short competition name first ("EPL MNU v ARS
+// spoiler", "F1 British GP spoiler"). The rewrite is cached on the shared item's
 // `spoiler_free_title` column; the ORIGINAL always stays in `title`, so the
 // client decides which to show (allowlist + per-user setting).
 //
@@ -38,21 +39,20 @@ export function spoilerContentText(row: {
     : text;
 }
 
-/** Prompt Gemini to classify a headline and, when it spoils a sporting result,
+/** Prompt Gemini to classify a headline and, when it spoils a sporting event,
  * return the spoiler-free rewrite. The contract is a small JSON object so the
  * "does it even contain a spoiler?" decision is an EXPLICIT flag, not something
  * we infer from prose:
- *   { "spoiler": true,  "headline": "EPL MNU vs ARS result" }
+ *   { "spoiler": true,  "headline": "EPL MNU v ARS spoiler" }
  *   { "spoiler": false, "headline": "" }
- * `spoiler` is true when the headline reveals the OUTCOME of a specific sporting
- * event — DIRECTLY (a score, who won/lost/drew, who advanced, a pole/qualifying
- * result) OR BY IMPLICATION (a team eliminated/knocked out/through, or an
- * emotive framing that only makes sense once you know the result — "Farewell X",
- * "dream over", "heartbreak for X", "X bow out"). We deliberately lean toward
- * hiding: when a headline is about a specific event and its outcome is ambiguous,
- * treat it as a spoiler. Non-sports headlines, and sports headlines that DON'T
- * reveal a result (pre-match previews, injuries, transfers, schedules, off-field
- * news), are `spoiler:false` → we keep the original. */
+ * The guiding principle is DELAYED-REPLAY: assume the reader might watch the
+ * event later and hide anything that would spoil it — the outcome (who won/lost/
+ * drew, advanced, was eliminated, crowned champion; incl. implied framings like
+ * "Farewell X") AND any in-play moment (a goal, the score, a card, a penalty, a
+ * crash, an injury during play, who's leading). The ONLY thing that's never a
+ * spoiler is PRE-GAME content (previews, predictions, build-up before it starts);
+ * and a headline with no event to watch (a transfer, a fixture, non-sport) has
+ * nothing to spoil. When unsure about a specific event, hide it. */
 export function buildSpoilerPrompt(
   title: string | null | undefined,
   content: string,
@@ -61,33 +61,30 @@ export function buildSpoilerPrompt(
     ? `\n\nFor context, the article body is between the delimiters:\n--- BEGIN ARTICLE ---\n${content}\n--- END ARTICLE ---`
     : '';
   return (
-    `You rewrite sports news headlines to avoid spoiling results.\n\n` +
-    `A headline is a SPOILER when it reveals — directly OR by implication — how a ` +
-    `specific sporting event, or a team's involvement in it, turned out: a final ` +
-    `score, who won, lost or drew, who advanced or was eliminated/knocked out, ` +
-    `who reached or exited a stage, or who was crowned champion. This INCLUDES ` +
-    `headlines that only IMPLY the result through framing — a farewell, tribute ` +
-    `or obituary to a team's run ("Farewell X", "X's journey ends", "dream over", ` +
-    `"heartbreak for X", "X crash out", "X bow out"), or a celebration of a win or ` +
-    `title ("X crowned champions", "X win the title", "X lift the trophy", ` +
-    `"X are champions", "glory for X") — EVEN WHEN no score is stated. Lean ` +
-    `toward hiding: if the headline is about a ` +
-    `specific event and you're unsure whether it gives the outcome away, treat it ` +
-    `as a spoiler.\n\n` +
-    `A headline is NOT a spoiler when it reveals no outcome: a pre-match preview ` +
-    `or build-up, an injury, a transfer, a fixture/schedule, contract or ` +
-    `off-field news, or general opinion not tied to a specific recent result. ` +
-    `Headlines that are not about sport are never spoilers.\n\n` +
-    `When it IS a spoiler, write a spoiler-free replacement that names only WHAT ` +
-    `happened, never the outcome: lead with the short competition or league name ` +
-    `(e.g. F1, EPL, NBA, NFL, World Cup), then the participants as short ` +
-    `abbreviations joined by "v" or "vs" when it's a head-to-head (use just the ` +
-    `one team when only one is named), then a plain event noun ("result", ` +
-    `"qualifying result", "final result", "match"). Use the article body to ` +
+    `You rewrite sports headlines so they don't spoil an event for someone who ` +
+    `plans to watch it later on delayed replay.\n\n` +
+    `A headline is a SPOILER if it reveals anything that happens once the event is ` +
+    `under way — from the first whistle to the final result. That covers the ` +
+    `outcome (who won, lost, drew, advanced, was eliminated or knocked out, or was ` +
+    `crowned champion — including framings that only make sense once you know it, ` +
+    `like "Farewell X", "dream over", "X bow out", "glory for X", "X lift the ` +
+    `trophy") AND every in-play moment (a goal or the score at any point, a red or ` +
+    `yellow card, a penalty, a sending-off, a crash, a retirement, an injury ` +
+    `during play, who is leading, a comeback). If a headline is about a specific ` +
+    `event that has started or finished and you're unsure whether it gives ` +
+    `anything away, treat it as a spoiler.\n\n` +
+    `The ONLY exception is PRE-GAME content — a preview, prediction, build-up, or ` +
+    `team news from before the event begins — which is never a spoiler. And a ` +
+    `headline with no event to watch (a transfer, a fixture announcement, or ` +
+    `anything not about sport) has nothing to spoil.\n\n` +
+    `When it IS a spoiler, write a spoiler-free replacement that names only WHICH ` +
+    `event it is, never what happened: lead with the short competition or league ` +
+    `name (e.g. F1, EPL, NBA, NFL, World Cup), then the participants as short ` +
+    `abbreviations joined by "v" for a head-to-head (use just the one team ` +
+    `when only one is named), then the word "spoiler". Use the article body to ` +
     `identify the competition and the opponent when the headline names only one ` +
-    `side. Examples: "EPL MNU vs ARS result", "F1 British GP qualifying result", ` +
-    `"World Cup AUS v EGY result", "World Cup ARG v CPV result", "NBA Finals ` +
-    `Game 3 result".\n\n` +
+    `side. Examples: "EPL MNU v ARS spoiler", "F1 British GP qualifying spoiler", ` +
+    `"World Cup ARG v CPV spoiler", "NBA Finals Game 3 spoiler".\n\n` +
     `Reply with ONLY a JSON object of the form ` +
     `{"spoiler": boolean, "headline": string}. Set "headline" to the ` +
     `spoiler-free replacement when "spoiler" is true, otherwise an empty ` +

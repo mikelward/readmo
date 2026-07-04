@@ -327,7 +327,7 @@ describe('ItemPage (reader)', () => {
           item: {
             ...fi.item,
             title: 'Man Utd beat Arsenal 3-1 to go top',
-            spoilerFreeTitle: 'EPL MNU vs ARS result',
+            spoilerFreeTitle: 'EPL MNU v ARS spoiler',
           },
         };
       }
@@ -349,7 +349,7 @@ describe('ItemPage (reader)', () => {
 
       expect(shareFn).toHaveBeenCalledTimes(1);
       const payload = shareFn.mock.calls[0][0] as { title: string; text: string };
-      expect(payload.title).toBe('EPL MNU vs ARS result');
+      expect(payload.title).toBe('EPL MNU v ARS spoiler');
       expect(payload.text).not.toContain('3-1');
     } finally {
       if (prev) Object.defineProperty(window.navigator, 'share', prev);

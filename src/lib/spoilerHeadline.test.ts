@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { displayTitle } from './spoilerHeadline';
 
 const ORIGINAL = 'Man Utd beat Arsenal 3-1 to go top';
-const REWRITE = 'EPL MNU vs ARS result';
+const REWRITE = 'EPL MNU v ARS spoiler';
 
 const item = (spoilerFreeTitle: string | null) => ({
   title: ORIGINAL,

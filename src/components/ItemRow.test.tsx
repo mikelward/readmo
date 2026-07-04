@@ -664,7 +664,7 @@ describe('ItemRow', () => {
       item: {
         ...FEED_ITEM.item,
         title: 'Man Utd beat Arsenal 3-1 to go top',
-        spoilerFreeTitle: 'EPL MNU vs ARS result',
+        spoilerFreeTitle: 'EPL MNU v ARS spoiler',
       },
     };
 
@@ -681,7 +681,7 @@ describe('ItemRow', () => {
       // Default provider stack: signed-out → default capabilities → allowed;
       // the setting defaults on.
       renderWithProviders(<ItemRow feedItem={SPOILER_ITEM} />);
-      expect(screen.getByTestId('item-title')).toHaveTextContent('EPL MNU vs ARS result');
+      expect(screen.getByTestId('item-title')).toHaveTextContent('EPL MNU v ARS spoiler');
       expect(screen.getByTestId('item-title')).not.toHaveTextContent('3-1');
       const flag = screen.getByTestId('item-spoiler-flag');
       expect(flag).toHaveAttribute('title', 'Man Utd beat Arsenal 3-1 to go top');

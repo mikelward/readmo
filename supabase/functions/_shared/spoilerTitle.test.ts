@@ -56,24 +56,40 @@ describe('buildSpoilerPrompt', () => {
     expect(() => buildSpoilerPrompt(null, 'body')).not.toThrow();
   });
 
-  it('instructs the model to catch IMPLICIT results, not just explicit scores', () => {
-    // Guards the "be more aggressive" behavior: eliminations/exits, farewells,
-    // and title wins must be treated as spoilers even without a scoreline.
+  it('frames the delayed-replay principle and covers implied outcomes', () => {
+    // Guards the "assume they'll watch on replay" framing plus the implicit
+    // outcomes (eliminations/exits, farewells, title wins) that must be hidden
+    // even without a scoreline, and the lean-toward-hiding tie-breaker.
     const prompt = buildSpoilerPrompt('Farewell Cape Verde', '');
-    expect(prompt).toMatch(/by implication/i);
+    expect(prompt).toMatch(/delayed replay/i);
     expect(prompt).toMatch(/eliminated|knocked out/i);
     expect(prompt).toMatch(/farewell/i);
-    expect(prompt).toMatch(/crowned champions|win the title/i);
-    expect(prompt).toMatch(/lean toward hiding/i);
+    expect(prompt).toMatch(/crowned champion/i);
+    expect(prompt).toMatch(/unsure[\s\S]*?treat it as a spoiler/i);
+  });
+
+  it('hides in-play events and exempts only pre-game content', () => {
+    // Guards mid-game spoilers: goals, cards, crashes, and in-play injuries are
+    // hidden too — and the ONLY carve-out is pre-game (a transfer/fixture just
+    // has nothing to spoil, not a listed exception).
+    const prompt = buildSpoilerPrompt('Ronaldo scores twice before red card', 'body');
+    expect(prompt).toMatch(/in-play/i);
+    expect(prompt).toMatch(/\bgoal\b/i);
+    expect(prompt).toMatch(/red or yellow card/i);
+    expect(prompt).toMatch(/crash|retirement/i);
+    expect(prompt).toMatch(/injury during play|injured/i);
+    expect(prompt).toMatch(/pre-game/i);
+    expect(prompt).toMatch(/transfer/i);
+    expect(prompt).toMatch(/fixture/i);
   });
 });
 
 describe('parseSpoilerResult', () => {
   it('returns the rewrite when spoiler is true and a headline is given', () => {
     const out = parseSpoilerResult(
-      gemini('{"spoiler": true, "headline": "EPL MNU vs ARS result"}'),
+      gemini('{"spoiler": true, "headline": "EPL MNU v ARS spoiler"}'),
     );
-    expect(out).toEqual({ spoilerFreeTitle: 'EPL MNU vs ARS result' });
+    expect(out).toEqual({ spoilerFreeTitle: 'EPL MNU v ARS spoiler' });
   });
 
   it('returns null when spoiler is false (keep the original)', () => {
@@ -90,9 +106,9 @@ describe('parseSpoilerResult', () => {
 
   it('unwraps a ```json fenced object', () => {
     const out = parseSpoilerResult(
-      gemini('```json\n{"spoiler": true, "headline": "F1 GP qualifying result"}\n```'),
+      gemini('```json\n{"spoiler": true, "headline": "F1 GP qualifying spoiler"}\n```'),
     );
-    expect(out.spoilerFreeTitle).toBe('F1 GP qualifying result');
+    expect(out.spoilerFreeTitle).toBe('F1 GP qualifying spoiler');
   });
 
   it('returns null for non-JSON / empty / malformed responses', () => {
@@ -134,7 +150,7 @@ describe('generateSpoilerTitles', () => {
       generate: async (title) => {
         generateCalls++;
         return title?.includes('beat')
-          ? { status: 'rewrite', title: 'EPL MNU vs ARS result' }
+          ? { status: 'rewrite', title: 'EPL MNU v ARS spoiler' }
           : { status: 'none' };
       },
       write: async (id, spoilerFreeTitle) => {
@@ -150,7 +166,7 @@ describe('generateSpoilerTitles', () => {
     const result = await generateSpoilerTitles(['feed-x'], h.deps);
     expect(result).toEqual({ processed: 2, rewritten: 1, failed: 0, budgetHit: false });
     expect(h.writes).toEqual([
-      { id: 'feed-x-1', title: 'EPL MNU vs ARS result' },
+      { id: 'feed-x-1', title: 'EPL MNU v ARS spoiler' },
       { id: 'feed-x-2', title: null },
     ]);
   });

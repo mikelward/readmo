@@ -2167,8 +2167,8 @@ page's discipline is unchanged.
   result in the headline itself ("Man Utd beat Arsenal 3-1"). For allowlisted
   users, such a headline is replaced — in the list **and** the reader — with a
   spoiler-free rewrite that leads with the short competition name and names only
-  *what* happened, never the result: **"EPL MNU vs ARS result"**, **"F1 British
-  GP qualifying result"**, **"World Cup AUS v EGY result"**. Opening the article
+  *what* happened, never the result: **"EPL MNU v ARS spoiler"**, **"F1 British
+  GP qualifying spoiler"**, **"World Cup AUS v EGY spoiler"**. Opening the article
   is unchanged (full content, spoilers and all). The **original headline always
   stays in `items.title`** and the rewrite in a separate column, so display is
   reversible and the choice is a pure client decision.
@@ -2190,18 +2190,21 @@ page's discipline is unchanged.
     adds nothing to the poll's outbound footprint).
   - **Explicit spoiler flag.** The prompt asks Gemini for a small JSON object
     `{ "spoiler": boolean, "headline": string }`. The rewrite is cached **only**
-    when `spoiler` is true and a non-empty headline is returned; a non-sports
-    headline, a sports headline that *doesn't* reveal a result (preview, injury,
-    transfer, schedule), or any unparseable reply → **keep the original**. So the
-    "is this even a spoiler?" decision is the model's explicit flag, and a parse
-    failure fails safe (never blanks a title). The classifier is deliberately
-    **aggressive**: a spoiler is any headline that reveals an outcome *directly*
-    (score/winner/who advanced) **or by implication** — an elimination/exit, or an
-    emotive framing that only lands once you know the result ("Farewell X", "dream
-    over", "X bow out"), or a title win ("X crowned champions", "X lift the
-    trophy"), even with no score stated — and it's told to lean toward hiding when
-    a specific event's outcome is ambiguous. Genuine pre-match previews, injuries,
-    transfers, and schedules stay unhidden.
+    when `spoiler` is true and a non-empty headline is returned; anything the
+    model judges not a spoiler, or any unparseable reply → **keep the original**.
+    So the "is this even a spoiler?" decision is the model's explicit flag, and a
+    parse failure fails safe (never blanks a title). The classifier runs on one
+    **delayed-replay principle**: assume the reader might watch the event later and
+    hide anything that would spoil it — the **outcome** (who won/lost/drew,
+    advanced, was eliminated, crowned champion; incl. implied framings like
+    "Farewell X", "glory for X") **and any in-play moment** (a goal or the running
+    score, a red/yellow card, a penalty, a sending-off, a crash/retirement, an
+    injury *during play*, who's leading, a comeback). The **only** carve-out is
+    **pre-game** content (previews, predictions, build-up, team news before it
+    starts); a headline with no event to watch — a transfer, a fixture, non-sport
+    news — simply has nothing to spoil. When unsure about a specific event, it
+    hides. The rewrite always ends in **"spoiler"** (e.g. "EPL MNU v ARS
+    spoiler", "F1 British GP spoiler").
   - **Model:** Google **Gemini `gemini-2.5-flash-lite`** (the same model + key,
     `GOOGLE_API_KEY`, as AI summaries), `thinkingBudget: 0`, JSON response mode.
     Unset key → the poller silently skips the pass. Fixed Google host (the
