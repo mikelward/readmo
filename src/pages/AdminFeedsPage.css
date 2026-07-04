@@ -70,22 +70,16 @@
   gap: 8px;
 }
 
+/* The box size (shared with the reserved placeholder) is owned by the
+   FeedFavicon component; this only styles the surface. The row is top-aligned,
+   so both the icon and its stand-in nudge down to sit on the title's cap line. */
 .admin-feeds__favicon {
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
   margin-top: 2px;
   border-radius: 3px;
   object-fit: contain;
 }
 
-/* Empty stand-in holding the favicon's 16px box (matching .admin-feeds__favicon)
-   for feeds with no resolved icon, so every title lines up at the same left edge
-   whether or not its favicon loaded. Invisible: it only reserves space. */
 .admin-feeds__favicon-placeholder {
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
   margin-top: 2px;
 }
 

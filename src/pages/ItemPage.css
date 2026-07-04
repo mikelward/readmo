@@ -85,9 +85,6 @@
    the name is long; the name's inner span takes the truncation. Matches the
    16px per-row icon (.item-row__favicon). */
 .reader__feedname-favicon {
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
   border-radius: 3px;
   object-fit: contain;
 }

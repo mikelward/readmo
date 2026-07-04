@@ -160,25 +160,13 @@
 }
 
 /* Site favicon to the left of the feed name. Decorative (alt=""), so it never
-   adds a tap zone — it sits inside the toggle button / static label. Fixed box
-   so a non-square source doesn't shift the name; hidden via inline style on
-   load error (a derived /favicon.ico that 404s). */
+   adds a tap zone — it sits inside the toggle button / static label. The box
+   size (shared with the reserved placeholder) is owned by the FeedFavicon
+   component so they can't drift; this only styles the surface. Hidden via
+   inline style on load error (a derived /favicon.ico that 404s). */
 .item-list__group-favicon {
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
   border-radius: 3px;
   object-fit: contain;
-}
-
-/* Empty stand-in for the favicon box, shown in a header that has no favicon
-   when other headers in the same list do — holds the 16px slot (matching
-   .item-list__group-favicon) so every feed name lines up at the same left
-   edge. Invisible: it only reserves space. */
-.item-list__group-favicon-placeholder {
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
 }
 
 /* Collapse control, far left: a fixed 44px chevron button. It's the keyboard-

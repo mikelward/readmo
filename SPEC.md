@@ -1755,7 +1755,13 @@ discovery runs only on the first poll that finds no favicon stored yet, and
 every later poll reuses the stored value — a discovered icon, or the
 `/favicon.ico` guess it settled on — without re-fetching the page. Else, finally, the
 site origin's `/favicon.ico`. It's decorative (`alt=""`) and the `<img>` hides itself on load
-error, so a guessed `/favicon.ico` that 404s leaves no broken glyph. The URL is
+error, so a guessed `/favicon.ico` that 404s leaves no broken glyph — but it hides
+*without collapsing its box*: a missing icon (none resolved yet) or an invalid one
+that fails to load reserves the same fixed slot, so a feed lacking an icon never
+snaps its name/meta left out of alignment with siblings whose icons loaded. A
+shared `FeedFavicon` component owns that box size across every surface (rows,
+grouped headers, reader bar, feed page, admin) so the icon and its reserved
+placeholder can't drift apart. The URL is
 display-safe metadata (like `title`/`site_url`), so `feeds_public` exposes it;
 the client loads it directly (not via the image proxy). A handful of publishers
 ship a **black-on-transparent** favicon (a dark monochrome mark) that vanishes

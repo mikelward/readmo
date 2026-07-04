@@ -29,9 +29,40 @@ describe('FeedFavicon', () => {
         size={20}
       />,
     );
-    const img = container.querySelector<HTMLImageElement>('img');
+    const img = container.querySelector<HTMLImageElement>('img')!;
     expect(img).toHaveAttribute('width', '20');
     expect(img).toHaveAttribute('height', '20');
+  });
+
+  it('owns the box size inline on the img so caller CSS cannot resize it apart from the placeholder', () => {
+    const { container } = render(
+      <FeedFavicon
+        url="https://example.com/favicon.ico"
+        className="item-row__favicon"
+        size={20}
+      />,
+    );
+    const img = container.querySelector<HTMLImageElement>('img')!;
+    expect(img.style.width).toBe('20px');
+    expect(img.style.height).toBe('20px');
+  });
+
+  it('sizes the reserved placeholder inline to match the icon even with a placeholder class', () => {
+    const { container } = render(
+      <FeedFavicon
+        url={null}
+        className="item-list__group-favicon"
+        reserveSpace
+        placeholderClassName="item-list__group-favicon-placeholder"
+        size={20}
+      />,
+    );
+    const span = container.querySelector<HTMLSpanElement>(
+      'span.item-list__group-favicon-placeholder',
+    )!;
+    expect(span).not.toBeNull();
+    expect(span.style.width).toBe('20px');
+    expect(span.style.height).toBe('20px');
   });
 
   it('adds the dark-invert class only for dark-monochrome favicons', () => {
