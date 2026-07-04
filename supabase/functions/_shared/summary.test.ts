@@ -152,6 +152,23 @@ describe('stripSummaryPreamble', () => {
     expect(stripSummaryPreamble('## Summary\n\nThe gist here.')).toBe('The gist here.');
   });
 
+  it('preserves the summary\'s own opening emphasis after a stripped label', () => {
+    // The trailing mop-up must not eat the first token's markdown.
+    expect(stripSummaryPreamble('TL;DR: **OpenAI** launched a new model.')).toBe(
+      '**OpenAI** launched a new model.',
+    );
+    expect(stripSummaryPreamble('Summary: _OpenAI_ launched a new model.')).toBe(
+      '_OpenAI_ launched a new model.',
+    );
+    expect(
+      stripSummaryPreamble("Here's a tl;dr of the article: **OpenAI** launched."),
+    ).toBe('**OpenAI** launched.');
+    // The label's OWN closing emphasis is still removed.
+    expect(stripSummaryPreamble('**TL;DR:** **OpenAI** launched.')).toBe(
+      '**OpenAI** launched.',
+    );
+  });
+
   it('strips a "Here\'s a tl;dr of the article:" lead-in sentence', () => {
     expect(
       stripSummaryPreamble(
