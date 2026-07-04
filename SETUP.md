@@ -301,13 +301,30 @@ Store it once via the SQL editor (find the key in Project Settings → API):
 
 ```sql
 select vault.create_secret(
-  '<your-service-role-key>',  -- the long JWT from Project Settings → API
+  '<your-service-role-key>',  -- the service-role key from Project Settings → API
   'service_role_key'          -- must match the name used in the cron below
 );
 ```
 
 > **Dashboard alternative:** Project Settings → Vault → New secret →
-> name `service_role_key`, value = service role JWT.
+> name `service_role_key`, value = the service-role key.
+
+> **Key format:** the server key can be the legacy `service_role` **JWT**
+> (`eyJ…`) **or** the new **secret key** (`sb_secret_…`) — either works here.
+> Readmo's cron→function auth is a plain `Authorization: Bearer` **string
+> match** against `SUPABASE_SERVICE_ROLE_KEY` on `--no-verify-jwt` functions
+> (e.g. `poll`, §6), so the token format is irrelevant; the only hard
+> requirement is that **this Vault entry and the Edge Functions
+> `SUPABASE_SERVICE_ROLE_KEY` hold the same value** — a mismatch makes the
+> function's bearer check 401 the cron.
+>
+> This is a bespoke path. Supabase's newer convention is to send a secret key
+> on the **`apikey`** header (not `Authorization: Bearer`) and validate it with
+> `auth: 'secret'` ([migration guide][newkeys]); Readmo predates that and
+> matches the bearer string directly, which is why either format works as long
+> as both sides agree.
+
+[newkeys]: https://supabase.com/docs/guides/getting-started/migrating-to-new-api-keys#database-webhooks-and-pg_net
 
 > **Note:** `ALTER DATABASE SET app.*` is not available on managed Supabase
 > instances, so `current_setting()` cannot carry the key — the Vault subquery
@@ -481,7 +498,10 @@ Point a collector at it; nothing runs in your database.
 
 - **Endpoint:** `https://<project-ref>.supabase.co/customer/v1/privileged/metrics`
 - **Auth:** HTTP Basic — username `service_role`, password = the service-role
-  JWT (Project Settings → API). Scrape once a minute.
+  key (Project Settings → API). Scrape once a minute. (Unlike the poller path in
+  §7a, this hits a Supabase-hosted *privileged* endpoint, not one of our
+  `--no-verify-jwt` functions — so if a `sb_secret_…` secret key 401s here, use
+  the legacy `service_role` JWT.)
 
 Managed path (recommended): in **Grafana Cloud → Connections → add a
 Prometheus/Hosted endpoint scrape job** for that URL with the basic-auth
