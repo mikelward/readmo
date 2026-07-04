@@ -3,7 +3,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { parseFeed, parseFeedBody, absolutizeUrl, toIso, contentHash } from './parser.ts';
+import {
+  parseFeed,
+  parseFeedBody,
+  absolutizeUrl,
+  canonicalizeItemUrl,
+  toIso,
+  contentHash,
+} from './parser.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (name: string) =>
@@ -558,5 +565,98 @@ describe('parseFeedBody', () => {
     expect(() =>
       parseFeedBody('not xml or json at all$$$$', 'https://ex.com/feed', 'application/xml')
     ).toThrow();
+  });
+});
+
+describe('canonicalizeItemUrl', () => {
+  it('preserves ALL fragments — routes, anchors, and bare numeric', () => {
+    // A fragment is part of URL identity and can be load-bearing, so it's never
+    // stripped. Distinct fragments stay distinct (liveblog/update entries).
+    expect(canonicalizeItemUrl('https://www.bbc.com/news/articles/cabc#0'))
+      .toBe('https://www.bbc.com/news/articles/cabc#0');
+    expect(canonicalizeItemUrl('https://ex.com/live/story#block-123'))
+      .toBe('https://ex.com/live/story#block-123');
+    expect(canonicalizeItemUrl('https://ex.com/post#section-2'))
+      .toBe('https://ex.com/post#section-2');
+    expect(canonicalizeItemUrl('https://ex.com/#/article/123'))
+      .toBe('https://ex.com/#/article/123');
+    expect(canonicalizeItemUrl('https://ex.com/#!/article/123'))
+      .toBe('https://ex.com/#!/article/123');
+    // Bare-numeric anchors stay distinct (the case that made stripping unsafe).
+    expect(canonicalizeItemUrl('https://ex.com/live/story#123'))
+      .not.toBe(canonicalizeItemUrl('https://ex.com/live/story#124'));
+    // Trackers are still stripped even when a fragment is kept.
+    expect(canonicalizeItemUrl('https://ex.com/?utm_source=x#/article/123'))
+      .toBe('https://ex.com/#/article/123');
+    expect(canonicalizeItemUrl('https://ex.com/a?at_campaign=B#2'))
+      .toBe('https://ex.com/a#2');
+  });
+
+  it('drops known tracking params (BBC at_*, UTM, click ids)', () => {
+    expect(
+      canonicalizeItemUrl(
+        'https://www.bbc.com/news/articles/cabc?at_medium=RSS&at_campaign=KARANGA',
+      ),
+    ).toBe('https://www.bbc.com/news/articles/cabc');
+    expect(
+      canonicalizeItemUrl('https://ex.com/post?utm_source=feed&utm_medium=rss'),
+    ).toBe('https://ex.com/post');
+    expect(canonicalizeItemUrl('https://ex.com/post?fbclid=abc123'))
+      .toBe('https://ex.com/post');
+  });
+
+  it('collapses a campaign-tagged re-issue onto the bare URL', () => {
+    // The same-feed dupe the screenshot showed: same story, different campaign
+    // tag each time — all canonicalize to one row (fragment held constant).
+    const bare = canonicalizeItemUrl('https://www.bbc.com/news/articles/cabc');
+    expect(
+      canonicalizeItemUrl('https://www.bbc.com/news/articles/cabc?at_campaign=A'),
+    ).toBe(bare);
+    expect(
+      canonicalizeItemUrl('https://www.bbc.com/news/articles/cabc?at_medium=RSS&at_campaign=B'),
+    ).toBe(bare);
+  });
+
+  it('keeps load-bearing (non-tracking) query params, dropping only trackers', () => {
+    expect(
+      canonicalizeItemUrl('https://ex.com/story?id=123&page=2&utm_source=x'),
+    ).toBe('https://ex.com/story?id=123&page=2');
+    expect(canonicalizeItemUrl('https://ex.com/story?id=123'))
+      .toBe('https://ex.com/story?id=123');
+  });
+
+  it('preserves kept query pairs verbatim (no URLSearchParams reserialization)', () => {
+    // A bare key keeps its bare form (not `?article=`), and %-encoding is not
+    // rewritten to `+`. This keeps the click-through URL intact AND keeps the
+    // output byte-identical to the SQL twin, so the dedup key still matches.
+    expect(canonicalizeItemUrl('https://ex.com/?article&utm_source=rss'))
+      .toBe('https://ex.com/?article');
+    expect(canonicalizeItemUrl('https://ex.com/?q=a%20b&utm_source=rss'))
+      .toBe('https://ex.com/?q=a%20b');
+    // Idempotent on the preserved forms.
+    expect(canonicalizeItemUrl('https://ex.com/?article'))
+      .toBe('https://ex.com/?article');
+    expect(canonicalizeItemUrl('https://ex.com/?q=a%20b'))
+      .toBe('https://ex.com/?q=a%20b');
+  });
+
+  it('is idempotent', () => {
+    const once = canonicalizeItemUrl('https://ex.com/a?id=1&utm_source=x#frag');
+    expect(canonicalizeItemUrl(once)).toBe(once);
+  });
+
+  it('passes through null and unparseable input unchanged', () => {
+    expect(canonicalizeItemUrl(null)).toBeNull();
+    expect(canonicalizeItemUrl('not a url')).toBe('not a url');
+  });
+
+  it('is applied to parsed item urls', () => {
+    const xml = `<?xml version="1.0"?><rss version="2.0"><channel><title>T</title>
+      <item><title>Dream</title>
+        <link>https://www.bbc.com/news/articles/cabc?at_medium=RSS&amp;at_campaign=KARANGA</link>
+        <guid isPermaLink="false">https://www.bbc.com/news/articles/cabc#0</guid>
+      </item></channel></rss>`;
+    const parsed = parseFeed(xml, 'https://www.bbc.com/feed');
+    expect(parsed.items[0].url).toBe('https://www.bbc.com/news/articles/cabc');
   });
 });

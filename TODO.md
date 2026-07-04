@@ -38,7 +38,9 @@ constraint is documented in more detail.
 
 - **Cross-feed item dedup.** Same-feed dupes (a publisher re-issuing the same
   URL under a new `<guid>`) are now collapsed by the `(feed_id, url)` partial
-  unique index and the `upsert_feed_items` RPC (migration `0013`). The
+  unique index and the `upsert_feed_items` RPC (migration `0013`), with the URL
+  first canonicalized (fragment + tracking params stripped) so cosmetic
+  re-issues collapse too (migration `0048`, parser `canonicalizeItemUrl`). The
   remaining case is when the SAME article URL shows up in two DIFFERENT feed
   subscriptions — e.g. a user subscribed to both "BBC News - Home" and "BBC
   News - Top Stories", which carry overlapping articles. Today those land as
