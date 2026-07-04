@@ -24,6 +24,7 @@ import { OfflinePage } from './pages/OfflinePage';
 import { SignInPage } from './pages/SignInPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AdminPage } from './pages/AdminPage';
+import { AdminUsersPage } from './pages/AdminUsersPage';
 import { AdminFeedsPage } from './pages/AdminFeedsPage';
 import { AboutPage } from './pages/AboutPage';
 import { LegalPage } from './pages/LegalPage';
@@ -108,6 +109,7 @@ export default function App() {
                     {/* Signed-in routes; the pages gate on the `admin`
                         capability and the server enforces every read/write. */}
                     <Route path="/admin" element={<AdminPage />} />
+                    <Route path="/admin/users" element={<AdminUsersPage />} />
                     <Route path="/admin/feeds" element={<AdminFeedsPage />} />
                     <Route
                       path="/feeds"
