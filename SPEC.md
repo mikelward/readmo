@@ -1506,11 +1506,14 @@ negligible and off every critical path. See the External services table in
     - **Appearance** — the **Color theme** (Ink/Grape swatches), **Dark/light
       mode** (light/dark/system icons), **Text size** (Extra Small–Huge
       A-glyphs), and **Font** pickers (all symbolic segmented controls), then the
-      two minor display settings placed further down: the **Bottom toolbar**
+      minor display settings placed further down: the **Bottom toolbar**
       picker (`readmo:bottom-bar`) — **Bottom of list** (default) or **Bottom of
       screen** (see *Bottom action bar*) — and, at the very bottom of the
-      section, the **Show feed icons on articles** toggle
-      (`readmo:show-row-favicon`).
+      section, a **Feed icons** group with two toggles: **Show icons on groups**
+      (`readmo:show-group-favicon`, **on by default** — the icon on each
+      group-by-feed section header) and **Show icons on articles**
+      (`readmo:show-row-favicon`, **off by default** — the icon on each article
+      row in the non-grouped views).
     - **Smart features** — the **Hide sports spoilers** toggle
       (`readmo:hide-sports-spoilers`); shown only for allowlisted callers (same
       gate as the rewrite), so the whole section is hidden — heading and all — for
@@ -1718,15 +1721,16 @@ repeat its own domain); **age**; **author** when present. The feed's **site
 favicon** sits at the start of the meta line — but where it appears depends on
 grouping. In **group-by-feed** view it's on the **section header** only (beside
 the feed name), identifying a feed's run of rows once rather than repeating on
-every article. In **non-grouped** views (the flat river, library, search,
+every article — gated on the **Show icons on groups** setting (Settings →
+Appearance → Feed icons; `readmo:show-group-favicon`, **on by default**,
+per-device). In **non-grouped** views (the flat river, library, search,
 offline), where rows from different feeds interleave with no section header to
 attribute them, each row *can* show its own feed's favicon just before the
-source name — gated on the **Show feed icons on articles** setting (Settings →
-Appearance; `readmo:show-row-favicon`, **off by default**, per-device). The
-group-by-feed header always carries its icon regardless of the setting. The
+source name — gated on the **Show icons on articles** setting (same Feed icons
+group; `readmo:show-row-favicon`, **off by default**, per-device). The
 **single feed page** (`/feed/:feedId`) also shows it once, left of the feed name
-in the page-header title (sized up to 20px for the heading), independent of that
-per-device row setting. That
+in the page-header title (sized up to 20px for the heading), independent of both
+per-device settings. That
 favicon comes from `feeds.favicon_url`, which
 the poller resolves on each fetch: the feed-advertised icon when present (Atom
 `<icon>`/`<logo>`, RSS `<image>`, JSON Feed `favicon`/`icon`, scheme-checked to

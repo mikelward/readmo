@@ -6,6 +6,7 @@ import {
   useItemSort,
   useGroupByFeed,
   useShowRowFavicon,
+  useShowGroupFavicon,
   useHideSportsSpoilers,
   type BottomBarPosition,
 } from '../hooks/useReadingPrefs';
@@ -31,6 +32,7 @@ export function SettingsPage() {
   const { itemSort, setItemSort } = useItemSort();
   const { groupByFeed, setGroupByFeed } = useGroupByFeed();
   const { showRowFavicon, setShowRowFavicon } = useShowRowFavicon();
+  const { showGroupFavicon, setShowGroupFavicon } = useShowGroupFavicon();
   const { hideSportsSpoilers, setHideSportsSpoilers } = useHideSportsSpoilers();
   // The spoiler-free rewrite only shows for allowlisted callers, so the toggle is
   // a no-op for anyone off the list — hide it there rather than offer a dead
@@ -138,9 +140,9 @@ export function SettingsPage() {
       </section>
 
       {/* Appearance — how things look/lay out. The four theme controls are folded
-          under one heading (instead of one section each), followed by the two
-          minor display settings further down: the toolbar position, then the
-          feed-icons toggle at the very bottom. */}
+          under one heading (instead of one section each), followed by the minor
+          display settings further down: the toolbar position, then the Feed
+          icons group (icons on groups / on articles) at the very bottom. */}
       <section className="settings__section">
         <h2 className="settings__heading">Appearance</h2>
 
@@ -195,7 +197,23 @@ export function SettingsPage() {
           ))}
         </div>
 
-        <ul className="settings__toggles settings__toggles--spaced">
+        <h3 className="settings__subheading">Feed icons</h3>
+        <ul className="settings__toggles">
+          <li className="settings__toggle">
+            <label className="settings__toggle-label">
+              <input
+                type="checkbox"
+                className="settings__toggle-check"
+                checked={showGroupFavicon}
+                onChange={(e) => setShowGroupFavicon(e.target.checked)}
+              />
+              <span className="settings__toggle-text">
+                <span className="settings__toggle-title">
+                  Show icons on groups
+                </span>
+              </span>
+            </label>
+          </li>
           <li className="settings__toggle">
             <label className="settings__toggle-label">
               <input
@@ -206,10 +224,7 @@ export function SettingsPage() {
               />
               <span className="settings__toggle-text">
                 <span className="settings__toggle-title">
-                  Show feed icons on articles
-                </span>
-                <span className="settings__toggle-desc">
-                  Show each feed’s icon beside its articles in lists.
+                  Show icons on articles
                 </span>
               </span>
             </label>

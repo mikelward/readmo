@@ -20,8 +20,11 @@ import { usePersistentStore } from './usePersistentStore';
 //  - group-by-feed (default off): section the body by feed instead of one flat
 //    river (see ItemList / ItemRows).
 //  - show-row-favicon (default off): show each feed's favicon on its rows in
-//    the non-grouped views (flat river, library, search, offline). Group-by-feed
-//    carries the icon on the section header regardless (see ItemRows / ItemRow).
+//    the non-grouped views (flat river, library, search, offline). See ItemRows
+//    / ItemRow.
+//  - show-group-favicon (default ON): show each feed's favicon on its section
+//    header in the group-by-feed views. On by default so the grouped layout
+//    keeps the icons it has always carried (see ItemRows).
 //  - hide-sports-spoilers (default ON): show the server-generated spoiler-free
 //    rewrite of a sports-result headline instead of the original (see
 //    lib/spoilerHeadline). Only takes effect for allowlisted callers — the
@@ -33,6 +36,7 @@ export const BOTTOM_BAR_KEY = 'readmo:bottom-bar';
 export const ITEM_SORT_KEY = 'readmo:item-sort';
 export const GROUP_BY_FEED_KEY = 'readmo:group-by-feed';
 export const SHOW_ROW_FAVICON_KEY = 'readmo:show-row-favicon';
+export const SHOW_GROUP_FAVICON_KEY = 'readmo:show-group-favicon';
 export const HIDE_SPORTS_SPOILERS_KEY = 'readmo:hide-sports-spoilers';
 
 /** Where the bottom action bar sits. 'list' = relative footer at the end of the
@@ -60,16 +64,21 @@ const hideOnScrollStore = boolStore(HIDE_ON_SCROLL_KEY);
 const groupByFeedStore = boolStore(GROUP_BY_FEED_KEY);
 const showRowFaviconStore = boolStore(SHOW_ROW_FAVICON_KEY);
 
-// Default-ON boolean pref: absent → true, '0' → false, '1' → true. Unlike
-// boolStore (default off), a fresh install opts INTO spoiler-hiding, so an
-// allowlisted user gets it without hunting for the switch.
-const hideSportsSpoilersStore = createPersistentStore<boolean>({
-  storageKey: HIDE_SPORTS_SPOILERS_KEY,
-  changeEvent: CHANGE_EVENT,
-  defaultValue: true,
-  parse: (raw) => (raw === '0' ? false : raw === '1' ? true : undefined),
-  serialize: (value) => (value ? '1' : '0'),
-});
+// Default-ON boolean store: absent → true, '0' → false, '1' → true. Used where a
+// fresh install should opt IN (spoiler-hiding; group-header favicons, which the
+// grouped layout has always shown).
+function boolStoreDefaultOn(storageKey: string): PersistentStore<boolean> {
+  return createPersistentStore<boolean>({
+    storageKey,
+    changeEvent: CHANGE_EVENT,
+    defaultValue: true,
+    parse: (raw) => (raw === '0' ? false : raw === '1' ? true : undefined),
+    serialize: (value) => (value ? '1' : '0'),
+  });
+}
+
+const hideSportsSpoilersStore = boolStoreDefaultOn(HIDE_SPORTS_SPOILERS_KEY);
+const showGroupFaviconStore = boolStoreDefaultOn(SHOW_GROUP_FAVICON_KEY);
 
 const bottomBarStore = createPersistentStore<BottomBarPosition>({
   storageKey: BOTTOM_BAR_KEY,
@@ -141,8 +150,7 @@ export function useGroupByFeed(): {
 }
 
 /** Whether non-grouped views (flat river, library, search, offline) show each
- * feed's favicon on its rows. Off by default; group-by-feed carries the icon on
- * the section header regardless. Per-device. */
+ * feed's favicon on its article rows. Off by default. Per-device. */
 export function useShowRowFavicon(): {
   showRowFavicon: boolean;
   setShowRowFavicon: (next: boolean) => void;
@@ -153,6 +161,21 @@ export function useShowRowFavicon(): {
     [],
   );
   return { showRowFavicon, setShowRowFavicon };
+}
+
+/** Whether the group-by-feed views show each feed's favicon on its section
+ * header. On by default — the grouped layout has always carried the icon.
+ * Per-device. */
+export function useShowGroupFavicon(): {
+  showGroupFavicon: boolean;
+  setShowGroupFavicon: (next: boolean) => void;
+} {
+  const showGroupFavicon = usePersistentStore(showGroupFaviconStore);
+  const setShowGroupFavicon = useCallback(
+    (next: boolean) => showGroupFaviconStore.set(next),
+    [],
+  );
+  return { showGroupFavicon, setShowGroupFavicon };
 }
 
 /** Whether sports-result headlines are shown in their spoiler-free rewritten
@@ -177,6 +200,7 @@ export function resetReadingPrefsCacheForTest(): void {
   hideOnScrollStore.resetForTest();
   groupByFeedStore.resetForTest();
   showRowFaviconStore.resetForTest();
+  showGroupFaviconStore.resetForTest();
   hideSportsSpoilersStore.resetForTest();
   bottomBarStore.resetForTest();
   itemSortStore.resetForTest();
