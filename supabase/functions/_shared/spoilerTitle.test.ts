@@ -79,6 +79,21 @@ describe('buildSpoilerPrompt', () => {
     expect(prompt).toMatch(/never omit both/i);
   });
 
+  it('treats finishing positions and standings changes as spoilers', () => {
+    // Guards the miss where "F1 championship leader extends lead, Piastri seventh
+    // in British sprint" slipped through: a finishing place ("seventh") and a
+    // change to the championship standings ("extends lead") are both results and
+    // must be classified as spoilers, even for a competitor named outside the
+    // decisive moment.
+    const prompt = buildSpoilerPrompt(
+      'F1 championship leader extends lead, Piastri seventh in British sprint',
+      'Antonelli took the sprint win',
+    );
+    expect(prompt).toMatch(/finishing position or placing/i);
+    expect(prompt).toMatch(/extends lead|standings/i);
+    expect(prompt).toMatch(/finished seventh|P3/);
+  });
+
   it('forbids describing the incident and pulls teams from the body instead', () => {
     // Guards the failure where a headline naming no teams (a mid-match injury)
     // was rewritten as "Football critical injury spoiler" — which leaks WHAT
