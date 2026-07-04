@@ -19,8 +19,13 @@ import { displayTitle } from '../lib/spoilerHeadline';
 import { ItemRowMenu, type ItemRowMenuItem } from './ItemRowMenu';
 import { TooltipButton } from './TooltipButton';
 import { Article, Check, PushPinFilled, PushPinOutline, VisibilityOff } from './icons';
-import { newshackerUrlForItem } from '../lib/newshacker';
+import {
+  hackerNewsItemId,
+  isHackerNewsFeed,
+  newshackerUrlForItem,
+} from '../lib/newshacker';
 import { suppressNextDoneMirror } from '../lib/newshackerMirrorSuppress';
+import { rememberHackerNewsItemId } from '../lib/newshackerItemIds';
 import './ItemRow.css';
 
 export interface RightAction {
@@ -78,6 +83,15 @@ export function ItemRow({
 }: Props) {
   const { item, feed } = feedItem;
   const { state, set, toggle, hide } = useItemState(item.id);
+  // Remember this row's HN id while it's on screen, so the newshacker mirror can
+  // still resolve it when a later unpin/un-dismiss clears the item's visibility
+  // (see src/lib/newshackerItemIds.ts). HN feeds only, so a non-HN post that
+  // merely links to HN is never mirrored.
+  useEffect(() => {
+    if (!isHackerNewsFeed(feed)) return;
+    const hnId = hackerNewsItemId(item);
+    if (hnId != null) rememberHackerNewsItemId(item.id, Number(hnId));
+  }, [item, feed]);
   const pinned = state.pinned;
   const opened = state.opened;
   const done = state.done;

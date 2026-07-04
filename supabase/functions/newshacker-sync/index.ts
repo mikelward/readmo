@@ -1,11 +1,13 @@
-// Readmo → newshacker dismissal mirror — Edge Function.
+// Readmo → newshacker Done/Pinned mirror — Edge Function.
 //
-// POST /functions/v1/newshacker-sync { entries: [{ id, at, deleted? }] }
-// Forwards a batch of the caller's Done transitions for Hacker News items to
-// newshacker's /api/sync, so dismissing an HN story in Readmo also marks it Done
-// on newshacker (SPEC.md "Mirror dismissals to newshacker"). `id` is the numeric
-// HN item id (derived client-side, see src/lib/newshacker.ts); `deleted` is a
-// tombstone for an un-dismiss.
+// POST /functions/v1/newshacker-sync
+//   { entries: [{ id, at, deleted? }],   // Done list (legacy key name, kept so
+//     pinned:  [{ id, at, deleted? }] }   // an older client still mirrors Done)
+// Forwards a batch of the caller's Done and Pinned transitions for Hacker News
+// items to newshacker's /api/sync, so dismissing or pinning an HN story in Readmo
+// also updates newshacker's matching list (SPEC.md "Mirror dismissals and pins to
+// newshacker"). `id` is the numeric HN item id (derived client-side, see
+// src/lib/newshacker.ts); `deleted` is a tombstone for an un-dismiss / unpin.
 //
 // Trust + access:
 //   - The caller's JWT identifies the user (userClient.auth.getUser()).
@@ -93,8 +95,12 @@ async function handle(req: Request): Promise<Response> {
   } catch {
     return json({ error: 'Invalid JSON' }, 400);
   }
-  const entries = normalizeEntries((body as Record<string, unknown>)?.entries);
-  if (entries.length === 0) return json({ linked: null, ok: true });
+  const b = (body as Record<string, unknown>) ?? {};
+  const done = normalizeEntries(b.entries);
+  const pinned = normalizeEntries(b.pinned);
+  if (done.length === 0 && pinned.length === 0) {
+    return json({ linked: null, ok: true });
+  }
 
   // Read the caller's token (service role bypasses the deny-all RLS on the link).
   const { data: link, error: linkError } = await service
@@ -108,7 +114,7 @@ async function handle(req: Request): Promise<Response> {
   }
   if (!link?.token) return json({ linked: false, ok: true });
 
-  // Forward to newshacker's /api/sync bearer branch. done-list only.
+  // Forward to newshacker's /api/sync bearer branch (done + pinned lists).
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SYNC_TIMEOUT_MS);
   try {
@@ -118,7 +124,7 @@ async function handle(req: Request): Promise<Response> {
         'content-type': 'application/json',
         Authorization: `Bearer ${link.token}`,
       },
-      body: JSON.stringify({ done: entries }),
+      body: JSON.stringify({ done, pinned }),
       signal: controller.signal,
     });
     return json({ linked: true, ok: res.ok, status: res.status });

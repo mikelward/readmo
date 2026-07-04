@@ -3,12 +3,13 @@ import { render } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DataSourceProvider } from '../lib/data/context';
 import {
-  useNewshackerDismissSync,
+  useNewshackerSync,
   NEWSHACKER_LINK_QUERY_KEY,
-} from './useNewshackerDismissSync';
+} from './useNewshackerSync';
 import type { DataSource } from '../lib/data/DataSource';
-import type { NewshackerDoneEntry } from '../lib/newshackerSync';
+import type { MirrorPayload } from '../lib/newshackerSync';
 import { suppressNextDoneMirror } from '../lib/newshackerMirrorSuppress';
+import { rememberHackerNewsItemId } from '../lib/newshackerItemIds';
 import type { Feed, FeedItem, Item, ItemId, ItemStateField } from '../lib/types';
 
 type MutationListener = (
@@ -42,7 +43,7 @@ function hnItem(id: string, hnId: string): FeedItem {
 
 function makeFakeSource(items: FeedItem[]) {
   let listener: MutationListener | null = null;
-  const syncNewshackerDone = vi.fn(async (_entries: NewshackerDoneEntry[]) => {});
+  const syncNewshackerState = vi.fn(async (_payload: MirrorPayload) => {});
   const source = {
     stateStore: {
       subscribeMutations: (l: MutationListener) => {
@@ -52,15 +53,15 @@ function makeFakeSource(items: FeedItem[]) {
         };
       },
     },
-    getNewshackerLink: vi.fn(async () => ({ linked: true })),
+    getNewshackerLink: vi.fn(async () => ({ linked: true, supported: true })),
     getItemsByIds: vi.fn(async (ids: ItemId[]) =>
       items.filter((it) => ids.includes(it.item.id)),
     ),
-    syncNewshackerDone,
+    syncNewshackerState,
   } as unknown as DataSource;
   return {
     source,
-    syncNewshackerDone,
+    syncNewshackerState,
     emit: (id: ItemId, changed: Partial<Record<ItemStateField, boolean>>) => {
       listener?.(id, changed);
     },
@@ -73,9 +74,9 @@ function mount(source: DataSource, linked: boolean) {
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
   // Seed the link status so the hook reads it synchronously from cache.
-  client.setQueryData(NEWSHACKER_LINK_QUERY_KEY, { linked });
+  client.setQueryData(NEWSHACKER_LINK_QUERY_KEY, { linked, supported: true });
   function Harness() {
-    useNewshackerDismissSync();
+    useNewshackerSync();
     return null;
   }
   render(
@@ -87,7 +88,7 @@ function mount(source: DataSource, linked: boolean) {
   );
 }
 
-describe('useNewshackerDismissSync', () => {
+describe('useNewshackerSync', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
@@ -99,9 +100,25 @@ describe('useNewshackerDismissSync', () => {
     fake.emit('a', { done: true });
     await vi.advanceTimersByTimeAsync(1500);
 
-    expect(fake.syncNewshackerDone).toHaveBeenCalledTimes(1);
-    const entries = fake.syncNewshackerDone.mock.calls[0][0];
-    expect(entries).toEqual([{ id: 12345, at: expect.any(Number) }]);
+    expect(fake.syncNewshackerState).toHaveBeenCalledTimes(1);
+    expect(fake.syncNewshackerState.mock.calls[0][0]).toEqual({
+      done: [{ id: 12345, at: expect.any(Number) }],
+      pinned: [],
+    });
+  });
+
+  it('mirrors a pinned HN item after the debounce', async () => {
+    const fake = makeFakeSource([hnItem('a', '777')]);
+    mount(fake.source, true);
+
+    fake.emit('a', { pinned: true });
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(fake.syncNewshackerState).toHaveBeenCalledTimes(1);
+    expect(fake.syncNewshackerState.mock.calls[0][0]).toEqual({
+      done: [],
+      pinned: [{ id: 777, at: expect.any(Number) }],
+    });
   });
 
   it('does not mirror a suppressed Done (open-on-newshacker handoff)', async () => {
@@ -109,16 +126,35 @@ describe('useNewshackerDismissSync', () => {
     mount(fake.source, true);
 
     // The open-on-newshacker path registers a one-shot suppression right before
-    // marking Done; the mirror must skip that exact transition.
+    // marking Done; the mirror must skip that exact transition (and any pin it
+    // clears in the same mutation).
     suppressNextDoneMirror('a');
-    fake.emit('a', { done: true });
+    fake.emit('a', { done: true, pinned: false });
     await vi.advanceTimersByTimeAsync(1500);
-    expect(fake.syncNewshackerDone).not.toHaveBeenCalled();
+    expect(fake.syncNewshackerState).not.toHaveBeenCalled();
 
     // A later real dismissal of the same item still mirrors (one-shot).
     fake.emit('a', { done: true });
     await vi.advanceTimersByTimeAsync(1500);
-    expect(fake.syncNewshackerDone).toHaveBeenCalledTimes(1);
+    expect(fake.syncNewshackerState).toHaveBeenCalledTimes(1);
+  });
+
+  it('mirrors an unpin tombstone from the render cache when the item is gone', async () => {
+    // Simulate unpinning an unsubscribed feed's item: the row is no longer
+    // fetchable (getItemsByIds returns nothing), but its HN id was remembered
+    // while it was on screen, so the tombstone must still be sent.
+    const fake = makeFakeSource([]); // getItemsByIds resolves nothing
+    rememberHackerNewsItemId('gone', 999);
+    mount(fake.source, true);
+
+    fake.emit('gone', { pinned: false });
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(fake.syncNewshackerState).toHaveBeenCalledTimes(1);
+    expect(fake.syncNewshackerState.mock.calls[0][0]).toEqual({
+      done: [],
+      pinned: [{ id: 999, at: expect.any(Number), deleted: true }],
+    });
   });
 
   it('coalesces a burst into a single mirror call', async () => {
@@ -126,21 +162,24 @@ describe('useNewshackerDismissSync', () => {
     mount(fake.source, true);
 
     fake.emit('a', { done: true });
-    fake.emit('b', { done: true });
+    fake.emit('b', { pinned: true });
     await vi.advanceTimersByTimeAsync(1500);
 
-    expect(fake.syncNewshackerDone).toHaveBeenCalledTimes(1);
-    expect(fake.syncNewshackerDone.mock.calls[0][0]).toHaveLength(2);
+    expect(fake.syncNewshackerState).toHaveBeenCalledTimes(1);
+    const payload = fake.syncNewshackerState.mock.calls[0][0];
+    expect(payload.done).toHaveLength(1);
+    expect(payload.pinned).toHaveLength(1);
   });
 
-  it('ignores non-done mutations', async () => {
+  it('ignores mutations that touch neither Done nor Pinned', async () => {
     const fake = makeFakeSource([hnItem('a', '1')]);
     mount(fake.source, true);
 
-    fake.emit('a', { pinned: true });
+    fake.emit('a', { favorite: true });
+    fake.emit('a', { opened: true });
     await vi.advanceTimersByTimeAsync(1500);
 
-    expect(fake.syncNewshackerDone).not.toHaveBeenCalled();
+    expect(fake.syncNewshackerState).not.toHaveBeenCalled();
   });
 
   it('does nothing when the account is not linked', async () => {
@@ -148,6 +187,6 @@ describe('useNewshackerDismissSync', () => {
     mount(fake.source, false);
     // The effect never subscribes when unlinked.
     expect(fake.hasListener()).toBe(false);
-    expect(fake.syncNewshackerDone).not.toHaveBeenCalled();
+    expect(fake.syncNewshackerState).not.toHaveBeenCalled();
   });
 });

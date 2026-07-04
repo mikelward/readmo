@@ -15,7 +15,7 @@ import {
 } from '../types';
 import type { FullTextResult, FullTextStatus } from '../fullText';
 import type { SummaryResult, SummaryStatus } from '../summary';
-import type { NewshackerDoneEntry } from '../newshackerSync';
+import type { MirrorPayload } from '../newshackerSync';
 import { getSupabase } from '../supabase/client';
 import { confirmBackendReachable } from '../networkStatus';
 import { OUTBOX_SUFFIX } from '../userCache';
@@ -699,11 +699,16 @@ export class SupabaseDataSource implements DataSource {
 
   /** Fire-and-forget the mirror to newshacker. Swallows every failure (signed
    * out, function not deployed, unlinked, newshacker down): the mirror is
-   * additive and the local Done state is authoritative. */
-  async syncNewshackerDone(entries: NewshackerDoneEntry[]): Promise<void> {
-    if (entries.length === 0) return;
+   * additive and the local state is authoritative. The Done list rides the
+   * legacy `entries` key so an older, not-yet-redeployed `newshacker-sync`
+   * function (which only reads `entries`) still mirrors dismissals; the new
+   * `pinned` key is simply ignored there until it's redeployed. */
+  async syncNewshackerState(payload: MirrorPayload): Promise<void> {
+    if (payload.done.length === 0 && payload.pinned.length === 0) return;
     try {
-      await this.sb.functions.invoke('newshacker-sync', { body: { entries } });
+      await this.sb.functions.invoke('newshacker-sync', {
+        body: { entries: payload.done, pinned: payload.pinned },
+      });
     } catch {
       // best-effort; nothing to surface.
     }
