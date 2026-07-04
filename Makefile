@@ -1,6 +1,6 @@
 IMPORT_MAP := supabase/functions/import_map.json
 
-.PHONY: deploy deploy-discover deploy-refresh deploy-poll deploy-img deploy-fulltext deploy-summary deploy-notify-signup deploy-db-perf migrate set-build check-link
+.PHONY: deploy deploy-discover deploy-refresh deploy-poll deploy-img deploy-fulltext deploy-summary deploy-newshacker-sync deploy-notify-signup deploy-db-perf migrate set-build check-link
 
 # Fail fast unless we're sitting in the linked project. Without a local
 # supabase/config.toml the CLI silently walks up the tree and resolves a
@@ -29,7 +29,7 @@ set-build: check-link
 
 ## Deploy all Edge Functions (run migrate first to apply any schema changes,
 ## and stamp the current build number into the functions' outbound User-Agent)
-deploy: migrate set-build deploy-discover deploy-refresh deploy-poll deploy-img deploy-fulltext deploy-summary deploy-notify-signup deploy-db-perf
+deploy: migrate set-build deploy-discover deploy-refresh deploy-poll deploy-img deploy-fulltext deploy-summary deploy-newshacker-sync deploy-notify-signup deploy-db-perf
 
 deploy-discover: check-link
 	supabase functions deploy discover --import-map $(IMPORT_MAP)
@@ -51,6 +51,12 @@ deploy-fulltext: check-link
 # GOOGLE_API_KEY secret set (see SETUP.md) to actually generate.
 deploy-summary: check-link
 	supabase functions deploy summary --import-map $(IMPORT_MAP)
+
+# Mirror HN dismissals to newshacker. Browser-invoked with the caller's JWT
+# (verified to identify the user before reading their link token), so deploy
+# WITH jwt verification like summary.
+deploy-newshacker-sync: check-link
+	supabase functions deploy newshacker-sync --import-map $(IMPORT_MAP)
 
 # Server-to-server (called by the auth.users trigger, verifies the bearer
 # itself), so deploy with --no-verify-jwt like poll.

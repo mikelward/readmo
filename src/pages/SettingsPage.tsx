@@ -18,6 +18,7 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { ThemeModeControl } from '../components/ThemeModeControl';
 import { TextSizeControl } from '../components/TextSizeControl';
 import { ColorThemeControl } from '../components/ColorThemeControl';
+import { NewshackerConnection } from '../components/NewshackerConnection';
 import {
   FONT_LABELS,
   FONT_STACKS,
@@ -287,6 +288,10 @@ export function SettingsPage() {
           </ul>
         </section>
       ) : null}
+
+      {/* newshacker link — only relevant to a signed-in account (the token acts
+          as that account). Hidden when signed out or unsupported by the source. */}
+      {user ? <NewshackerConnection /> : null}
 
       <section className="settings__section">
         <h2 className="settings__heading">Account</h2>

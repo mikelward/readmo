@@ -6,6 +6,7 @@ import { renderWithProviders } from '../test/renderWithProviders';
 import { ItemRow } from './ItemRow';
 import { PushPinFilled } from './icons';
 import { MockDataSource } from '../lib/data/MockDataSource';
+import { consumeDoneMirrorSuppression } from '../lib/newshackerMirrorSuppress';
 import {
   HIDE_SPORTS_SPOILERS_KEY,
   resetReadingPrefsCacheForTest,
@@ -297,6 +298,9 @@ describe('ItemRow', () => {
       await user.click(body);
       expect(source.stateStore.get('item-1').opened).toBe(true);
       expect(source.stateStore.get('item-1').done).toBe(true);
+      // Opening ON newshacker is a handoff: the Done mirror is suppressed so it
+      // isn't swept to Done on newshacker as the user arrives there.
+      expect(consumeDoneMirrorSuppression('item-1')).toBe(true);
     });
 
     it('does NOT mark done when opening the in-app reader (reader-mode body tap)', async () => {
@@ -318,6 +322,9 @@ describe('ItemRow', () => {
       await user.click(screen.getByTestId('item-title'));
       expect(source.stateStore.get('item-1').done).toBe(true);
       expect(source.stateStore.get('item-1').pinned).toBe(false);
+      // Opening the ORIGINAL source is a real completion, not a handoff — its
+      // Done is NOT suppressed and still mirrors.
+      expect(consumeDoneMirrorSuppression('item-1')).toBe(false);
     });
   });
 
