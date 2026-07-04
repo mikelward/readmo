@@ -139,7 +139,8 @@ export function SettingsPage() {
 
       {/* Appearance — how things look/lay out. The four theme controls are folded
           under one heading (instead of one section each), followed by the two
-          minor display settings (feed icons, toolbar position) further down. */}
+          minor display settings further down: the toolbar position, then the
+          feed-icons toggle at the very bottom. */}
       <section className="settings__section">
         <h2 className="settings__heading">Appearance</h2>
 
@@ -171,27 +172,6 @@ export function SettingsPage() {
           ))}
         </div>
 
-        <ul className="settings__toggles settings__toggles--spaced">
-          <li className="settings__toggle">
-            <label className="settings__toggle-label">
-              <input
-                type="checkbox"
-                className="settings__toggle-check"
-                checked={showRowFavicon}
-                onChange={(e) => setShowRowFavicon(e.target.checked)}
-              />
-              <span className="settings__toggle-text">
-                <span className="settings__toggle-title">
-                  Show feed icons on articles
-                </span>
-                <span className="settings__toggle-desc">
-                  Show each feed’s icon beside its articles in lists.
-                </span>
-              </span>
-            </label>
-          </li>
-        </ul>
-
         <h3 className="settings__subheading">Bottom toolbar</h3>
         <div
           className="settings__theme"
@@ -214,6 +194,27 @@ export function SettingsPage() {
             </button>
           ))}
         </div>
+
+        <ul className="settings__toggles settings__toggles--spaced">
+          <li className="settings__toggle">
+            <label className="settings__toggle-label">
+              <input
+                type="checkbox"
+                className="settings__toggle-check"
+                checked={showRowFavicon}
+                onChange={(e) => setShowRowFavicon(e.target.checked)}
+              />
+              <span className="settings__toggle-text">
+                <span className="settings__toggle-title">
+                  Show feed icons on articles
+                </span>
+                <span className="settings__toggle-desc">
+                  Show each feed’s icon beside its articles in lists.
+                </span>
+              </span>
+            </label>
+          </li>
+        </ul>
       </section>
 
       {/* Smart features — the AI-assisted extras. Gated on the allowlist

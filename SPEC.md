@@ -1506,10 +1506,11 @@ negligible and off every critical path. See the External services table in
     - **Appearance** — the **Color theme** (Ink/Grape swatches), **Dark/light
       mode** (light/dark/system icons), **Text size** (Extra Small–Huge
       A-glyphs), and **Font** pickers (all symbolic segmented controls), then the
-      two minor display settings placed further down: the **Show feed icons on
-      articles** toggle (`readmo:show-row-favicon`) and the **Bottom toolbar**
-      picker (`readmo:bottom-bar`): **Bottom of list** (default) or **Bottom of
-      screen** (see *Bottom action bar*).
+      two minor display settings placed further down: the **Bottom toolbar**
+      picker (`readmo:bottom-bar`) — **Bottom of list** (default) or **Bottom of
+      screen** (see *Bottom action bar*) — and, at the very bottom of the
+      section, the **Show feed icons on articles** toggle
+      (`readmo:show-row-favicon`).
     - **Smart features** — the **Hide sports spoilers** toggle
       (`readmo:hide-sports-spoilers`); shown only for allowlisted callers (same
       gate as the rewrite), so the whole section is hidden — heading and all — for
