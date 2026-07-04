@@ -15,6 +15,20 @@ describe('ArticleSummary', () => {
     expect(screen.getByText('Summary by Gemini')).toBeInTheDocument();
   });
 
+  it('renders a bulleted summary as a list', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    source.getSummary = async (): Promise<SummaryResult> => ({
+      status: 'ok',
+      summary: '- First point\n- Second point',
+    });
+    renderWithProviders(<ArticleSummary id={ITEM_ID} online />, { source });
+    const body = await screen.findByTestId('article-summary-body');
+    const items = body.querySelectorAll('ul.markdown-list > li');
+    expect(items).toHaveLength(2);
+    expect(items[0].textContent).toBe('First point');
+    expect(items[1].textContent).toBe('Second point');
+  });
+
   it('shows for an unpinned article — pinning is not required (allowlist-only)', async () => {
     // The item is never pinned; an allowlisted user still gets the summary.
     renderWithProviders(<ArticleSummary id={ITEM_ID} online />);

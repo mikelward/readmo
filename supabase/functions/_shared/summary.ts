@@ -107,20 +107,24 @@ export function pickStoredContent(src: SummarySource): StoredPick | null {
   return null;
 }
 
-/** Prompt for the article summary: a tl;dr ask with a single targeted
- * anti-preamble instruction, the title (when known) passed along as context,
- * and the article text between explicit delimiters.
+/** Prompt for the article summary: a tl;dr ask with an anti-preamble
+ * instruction and an explicit Markdown-format instruction, the title (when
+ * known) passed along as context, and the article text between explicit
+ * delimiters.
  *
- * Otherwise deliberately unsteered — length/format/register instructions made
- * the output longer and stiffer in practice, while the bare ask yields short,
- * direct prose. The lone steer is the "respond with only the summary" line:
- * because the ask is a "tl;dr", the model kept echoing that framing back as a
- * preamble ("tl;dr:", "Here's a tl;dr of the article:", "The article covers…"),
- * so we tell it not to. It's a negative instruction a flash-lite model may
- * still ignore, so {@link stripSummaryPreamble} stays as a deterministic
- * backstop on the output. If bullet output ever shows up (the inline
- * MarkdownText renderer has no list support), add back a minimal plain-prose
- * clause. */
+ * Length/register are left unsteered — those instructions made the output
+ * longer and stiffer in practice, while the bare ask yields short, direct prose.
+ * Two targeted steers remain:
+ *   - the "respond with only the summary" line, because the "tl;dr" ask made the
+ *     model echo that framing back as a preamble ("tl;dr:", "Here's a tl;dr of
+ *     the article:", "The article covers…"). It's a negative instruction a
+ *     flash-lite model may still ignore, so {@link stripSummaryPreamble} stays a
+ *     deterministic backstop on the output; and
+ *   - the Markdown-format line. The model already reached for Markdown (bold
+ *     spans, and bullet lists for multi-point articles) intermittently, so
+ *     rather than fight it we ask for it explicitly and render it with the
+ *     `MarkdownText` component. We ask specifically for a *bulleted* list (not
+ *     ordered/nested) so the output stays within what that renderer supports. */
 export function buildSummaryPrompt(
   title: string | null | undefined,
   content: string,
@@ -130,14 +134,18 @@ export function buildSummaryPrompt(
     `Provide a tl;dr of the following article:\n\n` +
     `Respond with only the summary itself: no preamble or meta-commentary, ` +
     `no "tl;dr" label, and no "The article covers…" style lead-in.\n\n` +
+    `Format the summary in Markdown: a short bulleted list (using "-" markers) ` +
+    `when the article makes several distinct points, otherwise a short ` +
+    `paragraph. Inline **bold**, *italic*, and \`code\` are welcome where they ` +
+    `aid clarity; do not use headings.\n\n` +
     titleLine +
     `--- BEGIN ARTICLE ---\n${content}\n--- END ARTICLE ---`
   );
 }
 
 /** Strip a leading meta-framing preamble the model sometimes prepends to the
- * gist. Because the prompt asks for a "tl;dr" (and stays deliberately unsteered —
- * see {@link buildSummaryPrompt}), the model occasionally echoes that framing
+ * gist. Because the prompt asks for a "tl;dr" (see {@link buildSummaryPrompt}),
+ * the model occasionally echoes that framing
  * back as a label ("tl;dr:", "**TL;DR:**") or a lead-in sentence ("Here's a
  * tl;dr of the article:", "Summary:") before the actual summary. That preamble
  * is noise in the reader's summary card, so we peel it off here.
@@ -146,8 +154,43 @@ export function buildSummaryPrompt(
  * the very start, so a summary whose real prose merely mentions "tl;dr" mid-text
  * is untouched. Runs in a small loop so stacked preambles ("Here's a tl;dr:
  * **TL;DR:** …") are all removed. Tolerates surrounding markdown emphasis/heading
- * markers (`*`, `_`, `#`) since the model may bold or head the label. */
+ * markers (`*`, `_`, `#`) since the model may bold or head the label.
+ *
+ * BULLET-LIST SAFETY: the prompt now asks for a Markdown bullet list when the
+ * article makes several points, so a label can sit directly above a list
+ * ("Summary:\n- First\n- Second"). The character-level {@link stripHeadPreamble}
+ * mop-up below is line-agnostic and would treat that first "- " as a trailing
+ * separator and swallow the bullet marker — corrupting the list so its first
+ * point renders as prose. Rather than teach every regex about line starts, we
+ * respect block structure at the one boundary that matters: peel the trailing
+ * bullet-list block off first (using the SAME bullet definition
+ * `MarkdownText` renders with), strip the preamble from the head alone, then
+ * rejoin. The head keeps its careful emphasis-preservation logic untouched. */
 export function stripSummaryPreamble(text: string): string {
+  const bulletOffset = firstBulletLineOffset(text);
+  if (bulletOffset < 0) return stripHeadPreamble(text);
+  const head = stripHeadPreamble(text.slice(0, bulletOffset));
+  const list = text.slice(bulletOffset);
+  // A stripped-to-nothing head means the whole preamble was the label; return
+  // just the list. Otherwise re-join head and list with a single newline (block
+  // separation is all the renderer needs — it splits on lines, not blank runs).
+  return head ? `${head}\n${list}` : list;
+}
+
+/** Byte offset of the first Markdown bullet line ("- x" / "* x" / "+ x"), or -1
+ * if the text has none. Kept in sync with `MarkdownText`'s BULLET_RE so we peel
+ * exactly the block the renderer will treat as a list. */
+function firstBulletLineOffset(text: string): number {
+  const bulletLine = /^[ \t]*[-*+][ \t]+/;
+  let offset = 0;
+  for (const line of text.split('\n')) {
+    if (bulletLine.test(line)) return offset;
+    offset += line.length + 1; // +1 for the consumed '\n'
+  }
+  return -1;
+}
+
+function stripHeadPreamble(text: string): string {
   // Trailing mop-up after a matched label: whitespace, separators, and the
   // label's OWN closing emphasis/heading markers. An emphasis run is only
   // consumed when it's a closing/dangling run (followed by whitespace, a

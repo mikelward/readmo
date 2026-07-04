@@ -120,11 +120,16 @@ describe('buildSummaryPrompt', () => {
     expect(prompt).toContain('The article covers');
   });
 
-  it('stays unsteered on the prose: no length/format/register instructions', () => {
+  it('stays unsteered on length/register: no length/register instructions', () => {
     const prompt = buildSummaryPrompt('A Title', 'body');
     expect(prompt).not.toContain('sentences');
-    expect(prompt).not.toContain('bullet');
-    expect(prompt).not.toContain('Markdown');
+  });
+
+  it('explicitly requests Markdown, a bulleted list, and no headings', () => {
+    const prompt = buildSummaryPrompt('A Title', 'body');
+    expect(prompt).toContain('Format the summary in Markdown');
+    expect(prompt).toContain('bulleted list');
+    expect(prompt).toContain('do not use headings');
   });
 
   it('omits the title clause when there is no title', () => {
@@ -222,6 +227,38 @@ describe('stripSummaryPreamble', () => {
 
   it('trims surrounding whitespace', () => {
     expect(stripSummaryPreamble('  \n  tl;dr:  It rained.  \n')).toBe('It rained.');
+  });
+
+  it('preserves a bullet list under a stripped label (does not eat the marker)', () => {
+    // Regression: the prompt now asks for "-" bullet lists, and the line-agnostic
+    // mop-up used to treat the first "- " as a separator, dropping the marker so
+    // the first point rendered as prose. The whole list must survive.
+    expect(stripSummaryPreamble('Summary:\n- First point\n- Second point')).toBe(
+      '- First point\n- Second point',
+    );
+    expect(stripSummaryPreamble('tl;dr:\n- alpha\n- beta')).toBe('- alpha\n- beta');
+    expect(stripSummaryPreamble('**TL;DR:**\n- alpha\n- beta')).toBe('- alpha\n- beta');
+    expect(stripSummaryPreamble("Here's a tl;dr of the article:\n- alpha\n- beta")).toBe(
+      '- alpha\n- beta',
+    );
+    // A blank line between the label and the list is still fully stripped.
+    expect(stripSummaryPreamble('Summary:\n\n- alpha\n- beta')).toBe('- alpha\n- beta');
+  });
+
+  it('preserves inline emphasis in the first bullet under a stripped label', () => {
+    expect(stripSummaryPreamble('tl;dr:\n- **OpenAI** shipped a model\n- prices fell')).toBe(
+      '- **OpenAI** shipped a model\n- prices fell',
+    );
+  });
+
+  it('keeps a real head paragraph above a bullet list', () => {
+    const text = 'The release lands three changes:\n- faster sync\n- dark mode';
+    expect(stripSummaryPreamble(text)).toBe(text);
+  });
+
+  it('leaves a bullet list with no preamble untouched', () => {
+    expect(stripSummaryPreamble('- alpha\n- beta')).toBe('- alpha\n- beta');
+    expect(stripSummaryPreamble('* alpha\n* beta')).toBe('* alpha\n* beta');
   });
 });
 
