@@ -2207,6 +2207,11 @@ page's discipline is unchanged.
   broad: not just who won or lost, but a finishing position or placing
   ("finished seventh", "on the podium") and any change to the championship or
   league standings the event produced ("extends lead", "goes top of the table").
+  A multi-session event protects each session separately — an F1 qualifying or
+  sprint result is a spoiler in its own right, not pre-game build-up to the race.
+  The only exemption is genuinely pre-game content that reveals nothing from any
+  already-run session; a "race preview" that leaks the qualifying result still
+  spoils.
   For allowlisted
   users, such a headline is replaced — in the list **and** the reader — with a
   spoiler-free rewrite that names only **which** event it is — the competition

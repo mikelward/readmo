@@ -80,8 +80,20 @@ export function buildSpoilerPrompt(
     `away both the standings and a placing). If a headline is about a specific ` +
     `event that has started or finished and you're unsure whether it gives ` +
     `anything away, treat it as a spoiler.\n\n` +
-    `The ONLY exception is PRE-GAME content — a preview, prediction, build-up, or ` +
-    `team news from before the event begins — which is never a spoiler. And a ` +
+    `Many events have several separately-watched sessions — in F1 a qualifying, ` +
+    `a sprint, and the race; elsewhere heats, legs, rounds, or each game of a ` +
+    `series. Each session is its OWN event to protect: a result from qualifying ` +
+    `or a sprint is a spoiler even though it comes before the main race. ` +
+    `"Pre-game" means before THAT session has begun, not before the main event — ` +
+    `so a qualifying or sprint result is NOT pre-game build-up, it is the result ` +
+    `of a session someone may watch, and must be hidden.\n\n` +
+    `The ONLY exception is genuinely PRE-GAME content — a preview, prediction, ` +
+    `build-up, or team news that reveals nothing from any session already run. ` +
+    `Being a "preview" or "build-up" does NOT by itself make a headline safe: a ` +
+    `race preview that mentions the qualifying result, or a build-up piece that ` +
+    `gives away an earlier heat, leg, or game of the SAME event, is a spoiler, ` +
+    `not an exception. Pre-game is safe only when nothing in the event has ` +
+    `happened yet. And a ` +
     `headline with no event to watch (a transfer, a fixture announcement, or ` +
     `anything not about sport) has nothing to spoil.\n\n` +
     `When it IS a spoiler, write a spoiler-free replacement that names only WHICH ` +
