@@ -130,7 +130,9 @@ export function buildSpoilerPrompt(
     `"World Cup ARG v CPV spoiler", "NBA Finals Game 3 spoiler", ` +
     `"Rugby AUS v IRE spoiler", "Football Epping v Lalor Reserves spoiler", ` +
     `"World Cup semi-final spoiler".\n\n` +
-    `Reply with ONLY a JSON object of the form ` +
+    `Return a raw JSON object and absolutely nothing else — no preamble, no ` +
+    `explanation, and do NOT wrap it in a markdown code block (no \`\`\` fences). ` +
+    `Output only valid JSON of the form ` +
     `{"spoiler": boolean, "headline": string}. Set "headline" to the ` +
     `spoiler-free replacement when "spoiler" is true, otherwise an empty ` +
     `string.\n\n` +
