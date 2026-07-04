@@ -55,6 +55,17 @@ describe('buildSpoilerPrompt', () => {
   it('tolerates a null title', () => {
     expect(() => buildSpoilerPrompt(null, 'body')).not.toThrow();
   });
+
+  it('instructs the model to catch IMPLICIT results, not just explicit scores', () => {
+    // Guards the "be more aggressive" behavior: eliminations/exits, farewells,
+    // and title wins must be treated as spoilers even without a scoreline.
+    const prompt = buildSpoilerPrompt('Farewell Cape Verde', '');
+    expect(prompt).toMatch(/by implication/i);
+    expect(prompt).toMatch(/eliminated|knocked out/i);
+    expect(prompt).toMatch(/farewell/i);
+    expect(prompt).toMatch(/crowned champions|win the title/i);
+    expect(prompt).toMatch(/lean toward hiding/i);
+  });
 });
 
 describe('parseSpoilerResult', () => {

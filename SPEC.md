@@ -2171,7 +2171,14 @@ page's discipline is unchanged.
     headline, a sports headline that *doesn't* reveal a result (preview, injury,
     transfer, schedule), or any unparseable reply → **keep the original**. So the
     "is this even a spoiler?" decision is the model's explicit flag, and a parse
-    failure fails safe (never blanks a title).
+    failure fails safe (never blanks a title). The classifier is deliberately
+    **aggressive**: a spoiler is any headline that reveals an outcome *directly*
+    (score/winner/who advanced) **or by implication** — an elimination/exit, or an
+    emotive framing that only lands once you know the result ("Farewell X", "dream
+    over", "X bow out"), or a title win ("X crowned champions", "X lift the
+    trophy"), even with no score stated — and it's told to lean toward hiding when
+    a specific event's outcome is ambiguous. Genuine pre-match previews, injuries,
+    transfers, and schedules stay unhidden.
   - **Model:** Google **Gemini `gemini-2.5-flash-lite`** (the same model + key,
     `GOOGLE_API_KEY`, as AI summaries), `thinkingBudget: 0`, JSON response mode.
     Unset key → the poller silently skips the pass. Fixed Google host (the
