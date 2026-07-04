@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useState, type ReactNode } from 'react';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { IsRestoringProvider, QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -109,6 +109,60 @@ afterEach(() => {
 });
 
 describe('ItemPage (reader)', () => {
+  it('does not auto-generate the summary for the next item after navigating from a pinned one', async () => {
+    // Regression: `pinnedAtOpen` must be keyed to the rendered item, not left as
+    // a stale snapshot from the previous article. Navigating a pinned → unpinned
+    // item in the SAME ItemPage instance must not leak a `getSummary` call for
+    // the unpinned one before the snapshot updates.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    source.stateStore.set('item-1', 'pinned', true); // pinned before opening
+    const calledFor: string[] = [];
+    const orig = source.getSummary.bind(source);
+    source.getSummary = (id) => {
+      calledFor.push(id);
+      return orig(id);
+    };
+
+    function Nav() {
+      const navigate = useNavigate();
+      return (
+        <button data-testid="go-item-2" onClick={() => navigate('/item/item-2')}>
+          go
+        </button>
+      );
+    }
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DataSourceProvider source={source}>
+          <ToastProvider>
+            <FeedBarProvider>
+              <MemoryRouter initialEntries={['/item/item-1']}>
+                <Nav />
+                <Routes>
+                  <Route path="/item/:id" element={<ItemPage />} />
+                </Routes>
+              </MemoryRouter>
+            </FeedBarProvider>
+          </ToastProvider>
+        </DataSourceProvider>
+      </QueryClientProvider>,
+    );
+
+    // item-1 was pinned before opening → the summary auto-generates.
+    await screen.findByTestId('article-summary-body');
+    expect(calledFor).toContain('item-1');
+
+    // Navigate to the unpinned item-2 without unmounting: it must offer the
+    // Generate button, and never fire getSummary for item-2 on its own.
+    await userEvent.click(screen.getByTestId('go-item-2'));
+    expect(await screen.findByTestId('article-summary-generate')).toBeInTheDocument();
+    expect(calledFor).not.toContain('item-2');
+  });
+
   it('renders the article and marks it opened on view', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     renderReader(source);
