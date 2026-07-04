@@ -685,7 +685,7 @@ export class MockDataSource implements DataSource {
     this.newshackerToken = null;
   }
 
-  async syncNewshackerDone(): Promise<void> {
+  async syncNewshackerState(): Promise<void> {
     // No newshacker to reach from the mock — no-op.
   }
 

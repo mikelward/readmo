@@ -6,7 +6,7 @@
 // handoff, NOT a dismissal — mirroring it would sweep the item to Done on
 // newshacker at the exact moment you arrive to engage with it. So the row's
 // open handler registers the item id here right before setting Done, and the
-// mirror hook (`useNewshackerDismissSync`) consumes it and skips that one send.
+// mirror hook (`useNewshackerSync`) consumes it and skips that one send.
 //
 // Deliberately a tiny module-level set, not React state: the producer (ItemRow's
 // click handler) and consumer (the app-wide mirror hook) are far apart in the

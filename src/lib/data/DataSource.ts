@@ -10,7 +10,7 @@ import type {
 } from '../types';
 import type { FullTextResult } from '../fullText';
 import type { SummaryResult } from '../summary';
-import type { NewshackerDoneEntry } from '../newshackerSync';
+import type { MirrorPayload } from '../newshackerSync';
 import type { ItemStateStore } from './itemState';
 
 /** Per-user capability flags, resolved from the server (`get_capabilities` RPC).
@@ -367,11 +367,11 @@ export interface DataSource {
   setNewshackerToken?(token: string): Promise<void>;
   /** Forget the newshacker link (disconnect); mirroring stops. */
   clearNewshackerLink?(): Promise<void>;
-  /** Best-effort mirror of Hacker News Done transitions to newshacker's Done
-   * list. Never throws — the mirror is additive and the local Done state stays
-   * authoritative; no-ops when unlinked, unsupported, or the batch has no HN
-   * items. */
-  syncNewshackerDone?(entries: NewshackerDoneEntry[]): Promise<void>;
+  /** Best-effort mirror of Hacker News **Done** and **Pinned** transitions to
+   * newshacker's matching sync lists. Never throws — the mirror is additive and
+   * the local state stays authoritative; no-ops when unlinked, unsupported, or
+   * the batch has no HN items. */
+  syncNewshackerState?(payload: MirrorPayload): Promise<void>;
 
   // --- OPML -----------------------------------------------------------------
   importOpml(xml: string): Promise<{ added: number; skipped: number }>;

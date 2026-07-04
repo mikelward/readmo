@@ -7,6 +7,7 @@ import { ItemRow } from './ItemRow';
 import { PushPinFilled } from './icons';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import { consumeDoneMirrorSuppression } from '../lib/newshackerMirrorSuppress';
+import { recallHackerNewsItemId } from '../lib/newshackerItemIds';
 import {
   HIDE_SPORTS_SPOILERS_KEY,
   resetReadingPrefsCacheForTest,
@@ -295,6 +296,9 @@ describe('ItemRow', () => {
       const body = screen.getByTestId('item-title');
       expect(body).toHaveAttribute('href', 'https://newshacker.app/item/42662903');
       expect(body).not.toHaveAttribute('target');
+      // Rendering an HN row remembers its numeric id for the mirror, so an
+      // unpin/un-dismiss can still resolve it after visibility is cleared.
+      expect(recallHackerNewsItemId('item-1')).toBe(42662903);
       await user.click(body);
       expect(source.stateStore.get('item-1').opened).toBe(true);
       expect(source.stateStore.get('item-1').done).toBe(true);

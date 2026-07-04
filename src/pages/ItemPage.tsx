@@ -44,10 +44,12 @@ import {
 } from '../components/icons';
 import {
   NEWSHACKER_ORIGIN,
+  hackerNewsItemId,
   isHackerNewsFeed,
   newshackerUrlForCommentsUrl,
   newshackerUrlForItem,
 } from '../lib/newshacker';
+import { rememberHackerNewsItemId } from '../lib/newshackerItemIds';
 import './ItemPage.css';
 
 /** True when a cached `['fulltext', id]` result already holds a usable reading
@@ -346,6 +348,16 @@ export function ItemPage() {
     [data, isRestoring, queryClient, id],
   );
   const resolved = data === undefined ? fallback : data;
+
+  // Remember this HN item's numeric id while the reader is open, so the
+  // newshacker mirror can still resolve it if the user unpins/unmarks-done here
+  // and that clears the item's last RLS visibility grant (same as ItemRow; see
+  // src/lib/newshackerItemIds.ts).
+  useEffect(() => {
+    if (!resolved || !isHackerNewsFeed(resolved.feed)) return;
+    const hnId = hackerNewsItemId(resolved.item);
+    if (hnId != null) rememberHackerNewsItemId(resolved.item.id, Number(hnId));
+  }, [resolved]);
 
   // Reading mode: when the feed body looks truncated, fetch the full article
   // from its source (server-side extraction) in the background while the RSS

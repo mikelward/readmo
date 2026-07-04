@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
-import { NEWSHACKER_LINK_QUERY_KEY } from './useNewshackerDismissSync';
+import { NEWSHACKER_LINK_QUERY_KEY } from './useNewshackerSync';
 
 /**
  * The newshacker link for the signed-in account — used by the Settings

@@ -11,7 +11,7 @@ import { useOfflineCacheLock } from './hooks/useOfflineCacheLock';
 import { useSummaryPrewarm } from './hooks/useSummaryPrewarm';
 import { useFeedInvalidation } from './hooks/useFeedInvalidation';
 import { useStateSync } from './hooks/useStateSync';
-import { useNewshackerDismissSync } from './hooks/useNewshackerDismissSync';
+import { useNewshackerSync } from './hooks/useNewshackerSync';
 import { HomePage, FolderPage, FeedPage } from './pages/FeedPages';
 import {
   PinnedPage,
@@ -74,10 +74,10 @@ export default function App() {
   // Re-pull item state when the tab regains focus/visibility or comes back
   // online, so pins/favorites/done changed on another device sync in.
   useStateSync();
-  // Mirror Hacker News dismissals to newshacker's Done list when the account has
-  // linked a newshacker token (no-op otherwise). SPEC.md *Mirror dismissals to
-  // newshacker*.
-  useNewshackerDismissSync();
+  // Mirror Hacker News dismissals (Done) and pins to newshacker's matching lists
+  // when the account has linked a newshacker token (no-op otherwise). SPEC.md
+  // *Mirror dismissals and pins to newshacker*.
+  useNewshackerSync();
   // Gate rendering across an auth transition: while the previous user's caches
   // are being purged and the app reloads, paint nothing so the next user can't
   // briefly see the previous user's cached content (guardrail #8).

@@ -356,15 +356,16 @@ live.
   helpers, no cross-`api/` imports — Vercel's bundler drops them at deploy
   time.)
 
-### Mirror dismissals to newshacker (companion app)
+### Mirror dismissals and pins to newshacker (companion app)
 
-Dismissing a **Hacker News** story in Readmo can also mark it Done on
-**newshacker** (the sibling HN reader), so the two apps' Done lists stay in step
-for HN feeds. One-way today (Readmo → newshacker); opt-in per account.
+Dismissing (**Done**) or **pinning** a **Hacker News** story in Readmo can also
+update the matching list on **newshacker** (the sibling HN reader), so the two
+apps stay in step for HN feeds. One-way today (Readmo → newshacker); opt-in per
+account.
 
 - **Why it's possible.** Readmo already derives the numeric HN item id from an
   HN-feed item (`src/lib/newshacker.ts`, used by *Open on newshacker*). newshacker
-  already syncs a per-user `done` list. This feature bridges the two.
+  already syncs per-user `done` **and** `pinned` lists. This feature bridges them.
 - **Auth model (B2).** newshacker mints an **app token** (its Settings →
   *Connected apps*); the user pastes it into Readmo's Settings → *newshacker*
   once. The token is a bearer credential newshacker accepts on its `/api/sync`.
@@ -381,16 +382,28 @@ for HN feeds. One-way today (Readmo → newshacker); opt-in per account.
   with Vault; plaintext in the RLS-locked table is acceptable for now since the
   token only grants the user's own Done-list sync and is revocable from either
   side.*
-- **Mirror path.** `useNewshackerDismissSync` (mounted in `App`, active only when
-  linked) listens to the item-state store's **mutation** events (user-driven
-  set/hide/sweep/undo — never hydration/cross-device sync), coalesces a burst
-  (~1.5 s), resolves the ids to HN item ids (`buildDoneEntries`; non-HN items
-  drop out), and calls the **`newshacker-sync` Edge Function**, which reads the
-  caller's token (service_role) and `POST`s `{ done: [...] }` to newshacker's
-  `/api/sync` with `Authorization: Bearer`. `done:false` sends a tombstone. The
-  target host is a compile-time constant (`NEWSHACKER_ORIGIN`), so there's no
-  user-controlled URL / SSRF surface — this deliberately bypasses the generic
-  SSRF helper, which would strip the credential we intend to forward.
+- **Mirror path.** `useNewshackerSync` (mounted in `App`, active only when
+  linked) listens to the item-state store's **mutation** events — **user-driven
+  only** (set/hide/sweep/undo), never hydration/cross-device sync, so a pin/Done
+  arriving *from* another device is never echoed back out (mirror on the local
+  event, not on every sync). It coalesces a burst (~1.5 s), resolves the ids to
+  HN item ids (`buildMirrorPayload`; non-HN items drop out), and calls the
+  **`newshacker-sync` Edge Function**, which reads the caller's token
+  (service_role) and `POST`s `{ done: [...], pinned: [...] }` to newshacker's
+  `/api/sync` with `Authorization: Bearer`. A `false` value (un-dismiss / unpin)
+  sends a tombstone. The target host is a compile-time constant
+  (`NEWSHACKER_ORIGIN`), so there's no user-controlled URL / SSRF surface — this
+  deliberately bypasses the generic SSRF helper, which would strip the credential
+  we intend to forward. **Wire back-compat:** the Done list rides the legacy
+  `entries` key (pins under a new `pinned` key), so an older, not-yet-redeployed
+  function still mirrors dismissals; pins start once it's redeployed.
+- **Tombstone resolution.** An un-dismiss / unpin can clear the *last* permanent
+  state (`pinned`/`favorite`/`done`) that kept an unsubscribed feed's item
+  RLS-visible (`items_select`, 0002), so a post-mutation `getItemsByIds` would
+  return nothing and the tombstone would be lost. To avoid that, every HN-feed
+  row **and the reader** remember their numeric id while on screen
+  (`newshackerItemIds.ts`), and the mirror resolves from that render cache first,
+  fetching only ids it hasn't seen.
 - **Not mirrored: the open-on-newshacker handoff.** Opening an item *on
   newshacker* (open-on-newshacker mode) with *Mark done when opening* marks it
   Done in Readmo, but that Done is a **handoff, not a dismissal** — mirroring it
@@ -401,21 +414,20 @@ for HN feeds. One-way today (Readmo → newshacker); opt-in per account.
   any explicit dismissal (swipe/Sweep/menu) or scroll-away Done, still mirrors.
   This is also the only same-tab-unload dismissal path, so excluding it means the
   remaining dismissals all happen with the app open (no unload race).
-- **Stretch goals (TODO, not built).** The token + Edge Function are the general
-  transport, so two natural follow-ups reuse them: **(1) push pins** (Readmo →
-  newshacker) — send `pinned` entries alongside `done` on the same call; and
-  **(2) reverse sync** — pull newshacker's own `done` (a `GET /api/sync`) and
-  apply it to Readmo `item_state`, mapping each HN id back to a Readmo item the
-  user has. (2) is why the open-on-newshacker Done isn't pushed forward: once you
-  hand off, newshacker should own that item's Done and sync it back.
+- **Stretch goal (TODO, not built): reverse sync** — pull newshacker's own
+  `done`/`pinned` (a `GET /api/sync`) and apply it to Readmo `item_state`, mapping
+  each HN id back to a Readmo item the user has. This is why the open-on-newshacker
+  Done isn't pushed forward: once you hand off, newshacker should own that item's
+  Done and sync it back. (Pushing pins Readmo → newshacker — the former stretch
+  goal — now ships above.)
 - **Best-effort.** Every failure (signed out, function not deployed, unlinked,
-  newshacker down) is swallowed; the local Done state stays authoritative. The
-  whole feature feature-detects: a backend without the 0050 RPC just reports
+  newshacker down) is swallowed; the local Done/Pinned state stays authoritative.
+  The whole feature feature-detects: a backend without the 0050 RPC just reports
   "not linked" and the Settings section hides.
 - **Cost/reliability (guardrail #5).** No new third-party account — reuses the
   Supabase Edge Function runtime and one small first-party call to newshacker per
-  debounced dismissal batch of HN items. **Negligible.** Failure mode: the mirror
-  no-ops; Readmo is unaffected. **Manual deploy:** `make migrate` (0050) +
+  debounced batch of HN Done/Pinned changes. **Negligible.** Failure mode: the
+  mirror no-ops; Readmo is unaffected. **Manual deploy:** `make migrate` (0050) +
   `make deploy` (the `newshacker-sync` function) — and newshacker's app-token
   endpoint must be live first.
 

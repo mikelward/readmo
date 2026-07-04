@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildDoneEntries, type DoneChange } from './newshackerSync';
+import {
+  buildMirrorPayload,
+  resolveHackerNewsIds,
+  type MirrorChange,
+} from './newshackerSync';
 import type { Feed, FeedItem, Item, ItemId } from './types';
 
 const HN_FEED = {
@@ -39,64 +43,75 @@ function feedItem(
 
 const HN = 'https://news.ycombinator.com/item?id=';
 
-describe('buildDoneEntries', () => {
-  it('maps a dismissed HN item to its numeric id', () => {
-    const items = [feedItem('a', { commentsUrl: `${HN}12345` })];
-    const changes = new Map<ItemId, DoneChange>([['a', { done: true, at: 111 }]]);
-    expect(buildDoneEntries(items, changes)).toEqual([{ id: 12345, at: 111 }]);
-  });
-
-  it('emits a tombstone when Done was turned off (un-dismiss)', () => {
-    const items = [feedItem('a', { commentsUrl: `${HN}7` })];
-    const changes = new Map<ItemId, DoneChange>([['a', { done: false, at: 222 }]]);
-    expect(buildDoneEntries(items, changes)).toEqual([
-      { id: 7, at: 222, deleted: true },
+describe('resolveHackerNewsIds', () => {
+  it('maps HN-feed items to their numeric id', () => {
+    const map = resolveHackerNewsIds([
+      feedItem('a', { commentsUrl: `${HN}12345` }),
+      feedItem('b', { guid: `${HN}7`, commentsUrl: null }),
     ]);
+    expect(map.get('a')).toBe(12345);
+    expect(map.get('b')).toBe(7);
   });
 
-  it('drops non-Hacker-News items (no derivable id)', () => {
-    const items = [
-      feedItem('a', { url: 'https://blog.example.com/post', guid: 'x' }),
-    ];
-    const changes = new Map<ItemId, DoneChange>([['a', { done: true, at: 1 }]]);
-    expect(buildDoneEntries(items, changes)).toEqual([]);
-  });
-
-  it('drops a non-HN-feed item even when its body links to an HN discussion', () => {
-    // A blog post that merely links to an HN thread must NOT mirror that
-    // unrelated story as Done — gate on the feed, not just a derivable id.
-    const items = [
+  it('omits non-Hacker-News feed items (even ones linking to HN in the body)', () => {
+    const map = resolveHackerNewsIds([
+      feedItem('a', { url: 'https://blog.example.com/post' }, BLOG_FEED),
       feedItem(
-        'a',
+        'b',
         { contentHtml: `<a href="${HN}555">discuss on HN</a>` },
         BLOG_FEED,
       ),
-    ];
-    const changes = new Map<ItemId, DoneChange>([['a', { done: true, at: 1 }]]);
-    expect(buildDoneEntries(items, changes)).toEqual([]);
+    ]);
+    expect(map.size).toBe(0);
+  });
+});
+
+describe('buildMirrorPayload', () => {
+  const ids = new Map<ItemId, number>([
+    ['a', 12345],
+    ['b', 7],
+  ]);
+
+  it('maps a dismissed item to a done entry', () => {
+    const changes = new Map<ItemId, MirrorChange>([['a', { done: true, at: 111 }]]);
+    expect(buildMirrorPayload(ids, changes)).toEqual({
+      done: [{ id: 12345, at: 111 }],
+      pinned: [],
+    });
   });
 
-  it('skips items with no recorded change', () => {
-    const items = [
-      feedItem('a', { commentsUrl: `${HN}1` }),
-      feedItem('b', { commentsUrl: `${HN}2` }),
-    ];
-    const changes = new Map<ItemId, DoneChange>([['a', { done: true, at: 5 }]]);
-    expect(buildDoneEntries(items, changes)).toEqual([{ id: 1, at: 5 }]);
+  it('maps a pinned item to a pinned entry', () => {
+    const changes = new Map<ItemId, MirrorChange>([['b', { pinned: true, at: 5 }]]);
+    expect(buildMirrorPayload(ids, changes)).toEqual({
+      done: [],
+      pinned: [{ id: 7, at: 5 }],
+    });
   });
 
-  it('derives the id from the item body when no structured link exists', () => {
-    // The official news.ycombinator.com/rss feed carries the discussion link
-    // only in the item HTML.
-    const items = [
-      feedItem('a', {
-        commentsUrl: null,
-        guid: 'https://news.ycombinator.com/rss-guid',
-        url: 'https://example.com/story',
-        contentHtml: `<a href="${HN}99">Comments</a>`,
-      }),
-    ];
-    const changes = new Map<ItemId, DoneChange>([['a', { done: true, at: 9 }]]);
-    expect(buildDoneEntries(items, changes)).toEqual([{ id: 99, at: 9 }]);
+  it('emits tombstones for un-dismiss and unpin', () => {
+    const changes = new Map<ItemId, MirrorChange>([
+      ['b', { done: false, pinned: false, at: 3 }],
+    ]);
+    expect(buildMirrorPayload(ids, changes)).toEqual({
+      done: [{ id: 7, at: 3, deleted: true }],
+      pinned: [{ id: 7, at: 3, deleted: true }],
+    });
+  });
+
+  it('carries both lists when a pin clears done in one mutation', () => {
+    const changes = new Map<ItemId, MirrorChange>([
+      ['a', { pinned: true, done: false, at: 8 }],
+    ]);
+    expect(buildMirrorPayload(ids, changes)).toEqual({
+      done: [{ id: 12345, at: 8, deleted: true }],
+      pinned: [{ id: 12345, at: 8 }],
+    });
+  });
+
+  it('drops changes for items with no resolved HN id', () => {
+    const changes = new Map<ItemId, MirrorChange>([
+      ['unknown', { done: true, at: 1 }],
+    ]);
+    expect(buildMirrorPayload(ids, changes)).toEqual({ done: [], pinned: [] });
   });
 });

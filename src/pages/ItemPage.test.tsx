@@ -13,6 +13,7 @@ import { _resetNetworkStatusForTests, trackedFetch } from '../lib/networkStatus'
 import type { Feed, FeedItem, Item, ItemId } from '../lib/types';
 import type { FullTextResult } from '../lib/fullText';
 import { ItemPage } from './ItemPage';
+import { recallHackerNewsItemId } from '../lib/newshackerItemIds';
 
 function renderReader(
   source: MockDataSource,
@@ -109,6 +110,40 @@ afterEach(() => {
 });
 
 describe('ItemPage (reader)', () => {
+  it('remembers the HN item id when reading an HN article (for the mirror)', async () => {
+    class HnReaderSource extends MockDataSource {
+      async getItem(itemId: ItemId): Promise<FeedItem | null> {
+        return {
+          item: {
+            id: itemId,
+            feedId: 'hn',
+            guid: 'g',
+            url: 'https://example.com/a',
+            commentsUrl: 'https://news.ycombinator.com/item?id=8675309',
+            title: 'A story',
+            spoilerFreeTitle: null,
+            author: null,
+            publishedAt: 0,
+            contentHtml: '<p>body</p>',
+            summary: null,
+            fullContentHtml: null,
+            enclosures: [],
+          } as Item,
+          feed: {
+            id: 'hn',
+            url: 'https://news.ycombinator.com/rss',
+            siteUrl: 'https://news.ycombinator.com/',
+          } as Feed,
+        };
+      }
+    }
+    const source = new HnReaderSource(`test-${Math.random()}`);
+    renderReader(source, 'hn-read-1');
+    await waitFor(() =>
+      expect(recallHackerNewsItemId('hn-read-1')).toBe(8675309),
+    );
+  });
+
   it('does not auto-generate the summary for the next item after navigating from a pinned one', async () => {
     // Regression: `pinnedAtOpen` must be keyed to the rendered item, not left as
     // a stale snapshot from the previous article. Navigating a pinned → unpinned
