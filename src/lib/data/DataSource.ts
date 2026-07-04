@@ -10,6 +10,7 @@ import type {
 } from '../types';
 import type { FullTextResult } from '../fullText';
 import type { SummaryResult } from '../summary';
+import type { NewshackerDoneEntry } from '../newshackerSync';
 import type { ItemStateStore } from './itemState';
 
 /** Per-user capability flags, resolved from the server (`get_capabilities` RPC).
@@ -351,6 +352,26 @@ export interface DataSource {
    * on `/debug` as "Last sync". Optional: sources with no server to reconcile
    * against (the in-memory mock) omit it, and `/debug` then shows it as N/A. */
   getLastSyncedAt?(): number | null;
+
+  // --- newshacker dismissal mirror ------------------------------------------
+  /** Whether this account has linked a newshacker app token, so dismissing a
+   * Hacker News item here also marks it Done on newshacker (SPEC.md *Mirror
+   * dismissals to newshacker*). Feature-detects a backend without the
+   * `newshacker_link_status` RPC and returns `{ linked: false }`, so an old
+   * backend just behaves as "not linked". Optional — the mock implements it in
+   * memory; a source without it is treated as unlinked. */
+  getNewshackerLink?(): Promise<{ linked: boolean; supported: boolean }>;
+  /** Store (or replace) this account's newshacker app token — the credential
+   * the `newshacker-sync` Edge Function forwards. Throws on an invalid token or
+   * a backend predating the `set_newshacker_token` RPC. */
+  setNewshackerToken?(token: string): Promise<void>;
+  /** Forget the newshacker link (disconnect); mirroring stops. */
+  clearNewshackerLink?(): Promise<void>;
+  /** Best-effort mirror of Hacker News Done transitions to newshacker's Done
+   * list. Never throws — the mirror is additive and the local Done state stays
+   * authoritative; no-ops when unlinked, unsupported, or the batch has no HN
+   * items. */
+  syncNewshackerDone?(entries: NewshackerDoneEntry[]): Promise<void>;
 
   // --- OPML -----------------------------------------------------------------
   importOpml(xml: string): Promise<{ added: number; skipped: number }>;

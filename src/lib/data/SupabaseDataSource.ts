@@ -15,6 +15,7 @@ import {
 } from '../types';
 import type { FullTextResult, FullTextStatus } from '../fullText';
 import type { SummaryResult, SummaryStatus } from '../summary';
+import type { NewshackerDoneEntry } from '../newshackerSync';
 import { getSupabase } from '../supabase/client';
 import { confirmBackendReachable } from '../networkStatus';
 import { OUTBOX_SUFFIX } from '../userCache';
@@ -665,6 +666,47 @@ export class SupabaseDataSource implements DataSource {
    * first one lands (see {@link DataSource.getLastSyncedAt}). */
   getLastSyncedAt(): number | null {
     return this.lastSyncedAt;
+  }
+
+  // --- newshacker dismissal mirror ------------------------------------------
+
+  /** Whether this account has a newshacker link, and whether the backend even
+   * supports it. `supported` is true ONLY on a successful RPC response, so a
+   * backend that predates the 0050 RPC (PGRST202) — or any error — reports
+   * `supported: false`, and the Settings section hides rather than offering a
+   * control whose RPC would 404 (guardrail #11). The mirror also stays off. */
+  async getNewshackerLink(): Promise<{ linked: boolean; supported: boolean }> {
+    try {
+      const { data, error } = await this.sb.rpc('newshacker_link_status');
+      if (error) return { linked: false, supported: false };
+      return { linked: data === true, supported: true };
+    } catch {
+      return { linked: false, supported: false };
+    }
+  }
+
+  async setNewshackerToken(token: string): Promise<void> {
+    const { error } = await this.sb.rpc('set_newshacker_token', {
+      p_token: token,
+    });
+    if (error) throw toRequestError({ error });
+  }
+
+  async clearNewshackerLink(): Promise<void> {
+    const { error } = await this.sb.rpc('clear_newshacker_link');
+    if (error) throw toRequestError({ error });
+  }
+
+  /** Fire-and-forget the mirror to newshacker. Swallows every failure (signed
+   * out, function not deployed, unlinked, newshacker down): the mirror is
+   * additive and the local Done state is authoritative. */
+  async syncNewshackerDone(entries: NewshackerDoneEntry[]): Promise<void> {
+    if (entries.length === 0) return;
+    try {
+      await this.sb.functions.invoke('newshacker-sync', { body: { entries } });
+    } catch {
+      // best-effort; nothing to surface.
+    }
   }
 
   /** Memoized hydration, used by every read: once it has succeeded, reads return

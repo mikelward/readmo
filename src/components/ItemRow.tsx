@@ -20,6 +20,7 @@ import { ItemRowMenu, type ItemRowMenuItem } from './ItemRowMenu';
 import { TooltipButton } from './TooltipButton';
 import { Article, Check, PushPinFilled, PushPinOutline, VisibilityOff } from './icons';
 import { newshackerUrlForItem } from '../lib/newshacker';
+import { suppressNextDoneMirror } from '../lib/newshackerMirrorSuppress';
 import './ItemRow.css';
 
 export interface RightAction {
@@ -161,8 +162,15 @@ export function ItemRow({
   // before navigating). Source-URL opens stay in a new tab, so they're unaffected.
   const markOpenedExternal = useCallback(() => {
     set('opened', true);
-    if (markDoneOnOpen) set('done', true);
-  }, [set, markDoneOnOpen]);
+    if (markDoneOnOpen) {
+      // Opening ON newshacker is a handoff, not a dismissal: suppress the mirror
+      // of this one Done so we don't sweep the item to Done on newshacker as the
+      // user arrives to read it there. Opening the ORIGINAL source still mirrors.
+      // See src/lib/newshackerMirrorSuppress.ts.
+      if (externalIsNewshacker) suppressNextDoneMirror(item.id);
+      set('done', true);
+    }
+  }, [set, markDoneOnOpen, externalIsNewshacker, item.id]);
   // On an external-open row the body itself goes to the source/newshacker target,
   // so the dedicated row button is the one remaining path to the in-app reader:
   // it navigates to the reader and marks the item opened (same as a reader-mode

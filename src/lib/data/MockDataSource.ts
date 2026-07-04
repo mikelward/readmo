@@ -665,6 +665,30 @@ export class MockDataSource implements DataSource {
     // SupabaseDataSource concern; in the mock this is a no-op.
   }
 
+  // --- newshacker dismissal mirror ------------------------------------------
+  // In-memory: enough for dev + Settings + tests to exercise the connect flow.
+  // The actual mirror POST is a SupabaseDataSource/Edge-Function concern.
+  private newshackerToken: string | null = null;
+
+  async getNewshackerLink(): Promise<{ linked: boolean; supported: boolean }> {
+    return { linked: this.newshackerToken != null, supported: true };
+  }
+
+  async setNewshackerToken(token: string): Promise<void> {
+    if (!/^nht_[A-Za-z0-9_-]{16,}$/.test(token.trim())) {
+      throw new Error('a valid newshacker token is required');
+    }
+    this.newshackerToken = token.trim();
+  }
+
+  async clearNewshackerLink(): Promise<void> {
+    this.newshackerToken = null;
+  }
+
+  async syncNewshackerDone(): Promise<void> {
+    // No newshacker to reach from the mock — no-op.
+  }
+
   // --- OPML -----------------------------------------------------------------
 
   async importOpml(xml: string): Promise<{ added: number; skipped: number }> {

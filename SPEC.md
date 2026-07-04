@@ -356,6 +356,69 @@ live.
   helpers, no cross-`api/` imports — Vercel's bundler drops them at deploy
   time.)
 
+### Mirror dismissals to newshacker (companion app)
+
+Dismissing a **Hacker News** story in Readmo can also mark it Done on
+**newshacker** (the sibling HN reader), so the two apps' Done lists stay in step
+for HN feeds. One-way today (Readmo → newshacker); opt-in per account.
+
+- **Why it's possible.** Readmo already derives the numeric HN item id from an
+  HN-feed item (`src/lib/newshacker.ts`, used by *Open on newshacker*). newshacker
+  already syncs a per-user `done` list. This feature bridges the two.
+- **Auth model (B2).** newshacker mints an **app token** (its Settings →
+  *Connected apps*); the user pastes it into Readmo's Settings → *newshacker*
+  once. The token is a bearer credential newshacker accepts on its `/api/sync`.
+  We use a **server-to-server** call (not a browser cross-site fetch) precisely
+  so third-party-cookie blocking (Safari/Firefox/Brave defaults, hardened
+  profiles) can't break it — it works uniformly on every browser/PWA. A future
+  **B3** (OAuth-style one-tap linking) would replace the paste, reusing the same
+  token; tracked as a TODO.
+- **Token storage.** `newshacker_link (user_id PK, token, created_at)` (0050),
+  **RLS deny-all** — reachable only via `SECURITY DEFINER` RPCs
+  (`set_newshacker_token` / `clear_newshacker_link` / `newshacker_link_status`,
+  scoped to `auth.uid()`, never returning the token) and the service_role. The
+  client never reads the token (guardrail #7). *TODO(security): encrypt at rest
+  with Vault; plaintext in the RLS-locked table is acceptable for now since the
+  token only grants the user's own Done-list sync and is revocable from either
+  side.*
+- **Mirror path.** `useNewshackerDismissSync` (mounted in `App`, active only when
+  linked) listens to the item-state store's **mutation** events (user-driven
+  set/hide/sweep/undo — never hydration/cross-device sync), coalesces a burst
+  (~1.5 s), resolves the ids to HN item ids (`buildDoneEntries`; non-HN items
+  drop out), and calls the **`newshacker-sync` Edge Function**, which reads the
+  caller's token (service_role) and `POST`s `{ done: [...] }` to newshacker's
+  `/api/sync` with `Authorization: Bearer`. `done:false` sends a tombstone. The
+  target host is a compile-time constant (`NEWSHACKER_ORIGIN`), so there's no
+  user-controlled URL / SSRF surface — this deliberately bypasses the generic
+  SSRF helper, which would strip the credential we intend to forward.
+- **Not mirrored: the open-on-newshacker handoff.** Opening an item *on
+  newshacker* (open-on-newshacker mode) with *Mark done when opening* marks it
+  Done in Readmo, but that Done is a **handoff, not a dismissal** — mirroring it
+  would sweep the item to Done on newshacker at the moment you arrive to read it
+  there (and it'd fight the planned reverse sync below). So the row's open
+  handler registers a one-shot suppression (`newshackerMirrorSuppress.ts`) that
+  the hook consumes and skips. Opening the **original source** with mark-done, or
+  any explicit dismissal (swipe/Sweep/menu) or scroll-away Done, still mirrors.
+  This is also the only same-tab-unload dismissal path, so excluding it means the
+  remaining dismissals all happen with the app open (no unload race).
+- **Stretch goals (TODO, not built).** The token + Edge Function are the general
+  transport, so two natural follow-ups reuse them: **(1) push pins** (Readmo →
+  newshacker) — send `pinned` entries alongside `done` on the same call; and
+  **(2) reverse sync** — pull newshacker's own `done` (a `GET /api/sync`) and
+  apply it to Readmo `item_state`, mapping each HN id back to a Readmo item the
+  user has. (2) is why the open-on-newshacker Done isn't pushed forward: once you
+  hand off, newshacker should own that item's Done and sync it back.
+- **Best-effort.** Every failure (signed out, function not deployed, unlinked,
+  newshacker down) is swallowed; the local Done state stays authoritative. The
+  whole feature feature-detects: a backend without the 0050 RPC just reports
+  "not linked" and the Settings section hides.
+- **Cost/reliability (guardrail #5).** No new third-party account — reuses the
+  Supabase Edge Function runtime and one small first-party call to newshacker per
+  debounced dismissal batch of HN items. **Negligible.** Failure mode: the mirror
+  no-ops; Readmo is unaffected. **Manual deploy:** `make migrate` (0050) +
+  `make deploy` (the `newshacker-sync` function) — and newshacker's app-token
+  endpoint must be live first.
+
 ### Schema (sketch)
 
 ```
@@ -377,6 +440,7 @@ item_state    (user_id FK, item_id FK,
                opened bool, opened_at)                               -- PK(user_id,item_id)
                -- each *_at is the field's last-change time = its LWW clock
 folders       (user_id FK, name, sort)
+newshacker_link (user_id PK/FK, token, created_at)                    -- companion-app token; RLS deny-all, server-only (0050)
 ```
 
 - **Feeds and items are shared at the storage layer** (poll each distinct feed
