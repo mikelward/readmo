@@ -44,11 +44,15 @@ export function spoilerContentText(row: {
  * we infer from prose:
  *   { "spoiler": true,  "headline": "EPL MNU vs ARS result" }
  *   { "spoiler": false, "headline": "" }
- * `spoiler` is true only when the headline reveals the OUTCOME of a specific
- * sporting event (final score, winner, who advanced, pole/qualifying result).
- * Non-sports headlines, and sports headlines that DON'T reveal a result
- * (previews, injuries, transfers, schedules), are `spoiler:false` → we keep the
- * original. */
+ * `spoiler` is true when the headline reveals the OUTCOME of a specific sporting
+ * event — DIRECTLY (a score, who won/lost/drew, who advanced, a pole/qualifying
+ * result) OR BY IMPLICATION (a team eliminated/knocked out/through, or an
+ * emotive framing that only makes sense once you know the result — "Farewell X",
+ * "dream over", "heartbreak for X", "X bow out"). We deliberately lean toward
+ * hiding: when a headline is about a specific event and its outcome is ambiguous,
+ * treat it as a spoiler. Non-sports headlines, and sports headlines that DON'T
+ * reveal a result (pre-match previews, injuries, transfers, schedules, off-field
+ * news), are `spoiler:false` → we keep the original. */
 export function buildSpoilerPrompt(
   title: string | null | undefined,
   content: string,
@@ -57,19 +61,33 @@ export function buildSpoilerPrompt(
     ? `\n\nFor context, the article body is between the delimiters:\n--- BEGIN ARTICLE ---\n${content}\n--- END ARTICLE ---`
     : '';
   return (
-    `You rewrite news headlines to avoid spoiling sports results.\n\n` +
-    `Decide whether this headline gives away the OUTCOME of a specific sporting ` +
-    `event — a final score, the winner, who advanced, or a qualifying/pole ` +
-    `result. A headline that is not about sport, or is about sport but does NOT ` +
-    `reveal a result (a preview, injury, transfer, schedule, or opinion), is NOT ` +
-    `a spoiler.\n\n` +
+    `You rewrite sports news headlines to avoid spoiling results.\n\n` +
+    `A headline is a SPOILER when it reveals — directly OR by implication — how a ` +
+    `specific sporting event, or a team's involvement in it, turned out: a final ` +
+    `score, who won, lost or drew, who advanced or was eliminated/knocked out, ` +
+    `who reached or exited a stage, or who was crowned champion. This INCLUDES ` +
+    `headlines that only IMPLY the result through framing — a farewell, tribute ` +
+    `or obituary to a team's run ("Farewell X", "X's journey ends", "dream over", ` +
+    `"heartbreak for X", "X crash out", "X bow out"), or a celebration of a win or ` +
+    `title ("X crowned champions", "X win the title", "X lift the trophy", ` +
+    `"X are champions", "glory for X") — EVEN WHEN no score is stated. Lean ` +
+    `toward hiding: if the headline is about a ` +
+    `specific event and you're unsure whether it gives the outcome away, treat it ` +
+    `as a spoiler.\n\n` +
+    `A headline is NOT a spoiler when it reveals no outcome: a pre-match preview ` +
+    `or build-up, an injury, a transfer, a fixture/schedule, contract or ` +
+    `off-field news, or general opinion not tied to a specific recent result. ` +
+    `Headlines that are not about sport are never spoilers.\n\n` +
     `When it IS a spoiler, write a spoiler-free replacement that names only WHAT ` +
-    `happened, never the result: lead with the short competition or league name ` +
+    `happened, never the outcome: lead with the short competition or league name ` +
     `(e.g. F1, EPL, NBA, NFL, World Cup), then the participants as short ` +
-    `abbreviations joined by "v" or "vs" when it's a head-to-head, then the word ` +
-    `"result" (or "qualifying result", "final result" where that fits). ` +
-    `Examples: "EPL MNU vs ARS result", "F1 British GP qualifying result", ` +
-    `"World Cup AUS v EGY result", "NBA Finals Game 3 result".\n\n` +
+    `abbreviations joined by "v" or "vs" when it's a head-to-head (use just the ` +
+    `one team when only one is named), then a plain event noun ("result", ` +
+    `"qualifying result", "final result", "match"). Use the article body to ` +
+    `identify the competition and the opponent when the headline names only one ` +
+    `side. Examples: "EPL MNU vs ARS result", "F1 British GP qualifying result", ` +
+    `"World Cup AUS v EGY result", "World Cup ARG v CPV result", "NBA Finals ` +
+    `Game 3 result".\n\n` +
     `Reply with ONLY a JSON object of the form ` +
     `{"spoiler": boolean, "headline": string}. Set "headline" to the ` +
     `spoiler-free replacement when "spoiler" is true, otherwise an empty ` +
