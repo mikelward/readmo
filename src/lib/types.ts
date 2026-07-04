@@ -45,7 +45,7 @@ export interface Item {
   commentsUrl: string | null;
   title: string;
   /** A spoiler-free rewrite of `title` for sports-result headlines, e.g.
-   * "EPL MNU vs ARS result" / "F1 Qualifying results" — the short competition
+   * "EPL MNU v ARS spoiler" / "F1 Qualifying spoiler" — the short competition
    * name first, no scoreline/winner. Generated server-side (Gemini) at poll time
    * for allowlisted-subscriber feeds and cached on the shared item; null when the
    * headline isn't a sports-result spoiler, when it hasn't been processed, or

@@ -152,8 +152,8 @@ describe('mapItem', () => {
 
   it('maps spoiler_free_title, defaulting to null when the column is absent', () => {
     expect(
-      mapItem({ ...row, spoiler_free_title: 'EPL MNU vs ARS result' }).spoilerFreeTitle,
-    ).toBe('EPL MNU vs ARS result');
+      mapItem({ ...row, spoiler_free_title: 'EPL MNU v ARS spoiler' }).spoilerFreeTitle,
+    ).toBe('EPL MNU v ARS spoiler');
     // A pre-0045 backend (or the step-down column set) omits it entirely.
     expect(mapItem(row).spoilerFreeTitle).toBeNull();
     expect(mapItem({ ...row, spoiler_free_title: null }).spoilerFreeTitle).toBeNull();
