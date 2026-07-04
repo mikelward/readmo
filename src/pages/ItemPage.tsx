@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useIsRestoring, useQuery, useQueryClient } from '@tanstack/react-query';
+import { closeArticleView } from '../lib/closeArticleView';
 import { useDataSource } from '../lib/data/context';
 import { findCachedFeedItem } from '../lib/offlineItem';
 import { collapseProxiedSrcset } from '../lib/extractProxiedImageUrls';
@@ -435,26 +436,34 @@ export function ItemPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolved?.item.id]);
 
+  // Leave the reader the way the browser Back button would: back to wherever
+  // the reader came from (an in-app list, or the external page they arrived
+  // from in the same tab), else close the tab (dismissing a new tab / Android
+  // Custom Tab into the app that opened us), else the home list. See
+  // closeArticleView. Shared by the Done action, the mark-done-on-open flow,
+  // and the `b` shortcut.
+  const goBack = useCallback(() => {
+    closeArticleView(navigate);
+  }, [navigate]);
+
   const openOriginal = useCallback(() => {
     if (resolved && isSafeHttpUrl(resolved.item.url)) {
       set('opened', true);
       window.open(resolved.item.url, '_blank', 'noopener,noreferrer');
       // "Mark done when opening" feeds: opening the original finishes the item,
-      // so mark it Done (which also clears pinned) and drop back to the list —
-      // the same completion flow as the Done action.
+      // so mark it Done (which also clears pinned) and drop back to where the
+      // reader came from — the same completion flow as the Done action.
       if (markDoneOnOpenFeeds.has(resolved.feed.id)) {
         set('done', true);
-        navigate(-1);
+        goBack();
       }
     }
-  }, [resolved, set, markDoneOnOpenFeeds, navigate]);
+  }, [resolved, set, markDoneOnOpenFeeds, goBack]);
 
   const markDone = useCallback(() => {
     set('done', true); // also clears pinned via the mutation shield
-    navigate(-1);
-  }, [set, navigate]);
-
-  const goBack = useCallback(() => navigate(-1), [navigate]);
+    goBack();
+  }, [set, goBack]);
 
   // Go up one level in the content hierarchy: an RSS article's parent is the
   // feed it came from, so `u` jumps to this item's feed page. (newshacker's `u`
@@ -493,8 +502,17 @@ export function ItemPage() {
   const commentsOnNewshacker =
     commentsHref != null && isNewshackerUrl(commentsHref);
   const openComments = useCallback(() => {
-    if (commentsHref) window.open(commentsHref, '_blank', 'noopener,noreferrer');
-  }, [commentsHref]);
+    if (!commentsHref) return;
+    // newshacker (our own sibling app) opens in the SAME tab, so it becomes the
+    // browser's previous entry and newshacker's Done/back returns to this
+    // reader. An untrusted publisher comments page keeps the new-tab +
+    // noopener/noreferrer hardening (guardrail #6).
+    if (commentsOnNewshacker) {
+      window.location.assign(commentsHref);
+    } else {
+      window.open(commentsHref, '_blank', 'noopener,noreferrer');
+    }
+  }, [commentsHref, commentsOnNewshacker]);
 
   // Shared overflow menu for the reader's top + bottom bars. Lifted to the
   // page (like newshacker's Thread) so both ⋮ buttons drive one menu

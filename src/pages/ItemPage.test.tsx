@@ -72,6 +72,37 @@ function setOnline(value: boolean) {
   window.dispatchEvent(new Event(value ? 'online' : 'offline'));
 }
 
+// jsdom makes window.location.assign a non-configurable, non-writable data
+// property, so it can't be spied or wrapped in a Proxy (the invariant forbids
+// returning a different value). Replace window.location with a plain stub that
+// copies the readable fields and swaps in mock navigation methods, so a test
+// can assert same-tab navigation, then restore the real location.
+function mockLocationAssign() {
+  const assign = vi.fn();
+  const real = window.location;
+  const stub = {
+    assign,
+    replace: vi.fn(),
+    reload: vi.fn(),
+    href: real.href,
+    origin: real.origin,
+    protocol: real.protocol,
+    host: real.host,
+    hostname: real.hostname,
+    port: real.port,
+    pathname: real.pathname,
+    search: real.search,
+    hash: real.hash,
+    toString: () => real.href,
+  };
+  Object.defineProperty(window, 'location', { configurable: true, value: stub });
+  return {
+    assign,
+    restore: () =>
+      Object.defineProperty(window, 'location', { configurable: true, value: real }),
+  };
+}
+
 afterEach(() => {
   setOnline(true);
   _resetNetworkStatusForTests();
@@ -224,6 +255,54 @@ describe('ItemPage (reader)', () => {
     const state = source.stateStore.get('item-1');
     expect(state.done).toBe(true);
     expect(state.pinned).toBe(false);
+  });
+
+  it('Done with no back entry closes the tab, then falls back to the home list', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    // Single router entry → location.key === 'default', and no back entry
+    // (window.history.length === 1 in jsdom). Done tries to close the tab
+    // (dismissing a new tab / Custom Tab into the opener) and, since the browser
+    // won't close it here, falls back to '/' rather than stranding the reader.
+    const close = vi.spyOn(window, 'close').mockImplementation(() => {});
+    renderReaderWithHistory(source, { entries: ['/item/item-1'] });
+    const done = await screen.findByTestId('reader-done');
+    await user.click(done);
+    expect(source.stateStore.get('item-1').done).toBe(true);
+    expect(close).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(screen.getByTestId('location-pathname')).toHaveTextContent('/');
+    });
+  });
+
+  it('Done on an external deep link pops back to the referrer, not the home list', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    // Single router entry (location.key === 'default') but the browser has a
+    // page behind us — the reader opened this article from an external app in
+    // the same tab, so that page is history[-1]. window.history.length > 1 →
+    // goBack pops with navigate(-1) to return there rather than redirecting to
+    // '/'. MemoryRouter can't pop past its one entry, so the path stays on the
+    // article — the point is that we do NOT fall back to the home list.
+    const orig = Object.getOwnPropertyDescriptor(window.history, 'length');
+    Object.defineProperty(window.history, 'length', {
+      configurable: true,
+      value: 2,
+    });
+    try {
+      renderReaderWithHistory(source, { entries: ['/item/item-1'] });
+      const done = await screen.findByTestId('reader-done');
+      await user.click(done);
+      expect(source.stateStore.get('item-1').done).toBe(true);
+      await waitFor(() => {
+        expect(screen.getByTestId('location-pathname')).toHaveTextContent(
+          '/item/item-1',
+        );
+      });
+    } finally {
+      if (orig) Object.defineProperty(window.history, 'length', orig);
+      else delete (window.history as unknown as { length?: number }).length;
+    }
   });
 
   it('Open original marks the item done and pops back when the feed opts into mark-done-when-opening', async () => {
@@ -406,23 +485,29 @@ describe('ItemPage comments button', () => {
     openSpy.mockRestore();
   });
 
-  it('routes a comments URL that points at Hacker News to newshacker', async () => {
+  it('routes a comments URL that points at Hacker News to newshacker (same tab)', async () => {
     const user = userEvent.setup();
     const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
-    // A non-HN feed whose structured <comments> link happens to be an HN thread.
-    const source = new CommentsSource({
-      item: { commentsUrl: 'https://news.ycombinator.com/item?id=42662903' },
-    });
-    renderReader(source);
-    const top = await screen.findByTestId('reader-comments');
-    expect(top).toHaveAttribute('aria-label', 'Comments on newshacker');
-    await user.click(top);
-    expect(openSpy).toHaveBeenCalledWith(
-      'https://newshacker.app/item/42662903',
-      '_blank',
-      'noopener,noreferrer',
-    );
-    openSpy.mockRestore();
+    const loc = mockLocationAssign();
+    try {
+      // A non-HN feed whose structured <comments> link is itself an HN thread.
+      const source = new CommentsSource({
+        item: { commentsUrl: 'https://news.ycombinator.com/item?id=42662903' },
+      });
+      renderReader(source);
+      const top = await screen.findByTestId('reader-comments');
+      expect(top).toHaveAttribute('aria-label', 'Comments on newshacker');
+      await user.click(top);
+      // newshacker (our sibling app) opens in the same tab (location.assign, no
+      // new-tab hardening), so its Done/back returns to this reader.
+      expect(loc.assign).toHaveBeenCalledWith(
+        'https://newshacker.app/item/42662903',
+      );
+      expect(openSpy).not.toHaveBeenCalled();
+    } finally {
+      loc.restore();
+      openSpy.mockRestore();
+    }
   });
 
   it('does not label a newshacker.app look-alike host as "Comments on newshacker"', async () => {
@@ -449,27 +534,29 @@ describe('ItemPage comments button', () => {
 
   it('derives the newshacker thread from the item body on a Hacker News feed', async () => {
     const user = userEvent.setup();
-    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
-    // Official HN feed: no structured comments URL — the discussion link lives
-    // only in the description body, so the HN derivation must scan it.
-    const source = new CommentsSource({
-      feed: { siteUrl: 'https://news.ycombinator.com/' },
-      item: {
-        commentsUrl: null,
-        contentHtml:
-          '<p>Article. <a href="https://news.ycombinator.com/item?id=42662903">Comments</a></p>',
-      },
-    });
-    renderReader(source);
-    const top = await screen.findByTestId('reader-comments');
-    expect(top).toHaveAttribute('aria-label', 'Comments on newshacker');
-    await user.click(top);
-    expect(openSpy).toHaveBeenCalledWith(
-      'https://newshacker.app/item/42662903',
-      '_blank',
-      'noopener,noreferrer',
-    );
-    openSpy.mockRestore();
+    const loc = mockLocationAssign();
+    try {
+      // Official HN feed: no structured comments URL — the discussion link lives
+      // only in the description body, so the HN derivation must scan it.
+      const source = new CommentsSource({
+        feed: { siteUrl: 'https://news.ycombinator.com/' },
+        item: {
+          commentsUrl: null,
+          contentHtml:
+            '<p>Article. <a href="https://news.ycombinator.com/item?id=42662903">Comments</a></p>',
+        },
+      });
+      renderReader(source);
+      const top = await screen.findByTestId('reader-comments');
+      expect(top).toHaveAttribute('aria-label', 'Comments on newshacker');
+      await user.click(top);
+      // Same-tab navigation to our sibling app (location.assign, no hardening).
+      expect(loc.assign).toHaveBeenCalledWith(
+        'https://newshacker.app/item/42662903',
+      );
+    } finally {
+      loc.restore();
+    }
   });
 
   it('does not show a Comments button on a non-HN feed whose body merely mentions HN', async () => {
@@ -553,6 +640,22 @@ describe('ItemPage navigation shortcuts', () => {
     await screen.findByTestId('open-original');
 
     await user.keyboard('b');
+    await waitFor(() => {
+      expect(screen.getByTestId('location-pathname')).toHaveTextContent('/');
+    });
+  });
+
+  it('b with no back entry closes the tab, then falls back to the home list', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    // Single entry, no back entry → try to close the tab, then fall back to '/'
+    // rather than a no-op navigate(-1) that leaves the reader stuck.
+    const close = vi.spyOn(window, 'close').mockImplementation(() => {});
+    renderReaderWithHistory(source, { entries: ['/item/item-1'] });
+    await screen.findByTestId('open-original');
+
+    await user.keyboard('b');
+    expect(close).toHaveBeenCalledTimes(1);
     await waitFor(() => {
       expect(screen.getByTestId('location-pathname')).toHaveTextContent('/');
     });

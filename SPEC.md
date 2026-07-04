@@ -1085,7 +1085,12 @@ negligible and off every critical path. See the External services table in
        item without a safe http(s) URL.
      - **Open on newshacker** — offered for **Hacker News feeds only** (the feed
        host is `news.ycombinator.com` or `hnrss.org`): the item's Hacker News
-       discussion on **newshacker.app** (`newshacker.app/item/<hn-id>`, new tab).
+       discussion on **newshacker.app** (`newshacker.app/item/<hn-id>`). Unlike an
+       untrusted source URL (which opens in a new tab with
+       `rel="noopener noreferrer"`), newshacker is our own sibling app, so it
+       opens in the **same tab** with no such hardening — that makes Readmo the
+       browser's previous entry, so newshacker's own Done/back returns the reader
+       here rather than stranding them in a separate tab.
        The HN id is derived client-side from the item's HN comments link — the
        structured `commentsUrl` first (the parsed `<comments>` link, carried on
        list rows), then its `guid` (hnrss feeds), then its `url` (Ask/Show HN),
@@ -1121,8 +1126,10 @@ negligible and off every critical path. See the External services table in
      menu, independent of the open mode above) that, when on, **marks an item Done
      the moment it's opened on its original source or newshacker discussion** — the
      `open-original`/`newshacker` row-body tap, the row's `o` shortcut, and the
-     reader's **Open original** button (which then also pops back to the list, the
-     same completion flow as Done). Deliberately **does not** fire for an in-app
+     reader's **Open original** button (which then also closes the reader via the
+     same Back-button ladder as Done — back to wherever the reader came from, else
+     close the tab, else the home list; see *Reader keyboard shortcuts → `b`* —
+     the same completion flow as Done). Deliberately **does not** fire for an in-app
      **reader** (article view) open — the setting is scoped to the outbound open
      actions, letting a "read the source and I'm done" feed clear items without a
      second tap. Marking Done clears Pinned (the usual exclusivity). Per-user,
@@ -2339,9 +2346,12 @@ immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
 - **Comments** (chat-bubble icon) is shown **only when the item has a
   discussion destination**, and is a **deep link out** to that discussion — not
   an in-app comment thread (guardrail "No comments, no votes" still holds: we
-  don't render or store comments). Opens in a new tab (`noopener,noreferrer`);
-  the aria-label/tooltip reads "Comments on newshacker" when the destination is
-  newshacker, "Comments" otherwise. Resolution:
+  don't render or store comments). A **newshacker** destination (our own sibling
+  app) opens in the **same tab** (`location.assign`, no hardening) so newshacker's
+  Done/back returns to this reader; any other (untrusted) comments URL opens in a
+  new tab with `noopener,noreferrer`. The aria-label/tooltip reads "Comments on
+  newshacker" when the destination is newshacker, "Comments" otherwise.
+  Resolution:
   - On a **Hacker News feed** (`isHackerNewsFeed`) it opens the **newshacker**
     thread (`newshacker.app/item/<id>`), same as the row's "open on newshacker"
     mode. The HN id is derived from the comments URL / guid / item url / body
@@ -2458,7 +2468,7 @@ Reader page (`/item/:id`):
 | `j` / `k` | Scroll to next/previous section heading (or page top/bottom) |
 | `o` | Open original · `c` Comments (when present) · `p` Pin · `f` Favorite · `d` Done (navigates back) |
 | `u` | Go up to this item's feed (`/feed/:id`). RSS articles have no comment tree, so the feed is the "parent" — the analog of newshacker's `u` (parent comment). |
-| `b` | Go back to the previous page (`navigate(-1)`), the same action as the Back button. |
+| `b` | Leave the reader the way the Back button would (`closeArticleView`): **(1)** when `window.history.length > 1` the browser has another entry — an in-app feed/list or the external site the reader arrived from in the same tab (cross-origin included) — so `navigate(-1)` back to it; **(2)** otherwise (a lone entry — cold deep link / fresh tab, and unchanged through a `replace`-based sign-in redirect) `window.close()` the tab, dismissing a new tab / Android Custom Tab straight back into the app that opened us; **(3)** if the browser refuses to close it (notably iOS Safari, or a user-opened primary tab), fall back to the home list. We key off `history.length` rather than `location.key` (non-`default` after a `replace`) or the Navigation API's `canGoBack` (blind to cross-origin entries). Same action as the Back button and the Done navigation. |
 | `?` / `Esc` | Help / close |
 
 Same bail-out conditions as newshacker (skip in inputs, open dialog/menu,

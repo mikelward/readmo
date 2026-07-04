@@ -118,6 +118,14 @@ export function ItemRow({
     openOriginal && isSafeHttpUrl(item.url) ? item.url : null;
   const newshackerHref = openNewshacker ? newshackerUrlForItem(item) : null;
   const externalHref = openOriginalHref ?? newshackerHref;
+  // newshacker is our own sibling app, not an untrusted publisher, so its
+  // discussion opens in the SAME tab (no `target="_blank"`) — that makes Readmo
+  // the browser's previous entry, so newshacker's Done/back returns here. We
+  // also drop `rel="noopener noreferrer"`: there's no reverse-tabnabbing risk
+  // from ourselves, and letting newshacker see the readmo.app referrer leaks
+  // nothing (route paths carry no secrets). Untrusted source URLs keep the
+  // new-tab + noopener/noreferrer hardening (guardrail #6).
+  const externalIsNewshacker = openOriginalHref == null && newshackerHref != null;
   // A feed-style external-open row (no library inverse action) gets a dedicated
   // "Open in reader" button to the left of the Done/Pin cluster — since the row
   // body now opens the source/newshacker target, that button is the row's one
@@ -144,6 +152,13 @@ export function ItemRow({
   // marks it Done (which clears pinned via the mutation shield). The plain
   // reader-mode body tap uses `markOpened` above, so an in-app reader open never
   // marks done.
+  // TODO(same-tab-open race): the newshacker open is now a same-tab navigation
+  // (see externalIsNewshacker below), so these state writes race page-unload —
+  // the optimistic local write should survive and re-sync on next load, but the
+  // in-flight remote sync can be cancelled. If opened/done occasionally fails to
+  // stick on an open-on-newshacker tap, make the write durable across unload
+  // (e.g. navigator.sendBeacon, fetch keepalive, or await the local persist
+  // before navigating). Source-URL opens stay in a new tab, so they're unaffected.
   const markOpenedExternal = useCallback(() => {
     set('opened', true);
     if (markDoneOnOpen) set('done', true);
@@ -407,13 +422,14 @@ export function ItemRow({
       >
         {externalHref ? (
           // Open mode (original / newshacker): the row body goes straight to the
-          // external target in a new tab (marking the item opened, like the
-          // in-app reader and the `o` shortcut) instead of navigating to the
-          // reader.
+          // external target (marking the item opened, like the in-app reader and
+          // the `o` shortcut) instead of navigating to the reader. Source URLs
+          // open in a new tab with the untrusted-link hardening; the newshacker
+          // discussion opens in the same tab (see externalIsNewshacker).
           <a
             href={externalHref}
-            target="_blank"
-            rel="noopener noreferrer"
+            target={externalIsNewshacker ? undefined : '_blank'}
+            rel={externalIsNewshacker ? undefined : 'noopener noreferrer'}
             className="item-row__body"
             data-testid="item-title"
             onClick={markOpenedExternal}

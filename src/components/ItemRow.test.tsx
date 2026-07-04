@@ -290,9 +290,11 @@ describe('ItemRow', () => {
       const { source } = renderWithProviders(
         <ItemRow feedItem={hn} openNewshacker markDoneOnOpen />,
       );
-      // The row body links to the newshacker discussion (external target).
-      expect(screen.getByTestId('item-title')).toHaveAttribute('target', '_blank');
-      await user.click(screen.getByTestId('item-title'));
+      // The row body links to the newshacker discussion in the same tab.
+      const body = screen.getByTestId('item-title');
+      expect(body).toHaveAttribute('href', 'https://newshacker.app/item/42662903');
+      expect(body).not.toHaveAttribute('target');
+      await user.click(body);
       expect(source.stateStore.get('item-1').opened).toBe(true);
       expect(source.stateStore.get('item-1').done).toBe(true);
     });
@@ -335,12 +337,15 @@ describe('ItemRow', () => {
       },
     };
 
-    it('links the row body to the newshacker discussion in a new tab', () => {
+    it('links the row body to the newshacker discussion in the same tab (no new-tab hardening)', () => {
+      // newshacker is our own sibling app, so it opens in the same tab (making
+      // Readmo newshacker's back target) without the untrusted-link
+      // noopener/noreferrer that source URLs get.
       renderWithProviders(<ItemRow feedItem={HN_FEED_ITEM} openNewshacker />);
       const body = screen.getByTestId('item-title');
       expect(body).toHaveAttribute('href', 'https://newshacker.app/item/42662903');
-      expect(body).toHaveAttribute('target', '_blank');
-      expect(body.getAttribute('rel')).toContain('noopener');
+      expect(body).not.toHaveAttribute('target');
+      expect(body).not.toHaveAttribute('rel');
     });
 
     it('adds the same Open in reader button as open-original mode', () => {
@@ -359,7 +364,7 @@ describe('ItemRow', () => {
           <LocationProbe />
         </>,
       );
-      // Row body opens the newshacker discussion in a new tab…
+      // Row body opens the newshacker discussion in the same tab…
       expect(screen.getByTestId('item-title')).toHaveAttribute(
         'href',
         'https://newshacker.app/item/42662903',
