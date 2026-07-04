@@ -10,6 +10,7 @@ import {
   HIDE_SPORTS_SPOILERS_KEY,
   ITEM_SORT_KEY,
   SHOW_ROW_FAVICON_KEY,
+  SHOW_GROUP_FAVICON_KEY,
   resetReadingPrefsCacheForTest,
 } from '../hooks/useReadingPrefs';
 import { SettingsPage } from './SettingsPage';
@@ -144,16 +145,28 @@ describe('SettingsPage — Reading & Bottom toolbar', () => {
     expect(window.localStorage.getItem(GROUP_BY_FEED_KEY)).toBe('1');
   });
 
-  it('toggles "Show feed icons on articles" and persists it', async () => {
+  it('toggles "Show icons on articles" (off by default) and persists it', async () => {
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
     const toggle = screen.getByRole('checkbox', {
-      name: /show feed icons on articles/i,
+      name: /show icons on articles/i,
     });
     expect(toggle).not.toBeChecked();
     await user.click(toggle);
     expect(toggle).toBeChecked();
     expect(window.localStorage.getItem(SHOW_ROW_FAVICON_KEY)).toBe('1');
+  });
+
+  it('toggles "Show icons on groups" (on by default) off and persists it', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    const toggle = screen.getByRole('checkbox', {
+      name: /show icons on groups/i,
+    });
+    expect(toggle).toBeChecked(); // default ON
+    await user.click(toggle);
+    expect(toggle).not.toBeChecked();
+    expect(window.localStorage.getItem(SHOW_GROUP_FAVICON_KEY)).toBe('0');
   });
 
   it('defaults sort order to "Newest first" and switches to "Oldest first"', async () => {

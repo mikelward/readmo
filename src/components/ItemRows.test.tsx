@@ -7,6 +7,7 @@ import { MarkUnread } from './icons';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import {
   SHOW_ROW_FAVICON_KEY,
+  SHOW_GROUP_FAVICON_KEY,
   resetReadingPrefsCacheForTest,
 } from '../hooks/useReadingPrefs';
 import type { FeedItem } from '../lib/types';
@@ -17,10 +18,17 @@ async function sampleItems(n = 3): Promise<FeedItem[]> {
   return page.items.slice(0, n);
 }
 
-/** Turn the off-by-default "show feed icons on articles" setting on for a test
+/** Turn the off-by-default "show icons on articles" setting on for a test
  * before rendering, so non-grouped rows render their favicon. */
 function enableRowFavicons(): void {
   window.localStorage.setItem(SHOW_ROW_FAVICON_KEY, '1');
+  resetReadingPrefsCacheForTest();
+}
+
+/** Turn the on-by-default "show icons on groups" setting off for a test before
+ * rendering, so group headers omit their favicon. */
+function disableGroupFavicons(): void {
+  window.localStorage.setItem(SHOW_GROUP_FAVICON_KEY, '0');
   resetReadingPrefsCacheForTest();
 }
 
@@ -163,6 +171,32 @@ describe('ItemRows', () => {
     );
     expect(placeholders).toHaveLength(1);
     expect(placeholders[0]).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('omits group-header favicons (and the reserved slot) when "show icons on groups" is off', async () => {
+    disableGroupFavicons();
+    const items = await sampleItems(2);
+    const headers = new Map([
+      [
+        items[0].item.id,
+        {
+          feedId: items[0].item.feedId,
+          title: 'Iconned Feed',
+          faviconUrl: 'https://example.com/favicon.ico',
+        },
+      ],
+      [items[1].item.id, { feedId: items[1].item.feedId, title: 'Plain Feed' }],
+    ]);
+    const { container } = renderWithProviders(
+      <ItemRows items={items} emptyLabel="Nothing here." groupHeaders={headers} />,
+    );
+    // Neither a real icon nor a reserved placeholder — the setting hides them all.
+    expect(container.querySelectorAll('.item-list__group-favicon')).toHaveLength(0);
+    expect(
+      container.querySelectorAll('.item-list__group-favicon-placeholder'),
+    ).toHaveLength(0);
+    // The section still renders its header + rows.
+    expect(container.querySelectorAll('.item-list__group-header')).toHaveLength(2);
   });
 
   it('keeps a favicon box (not display:none) when its image fails to load and a sibling has an icon', async () => {

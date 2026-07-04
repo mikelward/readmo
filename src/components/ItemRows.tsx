@@ -5,7 +5,11 @@ import { useShareItem } from '../hooks/useShareItem';
 import { useOpenOriginalFeeds } from '../hooks/useOpenOriginalFeeds';
 import { useOpenNewshackerFeeds } from '../hooks/useOpenNewshackerFeeds';
 import { useMarkDoneOnOpenFeeds } from '../hooks/useMarkDoneOnOpenFeeds';
-import { useShowRowFavicon, useHideSportsSpoilers } from '../hooks/useReadingPrefs';
+import {
+  useShowRowFavicon,
+  useShowGroupFavicon,
+  useHideSportsSpoilers,
+} from '../hooks/useReadingPrefs';
 import { useCapabilities, canUseFullText } from '../hooks/useCapabilities';
 import { displayTitle } from '../lib/spoilerHeadline';
 import { FeedFavicon } from './FeedFavicon';
@@ -158,9 +162,12 @@ export function ItemRows({
   // newshacker target also marks the item done. Same shared subscriptions read,
   // deduped via React Query.
   const markDoneOnOpenFeeds = useMarkDoneOnOpenFeeds();
-  // Off-by-default per-device setting (Settings → Reading). Only consulted in
-  // the non-grouped path below; group-by-feed shows the icon on its header.
+  // Off-by-default per-device setting (Settings → Appearance → Feed icons). Only
+  // consulted in the non-grouped path below.
   const { showRowFavicon: showRowFaviconPref } = useShowRowFavicon();
+  // On-by-default per-device setting (Settings → Appearance → Feed icons):
+  // whether the group-by-feed section header carries the feed's icon.
+  const { showGroupFavicon } = useShowGroupFavicon();
 
   // A subtle spinner with a visible "Loading…" label, rather than a run of
   // blank shimmer rows — the wait reads as loading, not as an empty feed still
@@ -252,14 +259,16 @@ export function ItemRows({
     // is true whenever a header has a URL), so the slot is always worth holding.
     // A header with no favicon URL at all stands the same-size placeholder in
     // that slot, so every feed name in the list starts at the same left edge.
-    const favicon = (
+    // Suppressed entirely when the group-favicon setting is off — no icon and no
+    // reserved slot, so the feed name sits flush against the chevron.
+    const favicon = showGroupFavicon ? (
       <FeedFavicon
         url={faviconUrl}
         className="item-list__group-favicon"
         reserveSpace={reserveFaviconSpace}
         placeholderClassName="item-list__group-favicon-placeholder"
       />
-    );
+    ) : null;
     const count =
       !phantom && groupCounts ? (groupCounts[feedId] ?? 0) : 0;
     const showCount = count > 0;
@@ -426,8 +435,10 @@ export function ItemRows({
   // Once any header in this list shows a favicon, reserve the icon slot in the
   // headers that lack one (feeds the poller hasn't resolved yet, or phantom
   // swept sections) so every feed name lines up at the same left edge instead
-  // of some snapping flush to the chevron.
-  const anyFavicon = sections.some((s) => !!s.header?.faviconUrl);
+  // of some snapping flush to the chevron. Skipped when the group-favicon
+  // setting is off — no header shows an icon, so there's nothing to align to.
+  const anyFavicon =
+    showGroupFavicon && sections.some((s) => !!s.header?.faviconUrl);
 
   const renderFeedSection = (section: Section): ReactNode => {
     const { feedId } = section;
