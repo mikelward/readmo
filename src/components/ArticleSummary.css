@@ -34,6 +34,42 @@
   font-size: 0.95rem;
 }
 
+/* Prompt state: an unpinned article isn't summarized on open, so the card is
+   replaced by a "Generate summary" button. No card chrome — the button carries
+   its own — but the same gutter so it lines up with the summary it becomes. */
+.article-summary--prompt {
+  margin: 12px 16px 4px;
+  padding: 0;
+  background: none;
+  border: none;
+}
+
+.article-summary__generate {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--rm-tap);
+  padding: 6px 14px;
+  border: 1px solid var(--rm-border);
+  background: var(--rm-bg-card);
+  color: var(--rm-accent);
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Wrap the hover paint in `hover: hover` so it doesn't stick after a tap on
+   touch devices; keep `:active` outside for the pressed state on touch. */
+@media (hover: hover) {
+  .article-summary__generate:hover {
+    background: var(--rm-bg);
+  }
+}
+
+.article-summary__generate:active {
+  background: var(--rm-bg);
+}
+
 .article-summary__footer {
   margin: 8px 0 0;
   color: var(--rm-meta);

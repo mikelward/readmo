@@ -2065,23 +2065,31 @@ page's discipline is unchanged.
     already-tracked gap.)
 - **AI article summaries (allowlisted).** A short AI summary (a few
   sentences) of the article, shown **directly below the title/byline, above the
-  reading-mode bar and article body** — for **any article an allowlisted user
-  opens**. The
-  **`allowlist` table is the only boundary** (the same trusted-user list as
-  reading mode / Google News — summaries are a generation-cost surface, one
-  Gemini call per cache miss). **Pinning is not required**: the summary is a
-  feature of every article an allowlisted user reads, not just the reading list.
-  Generation is gated solely on the allowlist (`useFullTextAllowed`, the shared
-  gate — it holds off while a signed-in user's capabilities are still loading,
-  so an off-list user fires no Edge call), and the `summary` Edge Function
-  re-checks the allowlist server-side regardless. The reader's `useSummary`
-  generates the summary for the article being opened.
+  reading-mode bar and article body** — for an **allowlisted user**. The
+  **`allowlist` table is the only access boundary** (the same trusted-user list
+  as reading mode / Google News — summaries are a generation-cost surface, one
+  Gemini call per cache miss). Access is gated solely on the allowlist
+  (`useFullTextAllowed`, the shared gate — it holds off while a signed-in user's
+  capabilities are still loading, so an off-list user fires no Edge call), and the
+  `summary` Edge Function re-checks the allowlist server-side regardless.
+  - **Generation is not automatic on every open — pin before opening, or ask.**
+    The reader's `useSummary` auto-generates only when the article was **pinned
+    before it opened** (the "I'll read this" signal the pre-warm already acts on,
+    passed to `ArticleSummary` as `autoGenerate`). For an **unpinned** open it
+    offers a **"Generate summary" button** instead, so a casual glance doesn't
+    spend a Gemini/Jina call — the user asks and the summary generates on click.
+    Either way, a summary **already cached** (warmed by a pin, or generated on an
+    earlier open) shows immediately: the gate is on *fetching*, not on
+    *displaying*. Offline with nothing cached, there's no button (nothing to
+    generate) — silent, like the rest of the card's soft states. A pin made while
+    reading warms the summary via the pre-warm subscriber, so it appears without a
+    button too.
   - **Pin is a prefetch signal (incl. cross-device), generate-once.**
     `useSummaryPrewarm` pre-warms the summary for **every pinned item** — pinned
     on this device, synced from another device, or restored on boot — the summary
     sibling of `useOfflineCacheLock`, which already warms each pinned item's
-    reader body + full text the same way. Pinning doesn't gate the feature; it
-    just signals an item is likely to be read, so we warm it ahead of the open.
+    reader body + full text the same way. Pinning is both the auto-generate signal
+    on open and the prefetch signal that warms it ahead of time.
     Both the pre-warm and the reader's on-open `useSummary` share the
     `['summary', id]` React Query key and the result caches on
     `items.ai_summary`, so whichever fires first generates and the rest are plain
@@ -2207,12 +2215,13 @@ page's discipline is unchanged.
   - **Cost & reliability (guardrail #5):** a cache miss makes **two** outbound
     calls — a Jina fetch (free tier 1M tokens/mo, ~10–100 K tokens per page) and a
     Gemini Flash-Lite call (~$0.10 / 1M input, ~$0.40 / 1M output). Each article is
-    summarized **once** (shared cache), so even though a summary is now generated
-    for **every article an allowlisted user opens** (not just pinned ones), the
-    miss volume is bounded by *distinct articles read* across the allowlisted
-    (family) set — still **effectively $0**, well under both free tiers. A pin
-    pre-warms the cache ahead of the open, so a pinned article is usually a hit;
-    an unpinned article generates on its first open. Unlike the earlier
+    summarized **once** (shared cache), and generation only happens for a **pinned
+    article** (pre-warmed, or auto-generated on open) or when an allowlisted user
+    **taps "Generate summary"** on an unpinned one — so the miss volume is bounded
+    by *distinct pinned/requested articles* across the allowlisted (family) set —
+    **effectively $0**, well under both free tiers. A pin pre-warms the cache
+    ahead of the open, so a pinned article is usually a hit; an unpinned article
+    generates only on an explicit ask. Unlike the earlier
     stored-content design this adds a per-article publisher fetch (via Jina), which
     is the deliberate trade for newshacker-parity and clean bot-blocked/paywalled
     handling; the fetch is off our polite first-party path. Latency: Jina (~1–5 s) +
