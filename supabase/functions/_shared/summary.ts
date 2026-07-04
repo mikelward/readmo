@@ -148,24 +148,40 @@ export function buildSummaryPrompt(
  * **TL;DR:** …") are all removed. Tolerates surrounding markdown emphasis/heading
  * markers (`*`, `_`, `#`) since the model may bold or head the label. */
 export function stripSummaryPreamble(text: string): string {
+  // Trailing mop-up after a matched label: whitespace, separators, and the
+  // label's OWN closing emphasis/heading markers. An emphasis run is only
+  // consumed when it's a closing/dangling run (followed by whitespace, a
+  // separator, or end of text) — never when it opens the first summary token,
+  // so "TL;DR: **OpenAI** …" keeps its bold and doesn't become "OpenAI** …".
+  const trail = String.raw`(?:[ \t\n:\-–—]|[*_#]+(?=[\s:\-–—]|$))*`;
   const patterns = [
     // A lead-in sentence: "Here's/Here is a tl;dr/summary of the article:",
     // optionally opened with "Sure,". The summary word must be the OFFERED
     // object — immediately before the colon, or before an "of …" phrase — so a
     // legit summary where it's just an adjective ("This is a summary judgment
     // case: …", "Here are the summary statistics: …") keeps its subject.
-    /^[#*_\s]*(?:sure[,!.]*\s*)?(?:here(?:['’])?s|here\s+is|here\s+are|below\s+is|this\s+is)\b[^:\n]*?\b(?:tl[;:]?dr|summary|gist|rundown|synopsis)(?:\s+of\b[^:\n]*)?\s*:[#*_\s]*/i,
+    new RegExp(
+      String.raw`^[#*_\s]*(?:sure[,!.]*\s*)?(?:here(?:['’])?s|here\s+is|here\s+are|below\s+is|this\s+is)\b[^:\n]*?\b(?:tl[;:]?dr|summary|gist|rundown|synopsis)(?:\s+of\b[^:\n]*)?\s*:` +
+        trail,
+      'i',
+    ),
     // A "tl;dr" LABEL: the token only counts as a prefix when it's clearly a
     // label — followed by a separator ("tl;dr:", "TL;DR —"), closing markdown
     // emphasis ("**tl;dr**"), or a line break / end of text. A bare token
     // followed by an ordinary word is left alone, so a summary that genuinely
     // opens with "TLDR" as a proper noun (e.g. the TLDR newsletter / tldr-pages)
     // keeps its first word.
-    /^[#*_\s]*tl[;:]?dr\b(?:[*_]+|[ \t]*[:\-–—]|[ \t]*(?=\n)|[ \t]*$)[#*_\s:\-–—]*/i,
+    new RegExp(
+      String.raw`^[#*_\s]*tl[;:]?dr\b(?:[*_]+|[ \t]*[:\-–—]|[ \t]*(?=\n)|[ \t]*$)` + trail,
+      'i',
+    ),
     // Word labels ("Summary", "Gist", "Synopsis") are only a prefix when a real
     // delimiter or a line break follows — "Summary:" / "**Summary**" / a "##
     // Summary" heading — NOT when an ordinary word does ("Summary judgment …").
-    /^[#*_\s]*(?:summary|gist|synopsis)\b[*_]*(?:\s*[:\-–—]\s*|\s*\n\s*)[#*_\s]*/i,
+    new RegExp(
+      String.raw`^[#*_\s]*(?:summary|gist|synopsis)\b[*_]*(?:\s*[:\-–—]\s*|\s*\n\s*)` + trail,
+      'i',
+    ),
   ];
   let out = text.trim();
   for (let guard = 0; guard < 4; guard++) {
