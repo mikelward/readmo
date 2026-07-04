@@ -8,8 +8,31 @@
 }
 
 .settings__heading {
-  font-size: 0.95rem;
+  font-size: 1.1rem;
   margin: 0 0 10px;
+}
+
+/* Sub-label for an individual control within a grouped section (e.g. the
+   Color theme / Dark-light / Text size / Font controls under Appearance).
+   Lighter than the section heading; extra top margin separates it from the
+   preceding control. */
+.settings__subheading {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--rm-text);
+  margin: 18px 0 8px;
+}
+
+/* The first sub-label sits right under the section heading, so it doesn't need
+   the full separating gap. */
+.settings__heading + .settings__subheading {
+  margin-top: 0;
+}
+
+/* A toggle list that follows another control in the same section wants a little
+   breathing room above it. */
+.settings__toggles--spaced {
+  margin-top: 18px;
 }
 
 .settings__add,
