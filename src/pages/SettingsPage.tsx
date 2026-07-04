@@ -77,6 +77,7 @@ export function SettingsPage() {
         </div>
       </section>
 
+      {/* Reading — how the list behaves. The settings that matter most, up top. */}
       <section className="settings__section">
         <h2 className="settings__heading">Reading</h2>
         <ul className="settings__toggles">
@@ -90,11 +91,11 @@ export function SettingsPage() {
               />
               <span className="settings__toggle-text">
                 <span className="settings__toggle-title">
-                  Hide articles as you scroll past
+                  Mark Done as you scroll
                 </span>
                 <span className="settings__toggle-desc">
-                  Unpinned articles are marked Done once you scroll them off the
-                  top of the screen. Pin an article to keep it.
+                  Dismiss articles when they scroll off the top of the screen.
+                  Pin an article to keep it.
                 </span>
               </span>
             </label>
@@ -116,43 +117,8 @@ export function SettingsPage() {
               </span>
             </label>
           </li>
-          <li className="settings__toggle">
-            <label className="settings__toggle-label">
-              <input
-                type="checkbox"
-                className="settings__toggle-check"
-                checked={showRowFavicon}
-                onChange={(e) => setShowRowFavicon(e.target.checked)}
-              />
-              <span className="settings__toggle-text">
-                <span className="settings__toggle-title">
-                  Show feed icons on articles
-                </span>
-              </span>
-            </label>
-          </li>
-          {spoilerToggleVisible ? (
-            <li className="settings__toggle">
-              <label className="settings__toggle-label">
-                <input
-                  type="checkbox"
-                  className="settings__toggle-check"
-                  checked={hideSportsSpoilers}
-                  onChange={(e) => setHideSportsSpoilers(e.target.checked)}
-                />
-                <span className="settings__toggle-text">
-                  <span className="settings__toggle-title">
-                    Hide sports spoilers
-                  </span>
-                </span>
-              </label>
-            </li>
-          ) : null}
         </ul>
-      </section>
-
-      <section className="settings__section">
-        <h2 className="settings__heading">Sort order</h2>
+        <h3 className="settings__subheading">Sort order</h3>
         <div className="settings__theme" role="radiogroup" aria-label="Sort order">
           {sortOrders.map(({ value, label }) => (
             <button
@@ -171,8 +137,62 @@ export function SettingsPage() {
         </div>
       </section>
 
+      {/* Appearance — how things look/lay out. The four theme controls are folded
+          under one heading (instead of one section each), followed by the two
+          minor display settings (feed icons, toolbar position) further down. */}
       <section className="settings__section">
-        <h2 className="settings__heading">Bottom toolbar</h2>
+        <h2 className="settings__heading">Appearance</h2>
+
+        <h3 className="settings__subheading">Color theme</h3>
+        <ColorThemeControl />
+
+        <h3 className="settings__subheading">Dark/light mode</h3>
+        <ThemeModeControl />
+
+        <h3 className="settings__subheading">Text size</h3>
+        <TextSizeControl />
+
+        <h3 className="settings__subheading">Font</h3>
+        <div className="settings__theme" role="radiogroup" aria-label="Font">
+          {fonts.map((f) => (
+            <button
+              key={f}
+              type="button"
+              role="radio"
+              aria-checked={font === f}
+              className={'settings__theme-btn' + (font === f ? ' is-active' : '')}
+              // Preview each option in its own face. `system` falls back to the
+              // native stack, matching what choosing it actually does.
+              style={{ fontFamily: FONT_STACKS[f] }}
+              onClick={() => setFont(f)}
+            >
+              {FONT_LABELS[f]}
+            </button>
+          ))}
+        </div>
+
+        <ul className="settings__toggles settings__toggles--spaced">
+          <li className="settings__toggle">
+            <label className="settings__toggle-label">
+              <input
+                type="checkbox"
+                className="settings__toggle-check"
+                checked={showRowFavicon}
+                onChange={(e) => setShowRowFavicon(e.target.checked)}
+              />
+              <span className="settings__toggle-text">
+                <span className="settings__toggle-title">
+                  Show feed icons on articles
+                </span>
+                <span className="settings__toggle-desc">
+                  Show each feed’s icon beside its articles in lists.
+                </span>
+              </span>
+            </label>
+          </li>
+        </ul>
+
+        <h3 className="settings__subheading">Bottom toolbar</h3>
         <div
           className="settings__theme"
           role="radiogroup"
@@ -196,41 +216,35 @@ export function SettingsPage() {
         </div>
       </section>
 
-      <section className="settings__section">
-        <h2 className="settings__heading">Color Theme</h2>
-        <ColorThemeControl />
-      </section>
-
-      <section className="settings__section">
-        <h2 className="settings__heading">Dark/Light Mode</h2>
-        <ThemeModeControl />
-      </section>
-
-      <section className="settings__section">
-        <h2 className="settings__heading">Text size</h2>
-        <TextSizeControl />
-      </section>
-
-      <section className="settings__section">
-        <h2 className="settings__heading">Font</h2>
-        <div className="settings__theme" role="radiogroup" aria-label="Font">
-          {fonts.map((f) => (
-            <button
-              key={f}
-              type="button"
-              role="radio"
-              aria-checked={font === f}
-              className={'settings__theme-btn' + (font === f ? ' is-active' : '')}
-              // Preview each option in its own face. `system` falls back to the
-              // native stack, matching what choosing it actually does.
-              style={{ fontFamily: FONT_STACKS[f] }}
-              onClick={() => setFont(f)}
-            >
-              {FONT_LABELS[f]}
-            </button>
-          ))}
-        </div>
-      </section>
+      {/* Smart features — the AI-assisted extras. Gated on the allowlist
+          capability (like the rewrite itself), so it's hidden — heading and all —
+          for anyone off the list rather than showing a dead toggle. */}
+      {spoilerToggleVisible ? (
+        <section className="settings__section">
+          <h2 className="settings__heading">Smart features</h2>
+          <ul className="settings__toggles">
+            <li className="settings__toggle">
+              <label className="settings__toggle-label">
+                <input
+                  type="checkbox"
+                  className="settings__toggle-check"
+                  checked={hideSportsSpoilers}
+                  onChange={(e) => setHideSportsSpoilers(e.target.checked)}
+                />
+                <span className="settings__toggle-text">
+                  <span className="settings__toggle-title">
+                    Hide sports spoilers
+                  </span>
+                  <span className="settings__toggle-desc">
+                    Rewrite sports headlines that give away a result, so the
+                    score stays hidden until you open the article.
+                  </span>
+                </span>
+              </label>
+            </li>
+          </ul>
+        </section>
+      ) : null}
 
       <section className="settings__section">
         <h2 className="settings__heading">Account</h2>

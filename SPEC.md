@@ -1487,25 +1487,33 @@ negligible and off every critical path. See the External services table in
    on titles for MVP; body search deferred). Search-glass in the header
    right-actions group, suppressed on `/search`. Same placement.
 
-10. **Settings** — `/settings`: **Reading**, **Sort order**, **Bottom toolbar**,
-    **Color Theme** (Ink/Grape swatches), **Dark/Light Mode** (light/dark/system
-    icons), **Text size** (Extra Small–Huge A-glyphs) — all symbolic segmented
-    pickers — font, account/sign-out, and an **About** link. Reached
-    from the **account menu** (top-right avatar → Settings). Feed management
-    lives on the Feeds page, not here, but an **Edit feeds** button at the top
-    of Settings links there (see below).
-    - **Reading** — per-device toggles: **Hide articles as you scroll past**
+10. **Settings** — `/settings`: grouped into three purpose-named sections —
+    **Reading** (how the list behaves), **Appearance** (how it looks/lays out),
+    and **Smart features** (the AI-assisted extras) — plus **Account**/sign-out
+    and an **About** link. The ordering puts the most-used behavioral settings up
+    top and the minor/visual ones lower; the four theme pickers are folded under
+    one **Appearance** heading (sub-labeled `settings__subheading`) rather than a
+    section each. Reached from the **account menu** (top-right avatar → Settings).
+    Feed management lives on the Feeds page, not here, but an **Edit feeds**
+    button at the top of Settings links there (see below).
+    - **Reading** — per-device toggles **Mark Done as you scroll**
       (`readmo:hide-on-scroll`, **off by default**), wiring the auto-hide
       behavior in *List toolbar → Auto-hide on scroll*; and **Group by feed**
       (`readmo:group-by-feed`, **off by default**), sectioning Home/folder lists
-      by feed (see *Feed views → Sort & grouping*).
-    - **Sort order** — a two-option per-device picker (`readmo:item-sort`)
-      choosing the feed body's chronological order: **Newest first** (the
-      default) or **Oldest first**. See *Feed views → Sort & grouping*.
-    - **Bottom toolbar** — a two-option per-device picker (`readmo:bottom-bar`)
-      choosing where the bottom action bar sits: **Bottom of list** (the
-      default — the relative end-of-list footer) or **Bottom of screen** (pinned
-      to the viewport foot). See *Bottom action bar*.
+      by feed (see *Feed views → Sort & grouping*) — followed by the **Sort
+      order** picker (`readmo:item-sort`): **Newest first** (default) or **Oldest
+      first**.
+    - **Appearance** — the **Color theme** (Ink/Grape swatches), **Dark/light
+      mode** (light/dark/system icons), **Text size** (Extra Small–Huge
+      A-glyphs), and **Font** pickers (all symbolic segmented controls), then the
+      two minor display settings placed further down: the **Show feed icons on
+      articles** toggle (`readmo:show-row-favicon`) and the **Bottom toolbar**
+      picker (`readmo:bottom-bar`): **Bottom of list** (default) or **Bottom of
+      screen** (see *Bottom action bar*).
+    - **Smart features** — the **Hide sports spoilers** toggle
+      (`readmo:hide-sports-spoilers`); shown only for allowlisted callers (same
+      gate as the rewrite), so the whole section is hidden — heading and all — for
+      anyone off the list. See *Spoiler-free sports headlines*.
 
 11. **Feeds** — `/feeds`: feed management, reached from the drawer's **Feeds**
     section edit pencil (also linked from the account menu).
@@ -1713,7 +1721,7 @@ every article. In **non-grouped** views (the flat river, library, search,
 offline), where rows from different feeds interleave with no section header to
 attribute them, each row *can* show its own feed's favicon just before the
 source name — gated on the **Show feed icons on articles** setting (Settings →
-Reading; `readmo:show-row-favicon`, **off by default**, per-device). The
+Appearance; `readmo:show-row-favicon`, **off by default**, per-device). The
 group-by-feed header always carries its icon regardless of the setting. The
 **single feed page** (`/feed/:feedId`) also shows it once, left of the feed name
 in the page-header title (sized up to 20px for the heading), independent of that
@@ -2180,7 +2188,7 @@ page's discipline is unchanged.
     allowlisted (`canUseFullText(useCapabilities())`, the shared reading-mode gate)
     **and** the per-user **"Hide sports spoilers"** setting is on
     (`useHideSportsSpoilers`, a per-device preference, **default on**, in the
-    Settings → Reading section; the toggle is hidden for off-list users). Off-list,
+    Settings → Smart features section; the toggle is hidden for off-list users). Off-list,
     setting-off, or no rewrite cached → the original headline, untouched. The
     rewritten row/headline carries a **subtle, non-interactive marker**
     (`VisibilityOff` glyph, no tap zone — guardrail #2) whose native tooltip

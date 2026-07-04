@@ -165,12 +165,12 @@ describe('SettingsPage — Reading & Bottom toolbar', () => {
     expect(window.localStorage.getItem(ITEM_SORT_KEY)).toBe('oldest');
   });
 
-  it('toggles "Hide articles as you scroll past" and persists it', async () => {
+  it('toggles "Mark Done as you scroll" and persists it', async () => {
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
 
     const toggle = screen.getByRole('checkbox', {
-      name: /hide articles as you scroll past/i,
+      name: /mark done as you scroll/i,
     });
     expect(toggle).not.toBeChecked();
 
