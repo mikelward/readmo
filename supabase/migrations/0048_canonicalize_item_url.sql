@@ -29,6 +29,14 @@
 -- — keep the tracking-key list in sync. The TS version governs new writes; this
 -- one exists only to collapse the historical backlog.
 
+-- Wrap the whole migration in ONE explicit transaction. `supabase db push`
+-- executes each statement in autocommit (it does NOT wrap the file), so a bare
+-- `lock table` below would raise 25P01 ("LOCK TABLE can only be used in
+-- transaction blocks"). The explicit BEGIN also makes the collapse + url-rewrite
+-- atomic with the lock, which is the whole point (see the lock comment). The
+-- closing COMMIT is at the very end of the file.
+begin;
+
 -- ---------------------------------------------------------------------------
 -- Canonicalization function (SQL twin of parser.ts `canonicalizeItemUrl`).
 -- Removes tracking/campaign query params, preserving the order + values of the
@@ -481,3 +489,6 @@ comment on function public.upsert_feed_items(uuid, jsonb) is
 -- explicit so a fresh apply order can't leave it EXECUTE-to-PUBLIC).
 revoke execute on function public.upsert_feed_items(uuid, jsonb) from public;
 grant  execute on function public.upsert_feed_items(uuid, jsonb) to service_role;
+
+-- Close the transaction opened at the top of the file.
+commit;
