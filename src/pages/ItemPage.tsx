@@ -368,8 +368,22 @@ export function ItemPage() {
   // opening is the "I'll read this" signal that auto-generates the AI summary
   // (and prewarms it); an unpinned open offers a "Generate summary" button
   // instead. Snapshot at open — a pin made later while reading shouldn't
-  // retroactively flip an already-decided open, and re-snapshots per item below.
-  const [pinnedAtOpen, setPinnedAtOpen] = useState(() => state.pinned);
+  // retroactively flip an already-decided open.
+  //
+  // Keyed to the item id and captured DURING render (the supported "adjust state
+  // when a prop changes" pattern), NOT in an effect: navigating this same
+  // ItemPage instance from a pinned article to an unpinned one would otherwise
+  // leave the old `true` in place for the first render of the new item — long
+  // enough for the mounted `ArticleSummary` to auto-generate `getSummary(next)`
+  // before an effect could reset the snapshot, leaking a fetch past the gate.
+  // Capturing on the render where `resolved.item.id` first changes reads the new
+  // item's pin state immediately, so the leak window never exists.
+  const [pinSnapshot, setPinSnapshot] = useState<{ id: string; pinned: boolean }>(
+    () => ({ id, pinned: state.pinned }),
+  );
+  if (resolved && pinSnapshot.id !== resolved.item.id) {
+    setPinSnapshot({ id: resolved.item.id, pinned: state.pinned });
+  }
 
   const cachedFull = resolved?.item.fullContentHtml ?? null;
   const truncated = resolved ? looksTruncated(resolved.item) : false;
@@ -438,9 +452,8 @@ export function ItemPage() {
     setFullReadyAtOpen(
       cachedFullTextOk(queryClient.getQueryData<FullTextResult>(['fulltext', id])),
     );
-    // Re-snapshot "was it pinned at open?" for the newly-opened item, so the
-    // summary auto-generates only when this article was already pinned.
-    setPinnedAtOpen(state.pinned);
+    // (The pinned-at-open snapshot is captured during render, above — keeping it
+    // out of this effect is what closes the auto-generate leak window.)
     // Only when the item first resolves / changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolved?.item.id]);
@@ -694,6 +707,10 @@ export function ItemPage() {
 
   const { item, feed } = resolved;
   const source = feed.title || formatDisplayDomain(item.url);
+  // Was this article pinned when it opened? Only true when the snapshot is for
+  // the currently-rendered item (the render-time capture above guarantees they
+  // match by the time we get here); drives the AI summary's auto-generate.
+  const pinnedAtOpen = pinSnapshot.id === item.id && pinSnapshot.pinned;
   // The headline to show: the spoiler-free rewrite for an allowlisted caller with
   // the setting on, else the original. Article body + link target are unchanged —
   // opening still gives the full piece (see lib/spoilerHeadline).
