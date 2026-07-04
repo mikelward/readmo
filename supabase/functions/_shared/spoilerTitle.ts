@@ -79,12 +79,15 @@ export function buildSpoilerPrompt(
     `anything not about sport) has nothing to spoil.\n\n` +
     `When it IS a spoiler, write a spoiler-free replacement that names only WHICH ` +
     `event it is, never what happened: lead with the short competition or league ` +
-    `name (e.g. F1, EPL, NBA, NFL, World Cup), then the participants as short ` +
-    `abbreviations joined by "v" for a head-to-head (use just the one team ` +
+    `name (e.g. F1, EPL, NBA, NFL, World Cup). If you can't identify the specific ` +
+    `competition, lead with the SPORT instead (e.g. Rugby, Cricket, Tennis) so the ` +
+    `reader still knows what it is — never omit both. Then give the participants as ` +
+    `short abbreviations joined by "v" for a head-to-head (use just the one team ` +
     `when only one is named), then the word "spoiler". Use the article body to ` +
-    `identify the competition and the opponent when the headline names only one ` +
-    `side. Examples: "EPL MNU v ARS spoiler", "F1 British GP qualifying spoiler", ` +
-    `"World Cup ARG v CPV spoiler", "NBA Finals Game 3 spoiler".\n\n` +
+    `identify the competition, the sport, and the opponent when the headline names ` +
+    `only one side. Examples: "EPL MNU v ARS spoiler", "F1 British GP qualifying ` +
+    `spoiler", "World Cup ARG v CPV spoiler", "NBA Finals Game 3 spoiler", ` +
+    `"Rugby AUS v IRE spoiler".\n\n` +
     `Reply with ONLY a JSON object of the form ` +
     `{"spoiler": boolean, "headline": string}. Set "headline" to the ` +
     `spoiler-free replacement when "spoiler" is true, otherwise an empty ` +

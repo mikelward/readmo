@@ -2207,7 +2207,9 @@ page's discipline is unchanged.
   users, such a headline is replaced — in the list **and** the reader — with a
   spoiler-free rewrite that leads with the short competition name and names only
   *what* happened, never the result: **"EPL MNU v ARS spoiler"**, **"F1 British
-  GP qualifying spoiler"**, **"World Cup AUS v EGY spoiler"**. Opening the article
+  GP qualifying spoiler"**, **"World Cup AUS v EGY spoiler"**. When the specific
+  competition can't be identified, the rewrite leads with the **sport** instead
+  so it's never left bare (**"Rugby AUS v IRE spoiler"**). Opening the article
   is unchanged (full content, spoilers and all). The **original headline always
   stays in `items.title`** and the rewrite in a separate column, so display is
   reversible and the choice is a pure client decision.

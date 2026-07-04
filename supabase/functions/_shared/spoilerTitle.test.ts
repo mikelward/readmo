@@ -68,6 +68,17 @@ describe('buildSpoilerPrompt', () => {
     expect(prompt).toMatch(/unsure[\s\S]*?treat it as a spoiler/i);
   });
 
+  it('falls back to the sport when the competition is unknown', () => {
+    // The rewrite must always name at least the sport: an unidentified league
+    // like a bare "AUS v IRE spoiler" leaves the reader guessing, so the model
+    // is told to lead with the sport (Rugby, Cricket, …) when it can't name the
+    // competition.
+    const prompt = buildSpoilerPrompt('Wallabies edge Ireland in Sydney thriller', 'rugby body');
+    expect(prompt).toMatch(/lead with the SPORT/i);
+    expect(prompt).toMatch(/Rugby AUS v IRE spoiler/);
+    expect(prompt).toMatch(/never omit both/i);
+  });
+
   it('hides in-play events and exempts only pre-game content', () => {
     // Guards mid-game spoilers: goals, cards, crashes, and in-play injuries are
     // hidden too — and the ONLY carve-out is pre-game (a transfer/fixture just
