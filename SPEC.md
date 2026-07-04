@@ -2093,7 +2093,10 @@ page's discipline is unchanged.
     Both the pre-warm and the reader's on-open `useSummary` share the
     `['summary', id]` React Query key and the result caches on
     `items.ai_summary`, so whichever fires first generates and the rest are plain
-    cache hits — **never a second Gemini call**. So a pinned article is usually
+    cache hits — **never a second Gemini call** on one client. Truly *simultaneous*
+    misses across devices/users are collapsed on the server too (the generation
+    lease below), so N concurrent first-opens of the same article still cost one
+    Gemini call. So a pinned article is usually
     already summarized (no spinner) by the time it's opened, on whatever device.
     The pre-warm is also gated on the family-only **Auto generate summaries for
     pinned articles** setting (`readmo:auto-summarize-pinned`, on by default —
@@ -2202,6 +2205,33 @@ page's discipline is unchanged.
     is re-summarized rather than served a stale gist. (It compares the real body/
     title, **not** `content_hash` — the poller sets `content_hash` to the guid, so
     it never changes on a same-guid edit.)
+  - **Concurrent requests are single-flighted (a generation lease).** The cache
+    hit above only dedupes *sequential* callers; two misses for the same shared
+    item that overlap (a device pre-warm racing a pin on another device, the same
+    article open on phone + desktop, two family users pinning it at once) would
+    each run the full Jina + Gemini pass. So the `summary` function leases the
+    generation: `items.ai_summary_generated_at` set while `ai_summary` is still
+    null **means "a generation is in flight."** The claim is a single atomic
+    conditional `UPDATE` (stamp the lease iff the summary is still null AND no
+    fresh lease exists) — exactly one concurrent caller wins and generates; the
+    rest poll and return its result the instant it's cached, so the second caller
+    is typically *faster* than generating itself (it only waits out the winner's
+    remaining time). N concurrent misses → **one** Gemini call. It's a durable row
+    marker, **not** a Postgres advisory lock: advisory locks are session/txn
+    scoped and Supabase's pooled PostgREST connections would drop the lock the
+    moment the claim statement commits, long before the Deno-side Jina/Gemini
+    awaits finish. The lease has a **60 s TTL** (> the ~35 s worst-case Jina +
+    Gemini) so a generator that dies can't wedge waiters — after the TTL the
+    marker is stale and reclaimable; a generator that *fails* releases it at once
+    (resets to null, restoring the "both null" state); and a waiter that hits its
+    ~45 s overall cap self-generates without a lease, so a caller is never worse
+    off than the no-lease behavior. Reuses the existing column (no migration): it
+    already sits out of list reads (0035 scrub) and is already nulled by the
+    poller on content change, so the lease neither leaks nor outlives an edit.
+    Purely additive to the deployed backend — an old summary function running
+    during the deploy window just ignores the lease (at most one redundant call).
+    The coalescing logic (`coalesceSummaryGeneration`) is unit-tested in
+    `_shared/summary.ts`.
   - **Outcomes** (the function returns `{ status, summary, retryable? }`): `ok`
     (the summary string), `empty` (nothing to summarize, or the silent
     allowlist denial — flagged `retryable` so a later allowlist change
@@ -2221,7 +2251,10 @@ page's discipline is unchanged.
     by *distinct pinned/requested articles* across the allowlisted (family) set —
     **effectively $0**, well under both free tiers. A pin pre-warms the cache
     ahead of the open, so a pinned article is usually a hit; an unpinned article
-    generates only on an explicit ask. Unlike the earlier
+    generates only on an explicit ask. The generation lease (above) also collapses
+    truly-concurrent first-opens of the same article to a single Jina + Gemini
+    pass, so even a burst of simultaneous requests can't multiply the per-article
+    cost. Unlike the earlier
     stored-content design this adds a per-article publisher fetch (via Jina), which
     is the deliberate trade for newshacker-parity and clean bot-blocked/paywalled
     handling; the fetch is off our polite first-party path. Latency: Jina (~1–5 s) +

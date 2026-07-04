@@ -1,15 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   MAX_SUMMARY_CONTENT_CHARS,
   SUMMARY_TRUNCATION_TEXT_THRESHOLD,
   buildSummaryPrompt,
   clampSummaryText,
+  coalesceSummaryGeneration,
   htmlToPlainText,
   looksTruncatedHtml,
   parseGeminiText,
   pickStoredContent,
   stripSummaryPreamble,
 } from './summary';
+import type { SummaryLeaseClient, SummaryOutcome } from './summary';
 
 describe('htmlToPlainText', () => {
   it('returns empty string for null/undefined/empty', () => {
@@ -278,5 +280,179 @@ describe('parseGeminiText', () => {
     expect(
       parseGeminiText({ candidates: [{ content: { parts: [{ text: '   ' }] } }] }),
     ).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// coalesceSummaryGeneration — single-flight lease over concurrent callers.
+
+const ITEM = 'item-1';
+
+/** An in-memory model of the `items` row's summary + lease columns that mirrors
+ * the atomic conditional-UPDATE claim the real SummaryLeaseClient runs against
+ * Postgres. The claim's check-and-set is synchronous (no await before the
+ * mutation), exactly like a single UPDATE statement — so two callers can never
+ * both win, without relying on any async-scheduling race. */
+function makeWorld(initial?: { aiSummary?: string | null; leaseAt?: string | null; clock?: number }) {
+  const state = {
+    aiSummary: initial?.aiSummary ?? null,
+    leaseAt: initial?.leaseAt ?? null as string | null,
+  };
+  let clock = initial?.clock ?? 1_000_000;
+  const now = () => clock;
+  const advance = (ms: number) => { clock += ms; };
+  // Default sleep advances the virtual clock; individual tests override it to
+  // inject a writer or hold state still.
+  const sleep = (ms: number) => { advance(ms); return Promise.resolve(); };
+
+  let claimCalls = 0;
+  const client: SummaryLeaseClient = {
+    async claimLease(_itemId, staleBeforeIso, nowIso) {
+      claimCalls++;
+      if (state.aiSummary != null) return false;
+      const stale =
+        state.leaseAt == null || Date.parse(state.leaseAt) < Date.parse(staleBeforeIso);
+      if (!stale) return false;
+      state.leaseAt = nowIso; // atomic set — no await before this line
+      return true;
+    },
+    async readState() {
+      return { aiSummary: state.aiSummary, leaseAt: state.leaseAt };
+    },
+    async releaseLease(_itemId, claimStamp) {
+      if (state.aiSummary == null && state.leaseAt === claimStamp) state.leaseAt = null;
+    },
+  };
+  return { state, now, sleep, advance, client, get claimCalls() { return claimCalls; } };
+}
+
+describe('coalesceSummaryGeneration', () => {
+  it('the elected generator runs generate() once and keeps the lease on success', async () => {
+    const w = makeWorld();
+    const generate = vi.fn(async (): Promise<SummaryOutcome> => {
+      w.state.aiSummary = 'SUM';
+      w.state.leaseAt = new Date(w.now()).toISOString();
+      return { status: 'ok', summary: 'SUM', cached: true };
+    });
+
+    const out = await coalesceSummaryGeneration({
+      client: w.client, itemId: ITEM, generate, now: w.now, sleep: w.sleep,
+    });
+
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(out).toEqual({ status: 'ok', summary: 'SUM', cached: true });
+    expect(w.state.aiSummary).toBe('SUM');
+    expect(w.state.leaseAt).not.toBeNull(); // NOT released — the summary landed
+  });
+
+  it('a concurrent caller that loses the claim waits and returns the winner’s result — no second generate', async () => {
+    // Seed a fresh lease held by "the winner" (summary still generating).
+    const w = makeWorld({ leaseAt: new Date(1_000_000).toISOString() });
+    // The winner finishes during our first poll sleep: model that by writing the
+    // summary the first time the waiter sleeps.
+    let wrote = false;
+    const sleep = (ms: number) => {
+      if (!wrote) { wrote = true; w.state.aiSummary = 'FROM_WINNER'; }
+      w.advance(ms);
+      return Promise.resolve();
+    };
+    const generate = vi.fn(async (): Promise<SummaryOutcome> => {
+      throw new Error('waiter must not generate');
+    });
+
+    const out = await coalesceSummaryGeneration({
+      client: w.client, itemId: ITEM, generate, now: w.now, sleep,
+    });
+
+    expect(generate).not.toHaveBeenCalled();
+    expect(out).toEqual({ status: 'ok', summary: 'FROM_WINNER', cached: true });
+  });
+
+  it('claimLease is atomic: of two callers hitting a fresh miss, exactly one wins', async () => {
+    // Directly exercise the claim primitive (models the concurrent DB UPDATE):
+    // two claims against the same null-summary row → one true, one false.
+    const w = makeWorld();
+    const stale = new Date(w.now() - 60_000).toISOString();
+    const first = await w.client.claimLease(ITEM, stale, new Date(w.now()).toISOString());
+    const second = await w.client.claimLease(ITEM, stale, new Date(w.now() + 1).toISOString());
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+    // Once a summary is cached, no one can claim.
+    w.state.aiSummary = 'SUM';
+    expect(await w.client.claimLease(ITEM, stale, new Date(w.now()).toISOString())).toBe(false);
+  });
+
+  it('a failed generator releases the lease so the next caller reclaims and generates', async () => {
+    const w = makeWorld();
+
+    const failing = vi.fn(async (): Promise<SummaryOutcome> => ({
+      status: 'unreachable', summary: null, // no `cached` → lease released
+    }));
+    const out1 = await coalesceSummaryGeneration({
+      client: w.client, itemId: ITEM, generate: failing, now: w.now, sleep: w.sleep,
+    });
+    expect(out1.status).toBe('unreachable');
+    expect(w.state.leaseAt).toBeNull(); // released after the failure
+
+    // A later caller finds a clean row, claims, and succeeds.
+    const ok = vi.fn(async (): Promise<SummaryOutcome> => {
+      w.state.aiSummary = 'SUM';
+      return { status: 'ok', summary: 'SUM', cached: true };
+    });
+    const out2 = await coalesceSummaryGeneration({
+      client: w.client, itemId: ITEM, generate: ok, now: w.now, sleep: w.sleep,
+    });
+    expect(out2).toMatchObject({ status: 'ok', summary: 'SUM' });
+    expect(failing).toHaveBeenCalledTimes(1);
+    expect(ok).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the lease (and re-throws) when the generator throws', async () => {
+    const w = makeWorld();
+    const boom = new Error('unexpected Supabase failure');
+    const generate = vi.fn(async (): Promise<SummaryOutcome> => {
+      throw boom;
+    });
+
+    await expect(
+      coalesceSummaryGeneration({
+        client: w.client, itemId: ITEM, generate, now: w.now, sleep: w.sleep,
+      }),
+    ).rejects.toBe(boom);
+
+    // Lease released despite the throw, so a retry/waiter reclaims immediately
+    // instead of blocking on the TTL.
+    expect(w.state.leaseAt).toBeNull();
+    expect(w.state.aiSummary).toBeNull();
+  });
+
+  it('reclaims a stale lease left by a dead generator', async () => {
+    // Lease stamped 2× the TTL ago, summary never written (holder crashed).
+    const w = makeWorld({ leaseAt: new Date(1_000_000 - 120_000).toISOString() });
+    const generate = vi.fn(async (): Promise<SummaryOutcome> => {
+      w.state.aiSummary = 'SUM';
+      return { status: 'ok', summary: 'SUM', cached: true };
+    });
+    const out = await coalesceSummaryGeneration({
+      client: w.client, itemId: ITEM, generate, now: w.now, sleep: w.sleep,
+    });
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(out).toMatchObject({ status: 'ok', summary: 'SUM' });
+  });
+
+  it('falls back to self-generating when a wedged holder never finishes before the deadline', async () => {
+    // A fresh lease that never resolves (holder wedged): summary stays null and
+    // the lease stays fresh until the waiter’s deadline, so it self-generates.
+    const w = makeWorld({ leaseAt: new Date(1_000_000).toISOString() });
+    const generate = vi.fn(async (): Promise<SummaryOutcome> => ({
+      status: 'ok', summary: 'SELF', cached: true,
+    }));
+    const out = await coalesceSummaryGeneration({
+      client: w.client, itemId: ITEM, generate, now: w.now, sleep: w.sleep,
+      leaseTtlMs: 10_000, pollIntervalMs: 1_000, maxWaitMs: 3_000,
+    });
+    // Never won the claim (lease stayed fresh); generated once as the fallback.
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(out).toEqual({ status: 'ok', summary: 'SELF', cached: true });
   });
 });

@@ -261,3 +261,153 @@ export function parseGeminiText(json: GeminiResponseLike | null | undefined): st
     .trim();
   return text || null;
 }
+
+// ---------------------------------------------------------------------------
+// Concurrent-request coalescing (single-flight lease).
+//
+// A cache miss is expensive: a Jina fetch + a Gemini call (up to ~35 s combined).
+// The cache read at the top of the handler only dedupes SEQUENTIAL callers — the
+// first commits `items.ai_summary`, later callers short-circuit on it. But two
+// misses for the SAME article that overlap (device pre-warm racing a pin on
+// another device, the same article open on phone + desktop, two family users
+// pinning the same shared item) both read a null summary and each run the full
+// Jina + Gemini work: N concurrent misses → N Gemini calls.
+//
+// To collapse them to ONE call we lease the generation. The lease can't be a
+// Postgres advisory lock: those are session/transaction scoped, and Supabase's
+// pooled PostgREST connections mean the lock would release the moment the claim
+// statement commits — long before the Deno-side Jina/Gemini awaits finish. So
+// the lease is a durable row marker instead: `ai_summary_generated_at` set while
+// `ai_summary` is still null MEANS "a generation is in flight". The claim is a
+// single atomic conditional UPDATE (see the real client in summary/index.ts):
+// set the lease iff the summary is still null AND no fresh lease exists. Exactly
+// one concurrent caller's UPDATE matches a row; it becomes the generator, the
+// rest wait and read its result the instant it lands — so the second caller
+// typically gets a FASTER response than generating itself (it only waits out the
+// generator's remaining time, not a whole fresh Jina + Gemini pass).
+//
+// The lease has a TTL so a generator that dies (crash, Edge timeout) can't wedge
+// waiters forever — after {@link SUMMARY_LEASE_TTL_MS} the marker is treated as
+// stale and reclaimable. Waiters poll until the summary lands, the lease is
+// released/goes stale (generator failed → reclaim), or an overall deadline is
+// hit (then they self-generate without a lease, so the user still gets a summary).
+//
+// Repurposing `ai_summary_generated_at` (vs. a new column) needs no migration:
+// the column already exists (0035), is already scrubbed from list reads and
+// already nulled by the poller on content change, so the lease neither leaks nor
+// outlives an edit. A generator that fails RELEASES the lease (resets it to null),
+// so after a failure the row is back to today's "both null" state — no stale
+// timestamp lingers.
+
+/** How long a generation lease stays valid before a waiter treats it as stale
+ * and reclaims it. Must exceed the worst-case generation time (Jina ≤15 s +
+ * Gemini ≤20 s ≈ 35 s) so a slow-but-alive generator isn't preempted. */
+export const SUMMARY_LEASE_TTL_MS = 60_000;
+
+/** How often a waiter re-reads the item while the generator works. */
+export const SUMMARY_POLL_INTERVAL_MS = 750;
+
+/** Overall cap a waiter blocks before giving up and generating itself. Kept
+ * comfortably above the lease TTL so the normal path is "wait, then read the
+ * generator's result"; the self-generate fallback is only for a wedged holder. */
+export const SUMMARY_MAX_WAIT_MS = 45_000;
+
+/** The summary function's normalized outcome (mirrors the JSON envelope, plus an
+ * internal `cached` flag the coalescer uses to decide whether to release the
+ * lease). `cached: true` means a summary was actually persisted to
+ * `items.ai_summary` — so waiters can see it and the lease must NOT be released. */
+export interface SummaryOutcome {
+  status: 'ok' | 'empty' | 'unavailable' | 'unreachable';
+  summary: string | null;
+  retryable?: boolean;
+  /** Set on the generator path: true iff the summary was written to the shared
+   * item. Absent/false on every non-`ok` outcome and on an `ok` whose cache
+   * write failed (so the lease is released and a waiter regenerates). */
+  cached?: boolean;
+}
+
+/** The DB operations the coalescer needs, injected so it's unit-testable without
+ * Deno/Supabase. The real implementation lives in summary/index.ts. */
+export interface SummaryLeaseClient {
+  /** Atomically claim the generation lease for `itemId`, stamping it `nowIso`.
+   * Wins iff `ai_summary` is still null AND the existing lease is null or older
+   * than `staleBeforeIso`. Returns true iff THIS caller won. */
+  claimLease(itemId: string, staleBeforeIso: string, nowIso: string): Promise<boolean>;
+  /** Read the current cached summary and lease stamp for `itemId`. */
+  readState(itemId: string): Promise<{ aiSummary: string | null; leaseAt: string | null }>;
+  /** Release a lease we hold after a FAILED generation (no summary persisted),
+   * so a waiter/retry proceeds immediately instead of waiting out the TTL.
+   * Guarded on our own `claimStamp` so it never clobbers a summary or a lease
+   * someone else re-claimed. */
+  releaseLease(itemId: string, claimStamp: string): Promise<void>;
+}
+
+export interface CoalesceDeps {
+  client: SummaryLeaseClient;
+  itemId: string;
+  /** Runs the real Jina + Gemini work + cache write. Invoked ONLY when this
+   * caller holds the lease (or as the last-resort fallback). */
+  generate: () => Promise<SummaryOutcome>;
+  /** Current epoch ms. Injected so tests drive a virtual clock. */
+  now: () => number;
+  /** Sleep `ms`. Injected so tests advance the clock deterministically. */
+  sleep: (ms: number) => Promise<void>;
+  leaseTtlMs?: number;
+  pollIntervalMs?: number;
+  maxWaitMs?: number;
+}
+
+/**
+ * Single-flight a summary generation across concurrent callers for one item.
+ *
+ * The elected generator runs {@link CoalesceDeps.generate}; every other
+ * concurrent caller waits and returns the generator's result the moment it's
+ * cached. Falls back to self-generating if the lease can't be won and no result
+ * appears before the deadline (a wedged/dead holder), so a caller is never worse
+ * off than the no-lease behavior.
+ */
+export async function coalesceSummaryGeneration(deps: CoalesceDeps): Promise<SummaryOutcome> {
+  const { client, itemId, generate, now, sleep } = deps;
+  const leaseTtlMs = deps.leaseTtlMs ?? SUMMARY_LEASE_TTL_MS;
+  const pollIntervalMs = deps.pollIntervalMs ?? SUMMARY_POLL_INTERVAL_MS;
+  const maxWaitMs = deps.maxWaitMs ?? SUMMARY_MAX_WAIT_MS;
+  const deadline = now() + maxWaitMs;
+
+  for (;;) {
+    const nowIso = new Date(now()).toISOString();
+    const staleBeforeIso = new Date(now() - leaseTtlMs).toISOString();
+    const won = await client.claimLease(itemId, staleBeforeIso, nowIso);
+    if (won) {
+      let outcome: SummaryOutcome;
+      try {
+        outcome = await generate();
+      } catch (err) {
+        // Generator threw before returning an outcome (an unexpected
+        // Supabase/Jina/cache exception, not a soft-failure return). Release the
+        // lease so waiters/retries reclaim at once instead of blocking on the
+        // full TTL, then re-throw so the handler still reports the failure.
+        await client.releaseLease(itemId, nowIso);
+        throw err;
+      }
+      if (!outcome.cached) {
+        // Nothing was persisted (empty/unreachable/unavailable, or an `ok` whose
+        // write failed) — release so a waiter or a later mount retries at once
+        // instead of blocking on the full TTL.
+        await client.releaseLease(itemId, nowIso);
+      }
+      return outcome;
+    }
+
+    // Lost the claim: another caller holds a fresh lease, or the summary was
+    // written between our cache read and here. Poll for their result.
+    for (;;) {
+      const { aiSummary, leaseAt } = await client.readState(itemId);
+      if (aiSummary) return { status: 'ok', summary: aiSummary, cached: true };
+      const leaseFresh = leaseAt != null && Date.parse(leaseAt) >= now() - leaseTtlMs;
+      if (!leaseFresh) break; // holder failed/died → reclaim (outer loop)
+      if (now() >= deadline) return generate(); // wedged holder → self-generate
+      await sleep(pollIntervalMs);
+    }
+    if (now() >= deadline) return generate();
+  }
+}

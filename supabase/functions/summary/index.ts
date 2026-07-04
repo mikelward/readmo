@@ -60,10 +60,12 @@ import { assertSafeUrl } from '../_shared/ssrf.ts';
 import {
   buildSummaryPrompt,
   clampSummaryText,
+  coalesceSummaryGeneration,
   parseGeminiText,
   pickStoredContent,
   stripSummaryPreamble,
 } from '../_shared/summary.ts';
+import type { SummaryLeaseClient, SummaryOutcome } from '../_shared/summary.ts';
 
 const MODEL = 'gemini-2.5-flash-lite';
 const GEMINI_ENDPOINT =
@@ -210,6 +212,35 @@ async function handle(req: Request): Promise<Response> {
     return json({ status: 'unavailable', summary: null, retryable: true });
   }
 
+  // Single-flight the generation: only one concurrent caller runs the Jina +
+  // Gemini work; the rest wait and return its result the instant it's cached
+  // (see coalesceSummaryGeneration in _shared/summary.ts). The lease lives on
+  // `ai_summary_generated_at` (set while `ai_summary` is null = in flight),
+  // claimed by the atomic conditional UPDATE below. This is what collapses N
+  // simultaneous misses for the same shared item into a single Gemini call.
+  const leaseClient = makeLeaseClient(service);
+  const outcome = await coalesceSummaryGeneration({
+    client: leaseClient,
+    itemId,
+    now: () => Date.now(),
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    generate: () => generateAndCache(service, apiKey, item, itemId),
+  });
+  // `cached` is internal to the coalescer (drives lease release); keep the wire
+  // envelope exactly `{ status, summary, retryable? }` for older clients.
+  const { cached: _cached, ...body } = outcome;
+  return json(body);
+}
+
+/** Run the actual Jina fetch + stored-body fallback + Gemini call + cache write
+ * for one item, returning the normalized outcome. Called only by the elected
+ * generator (or the last-resort fallback) inside coalesceSummaryGeneration. */
+async function generateAndCache(
+  service: any,
+  apiKey: string,
+  item: { feed_id: string; url: string | null; title: string | null; content_html: string | null; full_content_html: string | null },
+  itemId: string,
+): Promise<SummaryOutcome> {
   // Article text: Jina markdown is the primary source (handles bot-blocked /
   // paywalled / JS-rendered pages, and keeps the summary off our polite
   // first-party fetcher). Fall back to the body we already store when Jina is
@@ -228,11 +259,11 @@ async function handle(req: Request): Promise<Response> {
       // re-checks on a later mount once it can yield text. Only a URL-less,
       // body-less item is truly terminal (nothing to ever summarize).
       console.log(`summary: item ${itemId} — no article text from Jina or storage`);
-      return json({
+      return {
         status: 'empty',
         summary: null,
         ...(item.url ? { retryable: true } : {}),
-      });
+      };
     }
     if (!stored.cacheable) {
       // Only a truncated feed stub is available (Jina down/screened AND no full
@@ -242,7 +273,7 @@ async function handle(req: Request): Promise<Response> {
       // every reader mount. Defer with a retryable `empty` instead (no card, no
       // spend); the next mount re-checks once better content exists.
       console.log(`summary: item ${itemId} — only a stub available, deferring (retryable empty)`);
-      return json({ status: 'empty', summary: null, retryable: true });
+      return { status: 'empty', summary: null, retryable: true };
     }
     content = stored.text;
     source = 'stored';
@@ -253,7 +284,7 @@ async function handle(req: Request): Promise<Response> {
   const summary = await generateSummary(apiKey, item.title, content);
   if (!summary) {
     console.warn(`summary: item ${itemId} — generation failed`);
-    return json({ status: 'unreachable', summary: null });
+    return { status: 'unreachable', summary: null };
   }
   console.log(`summary: item ${itemId} — generated ${summary.length} chars from ${source}, caching`);
 
@@ -267,10 +298,65 @@ async function handle(req: Request): Promise<Response> {
     .eq('id', itemId);
   if (writeError) {
     // The summary still succeeded for this caller; surface it even if the cache
-    // write failed (the next caller just regenerates).
+    // write failed. `cached` stays false so the coalescer releases the lease and
+    // a waiter regenerates rather than blocking on a summary that never landed.
     console.error(`summary: cache write for item ${itemId} failed:`, writeError);
+    return { status: 'ok', summary, cached: false };
   }
-  return json({ status: 'ok', summary });
+  return { status: 'ok', summary, cached: true };
+}
+
+/** The generation-lease operations backed by the service-role Supabase client.
+ * The lease is `items.ai_summary_generated_at` interpreted as "generation in
+ * flight" while `ai_summary` is still null (see coalesceSummaryGeneration). */
+function makeLeaseClient(service: any): SummaryLeaseClient {
+  return {
+    async claimLease(itemId, staleBeforeIso, nowIso) {
+      // Atomic claim: stamp the lease iff the summary is still null AND no fresh
+      // lease exists (null, or older than the TTL cutoff). One concurrent
+      // caller's UPDATE matches the row; the rest match zero rows and go wait.
+      const { data, error } = await service
+        .from('items')
+        .update({ ai_summary_generated_at: nowIso })
+        .eq('id', itemId)
+        .is('ai_summary', null)
+        // Quote the timestamp: its ':'/'.' are reserved in the or() logic-tree
+        // grammar, so an unquoted value could misparse.
+        .or(`ai_summary_generated_at.is.null,ai_summary_generated_at.lt."${staleBeforeIso}"`)
+        .select('id');
+      if (error) {
+        // Lease infra failed — fail OPEN to generation so the caller still gets a
+        // summary (worst case a redundant Gemini call during a DB hiccup).
+        console.error(`summary: lease claim for item ${itemId} failed, generating anyway:`, error);
+        return true;
+      }
+      return (data?.length ?? 0) > 0;
+    },
+    async readState(itemId) {
+      const { data } = await service
+        .from('items')
+        .select('ai_summary, ai_summary_generated_at')
+        .eq('id', itemId)
+        .maybeSingle();
+      return {
+        aiSummary: data?.ai_summary ?? null,
+        leaseAt: data?.ai_summary_generated_at ?? null,
+      };
+    },
+    async releaseLease(itemId, claimStamp) {
+      // Reset the lease to null ONLY if we still hold it (exact stamp match) and
+      // no summary landed — never clobber a written summary or a re-claimed lease.
+      const { error } = await service
+        .from('items')
+        .update({ ai_summary_generated_at: null })
+        .eq('id', itemId)
+        .is('ai_summary', null)
+        .eq('ai_summary_generated_at', claimStamp);
+      if (error) {
+        console.error(`summary: lease release for item ${itemId} failed:`, error);
+      }
+    },
+  };
 }
 
 /** Fetch the article as Jina markdown, but only for URLs we're reasonably sure
