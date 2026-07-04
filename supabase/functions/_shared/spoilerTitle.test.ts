@@ -151,6 +151,24 @@ describe('buildSpoilerPrompt', () => {
     expect(prompt).toMatch(/never invent a league/i);
   });
 
+  it('never treats non-sport news as a spoiler, however violent', () => {
+    // Regression: a hard-news story about a leader killed in an airstrike was
+    // rewritten as "Iran spoiler" — the injury/crash/collapse/medical-emergency
+    // language bled into non-sport news, and the "never omit both league/sport"
+    // rule then forced a place name in as if it were a competition. The prompt
+    // must gate on SPORT first and exempt real-world news (war, accidents,
+    // deaths) up front, before any of the in-play-incident rules apply.
+    const prompt = buildSpoilerPrompt(
+      'Hundreds of thousands mourn leader killed in airstrike',
+      '',
+    );
+    expect(prompt).toMatch(/is even about SPORT/i);
+    expect(prompt).toMatch(/airstrike|war/i);
+    expect(prompt).toMatch(/NEVER a spoiler/i);
+    expect(prompt).toMatch(/in-play SPORTING incident only/i);
+    expect(prompt).toMatch(/not a sports spoiler/i);
+  });
+
   it('hides in-play events and exempts only pre-game content', () => {
     // Guards mid-game spoilers: goals, cards, crashes, and in-play injuries are
     // hidden too — and the ONLY carve-out is pre-game (a transfer/fixture just

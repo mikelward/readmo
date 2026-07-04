@@ -63,6 +63,15 @@ export function buildSpoilerPrompt(
   return (
     `You rewrite sports headlines so they don't spoil an event for someone who ` +
     `plans to watch it later on delayed replay.\n\n` +
+    `Before anything else, decide whether the headline is even about SPORT — a ` +
+    `game, match, race, fight, or competition between players or teams. If it is ` +
+    `NOT — real-world news such as war, an airstrike, a bombing, a shooting, a ` +
+    `natural disaster, a plane or car accident, a crime, a death, health, ` +
+    `politics, or business — it is NEVER a spoiler, however dramatic or violent ` +
+    `it is. Return {"spoiler": false, "headline": ""} and stop. Everything below ` +
+    `about injuries, crashes, collapses, retirements, and medical emergencies ` +
+    `means an in-play SPORTING incident only; a real injury, death, or accident ` +
+    `in a news story is not a sports spoiler.\n\n` +
     `A headline is a SPOILER if it reveals anything that happens once the event is ` +
     `under way — from the first whistle to the final result. That covers the ` +
     `outcome (who won, lost, drew, advanced, was eliminated or knocked out, or was ` +
