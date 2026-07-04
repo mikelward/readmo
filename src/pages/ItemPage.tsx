@@ -364,6 +364,12 @@ export function ItemPage() {
   const [fullReadyAtOpen, setFullReadyAtOpen] = useState(() =>
     cachedFullTextOk(queryClient.getQueryData<FullTextResult>(['fulltext', id])),
   );
+  // Whether the article was pinned at the moment it opened. Pinning before
+  // opening is the "I'll read this" signal that auto-generates the AI summary
+  // (and prewarms it); an unpinned open offers a "Generate summary" button
+  // instead. Snapshot at open — a pin made later while reading shouldn't
+  // retroactively flip an already-decided open, and re-snapshots per item below.
+  const [pinnedAtOpen, setPinnedAtOpen] = useState(() => state.pinned);
 
   const cachedFull = resolved?.item.fullContentHtml ?? null;
   const truncated = resolved ? looksTruncated(resolved.item) : false;
@@ -432,6 +438,9 @@ export function ItemPage() {
     setFullReadyAtOpen(
       cachedFullTextOk(queryClient.getQueryData<FullTextResult>(['fulltext', id])),
     );
+    // Re-snapshot "was it pinned at open?" for the newly-opened item, so the
+    // summary auto-generates only when this article was already pinned.
+    setPinnedAtOpen(state.pinned);
     // Only when the item first resolves / changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolved?.item.id]);
@@ -808,12 +817,13 @@ export function ItemPage() {
         </div>
       </header>
 
-      {/* AI summary — directly after the title/byline, above the article. Shows
-          for any article an allowlisted user opens (generated here on open if
-          useSummaryPrewarm hasn't already warmed it — e.g. from a pin). The
-          gating lives in useSummary, so it's always mounted to keep hook order
-          stable and renders nothing when there's nothing to show. */}
-      <ArticleSummary id={item.id} online={online} />
+      {/* AI summary — directly after the title/byline, above the article. For an
+          allowlisted user it generates automatically only when the article was
+          pinned before opening (useSummaryPrewarm usually has it warmed already);
+          otherwise it offers a "Generate summary" button. The gating lives in
+          useSummary, so it's always mounted to keep hook order stable and renders
+          nothing when there's nothing to show. */}
+      <ArticleSummary id={item.id} online={online} autoGenerate={pinnedAtOpen} />
 
       <div className="reader__modebar">
         {fetchingFull ? (
