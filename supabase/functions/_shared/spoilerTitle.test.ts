@@ -94,6 +94,26 @@ describe('buildSpoilerPrompt', () => {
     expect(prompt).toMatch(/finished seventh|P3/);
   });
 
+  it('treats a qualifying or sprint session as its own event to protect', () => {
+    // A qualifying/sprint result must not be waved through as mere "build-up" to
+    // the main race — each session is separately watched, so its result is a
+    // spoiler. Pre-game is scoped to THAT session, not the main event.
+    const prompt = buildSpoilerPrompt('Piastri fastest in British GP qualifying', '');
+    expect(prompt).toMatch(/qualifying.*sprint|sprint.*qualifying/i);
+    expect(prompt).toMatch(/its OWN event|separately-watched sessions/i);
+    expect(prompt).toMatch(/NOT pre-game/i);
+  });
+
+  it('does not treat a preview as safe when it leaks an earlier session', () => {
+    // Being labelled a "preview"/"build-up" is not a blanket exemption: a race
+    // preview that gives away the qualifying result (or a heat/leg of the same
+    // event) still spoils. Pre-game is only safe when nothing has been run yet.
+    const prompt = buildSpoilerPrompt('Race preview: pole-sitter leads the grid at Silverstone', '');
+    expect(prompt).toMatch(/genuinely PRE-GAME/i);
+    expect(prompt).toMatch(/does NOT by itself make a headline safe/i);
+    expect(prompt).toMatch(/nothing in the event has\s+happened yet/i);
+  });
+
   it('forbids describing the incident and pulls teams from the body instead', () => {
     // Guards the failure where a headline naming no teams (a mid-match injury)
     // was rewritten as "Football critical injury spoiler" — which leaks WHAT
