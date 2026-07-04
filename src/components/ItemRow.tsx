@@ -354,12 +354,17 @@ export function ItemRow({
       <span className="item-row__meta" data-testid="item-meta">
         {/* Per-row favicon only in non-grouped views (showFavicon). In
             group-by-feed view the icon lives on the section header instead, so
-            it isn't repeated on every row. */}
+            it isn't repeated on every row. Reserve the slot here: with favicons
+            on, a row whose icon is missing (null) or fails to load must keep the
+            16px box so its meta line stays aligned with the sibling rows whose
+            icons did load, instead of snapping left (a jagged interleaved list). */}
         {showFavicon ? (
           <FeedFavicon
             url={feed.faviconUrl}
             className="item-row__favicon"
             testId="item-favicon"
+            reserveSpace
+            placeholderClassName="item-row__favicon-placeholder"
           />
         ) : null}
         {formatItemMetaTail({

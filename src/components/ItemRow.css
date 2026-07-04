@@ -96,11 +96,9 @@
 
 /* Per-row site icon at the start of the meta line (non-grouped views only).
    Mirrors .item-list__group-favicon so the row and group-header icons match.
-   flex: 0 0 auto keeps it from shrinking when the meta text is long. */
+   The box size (shared with the reserved placeholder) is owned by the
+   FeedFavicon component so they can't drift; this only styles the surface. */
 .item-row__favicon {
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
   border-radius: 3px;
   object-fit: contain;
 }
