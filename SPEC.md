@@ -1594,13 +1594,34 @@ negligible and off every critical path. See the External services table in
         `get_capabilities()` only returns once `0030` is live): against a backend
         that still predates `0030` they're hidden, so the page never offers a
         button whose RPC would 404. The family promote/demote toggle (the `0028`
-        allowlist RPCs) stays available.
+        allowlist RPCs) stays available. The menu also holds a **Feeds** item that
+        drills down to that user's subscription list — see *Subscription
+        drill-downs* below.
+
+    - **Subscription drill-downs** — two admin cross-reads between users and
+      feeds, each reached from a row menu:
+      - **Feeds** (on a `/admin/users` row) → `/admin/users/:email/feeds`: the
+        feeds that account subscribes to (title, folder, muted), headed by the
+        email.
+      - **Users** (on a `/admin/feeds` row) → `/admin/feeds/:feedId/users`: the
+        accounts subscribed to that feed (email + Family/Blocked/Muted pills),
+        headed by the feed title (passed via router state).
+
+      `subscriptions` is RLS-gated on `auth.uid()`, so both go through
+      admin-gated `SECURITY DEFINER` RPCs (`admin_list_user_feeds` /
+      `admin_list_feed_subscribers`, migration `0047`) that return only
+      display-safe columns (never `secret_url`) and fail closed (`42501`) for
+      non-admins. Gated on a `canViewSubscriptions` capability (a
+      `can_view_subscriptions` flag `get_capabilities()` only returns once `0047`
+      is live): the *Feeds*/*Users* menu items are hidden against an older
+      backend, so a direct URL hit is the only way to reach the un-deployed-RPC
+      error state.
 
     A non-admin who reaches any admin route sees a short no-access message and
     nothing else — the gate is client convenience only; the server re-checks
     `is_admin()` on every admin RPC (`list_users`, `list/add/remove_allowlist`,
     `admin_delete_user`, `admin_set_user_blocked`, `get/set_signups_enabled`,
-    `admin_list_feeds`)
+    `admin_list_feeds`, `admin_list_user_feeds`, `admin_list_feed_subscribers`)
     and fails closed (`42501`). Admin identity lives in the `admin_users` table
     (bootstrapped via SQL — there's no UI to grant admin); the allowlist itself
     gates full-text reading mode and Google News feeds (see *Full-text reading
@@ -1651,11 +1672,13 @@ negligible and off every critical path. See the External services table in
       stay readable — pause only halts NEW fetching/enrichment. A paused feed
       shows a **Paused** status pill (which overrides the health cascade, since
       nothing else runs) and its menu offers Unpause instead of Refresh + Pause.
-      Finally, **Delete** — a confirm-gated, irreversible system-wide hard delete
-      of the shared feed (the admin-only `admin_delete_feed` RPC, migration
-      `0040`): a single `delete from feeds` cascades to its items — and their
-      `item_state` / `item_fulltext_status` — and to every user's subscription,
-      via the existing ON DELETE CASCADE FKs.
+      The menu also holds a **Users** item that drills down to the feed's
+      subscriber list (see *Subscription drill-downs* above). Finally, **Delete**
+      — a confirm-gated, irreversible system-wide hard delete of the shared feed
+      (the admin-only `admin_delete_feed` RPC, migration `0040`): a single
+      `delete from feeds` cascades to its items — and their `item_state` /
+      `item_fulltext_status` — and to every user's subscription, via the existing
+      ON DELETE CASCADE FKs.
 
       The sample is simply the feed's latest recorded attempt: a reading-mode
       attempt only ever runs for an **allowlisted** caller (the `fulltext` gate
@@ -2327,8 +2350,10 @@ immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
 | `/settings` | reading, sort, bottom toolbar, theme/palette/text-size/font, account; reached from the account menu (top-right avatar) |
 | `/feeds` | feed management: add a feed, subscriptions (reorder/rename/mute/unsubscribe), OPML in/out; reached via the drawer's Feeds edit pencil or the account menu. Code-split. |
 | `/admin` | operator console **hub**: no controls of its own, just links (shared `settings__section`/`settings__btn` style) to **Manage users** (`/admin/users`) and **Manage feeds** (`/admin/feeds`); admin-only, reached from the account menu's **Admin** link. Non-admins get a short no-access message (the server re-checks on every RPC). See *Admin*. |
-| `/admin/users` | user management: trusted-user allowlist (list / add / remove emails) **and** a registered-users list with a per-row **Manage** (⋯) menu — promote/demote-to-family, block/unblock, delete — plus a global allow-new-sign-ups switch; admin-only. See *Admin → Users*. |
-| `/admin/feeds` | feed-status console: every system feed with health, subscriber count, most-recent full-text download status, and per-row refresh / pause / delete; admin-only. See *Admin → Feed status*. |
+| `/admin/users` | user management: trusted-user allowlist (list / add / remove emails) **and** a registered-users list with a per-row **Manage** (⋯) menu — promote/demote-to-family, block/unblock, delete, view **Feeds** — plus a global allow-new-sign-ups switch; admin-only. See *Admin → Users*. |
+| `/admin/users/:email/feeds` | admin drill-down: the feeds a given account subscribes to (`admin_list_user_feeds`, migration 0047); admin-only. See *Admin → Subscription drill-downs*. |
+| `/admin/feeds` | feed-status console: every system feed with health, subscriber count, most-recent full-text download status, and per-row refresh / pause / delete / view **Users**; admin-only. See *Admin → Feed status*. |
+| `/admin/feeds/:feedId/users` | admin drill-down: the accounts subscribed to a given feed (`admin_list_feed_subscribers`, migration 0047); admin-only. See *Admin → Subscription drill-downs*. |
 | `/signin` | OAuth sign-in (unauthenticated landing) |
 | `/about` | what Readmo is, credited to its author (mikelward.com); no auth gate, informational only (no user data). Shows the build sequence number and age (e.g. `Build 100 · 2 days ago`) — no SHA — with a link to Debug. Linked from Settings → About. |
 | `/legal` | self-contained legal/DMCA page: third-party content, copyright/DMCA takedown + counter-notice, acceptable use, warranty disclaimer, limitation of liability, a privacy summary, and contact (mikel@mikelward.com). No auth gate, policy text only (no user data). Distinct from the standalone `docs/` legal hub (Privacy, Terms, and Copyright/DMCA pages), which Vercel's catch-all rewrite does not serve from readmo.app. Linked from the drawer (App section) and Settings → Legal. |

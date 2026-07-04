@@ -21,6 +21,8 @@ import type { SummaryResult } from '../summary';
 import {
   type AdminFeedSampleItem,
   type AdminFeedStatus,
+  type AdminFeedSubscriber,
+  type AdminUserFeed,
   type FulltextDownloadStatus,
   type AllowlistEntry,
   type Capabilities,
@@ -712,6 +714,7 @@ export class MockDataSource implements DataSource {
       admin: true, // the demo user is the operator in mock/dev
       allowlistArmed: armed,
       canManageUsers: true, // the mock backend has the 0030 RPCs
+      canViewSubscriptions: true, // …and the 0047 subscription-view RPCs
     };
   }
 
@@ -857,6 +860,57 @@ export class MockDataSource implements DataSource {
 
   async setSignupsEnabled(enabled: boolean): Promise<void> {
     this.signupsEnabled = enabled;
+  }
+
+  /** The in-memory store is single-user (`this.subs` is the demo account), so
+   * the admin cross-user drill-downs need a deterministic stand-in mapping to be
+   * demoable: the demo user gets its real subscriptions; the other seed accounts
+   * get fixed slices of the feed set. Keyed by lowercased email. */
+  private mockFeedIdsForUser(email: string): FeedId[] {
+    const target = email.trim().toLowerCase();
+    const all = [...this.feeds.keys()];
+    if (target === this.selfEmail) return [...this.subs.keys()];
+    if (target === 'alex@example.com') return all.slice(0, 2);
+    if (target === 'sam@example.com') return all.slice(0, 1);
+    return [];
+  }
+
+  async listUserFeeds(email: string): Promise<AdminUserFeed[]> {
+    const target = email.trim().toLowerCase();
+    const subscribedAt =
+      this.registeredUsers.find((u) => u.email === target)?.createdAt ??
+      '2024-01-01T00:00:00.000Z';
+    const rows: AdminUserFeed[] = [];
+    for (const feedId of this.mockFeedIdsForUser(target)) {
+      const feed = this.feeds.get(feedId);
+      if (!feed) continue;
+      const sub = target === this.selfEmail ? this.subs.get(feedId) : undefined;
+      rows.push({
+        feedId,
+        title: sub?.titleOverride ?? feed.title,
+        siteUrl: feed.siteUrl,
+        muted: sub?.muted ?? false,
+        folder: sub?.folder ?? null,
+        subscribedAt,
+      });
+    }
+    return rows.sort((a, b) => a.title.localeCompare(b.title));
+  }
+
+  async listFeedSubscribers(feedId: FeedId): Promise<AdminFeedSubscriber[]> {
+    const rows: AdminFeedSubscriber[] = [];
+    for (const u of this.registeredUsers) {
+      if (!this.mockFeedIdsForUser(u.email).includes(feedId)) continue;
+      const sub = u.email === this.selfEmail ? this.subs.get(feedId) : undefined;
+      rows.push({
+        email: u.email,
+        family: this.allowlist.has(u.email),
+        blocked: u.blocked,
+        muted: sub?.muted ?? false,
+        subscribedAt: u.createdAt,
+      });
+    }
+    return rows.sort((a, b) => a.email.localeCompare(b.email));
   }
 }
 

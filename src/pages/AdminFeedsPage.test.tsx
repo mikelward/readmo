@@ -140,6 +140,36 @@ describe('AdminFeedsPage', () => {
     );
   });
 
+  it('offers a "Users" drill-down in the feed row menu when subscription views are available', async () => {
+    const user = userEvent.setup();
+    render(); // default mock reports canViewSubscriptions
+    await screen.findByTestId('feed-status-feed-park');
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Occasionally Down Blog' }),
+    );
+    const menu = within(await screen.findByTestId('item-row-menu'));
+    expect(menu.getByTestId('item-row-menu-users')).toBeInTheDocument();
+  });
+
+  it('hides the "Users" drill-down on a backend without the 0047 RPCs', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AdminFeedsPage />, {
+      source: new CapsSource({
+        family: false,
+        admin: true,
+        allowlistArmed: false,
+        // canViewSubscriptions absent → the drill-down link is not offered.
+      }),
+      route: '/admin/feeds',
+    });
+    await screen.findByTestId('feed-status-feed-park');
+    await user.click(
+      screen.getByRole('button', { name: 'Actions for Occasionally Down Blog' }),
+    );
+    const menu = within(await screen.findByTestId('item-row-menu'));
+    expect(menu.queryByTestId('item-row-menu-users')).not.toBeInTheDocument();
+  });
+
   it('deletes a feed from its overflow menu after confirmation', async () => {
     const user = userEvent.setup();
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);

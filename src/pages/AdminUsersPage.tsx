@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useAuth } from '../hooks/useAuth';
@@ -24,8 +24,9 @@ export function AdminUsersPage() {
   const ds = useDataSource();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
-  const { admin, canManageUsers } = useCapabilities();
+  const { admin, canManageUsers, canViewSubscriptions } = useCapabilities();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const selfEmail = user?.email?.toLowerCase() ?? null;
   // Pointer devices get the anchored popover; touch gets the bottom sheet (44px
   // rows). ItemRowMenu picks the variant by whether it has an anchor, so we only
@@ -158,6 +159,17 @@ export function AdminUsersPage() {
           ? remove.mutate(menuUser.email)
           : add.mutate(menuUser.email),
     });
+    // Drill down to this user's subscription list. Gated on the 0047 RPC being
+    // deployed (guardrail #11) — hidden on an older backend rather than linking
+    // to a page that would only error.
+    if (canViewSubscriptions) {
+      menuItems.push({
+        key: 'feeds',
+        label: 'Feeds',
+        onSelect: () =>
+          navigate(`/admin/users/${encodeURIComponent(menuUser.email)}/feeds`),
+      });
+    }
     // Block/Delete only exist once 0030 is deployed, and the server refuses to
     // target the calling admin — so omit them off an old backend or on self.
     if (canManageUsers && !isSelf) {

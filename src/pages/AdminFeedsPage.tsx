@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useCapabilities } from '../hooks/useCapabilities';
@@ -33,7 +33,8 @@ export function AdminFeedsPage() {
   const ds = useDataSource();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
-  const { admin } = useCapabilities();
+  const { admin, canViewSubscriptions } = useCapabilities();
+  const navigate = useNavigate();
   // Pointer devices get the anchored popover; touch gets the bottom sheet.
   const pointerDevice = usePointerDevice();
   const [filter, setFilter] = useState<Filter>('all');
@@ -177,6 +178,21 @@ export function AdminFeedsPage() {
   const menuItems: ItemRowMenuItem[] = menuFeed
     ? [
         ...pauseActions,
+        // Drill down to this feed's subscriber list. Gated on the 0047 RPC
+        // being deployed (guardrail #11); the feed title rides along as router
+        // state so the subscribers page can head itself nicely.
+        ...(canViewSubscriptions
+          ? [
+              {
+                key: 'users',
+                label: 'Users',
+                onSelect: () =>
+                  navigate(`/admin/feeds/${menuFeed.id}/users`, {
+                    state: { feedTitle: menuFeed.title },
+                  }),
+              },
+            ]
+          : []),
         {
           key: 'delete',
           label: 'Delete…',

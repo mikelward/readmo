@@ -31,6 +31,12 @@ export interface Capabilities {
    * offer buttons that only error. Optional so the default (undefined → falsy)
    * is the safe "not available yet" state. */
   canManageUsers?: boolean;
+  /** The backend has migration 0047's admin subscription-view RPCs
+   * (`admin_list_user_feeds` / `admin_list_feed_subscribers`) deployed. Same
+   * ahead-of-migration story as `canManageUsers`: absent on an older backend, so
+   * the admin console hides the "Feeds"/"Users" drill-down menu items until the
+   * RPCs exist rather than link to a page that would only error. */
+  canViewSubscriptions?: boolean;
 }
 
 /** One allowlist entry as shown on `/admin` (admin-only read). */
@@ -53,6 +59,38 @@ export interface RegisteredUser {
   /** Suspended — `auth.users.banned_until` is in the future, so the account
    * can't sign in until unblocked. Distinct from deleted (the row is gone). */
   blocked: boolean;
+}
+
+/** One feed a given account subscribes to, as shown on the admin drill-down
+ * `/admin/users/:email/feeds` (admin-only read of another user's RLS-gated
+ * subscriptions). Display-safe fields only — never the feed's secret URL. */
+export interface AdminUserFeed {
+  feedId: FeedId;
+  /** The user's own title override if set, else the feed's title (matches what
+   * that user sees in-app). */
+  title: string;
+  siteUrl: string | null;
+  /** Subscribed but muted — drops out of the aggregate for that user. */
+  muted: boolean;
+  /** Folder the user filed the feed under, or null at the list root. */
+  folder: string | null;
+  /** ISO timestamp the user subscribed. */
+  subscribedAt: string;
+}
+
+/** One account subscribed to a given feed, as shown on the admin drill-down
+ * `/admin/feeds/:feedId/users` (admin-only read). Carries the same
+ * family/blocked status as the registered-users list. */
+export interface AdminFeedSubscriber {
+  email: string;
+  /** On the trusted-user allowlist. */
+  family: boolean;
+  /** Suspended (`auth.users.banned_until` in the future). */
+  blocked: boolean;
+  /** This user muted the feed (still subscribed). */
+  muted: boolean;
+  /** ISO timestamp the user subscribed. */
+  subscribedAt: string;
 }
 
 /** One system feed as shown on the admin `/admin/feeds` status console
@@ -342,6 +380,14 @@ export interface DataSource {
   /** Admin-only: suspend (`blocked = true`) or restore an account by email.
    * The server refuses to block the calling admin. */
   setUserBlocked(email: string, blocked: boolean): Promise<void>;
+  /** Admin-only: the feeds a given account subscribes to (drill-down from the
+   * user list). Rejects for non-admins; the RPC is gated on 0047, so callers
+   * feature-detect via `canViewSubscriptions` before offering the link. */
+  listUserFeeds(email: string): Promise<AdminUserFeed[]>;
+  /** Admin-only: the accounts subscribed to a given feed (drill-down from the
+   * feed-status list). Rejects for non-admins; gated on 0047 like
+   * `listUserFeeds`. */
+  listFeedSubscribers(feedId: FeedId): Promise<AdminFeedSubscriber[]>;
   /** Admin-only: system-wide feed status for `/admin/feeds` — every feed's
    * fetch health plus a sample article's cache state. Feature-detects a backend
    * that predates the RPC and returns `[]` so an old backend just shows an empty

@@ -25,7 +25,9 @@ import { SignInPage } from './pages/SignInPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AdminPage } from './pages/AdminPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
+import { AdminUserFeedsPage } from './pages/AdminUserFeedsPage';
 import { AdminFeedsPage } from './pages/AdminFeedsPage';
+import { AdminFeedUsersPage } from './pages/AdminFeedUsersPage';
 import { AboutPage } from './pages/AboutPage';
 import { LegalPage } from './pages/LegalPage';
 import { DebugPage } from './pages/DebugPage';
@@ -110,7 +112,15 @@ export default function App() {
                         capability and the server enforces every read/write. */}
                     <Route path="/admin" element={<AdminPage />} />
                     <Route path="/admin/users" element={<AdminUsersPage />} />
+                    <Route
+                      path="/admin/users/:email/feeds"
+                      element={<AdminUserFeedsPage />}
+                    />
                     <Route path="/admin/feeds" element={<AdminFeedsPage />} />
+                    <Route
+                      path="/admin/feeds/:feedId/users"
+                      element={<AdminFeedUsersPage />}
+                    />
                     <Route
                       path="/feeds"
                       element={
