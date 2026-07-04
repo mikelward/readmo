@@ -29,6 +29,8 @@ import {
 import {
   type AdminFeedSampleItem,
   type AdminFeedStatus,
+  type AdminFeedSubscriber,
+  type AdminUserFeed,
   type FulltextDownloadStatus,
   type AllowlistEntry,
   type Capabilities,
@@ -1691,6 +1693,7 @@ export class SupabaseDataSource implements DataSource {
           admin?: boolean;
           allowlist_armed?: boolean;
           can_manage_users?: boolean;
+          can_view_subscriptions?: boolean;
         }
       | null
       | undefined;
@@ -1701,6 +1704,9 @@ export class SupabaseDataSource implements DataSource {
       // Absent against a backend that predates 0030 → false, so /admin hides the
       // block/delete/sign-up controls until their RPCs are deployed.
       canManageUsers: row?.can_manage_users === true,
+      // Absent before 0047 → false, so the console hides the Feeds/Users
+      // subscription drill-down links until their RPCs are deployed.
+      canViewSubscriptions: row?.can_view_subscriptions === true,
     };
   }
 
@@ -1850,6 +1856,50 @@ export class SupabaseDataSource implements DataSource {
       p_blocked: blocked,
     });
     if (error) throw error instanceof Error ? error : new Error(String(error));
+  }
+
+  async listUserFeeds(email: string): Promise<AdminUserFeed[]> {
+    const { data, error } = await this.sb.rpc('admin_list_user_feeds', {
+      p_email: email,
+    });
+    if (error) throw error instanceof Error ? error : new Error(String(error));
+    const rows = (data ?? []) as Array<{
+      feed_id: string;
+      title: string;
+      site_url: string | null;
+      muted: boolean;
+      folder: string | null;
+      created_at: string;
+    }>;
+    return rows.map((r) => ({
+      feedId: r.feed_id,
+      title: r.title,
+      siteUrl: r.site_url ?? null,
+      muted: r.muted === true,
+      folder: r.folder ?? null,
+      subscribedAt: r.created_at,
+    }));
+  }
+
+  async listFeedSubscribers(feedId: FeedId): Promise<AdminFeedSubscriber[]> {
+    const { data, error } = await this.sb.rpc('admin_list_feed_subscribers', {
+      p_feed_id: feedId,
+    });
+    if (error) throw error instanceof Error ? error : new Error(String(error));
+    const rows = (data ?? []) as Array<{
+      email: string;
+      family: boolean;
+      blocked: boolean;
+      muted: boolean;
+      created_at: string;
+    }>;
+    return rows.map((r) => ({
+      email: r.email,
+      family: r.family === true,
+      blocked: r.blocked === true,
+      muted: r.muted === true,
+      subscribedAt: r.created_at,
+    }));
   }
 
   async getSignupsEnabled(): Promise<boolean> {

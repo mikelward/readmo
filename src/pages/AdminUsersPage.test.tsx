@@ -96,6 +96,31 @@ describe('AdminUsersPage', () => {
     );
   });
 
+  it('offers a "Feeds" drill-down in the row menu when subscription views are available', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AdminUsersPage />, { route: '/admin/users' });
+    await screen.findByText('alex@example.com');
+    const menu = await openRowMenu(user, 'alex@example.com');
+    expect(menu.getByTestId('item-row-menu-feeds')).toBeInTheDocument();
+  });
+
+  it('hides the "Feeds" drill-down on a backend without the 0047 RPCs', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AdminUsersPage />, {
+      source: new CapsSource({
+        family: false,
+        admin: true,
+        allowlistArmed: false,
+        canManageUsers: true,
+        // canViewSubscriptions absent → the drill-down link is not offered.
+      }),
+      route: '/admin/users',
+    });
+    await screen.findByText('alex@example.com');
+    const menu = await openRowMenu(user, 'alex@example.com');
+    expect(menu.queryByTestId('item-row-menu-feeds')).not.toBeInTheDocument();
+  });
+
   it('sorts the user list by name or signup date, and groups family first', async () => {
     const user = userEvent.setup();
     renderWithProviders(<AdminUsersPage />, { route: '/admin/users' });
