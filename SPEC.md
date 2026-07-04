@@ -1559,42 +1559,45 @@ negligible and off every critical path. See the External services table in
       trailing click is swallowed, so dismissing the menu doesn't also activate
       a neighboring row or control.
 
-12. **Admin** — `/admin`: operator console, reached from the **account menu**'s
-    Admin link (shown only to admins). Two sections:
-    - **Trusted-user allowlist** — lists the current allowlist (email, who added
-      it, when) with a per-row **Remove**, and an **add-by-email** form (an email
-      can be allowed before that person signs up).
-    - **Registered users** — lists every account (`list_users()`, an admin-only
-      read of `auth.users`) with **Admin**/**Family**/**Blocked** status pills
-      and a single per-row **Manage** (⋯) menu — the row's only tap zone, per the
-      tap-target rule (shared `ItemRowMenu`: anchored popover on pointer, bottom
-      sheet on touch). The menu holds **Make family / Remove from family**
-      (promote/demote by writing the allowlist — reuses the
-      `add`/`remove_from_allowlist` RPCs); **Block / Unblock** (sets/clears
-      `auth.users.banned_until` — keeps the account but stops sign-in); and
-      **Delete** (confirm-gated; permanently removes the account, cascading its
-      reader data and dropping it from the allowlist/admin list). Block and
-      Delete are **omitted from the signed-in admin's own menu** — the server
-      also refuses to block or delete the caller, so an operator can't lock
-      themselves out. A section-level
-      **Allow new sign-ups** switch closes registration globally (a BEFORE
-      INSERT trigger on `auth.users` rejects new accounts while it's off; the
-      read it uses fails *open*, so a glitch can't silently wall off signups).
-      All of these are plain admin-gated SQL RPCs (migration `0030`) — the
-      migration role owns the SECURITY DEFINER functions, so they touch
-      `auth.users` directly without the service-role admin API or a new Edge
-      function. Because the client auto-deploys ahead of migrations, the
-      block/delete/sign-up controls are gated on a `canManageUsers` capability
-      (a `can_manage_users` flag `get_capabilities()` only returns once `0030`
-      is live): against a backend that still predates `0030` they're hidden, so
-      the page never offers a button whose RPC would 404. The family
-      promote/demote toggle (the `0028` allowlist RPCs) stays available.
+12. **Admin** — `/admin`: operator console **hub**, reached from the **account
+    menu**'s Admin link (shown only to admins). It holds no controls of its own —
+    just links (shared `settings__section` / `settings__btn` style) to the two
+    management sub-pages: **Manage users** (`/admin/users`) and **Manage feeds**
+    (`/admin/feeds`).
 
-    A third section, **Feeds**, links to the feed-status console at
-    `/admin/feeds` (below).
+    - **Users** — `/admin/users`: user management, reached from the Admin hub's
+      *Users* link. Two sections:
+      - **Trusted-user allowlist** — lists the current allowlist (email, who
+        added it, when) with a per-row **Remove**, and an **add-by-email** form
+        (an email can be allowed before that person signs up).
+      - **Registered users** — lists every account (`list_users()`, an
+        admin-only read of `auth.users`) with **Admin**/**Family**/**Blocked**
+        status pills and a single per-row **Manage** (⋯) menu — the row's only
+        tap zone, per the tap-target rule (shared `ItemRowMenu`: anchored popover
+        on pointer, bottom sheet on touch). The menu holds **Make family / Remove
+        from family** (promote/demote by writing the allowlist — reuses the
+        `add`/`remove_from_allowlist` RPCs); **Block / Unblock** (sets/clears
+        `auth.users.banned_until` — keeps the account but stops sign-in); and
+        **Delete** (confirm-gated; permanently removes the account, cascading its
+        reader data and dropping it from the allowlist/admin list). Block and
+        Delete are **omitted from the signed-in admin's own menu** — the server
+        also refuses to block or delete the caller, so an operator can't lock
+        themselves out. A section-level **Allow new sign-ups** switch closes
+        registration globally (a BEFORE INSERT trigger on `auth.users` rejects
+        new accounts while it's off; the read it uses fails *open*, so a glitch
+        can't silently wall off signups). All of these are plain admin-gated SQL
+        RPCs (migration `0030`) — the migration role owns the SECURITY DEFINER
+        functions, so they touch `auth.users` directly without the service-role
+        admin API or a new Edge function. Because the client auto-deploys ahead
+        of migrations, the block/delete/sign-up controls are gated on a
+        `canManageUsers` capability (a `can_manage_users` flag
+        `get_capabilities()` only returns once `0030` is live): against a backend
+        that still predates `0030` they're hidden, so the page never offers a
+        button whose RPC would 404. The family promote/demote toggle (the `0028`
+        allowlist RPCs) stays available.
 
-    A non-admin who reaches the route sees a short no-access message and nothing
-    else — the gate is client convenience only; the server re-checks
+    A non-admin who reaches any admin route sees a short no-access message and
+    nothing else — the gate is client convenience only; the server re-checks
     `is_admin()` on every admin RPC (`list_users`, `list/add/remove_allowlist`,
     `admin_delete_user`, `admin_set_user_blocked`, `get/set_signups_enabled`,
     `admin_list_feeds`)
@@ -1606,7 +1609,7 @@ negligible and off every critical path. See the External services table in
 
     - **Feed status** — `/admin/feeds`: an operator console listing **every
       system feed** (not just the admin's own subscriptions), reached from the
-      Admin page's *Feeds* link. Each row shows the feed (favicon + title), its
+      Admin hub's *Manage feeds* link. Each row shows the feed (favicon + title), its
       **subscriber count** (users subscribed, across all accounts — counted by
       the admin RPC, which sees every subscription), the sampled article's title,
       a single derived **status** pill, and a muted **server-response** line. As in the grouped list headers, a feed with no
@@ -2310,7 +2313,9 @@ immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
 | `/search` | search over feed + item titles |
 | `/settings` | reading, sort, bottom toolbar, theme/palette/text-size/font, account; reached from the account menu (top-right avatar) |
 | `/feeds` | feed management: add a feed, subscriptions (reorder/rename/mute/unsubscribe), OPML in/out; reached via the drawer's Feeds edit pencil or the account menu. Code-split. |
-| `/admin` | operator console: trusted-user allowlist (list / add / remove emails) **and** a registered-users list with a per-row **Manage** (⋯) menu — promote/demote-to-family, block/unblock, delete — plus a global allow-new-sign-ups switch; admin-only, reached from the account menu's **Admin** link. Non-admins get a short no-access message (the server re-checks on every RPC). See *Admin*. |
+| `/admin` | operator console **hub**: no controls of its own, just links (shared `settings__section`/`settings__btn` style) to **Manage users** (`/admin/users`) and **Manage feeds** (`/admin/feeds`); admin-only, reached from the account menu's **Admin** link. Non-admins get a short no-access message (the server re-checks on every RPC). See *Admin*. |
+| `/admin/users` | user management: trusted-user allowlist (list / add / remove emails) **and** a registered-users list with a per-row **Manage** (⋯) menu — promote/demote-to-family, block/unblock, delete — plus a global allow-new-sign-ups switch; admin-only. See *Admin → Users*. |
+| `/admin/feeds` | feed-status console: every system feed with health, subscriber count, most-recent full-text download status, and per-row refresh / pause / delete; admin-only. See *Admin → Feed status*. |
 | `/signin` | OAuth sign-in (unauthenticated landing) |
 | `/about` | what Readmo is, credited to its author (mikelward.com); no auth gate, informational only (no user data). Shows the build sequence number and age (e.g. `Build 100 · 2 days ago`) — no SHA — with a link to Debug. Linked from Settings → About. |
 | `/legal` | self-contained legal/DMCA page: third-party content, copyright/DMCA takedown + counter-notice, acceptable use, warranty disclaimer, limitation of liability, a privacy summary, and contact (mikel@mikelward.com). No auth gate, policy text only (no user data). Distinct from the standalone `docs/` legal hub (Privacy, Terms, and Copyright/DMCA pages), which Vercel's catch-all rewrite does not serve from readmo.app. Linked from the drawer (App section) and Settings → Legal. |
