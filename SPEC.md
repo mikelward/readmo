@@ -2211,7 +2211,11 @@ page's discipline is unchanged.
   sprint result is a spoiler in its own right, not pre-game build-up to the race.
   The only exemption is genuinely pre-game content that reveals nothing from any
   already-run session; a "race preview" that leaks the qualifying result still
-  spoils.
+  spoils. A matchup or draw for a *later* round ("X will face Y in the
+  semi-final") reveals who advanced and IS a spoiler — and because naming the
+  teams would itself give that away, its rewrite is competition + round only
+  (**"World Cup semi-final spoiler"**). Only a genuine pre-tournament fixture
+  list or first-round draw, made before anyone has played, stays exempt.
   For allowlisted
   users, such a headline is replaced — in the list **and** the reader — with a
   spoiler-free rewrite that names only **which** event it is — the competition

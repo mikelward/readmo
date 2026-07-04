@@ -114,6 +114,21 @@ describe('buildSpoilerPrompt', () => {
     expect(prompt).toMatch(/nothing in the event has\s+happened yet/i);
   });
 
+  it('treats a later-round matchup as an advancement spoiler and hides the teams', () => {
+    // "USA will face Belgium in the semi-final" looks pre-game but reveals both
+    // won their quarters (and their opponents were knocked out). It's a spoiler,
+    // and naming the teams in the rewrite would itself give away who advanced —
+    // so the replacement is competition + round only ("World Cup semi-final
+    // spoiler"), no teams.
+    const prompt = buildSpoilerPrompt('USA will face Belgium in the semi-final', '');
+    expect(prompt).toMatch(/matchup or draw for a LATER round/i);
+    expect(prompt).toMatch(/reveal who\s+advanced/i);
+    expect(prompt).toMatch(/naming\s+the participants would ITSELF give away/i);
+    expect(prompt).toMatch(/World Cup semi-final spoiler/);
+    // A genuine pre-tournament fixture/draw stays exempt.
+    expect(prompt).toMatch(/pre-tournament fixture list|first-round draw/i);
+  });
+
   it('forbids describing the incident and pulls teams from the body instead', () => {
     // Guards the failure where a headline naming no teams (a mid-match injury)
     // was rewritten as "Football critical injury spoiler" — which leaks WHAT
