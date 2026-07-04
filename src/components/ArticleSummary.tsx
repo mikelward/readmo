@@ -40,9 +40,9 @@ export function ArticleSummary({ id, online }: ArticleSummaryProps) {
       aria-label="AI summary"
       data-testid="article-summary"
     >
-      <p className="article-summary__body" data-testid="article-summary-body">
+      <div className="article-summary__body" data-testid="article-summary-body">
         <MarkdownText text={summary} />
-      </p>
+      </div>
       <p className="article-summary__footer">Summary by Gemini</p>
     </section>
   );

@@ -2095,12 +2095,16 @@ page's discipline is unchanged.
     `GOOGLE_API_KEY` → the function reports `unavailable` and the reader shows no
     summary card. The prompt is a tl;dr ask ("Provide a tl;dr of the
     following article:", with the title passed along as context when known)
-    with **one targeted anti-preamble instruction** ("Respond with only the
-    summary itself: no preamble … no 'tl;dr' label, and no 'The article
-    covers…' style lead-in"), otherwise unsteered — diverging from
-    newshacker's heavily-steered article-summary prompt: in practice the bare
-    ask yields shorter, more direct prose than added length/format/register
-    instructions did. The anti-preamble line exists because the tl;dr ask made
+    with **two targeted instructions**: (1) an **anti-preamble** line ("Respond
+    with only the summary itself: no preamble … no 'tl;dr' label, and no 'The
+    article covers…' style lead-in"), and (2) a **Markdown-format** line asking
+    for a short **bulleted list** (with `-` markers) when the article makes
+    several distinct points, otherwise a short paragraph, with inline
+    bold/italic/`code` welcome and headings disallowed. Length/register stay
+    unsteered — in practice the bare ask yields shorter, more direct prose than
+    added length/register instructions did. The Markdown steer just makes
+    explicit (and renders deterministically) the formatting the model already
+    reached for intermittently. The anti-preamble line exists because the tl;dr ask made
     the model echo that framing back as a preamble ("tl;dr:", "**TL;DR:**",
     "Here's a tl;dr of the article:", "The article covers…"). Because that's a
     negative instruction a flash-lite model may still ignore, the function also
@@ -2114,10 +2118,13 @@ page's discipline is unchanged.
     same strip runs on the **cache-hit path** too, cleaning (and rewriting
     once) any row cached before the strip existed so legacy preambles don't
     render forever. The response is rendered
-    with the inline **`MarkdownText`** component **ported from newshacker**
-    (guardrail #9) — it emits `<strong>`/`<em>`/`<code>` React elements, never
+    with the **`MarkdownText`** component **ported from newshacker**
+    (guardrail #9) — inline `<strong>`/`<em>`/`<code>` plus flat **bullet lists**
+    (`-`/`*`/`+` runs → `<ul>`), all emitted as React elements, never
     `dangerouslySetInnerHTML`, so there's no markdown-library dependency and no
-    XSS surface (the model's text is React-escaped by construction).
+    XSS surface (the model's text is React-escaped by construction). Other
+    block-level Markdown (headings, ordered/nested lists, blockquotes, code
+    fences) renders as literal text and the prompt steers the model away from it.
   - **Model:** Google **Gemini `gemini-2.5-flash-lite`** via the
     `generateContent` REST endpoint (fixed Google host; the article is in the
     request body, never a URL), `thinkingBudget: 0` to keep latency low. Needs
