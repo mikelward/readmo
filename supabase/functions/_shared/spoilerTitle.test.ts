@@ -46,6 +46,14 @@ describe('buildSpoilerPrompt', () => {
     expect(prompt).toContain('--- BEGIN ARTICLE ---');
   });
 
+  it('forbids prose and markdown fences around the JSON (strict JSON mode)', () => {
+    // Guards against the model prepending "Here is the JSON:" or wrapping the
+    // object in a ``` fence, which would trip an automated parser.
+    const prompt = buildSpoilerPrompt('Some headline', '');
+    expect(prompt).toMatch(/raw JSON object and absolutely nothing else/i);
+    expect(prompt).toMatch(/do NOT wrap it in a markdown code block/i);
+  });
+
   it('omits the article block when there is no content', () => {
     const prompt = buildSpoilerPrompt('Some headline', '');
     expect(prompt).not.toContain('BEGIN ARTICLE');
