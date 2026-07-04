@@ -8,6 +8,7 @@ import {
   GROUP_BY_FEED_KEY,
   HIDE_ON_SCROLL_KEY,
   HIDE_SPORTS_SPOILERS_KEY,
+  AUTO_SUMMARIZE_PINNED_KEY,
   ITEM_SORT_KEY,
   SHOW_ROW_FAVICON_KEY,
   SHOW_GROUP_FAVICON_KEY,
@@ -201,6 +202,33 @@ describe('SettingsPage — Reading & Bottom toolbar', () => {
     await user.click(toggle);
     expect(toggle).not.toBeChecked();
     expect(window.localStorage.getItem(HIDE_SPORTS_SPOILERS_KEY)).toBe('0');
+  });
+
+  it('shows "Auto generate summaries for pinned articles" (on by default) for a family user and toggles it off', async () => {
+    const user = userEvent.setup();
+    // Sign in against the default MockDataSource: the demo user is on its own
+    // armed allowlist → capabilities resolve to family:true.
+    window.localStorage.setItem('readmo:mock-signed-in', '1');
+    renderWithProviders(<SettingsPage />);
+    const toggle = await screen.findByRole('checkbox', {
+      name: /auto generate summaries for pinned articles/i,
+    });
+    expect(toggle).toBeChecked(); // default ON
+    await user.click(toggle);
+    expect(toggle).not.toBeChecked();
+    expect(window.localStorage.getItem(AUTO_SUMMARIZE_PINNED_KEY)).toBe('0');
+  });
+
+  it('hides the "Auto generate summaries" toggle for a non-family user', async () => {
+    // Signed-out default caps resolve to family:false (allowlist disarmed), so
+    // the spoiler toggle still shows but the family-only summary toggle does not.
+    renderWithProviders(<SettingsPage />);
+    await screen.findByRole('checkbox', { name: /hide sports spoilers/i });
+    expect(
+      screen.queryByRole('checkbox', {
+        name: /auto generate summaries for pinned articles/i,
+      }),
+    ).toBeNull();
   });
 
   it('hides the "Hide sports spoilers" toggle for an off-allowlist user', async () => {

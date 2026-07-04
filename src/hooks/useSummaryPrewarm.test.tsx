@@ -9,6 +9,10 @@ import { DataSourceProvider } from '../lib/data/context';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import { _resetNetworkStatusForTests } from '../lib/networkStatus';
 import { useSummaryPrewarm } from './useSummaryPrewarm';
+import {
+  AUTO_SUMMARIZE_PINNED_KEY,
+  resetReadingPrefsCacheForTest,
+} from './useReadingPrefs';
 import { summaryQueryKey } from './useSummary';
 import type { SummaryResult } from '../lib/summary';
 
@@ -20,6 +24,8 @@ afterEach(() => {
   setNavigatorOnline(true);
   _resetNetworkStatusForTests();
   window.localStorage.removeItem('readmo:mock-signed-in');
+  window.localStorage.removeItem(AUTO_SUMMARIZE_PINNED_KEY);
+  resetReadingPrefsCacheForTest();
 });
 
 function Harness() {
@@ -66,6 +72,21 @@ describe('useSummaryPrewarm', () => {
     await waitFor(() =>
       expect(qc.getQueryData(summaryQueryKey(ID))).toMatchObject({ status: 'ok' }),
     );
+  });
+
+  it('does not warm when "Auto generate summaries for pinned articles" is off', async () => {
+    window.localStorage.setItem(AUTO_SUMMARIZE_PINNED_KEY, '0');
+    resetReadingPrefsCacheForTest();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const spy = vi.spyOn(source, 'getSummary');
+    const qc = setup(source);
+
+    source.stateStore.set(ID, 'pinned', true);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(qc.getQueryData(summaryQueryKey(ID))).toBeUndefined();
   });
 
   it('does not warm a favorite-only item (summary is a pinned-list feature)', async () => {

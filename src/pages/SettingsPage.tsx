@@ -8,6 +8,7 @@ import {
   useShowRowFavicon,
   useShowGroupFavicon,
   useHideSportsSpoilers,
+  useAutoSummarizePinned,
   type BottomBarPosition,
 } from '../hooks/useReadingPrefs';
 import type { ItemSort } from '../lib/data/DataSource';
@@ -34,10 +35,16 @@ export function SettingsPage() {
   const { showRowFavicon, setShowRowFavicon } = useShowRowFavicon();
   const { showGroupFavicon, setShowGroupFavicon } = useShowGroupFavicon();
   const { hideSportsSpoilers, setHideSportsSpoilers } = useHideSportsSpoilers();
+  const { autoSummarizePinned, setAutoSummarizePinned } =
+    useAutoSummarizePinned();
+  const capabilities = useCapabilities();
   // The spoiler-free rewrite only shows for allowlisted callers, so the toggle is
   // a no-op for anyone off the list — hide it there rather than offer a dead
   // control (disarmed allowlist → open to all, so it shows).
-  const spoilerToggleVisible = canUseFullText(useCapabilities());
+  const spoilerToggleVisible = canUseFullText(capabilities);
+  // Auto-summaries are a family-only control. `family` implies the section is
+  // already visible (family ⟹ canUseFullText), so this just gates the toggle.
+  const summaryToggleVisible = capabilities.family;
   const { user, signOut } = useAuth();
   useDocumentTitle('Settings · readmo');
 
@@ -235,29 +242,48 @@ export function SettingsPage() {
       {/* Smart features — the AI-assisted extras. Gated on the allowlist
           capability (like the rewrite itself), so it's hidden — heading and all —
           for anyone off the list rather than showing a dead toggle. */}
-      {spoilerToggleVisible ? (
+      {spoilerToggleVisible || summaryToggleVisible ? (
         <section className="settings__section">
           <h2 className="settings__heading">Smart features</h2>
           <ul className="settings__toggles">
-            <li className="settings__toggle">
-              <label className="settings__toggle-label">
-                <input
-                  type="checkbox"
-                  className="settings__toggle-check"
-                  checked={hideSportsSpoilers}
-                  onChange={(e) => setHideSportsSpoilers(e.target.checked)}
-                />
-                <span className="settings__toggle-text">
-                  <span className="settings__toggle-title">
-                    Hide sports spoilers
+            {spoilerToggleVisible ? (
+              <li className="settings__toggle">
+                <label className="settings__toggle-label">
+                  <input
+                    type="checkbox"
+                    className="settings__toggle-check"
+                    checked={hideSportsSpoilers}
+                    onChange={(e) => setHideSportsSpoilers(e.target.checked)}
+                  />
+                  <span className="settings__toggle-text">
+                    <span className="settings__toggle-title">
+                      Hide sports spoilers
+                    </span>
+                    <span className="settings__toggle-desc">
+                      Rewrite sports headlines that give away a result, so the
+                      score stays hidden until you open the article.
+                    </span>
                   </span>
-                  <span className="settings__toggle-desc">
-                    Rewrite sports headlines that give away a result, so the
-                    score stays hidden until you open the article.
+                </label>
+              </li>
+            ) : null}
+            {summaryToggleVisible ? (
+              <li className="settings__toggle">
+                <label className="settings__toggle-label">
+                  <input
+                    type="checkbox"
+                    className="settings__toggle-check"
+                    checked={autoSummarizePinned}
+                    onChange={(e) => setAutoSummarizePinned(e.target.checked)}
+                  />
+                  <span className="settings__toggle-text">
+                    <span className="settings__toggle-title">
+                      Auto generate summaries for pinned articles
+                    </span>
                   </span>
-                </span>
-              </label>
-            </li>
+                </label>
+              </li>
+            ) : null}
           </ul>
         </section>
       ) : null}

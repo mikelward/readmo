@@ -30,6 +30,10 @@ import { usePersistentStore } from './usePersistentStore';
 //    lib/spoilerHeadline). Only takes effect for allowlisted callers — the
 //    display is gated on the allowlist capability too — so it's a no-op for
 //    everyone else regardless of this switch.
+//  - auto-summarize-pinned (default ON): pre-warm the AI summary for pinned
+//    articles so it's ready before the reader opens them (see
+//    useSummaryPrewarm). A family-only control (the toggle is offered only to
+//    family users in Settings); off-list users never fire the Edge call anyway.
 
 export const HIDE_ON_SCROLL_KEY = 'readmo:hide-on-scroll';
 export const BOTTOM_BAR_KEY = 'readmo:bottom-bar';
@@ -38,6 +42,7 @@ export const GROUP_BY_FEED_KEY = 'readmo:group-by-feed';
 export const SHOW_ROW_FAVICON_KEY = 'readmo:show-row-favicon';
 export const SHOW_GROUP_FAVICON_KEY = 'readmo:show-group-favicon';
 export const HIDE_SPORTS_SPOILERS_KEY = 'readmo:hide-sports-spoilers';
+export const AUTO_SUMMARIZE_PINNED_KEY = 'readmo:auto-summarize-pinned';
 
 /** Where the bottom action bar sits. 'list' = relative footer at the end of the
  * list (the default); 'screen' = pinned to the bottom of the viewport. */
@@ -79,6 +84,7 @@ function boolStoreDefaultOn(storageKey: string): PersistentStore<boolean> {
 
 const hideSportsSpoilersStore = boolStoreDefaultOn(HIDE_SPORTS_SPOILERS_KEY);
 const showGroupFaviconStore = boolStoreDefaultOn(SHOW_GROUP_FAVICON_KEY);
+const autoSummarizePinnedStore = boolStoreDefaultOn(AUTO_SUMMARIZE_PINNED_KEY);
 
 const bottomBarStore = createPersistentStore<BottomBarPosition>({
   storageKey: BOTTOM_BAR_KEY,
@@ -194,6 +200,22 @@ export function useHideSportsSpoilers(): {
   return { hideSportsSpoilers, setHideSportsSpoilers };
 }
 
+/** Whether the AI summary for pinned articles is pre-warmed so it's ready
+ * before the reader opens them (default ON). A family-only control — the toggle
+ * is offered only to family users in Settings — but off-list callers never fire
+ * the Edge call regardless (see useSummaryPrewarm). Per-device. */
+export function useAutoSummarizePinned(): {
+  autoSummarizePinned: boolean;
+  setAutoSummarizePinned: (next: boolean) => void;
+} {
+  const autoSummarizePinned = usePersistentStore(autoSummarizePinnedStore);
+  const setAutoSummarizePinned = useCallback(
+    (next: boolean) => autoSummarizePinnedStore.set(next),
+    [],
+  );
+  return { autoSummarizePinned, setAutoSummarizePinned };
+}
+
 /** Test-only: drop the stores' parse memos so `localStorage.clear()` alone
  * resets state between cases. */
 export function resetReadingPrefsCacheForTest(): void {
@@ -202,6 +224,7 @@ export function resetReadingPrefsCacheForTest(): void {
   showRowFaviconStore.resetForTest();
   showGroupFaviconStore.resetForTest();
   hideSportsSpoilersStore.resetForTest();
+  autoSummarizePinnedStore.resetForTest();
   bottomBarStore.resetForTest();
   itemSortStore.resetForTest();
 }
