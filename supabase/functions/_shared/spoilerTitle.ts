@@ -94,8 +94,18 @@ export function buildSpoilerPrompt(
     `gives away an earlier heat, leg, or game of the SAME event, is a spoiler, ` +
     `not an exception. Pre-game is safe only when nothing in the event has ` +
     `happened yet. And a ` +
-    `headline with no event to watch (a transfer, a fixture announcement, or ` +
-    `anything not about sport) has nothing to spoil.\n\n` +
+    `headline with no event to watch — a transfer, a pre-tournament fixture list ` +
+    `or opening-round draw made before anyone has played, or anything not about ` +
+    `sport — has nothing to spoil.\n\n` +
+    `A matchup or draw for a LATER round is the tricky case: it looks pre-game ` +
+    `but usually spoils the round before. "USA will face Belgium in the ` +
+    `semi-final", "X book their place against Y", "X set up a final with Y", "the ` +
+    `quarter-final line-up is confirmed" only exist because those sides WON their ` +
+    `earlier round and their opponents were knocked out — so they reveal who ` +
+    `advanced and ARE spoilers. Treat a fixture/draw as safe only when it cannot ` +
+    `reveal an earlier result (a schedule set before the tournament, the ` +
+    `first-round draw); the moment a matchup implies someone advanced, hide it, ` +
+    `and when you're unsure whether it does, hide it.\n\n` +
     `When it IS a spoiler, write a spoiler-free replacement that names only WHICH ` +
     `event it is, NEVER what happened. The replacement must not describe the ` +
     `incident at all — no score, result, goal, card, crash, collapse, injury, or ` +
@@ -111,10 +121,15 @@ export function buildSpoilerPrompt(
     `Reserves, Women's, U21) since it says which side is playing. Dig the ` +
     `participants out of the article body when the headline names only one side ` +
     `or none at all; fall back to the sport alone only when the body names no ` +
-    `teams either — and even then, never describe the incident. Examples: ` +
+    `teams either — and even then, never describe the incident. But when naming ` +
+    `the participants would ITSELF give away the spoiler — an advancement or ` +
+    `knockout matchup where listing who's playing reveals who got through (e.g. ` +
+    `"USA will face Belgium in the semi-final") — omit the teams and name only ` +
+    `the competition and the stage or round. Examples: ` +
     `"EPL MNU v ARS spoiler", "F1 British GP qualifying spoiler", ` +
     `"World Cup ARG v CPV spoiler", "NBA Finals Game 3 spoiler", ` +
-    `"Rugby AUS v IRE spoiler", "Football Epping v Lalor Reserves spoiler".\n\n` +
+    `"Rugby AUS v IRE spoiler", "Football Epping v Lalor Reserves spoiler", ` +
+    `"World Cup semi-final spoiler".\n\n` +
     `Reply with ONLY a JSON object of the form ` +
     `{"spoiler": boolean, "headline": string}. Set "headline" to the ` +
     `spoiler-free replacement when "spoiler" is true, otherwise an empty ` +
