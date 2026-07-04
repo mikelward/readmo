@@ -2203,7 +2203,11 @@ page's discipline is unchanged.
     Gemini down/unconfigured → no card. The article and reading mode are
     unaffected.
 - **Spoiler-free sports headlines (allowlisted).** A sports feed can spoil a
-  result in the headline itself ("Man Utd beat Arsenal 3-1"). For allowlisted
+  result in the headline itself ("Man Utd beat Arsenal 3-1"). A "result" here is
+  broad: not just who won or lost, but a finishing position or placing
+  ("finished seventh", "on the podium") and any change to the championship or
+  league standings the event produced ("extends lead", "goes top of the table").
+  For allowlisted
   users, such a headline is replaced — in the list **and** the reader — with a
   spoiler-free rewrite that names only **which** event it is — the competition
   and the participants — and *never what happened*: **"EPL MNU v ARS spoiler"**,

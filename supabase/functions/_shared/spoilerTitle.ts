@@ -70,7 +70,14 @@ export function buildSpoilerPrompt(
     `like "Farewell X", "dream over", "X bow out", "glory for X", "X lift the ` +
     `trophy") AND every in-play moment (a goal or the score at any point, a red or ` +
     `yellow card, a penalty, a sending-off, a crash, a retirement, an injury ` +
-    `during play, who is leading, a comeback). If a headline is about a specific ` +
+    `during play, who is leading, a comeback). It ALSO covers a competitor's ` +
+    `finishing position or placing — "X wins", "finished seventh", "P3", "on the ` +
+    `podium", "out in the first round" — and any change to the championship, ` +
+    `league, or points standings that only the event's result produces: ` +
+    `"extends lead", "closes the gap", "goes top of the table", "moves into the ` +
+    `points". A headline can name a competitor NOT in the event's decisive moment ` +
+    `and still spoil it (e.g. "leader extends lead, X finishes seventh" gives ` +
+    `away both the standings and a placing). If a headline is about a specific ` +
     `event that has started or finished and you're unsure whether it gives ` +
     `anything away, treat it as a spoiler.\n\n` +
     `The ONLY exception is PRE-GAME content — a preview, prediction, build-up, or ` +
