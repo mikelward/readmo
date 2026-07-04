@@ -419,3 +419,24 @@ button {
     filter: invert(1);
   }
 }
+
+/* Fallback icon drawn by FeedFavicon when a feed's favicon is missing or fails
+   to load: the feed's initials centered on a deterministic color (feedInitials.ts
+   / avatarColorForString), same idea as the account UserAvatar disc. Box size +
+   background + font-size come inline from the component; this owns the badge
+   look. It also carries the favicon slot's surface class for margins/alignment,
+   so it lines up with real icons. Palette-agnostic; deliberately NOT inverted in
+   dark mode — the colors carry their own white-text contrast. */
+.favicon--initials {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  color: #fff;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}

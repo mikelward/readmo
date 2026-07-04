@@ -197,7 +197,7 @@ describe('ItemPage (reader)', () => {
     expect(bottom.closest('[data-testid="reader-feedname-bottom"]')).not.toBeNull();
   });
 
-  it('omits the favicon when the feed advertises none', async () => {
+  it('shows an initials badge when the feed advertises no favicon', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     const detail = (await source.getItem('item-1'))!;
     vi.spyOn(source, 'getItem').mockResolvedValue({
@@ -206,7 +206,11 @@ describe('ItemPage (reader)', () => {
     });
     renderReader(source, 'item-1');
     await screen.findByTestId('reader-feedname');
-    expect(screen.queryByTestId('reader-feedname-favicon')).not.toBeInTheDocument();
+    // No <img>, but the feed's initials badge (The Verge → "V") stands in.
+    const badge = screen.getByTestId('reader-feedname-favicon');
+    expect(badge.tagName).toBe('SPAN');
+    expect(badge).toHaveClass('favicon--initials');
+    expect(badge.textContent).toBe('V');
   });
 
   it('shows the article domain in the meta line below the title when it links off-site', async () => {

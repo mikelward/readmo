@@ -264,6 +264,7 @@ export function ItemRows({
     const favicon = showGroupFavicon ? (
       <FeedFavicon
         url={faviconUrl}
+        name={title}
         className="item-list__group-favicon"
         reserveSpace={reserveFaviconSpace}
         placeholderClassName="item-list__group-favicon-placeholder"

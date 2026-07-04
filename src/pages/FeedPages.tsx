@@ -187,6 +187,7 @@ export function FeedPage() {
           {/* Feed favicon left of the name, matching the reader bars and rows. */}
           <FeedFavicon
             url={feed?.faviconUrl}
+            name={feed?.title}
             className="page-header__favicon"
             size={20}
             testId="feed-header-favicon"

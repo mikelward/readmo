@@ -122,27 +122,72 @@ describe('FeedFavicon', () => {
     expect(span!.style.height).toBe('20px');
   });
 
-  it('collapses the img via display on a load error when space is not reserved', () => {
+  it('draws an initials badge (not a broken img) when the favicon fails to load', () => {
     const { container } = render(
-      <FeedFavicon url="https://example.com/favicon.ico" className="x" />,
+      <FeedFavicon
+        url="https://www.ft.com/favicon.ico"
+        name="Financial Times"
+        className="item-row__favicon"
+        size={20}
+      />,
     );
-    const img = container.querySelector<HTMLImageElement>('img')!;
-    fireEvent.error(img);
-    expect(img.style.display).toBe('none');
-    expect(img.style.visibility).toBe('');
+    fireEvent.error(container.querySelector('img')!);
+    expect(container.querySelector('img')).toBeNull();
+    const badge = container.querySelector<HTMLSpanElement>('span.favicon--initials')!;
+    expect(badge).not.toBeNull();
+    expect(badge.textContent).toBe('FT');
+    // Fills the same box, with a color background and the surface class kept.
+    expect(badge.style.width).toBe('20px');
+    expect(badge.style.height).toBe('20px');
+    expect(badge.style.background).not.toBe('');
+    expect(badge).toHaveClass('item-row__favicon');
   });
 
-  it('hides the img but keeps its box on a load error when space is reserved', () => {
+  it('draws the initials badge immediately when there is no favicon URL but a name', () => {
+    const { container } = render(
+      <FeedFavicon url={null} name="The Economist" className="x" />,
+    );
+    expect(container.querySelector('img')).toBeNull();
+    const badge = container.querySelector<HTMLSpanElement>('span.favicon--initials')!;
+    expect(badge).not.toBeNull();
+    expect(badge.textContent).toBe('E'); // leading "The" dropped
+  });
+
+  it('keeps the blank placeholder (no badge) when there is no name to draw', () => {
     const { container } = render(
       <FeedFavicon
         url="https://example.com/favicon.ico"
-        className="x"
+        className="item-list__group-favicon"
         reserveSpace
+        placeholderClassName="item-list__group-favicon-placeholder"
+        size={20}
       />,
     );
-    const img = container.querySelector<HTMLImageElement>('img')!;
-    fireEvent.error(img);
-    expect(img.style.visibility).toBe('hidden');
-    expect(img.style.display).toBe('');
+    fireEvent.error(container.querySelector('img')!);
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('.favicon--initials')).toBeNull();
+    const placeholder = container.querySelector<HTMLSpanElement>(
+      'span.item-list__group-favicon-placeholder',
+    )!;
+    expect(placeholder).not.toBeNull();
+    expect(placeholder.style.width).toBe('20px');
+  });
+
+  it('does not apply the dark-invert class to the initials badge', () => {
+    // vox.com is a dark-monochrome domain (its real icon inverts); the badge is
+    // a colored letter mark and must never be inverted.
+    const { container } = render(
+      <FeedFavicon
+        url="https://www.vox.com/favicon.ico"
+        name="Vox"
+        className="item-row__favicon"
+      />,
+    );
+    expect(container.querySelector('.item-row__favicon')).toHaveClass(
+      'favicon--invert-dark',
+    );
+    fireEvent.error(container.querySelector('img')!);
+    const badge = container.querySelector('.favicon--initials')!;
+    expect(badge).not.toHaveClass('favicon--invert-dark');
   });
 });

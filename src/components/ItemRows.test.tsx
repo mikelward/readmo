@@ -100,7 +100,10 @@ describe('ItemRows', () => {
       <ItemRows items={items} emptyLabel="Nothing here." groupHeaders={headers} />,
     );
     const headerEls = container.querySelectorAll('.item-list__group-header');
-    expect([...headerEls].map((el) => el.textContent)).toEqual([
+    // Read the name element specifically: the header also holds a decorative,
+    // aria-hidden initials badge whose letters would otherwise join textContent.
+    const names = container.querySelectorAll('.item-list__group-header .item-list__group-title');
+    expect([...names].map((el) => el.textContent)).toEqual([
       'First Feed',
       'Second Feed',
     ]);
@@ -137,7 +140,7 @@ describe('ItemRows', () => {
       <ItemRows items={items} emptyLabel="Nothing here." groupHeaders={headers} />,
     );
     const favicons = container.querySelectorAll<HTMLImageElement>(
-      '.item-list__group-favicon',
+      'img.item-list__group-favicon',
     );
     expect(favicons).toHaveLength(1);
     expect(favicons[0]).toHaveAttribute('src', 'https://example.com/favicon.ico');
@@ -146,7 +149,7 @@ describe('ItemRows', () => {
     expect(favicons[0]).toHaveAttribute('aria-hidden', 'true');
   });
 
-  it('reserves a favicon-sized placeholder in headers without an icon when a sibling has one', async () => {
+  it('draws an initials badge for a header without its own icon', async () => {
     const items = await sampleItems(2);
     const headers = new Map([
       [
@@ -157,20 +160,21 @@ describe('ItemRows', () => {
           faviconUrl: 'https://example.com/favicon.ico',
         },
       ],
-      // No favicon of its own → gets a placeholder so its name lines up with
-      // the iconned sibling above.
+      // No favicon of its own → its initials badge fills the slot so its name
+      // lines up with the iconned sibling above (no blank placeholder).
       [items[1].item.id, { feedId: items[1].item.feedId, title: 'Plain Feed' }],
     ]);
     const { container } = renderWithProviders(
       <ItemRows items={items} emptyLabel="Nothing here." groupHeaders={headers} />,
     );
-    // The iconned feed shows a real <img>; the plain one a decorative spacer.
-    expect(container.querySelectorAll('.item-list__group-favicon')).toHaveLength(1);
-    const placeholders = container.querySelectorAll(
-      '.item-list__group-favicon-placeholder',
-    );
-    expect(placeholders).toHaveLength(1);
-    expect(placeholders[0]).toHaveAttribute('aria-hidden', 'true');
+    // The iconned feed shows a real <img>; the plain one an initials badge.
+    expect(container.querySelectorAll('img.item-list__group-favicon')).toHaveLength(1);
+    const badge = container.querySelector('.item-list__group-favicon.favicon--initials');
+    expect(badge).not.toBeNull();
+    expect(badge?.textContent).toBe('PF');
+    expect(
+      container.querySelectorAll('.item-list__group-favicon-placeholder'),
+    ).toHaveLength(0);
   });
 
   it('omits group-header favicons (and the reserved slot) when "show icons on groups" is off', async () => {
@@ -199,7 +203,7 @@ describe('ItemRows', () => {
     expect(container.querySelectorAll('.item-list__group-header')).toHaveLength(2);
   });
 
-  it('keeps a favicon box (not display:none) when its image fails to load and a sibling has an icon', async () => {
+  it('falls back to an initials badge when a group favicon fails to load', async () => {
     const { fireEvent } = await import('@testing-library/react');
     const items = await sampleItems(2);
     const headers = new Map([
@@ -211,9 +215,8 @@ describe('ItemRows', () => {
           faviconUrl: 'https://example.com/favicon.ico',
         },
       ],
-      // Has a favicon URL, but it 404s / is bot-blocked and won't load. With a
-      // sibling showing an icon, the box must stay (blank) to hold alignment
-      // rather than collapse and snap the name left.
+      // Has a favicon URL, but it 404s / is bot-blocked and won't load — it's
+      // replaced by the feed's initials badge (fills the slot, no left snap).
       [
         items[1].item.id,
         {
@@ -230,12 +233,17 @@ describe('ItemRows', () => {
       'img.item-list__group-favicon[src="https://blocked.example/favicon.ico"]',
     )!;
     fireEvent.error(broken);
-    // Box preserved (space kept), image content hidden — no left snap, no glyph.
-    expect(broken.style.visibility).toBe('hidden');
-    expect(broken.style.display).not.toBe('none');
+    // The broken img is replaced by the feed's initials badge.
+    const badge = container.querySelector('.item-list__group-favicon.favicon--initials');
+    expect(badge).not.toBeNull();
+    expect(badge?.textContent).toBe('BI');
+    // The working sibling still shows its real img.
+    expect(
+      container.querySelector('img.item-list__group-favicon[src="https://example.com/favicon.ico"]'),
+    ).not.toBeNull();
   });
 
-  it('renders no favicon placeholder when no header in the list has an icon', async () => {
+  it('draws initials badges (no blank placeholder) for headers with no resolved icon', async () => {
     const items = await sampleItems(2);
     const headers = new Map([
       [items[0].item.id, { feedId: items[0].item.feedId, title: 'First Feed' }],
@@ -247,6 +255,8 @@ describe('ItemRows', () => {
     expect(
       container.querySelectorAll('.item-list__group-favicon-placeholder'),
     ).toHaveLength(0);
+    const badges = container.querySelectorAll('.item-list__group-favicon.favicon--initials');
+    expect(Array.from(badges).map((b) => b.textContent)).toEqual(['FF', 'SF']);
   });
 
   it('tags a dark-monochrome group favicon (vox.com) for dark-mode inversion', async () => {
