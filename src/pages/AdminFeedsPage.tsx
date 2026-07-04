@@ -355,6 +355,7 @@ function FeedStatusRow({
             list, instead of snapping flush to the row's left edge. */}
         <FeedFavicon
           url={feed.faviconUrl}
+          name={feed.title}
           className="admin-feeds__favicon"
           reserveSpace
           placeholderClassName="admin-feeds__favicon-placeholder"

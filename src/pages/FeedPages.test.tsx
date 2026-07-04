@@ -247,13 +247,16 @@ describe('FeedPage (header favicon)', () => {
     expect(favicon.closest('.page-header__title')).not.toBeNull();
   });
 
-  it('omits the favicon when the feed advertises none', async () => {
+  it('shows an initials badge when the feed advertises no favicon', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     const verge = (await source.getFeed('feed-verge'))!;
     vi.spyOn(source, 'getFeed').mockResolvedValue({ ...verge, faviconUrl: null });
     renderFeed(source, 'feed-verge');
-    // Title still renders; just no icon.
     await screen.findByRole('heading', { level: 1, name: 'The Verge' });
-    expect(screen.queryByTestId('feed-header-favicon')).toBeNull();
+    // No <img>, but the feed's initials badge (The Verge → "V") stands in.
+    const badge = screen.getByTestId('feed-header-favicon');
+    expect(badge.tagName).toBe('SPAN');
+    expect(badge).toHaveClass('favicon--initials');
+    expect(badge.textContent).toBe('V');
   });
 });

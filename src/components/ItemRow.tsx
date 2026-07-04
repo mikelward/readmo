@@ -384,6 +384,7 @@ export function ItemRow({
         {showFavicon ? (
           <FeedFavicon
             url={feed.faviconUrl}
+            name={source}
             className="item-row__favicon"
             testId="item-favicon"
             reserveSpace

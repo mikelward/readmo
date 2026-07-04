@@ -1883,14 +1883,20 @@ homepage fetch is a **one-shot cost per feed**:
 discovery runs only on the first poll that finds no favicon stored yet, and
 every later poll reuses the stored value — a discovered icon, or the
 `/favicon.ico` guess it settled on — without re-fetching the page. Else, finally, the
-site origin's `/favicon.ico`. It's decorative (`alt=""`) and the `<img>` hides itself on load
-error, so a guessed `/favicon.ico` that 404s leaves no broken glyph — but it hides
-*without collapsing its box*: a missing icon (none resolved yet) or an invalid one
-that fails to load reserves the same fixed slot, so a feed lacking an icon never
-snaps its name/meta left out of alignment with siblings whose icons loaded. A
+site origin's `/favicon.ico`. It's decorative (`alt=""`). When the stored icon
+is **missing or fails to load** — most often that guessed `/favicon.ico` for a
+publisher that serves none there (ft.com, economist.com), whose real icon is only
+on a bot-blocked homepage the poller can't reach — the client draws a
+**deterministic initials-on-color badge** from the feed name instead of leaving
+the row blank (`feedInitials.ts` for the letters, `avatarColorForString` for the
+color — the same offline, zero-request approach as the account `UserAvatar` disc;
+no favicon service, no third-party call). The badge fills the same fixed slot, so
+a feed lacking an icon never snaps its name/meta left out of alignment with
+siblings whose icons loaded; only when there's no name to draw does the slot fall
+back to a blank reserved placeholder (or collapse). A
 shared `FeedFavicon` component owns that box size across every surface (rows,
-grouped headers, reader bar, feed page, admin) so the icon and its reserved
-placeholder can't drift apart. The URL is
+grouped headers, reader bar, feed page, admin) and the load-error fallback, so the
+icon, its badge, and its placeholder can't drift apart. The stored URL is
 display-safe metadata (like `title`/`site_url`), so `feeds_public` exposes it;
 the client loads it directly (not via the image proxy). A handful of publishers
 ship a **black-on-transparent** favicon (a dark monochrome mark) that vanishes

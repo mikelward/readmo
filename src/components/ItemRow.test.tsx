@@ -107,33 +107,35 @@ describe('ItemRow', () => {
     expect(screen.getByTestId('item-meta')).toContainElement(favicon);
   });
 
-  it('keeps the favicon box (not display:none) when a present icon fails to load', () => {
-    // An invalid/404 favicon URL that errors in the browser must hide the image
-    // WITHOUT collapsing its box, or the row snaps left and jaggeds the list.
+  it('falls back to an initials badge when a present icon fails to load', () => {
+    // An invalid/404 favicon URL that errors in the browser is replaced by the
+    // feed's initials badge — no broken glyph, no blank box, no left snap.
     const withIcon: FeedItem = {
       item: FEED_ITEM.item,
       feed: { ...FEED_ITEM.feed, faviconUrl: 'https://example.com/favicon.ico' },
     };
     renderWithProviders(<ItemRow feedItem={withIcon} showFavicon />);
-    const favicon = screen.getByTestId('item-favicon');
     act(() => {
-      favicon.dispatchEvent(new Event('error'));
+      screen.getByTestId('item-favicon').dispatchEvent(new Event('error'));
     });
-    expect(favicon.style.visibility).toBe('hidden');
-    expect(favicon.style.display).toBe('');
+    const badge = screen.getByTestId('item-favicon');
+    expect(badge.tagName).toBe('SPAN');
+    expect(badge).toHaveClass('favicon--initials');
+    expect(badge.textContent).toBe('EB'); // "Example Blog"
   });
 
-  it('reserves the favicon slot when showFavicon is set but the feed has none', () => {
-    // faviconUrl null (poller hasn't resolved one) → no <img> (no broken-image
-    // glyph), but a placeholder holds the 16px box so this row's meta line stays
-    // aligned with sibling rows whose icons loaded, instead of snapping left.
+  it('shows an initials badge when showFavicon is set but the feed has no icon', () => {
+    // faviconUrl null (poller hasn't resolved one) → draw the feed's initials on
+    // a color badge (fills the same 16px slot, keeps rows aligned) rather than a
+    // blank placeholder.
     const { container } = renderWithProviders(
       <ItemRow feedItem={FEED_ITEM} showFavicon />,
     );
     expect(container.querySelector('img.item-row__favicon')).toBeNull();
-    expect(
-      container.querySelector('.item-row__favicon-placeholder'),
-    ).not.toBeNull();
+    expect(container.querySelector('.item-row__favicon-placeholder')).toBeNull();
+    const badge = container.querySelector('.item-row__favicon.favicon--initials');
+    expect(badge).not.toBeNull();
+    expect(badge?.textContent).toBe('EB');
   });
 
   it('shows the article domain next to the feed name when they differ', () => {

@@ -177,6 +177,7 @@ function ReaderToolbar({
             per-row icon. */}
         <FeedFavicon
           url={faviconUrl}
+          name={source}
           className="reader__feedname-favicon"
           testId={`reader-feedname-favicon${sfx}`}
         />
