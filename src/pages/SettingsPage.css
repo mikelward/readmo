@@ -2,37 +2,34 @@
   padding-bottom: 32px;
 }
 
+/* No dividers between sections on either page that uses this sheet (Settings
+   and the /feeds manager) — the vertical padding alone sets them apart, so it's
+   a touch larger to keep the groups legible. */
 .settings__section {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--rm-border);
+  padding: 16px;
 }
 
 .settings__heading {
   font-size: 1.1rem;
-  margin: 0 0 10px;
+  margin: 0 0 12px;
 }
 
 /* Sub-label for an individual control within a grouped section (e.g. the
    Color theme / Dark-light / Text size / Font controls under Appearance).
-   Lighter than the section heading; extra top margin separates it from the
-   preceding control. */
+   Lighter than the section heading; the top margin separates it from the
+   preceding control, the bottom margin sets the same label-to-control gap the
+   section heading uses. */
 .settings__subheading {
   font-size: 0.95rem;
   font-weight: 600;
   color: var(--rm-text);
-  margin: 18px 0 8px;
+  margin: 24px 0 12px;
 }
 
 /* The first sub-label sits right under the section heading, so it doesn't need
    the full separating gap. */
 .settings__heading + .settings__subheading {
   margin-top: 0;
-}
-
-/* A toggle list that follows another control in the same section wants a little
-   breathing room above it. */
-.settings__toggles--spaced {
-  margin-top: 18px;
 }
 
 .settings__add,
@@ -197,9 +194,6 @@
   padding: 0;
 }
 
-.settings__toggle + .settings__toggle {
-  border-top: 1px solid var(--rm-border);
-}
 
 .settings__toggle-label {
   display: flex;
@@ -209,6 +203,18 @@
   min-height: var(--rm-tap);
   cursor: pointer;
   user-select: none;
+}
+
+/* Strip the outer padding of a list's first/last rows so the toggle list lines
+   up with its heading (and the section edge) exactly like the button groups do
+   — the inner padding still separates adjacent rows. The 44px min-height keeps
+   every row a valid tap target regardless. */
+.settings__toggle:first-child .settings__toggle-label {
+  padding-top: 0;
+}
+
+.settings__toggle:last-child .settings__toggle-label {
+  padding-bottom: 0;
 }
 
 .settings__toggle-check {
@@ -261,6 +267,12 @@
   align-items: center;
   gap: 12px;
   padding: 10px 0;
+}
+
+/* Sections are divider-free, but the Subscriptions list on the /feeds page
+   keeps its per-row dividers — it's a dense, reorderable list where the lines
+   aid scanning (unlike the sparse settings groups). */
+.settings__sub {
   border-bottom: 1px solid var(--rm-border);
 }
 
@@ -469,6 +481,9 @@
 
 .settings__account {
   justify-content: space-between;
+  /* Sits flush under its heading like every other section's first control (the
+     Sign out button holds the 44px tap height). */
+  padding: 0;
 }
 
 /* A row holding one or more link/button actions under a section heading (Feeds,
