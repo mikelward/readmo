@@ -3,6 +3,7 @@ import { useIsRestoring, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useOnlineStatus } from './useOnlineStatus';
 import { useFullTextAllowed } from './useCapabilities';
+import { useAutoSummarizePinned } from './useReadingPrefs';
 import { summaryQueryKey } from './useSummary';
 import { isSummarySettled, summaryStaleTime, type SummaryResult } from '../lib/summary';
 
@@ -27,8 +28,11 @@ import { isSummarySettled, summaryStaleTime, type SummaryResult } from '../lib/s
  * circuit), and a never-summarized pin generates exactly **once**, shared across
  * every device and user.
  *
- * Gated **online + allowlisted** (same allowlist as `useSummary`), so an
- * off-list user fires no Edge call (the server re-checks regardless). An item is
+ * Gated **online + allowlisted + opted-in** (the family-only "Auto generate
+ * summaries for pinned articles" setting, on by default — see
+ * useAutoSummarizePinned), so an off-list user fires no Edge call and a family
+ * user who turned it off warms nothing (the server re-checks regardless). An
+ * item is
  * marked warmed only on a **settled** outcome, so a transient `unreachable`/
  * `unavailable` stays unwarmed and retries on reconnect / once the allowlist gate
  * resolves. The store subscriber warms only **newly-pinned** ids (so an
@@ -44,6 +48,10 @@ export function useSummaryPrewarm(): void {
   const queryClient = useQueryClient();
   const online = useOnlineStatus();
   const allowed = useFullTextAllowed();
+  // The family-only opt-in (on by default). When off, warm nothing — the reader
+  // still generates on-open for whoever opens an article; this only skips the
+  // ahead-of-time prefetch.
+  const { autoSummarizePinned } = useAutoSummarizePinned();
   // True while PersistQueryClientProvider is rehydrating the cache. Warming must
   // wait: running before hydration completes would see an empty cache and
   // re-fetch every persisted pinned summary on boot (defeating the cache).
@@ -55,6 +63,8 @@ export function useSummaryPrewarm(): void {
   onlineRef.current = online;
   const allowedRef = useRef(allowed);
   allowedRef.current = allowed;
+  const autoSummarizeRef = useRef(autoSummarizePinned);
+  autoSummarizeRef.current = autoSummarizePinned;
   const restoringRef = useRef(isRestoring);
   restoringRef.current = isRestoring;
   const warmed = useRef(new Set<string>()).current;
@@ -73,7 +83,8 @@ export function useSummaryPrewarm(): void {
         restoringRef.current ||
         warmed.has(id) ||
         !onlineRef.current ||
-        !allowedRef.current
+        !allowedRef.current ||
+        !autoSummarizeRef.current
       )
         return;
       void queryClient
@@ -116,10 +127,11 @@ export function useSummaryPrewarm(): void {
 
   // Warm the pinned set once it's both safe and useful — after the persisted
   // cache restored (so already-cached summaries are seen, not re-fetched) and
-  // while online + allowed. Also covers reconnect and the allowlist gate
-  // resolving: pins held off in those states fill in here.
+  // while online + allowed + opted-in. Also covers reconnect, the allowlist gate
+  // resolving, and the setting being switched on: pins held off in those states
+  // fill in here.
   useEffect(() => {
-    if (isRestoring || !online || !allowed) return;
+    if (isRestoring || !online || !allowed || !autoSummarizePinned) return;
     for (const [id, s] of ds.stateStore.entries()) if (s.pinned) warm(id);
-  }, [isRestoring, online, allowed, ds, warm]);
+  }, [isRestoring, online, allowed, autoSummarizePinned, ds, warm]);
 }

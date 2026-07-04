@@ -1539,9 +1539,16 @@ negligible and off every critical path. See the External services table in
       (`readmo:show-row-favicon`, **off by default** — the icon on each article
       row in the non-grouped views).
     - **Smart features** — the **Hide sports spoilers** toggle
-      (`readmo:hide-sports-spoilers`); shown only for allowlisted callers (same
-      gate as the rewrite), so the whole section is hidden — heading and all — for
-      anyone off the list. See *Spoiler-free sports headlines*.
+      (`readmo:hide-sports-spoilers`), shown only for allowlisted callers (same
+      gate as the rewrite), and the **Auto generate summaries for pinned
+      articles** toggle (`readmo:auto-summarize-pinned`, **on by default**),
+      shown only for **family** users. The whole section is hidden — heading and
+      all — when neither toggle applies (i.e. an off-list caller on an armed
+      allowlist). When on, the summary for a pinned article is pre-warmed so it's
+      ready before the reader opens it (see *AI article summaries* /
+      `useSummaryPrewarm`); when a family user turns it off, no pin pre-warm
+      fires — the reader still generates on open. See *Spoiler-free sports
+      headlines* and *AI article summaries*.
 
 11. **Feeds** — `/feeds`: feed management, reached from the drawer's **Feeds**
     section edit pencil (also linked from the account menu).
@@ -2080,6 +2087,11 @@ page's discipline is unchanged.
     `items.ai_summary`, so whichever fires first generates and the rest are plain
     cache hits — **never a second Gemini call**. So a pinned article is usually
     already summarized (no spinner) by the time it's opened, on whatever device.
+    The pre-warm is also gated on the family-only **Auto generate summaries for
+    pinned articles** setting (`readmo:auto-summarize-pinned`, on by default —
+    see *Settings → Smart features*): a family user who turns it off warms
+    nothing ahead of time, though the reader's on-open `useSummary` still
+    generates the summary for whatever article is opened.
     **Cross-device warming is cheap because the summary is cached server-side**: a
     warm of an already-generated summary is a *server cache hit* (the `summary`
     Edge Function short-circuits on `items.ai_summary` — no Jina, no Gemini), and
