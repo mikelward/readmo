@@ -2093,12 +2093,27 @@ page's discipline is unchanged.
     the **`GOOGLE_API_KEY`** Supabase secret (and **`JINA_API_KEY`** for the
     article fetch — without it the function falls back to stored content); unset
     `GOOGLE_API_KEY` → the function reports `unavailable` and the reader shows no
-    summary card. The prompt is a bare tl;dr ask ("Provide a tl;dr of the
-    following article:", with the title passed along as context when known) —
-    deliberately unsteered, diverging from newshacker's heavily-steered
-    article-summary prompt: in practice the bare ask yields shorter, more
-    direct prose than added length/format/register instructions did. The
-    response is rendered
+    summary card. The prompt is a tl;dr ask ("Provide a tl;dr of the
+    following article:", with the title passed along as context when known)
+    with **one targeted anti-preamble instruction** ("Respond with only the
+    summary itself: no preamble … no 'tl;dr' label, and no 'The article
+    covers…' style lead-in"), otherwise unsteered — diverging from
+    newshacker's heavily-steered article-summary prompt: in practice the bare
+    ask yields shorter, more direct prose than added length/format/register
+    instructions did. The anti-preamble line exists because the tl;dr ask made
+    the model echo that framing back as a preamble ("tl;dr:", "**TL;DR:**",
+    "Here's a tl;dr of the article:", "The article covers…"). Because that's a
+    negative instruction a flash-lite model may still ignore, the function also
+    **strips a leading meta-framing preamble** from the output as a
+    deterministic backstop (`stripSummaryPreamble` in `_shared/summary.ts`).
+    The strip is conservative — it removes only a recognized label/lead-in at
+    the very start and only when the "tl;dr" token is clearly a label (a
+    separator, closing emphasis, or line break follows), so a summary that
+    merely mentions "tl;dr" mid-text, or genuinely opens with "TLDR" as a
+    proper noun (the tldr-pages project / TLDR newsletter), is untouched. The
+    same strip runs on the **cache-hit path** too, cleaning (and rewriting
+    once) any row cached before the strip existed so legacy preambles don't
+    render forever. The response is rendered
     with the inline **`MarkdownText`** component **ported from newshacker**
     (guardrail #9) — it emits `<strong>`/`<em>`/`<code>` React elements, never
     `dangerouslySetInnerHTML`, so there's no markdown-library dependency and no

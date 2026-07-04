@@ -107,12 +107,20 @@ export function pickStoredContent(src: SummarySource): StoredPick | null {
   return null;
 }
 
-/** Prompt for the article summary: a bare tl;dr ask, with the title (when
- * known) passed along as context and the article text between explicit
- * delimiters. Deliberately unsteered — length/format/register instructions
- * made the output longer and stiffer in practice, while the bare ask yields
- * short, direct prose. If bullet output ever shows up (the inline MarkdownText
- * renderer has no list support), add back a minimal plain-prose clause. */
+/** Prompt for the article summary: a tl;dr ask with a single targeted
+ * anti-preamble instruction, the title (when known) passed along as context,
+ * and the article text between explicit delimiters.
+ *
+ * Otherwise deliberately unsteered — length/format/register instructions made
+ * the output longer and stiffer in practice, while the bare ask yields short,
+ * direct prose. The lone steer is the "respond with only the summary" line:
+ * because the ask is a "tl;dr", the model kept echoing that framing back as a
+ * preamble ("tl;dr:", "Here's a tl;dr of the article:", "The article covers…"),
+ * so we tell it not to. It's a negative instruction a flash-lite model may
+ * still ignore, so {@link stripSummaryPreamble} stays as a deterministic
+ * backstop on the output. If bullet output ever shows up (the inline
+ * MarkdownText renderer has no list support), add back a minimal plain-prose
+ * clause. */
 export function buildSummaryPrompt(
   title: string | null | undefined,
   content: string,
@@ -120,9 +128,58 @@ export function buildSummaryPrompt(
   const titleLine = title ? `The article is titled "${title}".\n\n` : '';
   return (
     `Provide a tl;dr of the following article:\n\n` +
+    `Respond with only the summary itself: no preamble or meta-commentary, ` +
+    `no "tl;dr" label, and no "The article covers…" style lead-in.\n\n` +
     titleLine +
     `--- BEGIN ARTICLE ---\n${content}\n--- END ARTICLE ---`
   );
+}
+
+/** Strip a leading meta-framing preamble the model sometimes prepends to the
+ * gist. Because the prompt asks for a "tl;dr" (and stays deliberately unsteered —
+ * see {@link buildSummaryPrompt}), the model occasionally echoes that framing
+ * back as a label ("tl;dr:", "**TL;DR:**") or a lead-in sentence ("Here's a
+ * tl;dr of the article:", "Summary:") before the actual summary. That preamble
+ * is noise in the reader's summary card, so we peel it off here.
+ *
+ * Conservative by design — it removes only a recognized lead-in, and only from
+ * the very start, so a summary whose real prose merely mentions "tl;dr" mid-text
+ * is untouched. Runs in a small loop so stacked preambles ("Here's a tl;dr:
+ * **TL;DR:** …") are all removed. Tolerates surrounding markdown emphasis/heading
+ * markers (`*`, `_`, `#`) since the model may bold or head the label. */
+export function stripSummaryPreamble(text: string): string {
+  const patterns = [
+    // A lead-in sentence: "Here's/Here is a tl;dr/summary of the article:",
+    // optionally opened with "Sure,". The summary word must be the OFFERED
+    // object — immediately before the colon, or before an "of …" phrase — so a
+    // legit summary where it's just an adjective ("This is a summary judgment
+    // case: …", "Here are the summary statistics: …") keeps its subject.
+    /^[#*_\s]*(?:sure[,!.]*\s*)?(?:here(?:['’])?s|here\s+is|here\s+are|below\s+is|this\s+is)\b[^:\n]*?\b(?:tl[;:]?dr|summary|gist|rundown|synopsis)(?:\s+of\b[^:\n]*)?\s*:[#*_\s]*/i,
+    // A "tl;dr" LABEL: the token only counts as a prefix when it's clearly a
+    // label — followed by a separator ("tl;dr:", "TL;DR —"), closing markdown
+    // emphasis ("**tl;dr**"), or a line break / end of text. A bare token
+    // followed by an ordinary word is left alone, so a summary that genuinely
+    // opens with "TLDR" as a proper noun (e.g. the TLDR newsletter / tldr-pages)
+    // keeps its first word.
+    /^[#*_\s]*tl[;:]?dr\b(?:[*_]+|[ \t]*[:\-–—]|[ \t]*(?=\n)|[ \t]*$)[#*_\s:\-–—]*/i,
+    // Word labels ("Summary", "Gist", "Synopsis") are only a prefix when a real
+    // delimiter or a line break follows — "Summary:" / "**Summary**" / a "##
+    // Summary" heading — NOT when an ordinary word does ("Summary judgment …").
+    /^[#*_\s]*(?:summary|gist|synopsis)\b[*_]*(?:\s*[:\-–—]\s*|\s*\n\s*)[#*_\s]*/i,
+  ];
+  let out = text.trim();
+  for (let guard = 0; guard < 4; guard++) {
+    const before = out;
+    for (const re of patterns) {
+      const next = out.replace(re, '');
+      if (next !== out) {
+        out = next.trim();
+        break;
+      }
+    }
+    if (out === before) break;
+  }
+  return out;
 }
 
 /** Minimal shape of the Gemini `generateContent` REST response we read. */

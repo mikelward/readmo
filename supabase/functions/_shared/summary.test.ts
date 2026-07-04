@@ -8,6 +8,7 @@ import {
   looksTruncatedHtml,
   parseGeminiText,
   pickStoredContent,
+  stripSummaryPreamble,
 } from './summary';
 
 describe('htmlToPlainText', () => {
@@ -112,17 +113,98 @@ describe('buildSummaryPrompt', () => {
     expect(prompt).toContain('--- END ARTICLE ---');
   });
 
-  it('stays unsteered: no length, format, or register instructions beyond the tl;dr ask', () => {
+  it('carries the targeted anti-preamble instruction', () => {
+    const prompt = buildSummaryPrompt('A Title', 'body');
+    expect(prompt).toContain('no preamble');
+    expect(prompt).toContain('"tl;dr" label');
+    expect(prompt).toContain('The article covers');
+  });
+
+  it('stays unsteered on the prose: no length/format/register instructions', () => {
     const prompt = buildSummaryPrompt('A Title', 'body');
     expect(prompt).not.toContain('sentences');
     expect(prompt).not.toContain('bullet');
     expect(prompt).not.toContain('Markdown');
-    expect(prompt).not.toContain('meta-framing');
   });
 
   it('omits the title clause when there is no title', () => {
     const prompt = buildSummaryPrompt(null, 'body');
     expect(prompt).not.toContain('titled');
+  });
+});
+
+describe('stripSummaryPreamble', () => {
+  it('strips a bare "tl;dr:" label prefix', () => {
+    expect(stripSummaryPreamble('tl;dr: The team shipped a new feature.')).toBe(
+      'The team shipped a new feature.',
+    );
+    expect(stripSummaryPreamble('TL;DR — The team shipped a new feature.')).toBe(
+      'The team shipped a new feature.',
+    );
+    expect(stripSummaryPreamble('tldr: no semicolon variant.')).toBe(
+      'no semicolon variant.',
+    );
+  });
+
+  it('strips markdown-emphasized labels', () => {
+    expect(stripSummaryPreamble('**TL;DR:** The gist here.')).toBe('The gist here.');
+    expect(stripSummaryPreamble('**tl;dr** the gist here.')).toBe('the gist here.');
+    expect(stripSummaryPreamble('## Summary\n\nThe gist here.')).toBe('The gist here.');
+  });
+
+  it('strips a "Here\'s a tl;dr of the article:" lead-in sentence', () => {
+    expect(
+      stripSummaryPreamble(
+        "Here's a tl;dr of the article: The article covers various news stories, including several updates.",
+      ),
+    ).toBe('The article covers various news stories, including several updates.');
+    expect(
+      stripSummaryPreamble('Here is a summary of the article: It rained.'),
+    ).toBe('It rained.');
+    expect(
+      stripSummaryPreamble('Sure, here is the tl;dr: It rained.'),
+    ).toBe('It rained.');
+  });
+
+  it('strips stacked preambles', () => {
+    expect(
+      stripSummaryPreamble("Here's a tl;dr of the article: **TL;DR:** It rained."),
+    ).toBe('It rained.');
+  });
+
+  it('leaves a clean summary untouched', () => {
+    const clean = 'The article covers various news stories, including updates.';
+    expect(stripSummaryPreamble(clean)).toBe(clean);
+  });
+
+  it('does not strip a mid-sentence mention of tl;dr', () => {
+    const text = 'The author gives a tl;dr at the end of the post.';
+    expect(stripSummaryPreamble(text)).toBe(text);
+  });
+
+  it('keeps a lead-in where "summary" is an adjective, not the offered object', () => {
+    const legal = 'This is a summary judgment case: the court ruled for the plaintiff.';
+    expect(stripSummaryPreamble(legal)).toBe(legal);
+    const stats = 'Here are the summary statistics: the mean was 4.2.';
+    expect(stripSummaryPreamble(stats)).toBe(stats);
+  });
+
+  it('keeps a leading TLDR proper noun when no label delimiter follows', () => {
+    // The tldr project / TLDR newsletter: "TLDR" is the subject, not a label.
+    const text = 'TLDR Pages is a community-driven collection of man pages.';
+    expect(stripSummaryPreamble(text)).toBe(text);
+    const news = 'TLDR newsletter rounded up the week in tech.';
+    expect(stripSummaryPreamble(news)).toBe(news);
+  });
+
+  it('does not strip a summary that merely begins with the word Summary in prose', () => {
+    const text = 'Summary judgment was granted to the defendant.';
+    // "Summary judgment" has no label separator after "Summary", so it survives.
+    expect(stripSummaryPreamble(text)).toBe(text);
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(stripSummaryPreamble('  \n  tl;dr:  It rained.  \n')).toBe('It rained.');
   });
 });
 

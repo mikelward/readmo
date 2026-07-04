@@ -62,6 +62,7 @@ import {
   clampSummaryText,
   parseGeminiText,
   pickStoredContent,
+  stripSummaryPreamble,
 } from '../_shared/summary.ts';
 
 const MODEL = 'gemini-2.5-flash-lite';
@@ -157,10 +158,33 @@ async function handle(req: Request): Promise<Response> {
   }
 
   // Cache hit — the summary lives on the shared item, so one caller's generation
-  // serves every subscriber who later pins the same article.
+  // serves every subscriber who later pins the same article. Run the preamble
+  // strip on the cached value too: rows cached BEFORE the strip existed still
+  // carry a "tl;dr:" / "Here's a tl;dr…" preamble, and the cache-hit path returns
+  // before generateSummary's strip. When cleaning actually changes the stored
+  // value (a legacy row), rewrite it once so every later reader gets the fixed
+  // text without re-stripping; fresh post-deploy summaries are already clean, so
+  // this is a no-op write for them.
   if (item.ai_summary) {
-    console.log(`summary: item ${itemId} — cache hit`);
-    return json({ status: 'ok', summary: item.ai_summary });
+    const cleaned = stripSummaryPreamble(item.ai_summary) || item.ai_summary;
+    if (cleaned !== item.ai_summary) {
+      console.log(`summary: item ${itemId} — cache hit, cleaning legacy preamble`);
+      // Compare-and-swap on the exact value we read: if the poller nulled the
+      // summary (title/body change) or another request wrote a newer one between
+      // our RLS read and here, the WHERE won't match and we leave that value
+      // alone instead of clobbering it with stale cleaned text.
+      const { error: rewriteError } = await service
+        .from('items')
+        .update({ ai_summary: cleaned })
+        .eq('id', itemId)
+        .eq('ai_summary', item.ai_summary);
+      if (rewriteError) {
+        console.error(`summary: legacy preamble rewrite for item ${itemId} failed:`, rewriteError);
+      }
+    } else {
+      console.log(`summary: item ${itemId} — cache hit`);
+    }
+    return json({ status: 'ok', summary: cleaned });
   }
 
   // Paused feed → decline generation (operator paused it from /admin/feeds). A
@@ -366,7 +390,12 @@ async function generateSummary(
       console.warn(`summary: Gemini responded HTTP ${res.status}`);
       return null;
     }
-    return parseGeminiText(await res.json());
+    const parsed = parseGeminiText(await res.json());
+    if (!parsed) return null;
+    // Peel off any "tl;dr:" / "Here's a tl;dr of the article:" framing the model
+    // echoed back before the gist (the prompt is deliberately unsteered). If
+    // nothing but the preamble came back, treat it as a soft failure.
+    return stripSummaryPreamble(parsed) || null;
   } catch (err) {
     console.warn('summary: Gemini call failed:', err);
     return null;
