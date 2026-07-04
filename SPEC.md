@@ -2205,11 +2205,17 @@ page's discipline is unchanged.
 - **Spoiler-free sports headlines (allowlisted).** A sports feed can spoil a
   result in the headline itself ("Man Utd beat Arsenal 3-1"). For allowlisted
   users, such a headline is replaced — in the list **and** the reader — with a
-  spoiler-free rewrite that leads with the short competition name and names only
-  *what* happened, never the result: **"EPL MNU v ARS spoiler"**, **"F1 British
-  GP qualifying spoiler"**, **"World Cup AUS v EGY spoiler"**. When the specific
-  competition can't be identified, the rewrite leads with the **sport** instead
-  so it's never left bare (**"Rugby AUS v IRE spoiler"**). Opening the article
+  spoiler-free rewrite that names only **which** event it is — the competition
+  and the participants — and *never what happened*: **"EPL MNU v ARS spoiler"**,
+  **"F1 British GP qualifying spoiler"**, **"World Cup AUS v EGY spoiler"**. The
+  incident itself (a score, goal, card, crash, injury, or medical emergency)
+  never appears in the rewrite, and the teams are pulled from the article body
+  when the headline doesn't name them, keeping any qualifier that's part of a
+  team's name (**"Football Epping v Lalor Reserves spoiler"** for a mid-match
+  injury story). When the specific competition can't be identified,
+  the rewrite leads with the **sport** instead so it's never left bare
+  (**"Rugby AUS v IRE spoiler"**); it never invents a league it can't confirm
+  from the text. Opening the article
   is unchanged (full content, spoilers and all). The **original headline always
   stays in `items.title`** and the rewrite in a separate column, so display is
   reversible and the choice is a pure client decision.

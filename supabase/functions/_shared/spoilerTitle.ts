@@ -78,16 +78,24 @@ export function buildSpoilerPrompt(
     `headline with no event to watch (a transfer, a fixture announcement, or ` +
     `anything not about sport) has nothing to spoil.\n\n` +
     `When it IS a spoiler, write a spoiler-free replacement that names only WHICH ` +
-    `event it is, never what happened: lead with the short competition or league ` +
-    `name (e.g. F1, EPL, NBA, NFL, World Cup). If you can't identify the specific ` +
-    `competition, lead with the SPORT instead (e.g. Rugby, Cricket, Tennis) so the ` +
-    `reader still knows what it is — never omit both. Then give the participants as ` +
-    `short abbreviations joined by "v" for a head-to-head (use just the one team ` +
-    `when only one is named), then the word "spoiler". Use the article body to ` +
-    `identify the competition, the sport, and the opponent when the headline names ` +
-    `only one side. Examples: "EPL MNU v ARS spoiler", "F1 British GP qualifying ` +
-    `spoiler", "World Cup ARG v CPV spoiler", "NBA Finals Game 3 spoiler", ` +
-    `"Rugby AUS v IRE spoiler".\n\n` +
+    `event it is, NEVER what happened. The replacement must not describe the ` +
+    `incident at all — no score, result, goal, card, crash, collapse, injury, or ` +
+    `medical emergency may appear in it. (A rewrite like "Football critical injury ` +
+    `spoiler" is WRONG: it states what happened. Name the teams instead.) Lead ` +
+    `with the short competition or league name (e.g. F1, EPL, NBA, NFL, World ` +
+    `Cup). If you can't identify the specific competition, lead with the SPORT ` +
+    `instead (e.g. Rugby, Cricket, Football) so the reader still knows what it is ` +
+    `— never omit both, and never invent a league you can't confirm from the ` +
+    `text. Then give the participants as short abbreviations or names joined by ` +
+    `"v" for a head-to-head (use just the one team when only one is named), then ` +
+    `the word "spoiler". Keep any qualifier that is part of a team's name (e.g. ` +
+    `Reserves, Women's, U21) since it says which side is playing. Dig the ` +
+    `participants out of the article body when the headline names only one side ` +
+    `or none at all; fall back to the sport alone only when the body names no ` +
+    `teams either — and even then, never describe the incident. Examples: ` +
+    `"EPL MNU v ARS spoiler", "F1 British GP qualifying spoiler", ` +
+    `"World Cup ARG v CPV spoiler", "NBA Finals Game 3 spoiler", ` +
+    `"Rugby AUS v IRE spoiler", "Football Epping v Lalor Reserves spoiler".\n\n` +
     `Reply with ONLY a JSON object of the form ` +
     `{"spoiler": boolean, "headline": string}. Set "headline" to the ` +
     `spoiler-free replacement when "spoiler" is true, otherwise an empty ` +

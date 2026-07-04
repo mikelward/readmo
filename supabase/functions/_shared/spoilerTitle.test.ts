@@ -79,6 +79,20 @@ describe('buildSpoilerPrompt', () => {
     expect(prompt).toMatch(/never omit both/i);
   });
 
+  it('forbids describing the incident and pulls teams from the body instead', () => {
+    // Guards the failure where a headline naming no teams (a mid-match injury)
+    // was rewritten as "Football critical injury spoiler" — which leaks WHAT
+    // happened. The replacement must never mention the incident and must dig the
+    // participants out of the body even when the headline names neither side.
+    const prompt = buildSpoilerPrompt('Footballer critical after mid-match head knock', 'Epping v Lalor Reserves');
+    expect(prompt).toMatch(/never what happened|must not describe the incident/i);
+    expect(prompt).toMatch(/injury/i);
+    expect(prompt).toMatch(/none at all/i);
+    expect(prompt).toMatch(/Football Epping v Lalor Reserves spoiler/);
+    expect(prompt).toMatch(/qualifier that is part of a team's name/i);
+    expect(prompt).toMatch(/never invent a league/i);
+  });
+
   it('hides in-play events and exempts only pre-game content', () => {
     // Guards mid-game spoilers: goals, cards, crashes, and in-play injuries are
     // hidden too — and the ONLY carve-out is pre-game (a transfer/fixture just
