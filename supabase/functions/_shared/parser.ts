@@ -150,6 +150,83 @@ export function absolutizeUrl(
   }
 }
 
+/**
+ * Query-parameter keys that are pure click/campaign tracking and never
+ * identify a distinct article. Stripped by {@link canonicalizeItemUrl} so a
+ * publisher (notably the BBC) re-issuing the same story with a rotated
+ * campaign tag collapses to ONE stored row under the `(feed_id, url)` dedup
+ * key instead of piling up identical entries.
+ *
+ * Keep this list in sync with the SQL twin `canonicalize_item_url()` in
+ * migration `0048_canonicalize_item_url.sql`, which uses it to collapse
+ * already-stored dupes.
+ */
+const TRACKING_PARAM_KEYS = new Set([
+  // Google / generic UTM.
+  'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+  'utm_id', 'utm_name', 'utm_reader', 'utm_brand',
+  // BBC (feeds.bbci.co.uk decorates article links with at_* campaign tags).
+  'at_medium', 'at_campaign', 'at_campaign_type', 'at_custom1', 'at_custom2',
+  'at_custom3', 'at_custom4', 'at_bbc_team', 'at_link_origin', 'at_ptr_name',
+  // Social / ad click identifiers.
+  'fbclid', 'gclid', 'dclid', 'gbraid', 'wbraid', 'msclkid', 'yclid', 'twclid',
+  'mc_cid', 'mc_eid', 'igshid',
+  // Other common newsroom campaign params.
+  'ito', 'ns_campaign', 'ns_mchannel', 'ns_source', 'ns_linkname', 'ns_fee',
+  'cmp', 'ocid', 'ncid', 'spm',
+]);
+
+/**
+ * Canonicalize an article URL for storage and de-duplication.
+ *
+ * The `(feed_id, url)` unique key de-dups a publisher re-issuing the same
+ * article under a new `<guid>` — but only when the URL is byte-identical.
+ * Publishers (notably the BBC) re-issue the same story with a rotating campaign
+ * query tag, so the raw URLs differ and the same headline lands two or three
+ * times in one feed (SPEC.md "Feed fetching & parsing → De-dup"). Strip the
+ * query noise that never identifies a distinct article — known tracking params
+ * — so campaign-tagged re-issues collapse to one row.
+ *
+ * The FRAGMENT is intentionally left untouched: it's part of the URL's
+ * identity and is routinely load-bearing — a hash-router/hashbang route
+ * (`#/article/123`), or a liveblog/update anchor (`#block-123`, or a bare
+ * numeric `#124`) that distinguishes separate entries published on ONE page.
+ * There's no reliable shape test that separates a cosmetic version counter from
+ * a load-bearing anchor, and the BBC counter rides on the `<guid>` (which we
+ * don't canonicalize), not the `<link>` — so stripping fragments would risk
+ * collapsing distinct articles and corrupting their click-through URLs for no
+ * BBC benefit. Publisher re-issues keep the same `<link>`, so the guid-only
+ * change is already handled by the `(feed_id, url)` key + migration 0048's
+ * collapse.
+ *
+ * Conservative by design: unknown query params are KEPT (they may be
+ * load-bearing, e.g. `?id=123&page=2`), the path + fragment are untouched, and
+ * an unparseable URL is returned unchanged. Idempotent.
+ */
+export function canonicalizeItemUrl(url: string | null): string | null {
+  if (!url) return url;
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return url;
+  }
+  // Drop tracking params by RAW-string surgery on the query, NOT via
+  // URLSearchParams — reserializing would rewrite kept pairs (`?article` →
+  // `?article=`, `?q=a%20b` → `?q=a+b`), which both changes the click-through
+  // URL and, worse, diverges from the SQL twin (which splits the raw string):
+  // migration 0048 would store `?article` while the parser later stores
+  // `?article=`, so the (feed_id, url) dedup key misses and dupes reappear.
+  // Split on `&`, keep the non-tracking pairs verbatim (key = substring before
+  // the first `=`, lower-cased — matching `split_part`/`lower` in the SQL twin).
+  const kept = u.search
+    .replace(/^\?/, '')
+    .split('&')
+    .filter((pair) => pair !== '' && !TRACKING_PARAM_KEYS.has(pair.split('=')[0].toLowerCase()));
+  u.search = kept.join('&');
+  return u.toString();
+}
+
 /** Cap on a stored favicon URL — keeps a pathological feed from writing a
  * huge data: URI (or other junk) into the feeds row. */
 const MAX_FAVICON_URL_LEN = 2048;
@@ -605,17 +682,20 @@ interface FinalizeInput {
 /** Apply the GUID fallback chain (explicit guid → url → content hash) and the
  * content hash, then assemble the normalized item. */
 function finalizeItem(input: FinalizeInput): NormalizedItem {
+  // Canonicalize before it's used as the stored url, the guid fallback, or the
+  // content hash, so a re-issue that differs only in a tracking param /
+  // fragment collapses onto the same identity instead of duplicating.
+  const url = canonicalizeItemUrl(input.url);
   const hash = contentHash(
     input.title,
-    input.url,
+    url,
     input.contentHtml,
     input.publishedAt,
   );
-  const guid =
-    firstOf(input.guidRaw, input.url) ?? `${input.feedUrl}#${hash}`;
+  const guid = firstOf(input.guidRaw, url) ?? `${input.feedUrl}#${hash}`;
   return {
     guid,
-    url: input.url,
+    url,
     commentsUrl: input.commentsUrl ?? null,
     // Titles and bylines are rendered as plain text in the UI, so decode any
     // entities the XML parser left behind (numeric / named / double-encoded).

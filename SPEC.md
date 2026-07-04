@@ -476,7 +476,24 @@ folders       (user_id FK, name, sort)
   direct upsert so both unique constraints can resolve atomically: insert with
   `ON CONFLICT (feed_id, guid)` and, on a `(feed_id, url)` `unique_violation`,
   fall back to `UPDATE` (adopting the new guid as the canonical identity).
-  Cross-feed dedup — same URL appearing in two distinct subscribed feeds — is
+- **Canonicalize the article `url` before it's stored/de-duped** so the
+  `(feed_id, url)` key catches re-issues that differ only cosmetically. The
+  same `(feed_id, url)` key only collapses re-issues whose URL is
+  byte-identical, but publishers (notably the BBC) re-issue the same story with
+  a rotating campaign query tag (`?at_medium=RSS&at_campaign=…`), so the raw
+  URLs differ and the same headline lands two or three times in one feed. The
+  parser (`canonicalizeItemUrl`) strips known tracking/campaign params (UTM,
+  BBC `at_*`, click ids) — keeping load-bearing params, the path, **and the
+  fragment** (fragments are load-bearing: SPA routes `#/…`, liveblog/update
+  anchors `#block-123`/`#124`; the BBC version counter rides on the `<guid>`,
+  not the `<link>`) — so every stored `url` is canonical and campaign-tagged
+  re-issues collapse to one row. Both writers (poll + refresh) build rows from
+  the parser, so both inherit it. Migration `0048` canonicalizes the
+  already-stored backlog, collapses the resulting dupes (SQL twin
+  `canonicalize_item_url()`), and installs an `items_canonicalize_url`
+  `BEFORE INSERT OR UPDATE OF url` trigger so the DB canonicalizes every write
+  regardless of which (possibly not-yet-redeployed) caller performs it.
+- Cross-feed dedup — same URL appearing in two distinct subscribed feeds — is
   out of scope here; tracked in `TODO.md`.
 
 ### Feed discovery
