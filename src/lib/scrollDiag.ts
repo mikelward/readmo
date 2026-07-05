@@ -8,7 +8,7 @@ import type { ItemId } from './types';
 // feed to the diagnostics page (the recording component unmounts, the buffer
 // doesn't). Purely diagnostic — never read on any user-facing path.
 
-export type DiagKind = 'scroll' | 'done' | 'resize';
+export type DiagKind = 'scroll' | 'done' | 'resize' | 'probe';
 
 export interface DiagEntry {
   /** ms since the first recorded entry — a relative clock so the buffer reads
@@ -39,6 +39,20 @@ export interface DiagEntry {
    * Read on scroll (not done) events, which fire after the synchronous mutation
    * handlers have run, so the lock state is settled. */
   locked?: boolean;
+  /** Layout breakdown, recorded on 'done'/'resize'/'probe'. `bodyH` is the list
+   * body's own height (`.item-list__body` offsetHeight); `docH` is the whole
+   * document (`documentElement.scrollHeight`). Comparing them localizes a
+   * collapse: if `docH` drops but `bodyH` holds, the lost height is in the chrome
+   * around the list; if `bodyH` drops too, it's inside the row list. */
+  bodyH?: number;
+  docH?: number;
+  /** Rendered row count (`[data-item-id]`) at record time. A momentary collapse
+   * with an unchanged `rows` proves no rows actually left — it's a reflow dip,
+   * not real removal. */
+  rows?: number;
+  /** `window.innerHeight` at record time — catches a viewport (mobile toolbar)
+   * change masquerading as a document collapse. */
+  vh?: number;
 }
 
 /** Ring-buffer cap — a few seconds of scrolling plus the surrounding Done
@@ -136,16 +150,33 @@ export function summarizeDiag(entries: DiagEntry[]): DiagSummary {
 export function formatDiagEntry(e: DiagEntry): string {
   const max = e.max != null ? ` max=${e.max}` : '';
   const sign = (e.delta ?? 0) > 0 ? '+' : '';
+  const lock = e.locked != null ? ` lock=${e.locked ? 'on' : 'off'}` : '';
+  // Layout breakdown suffix (present on done/resize/probe once captured): body
+  // height vs. whole document localizes a collapse; `rows` shows no rows left
+  // mid-dip; `vh` catches a viewport change.
+  const layout = [
+    e.bodyH != null ? `body=${e.bodyH}` : null,
+    e.docH != null ? `doc=${e.docH}` : null,
+    e.rows != null ? `rows=${e.rows}` : null,
+    e.vh != null ? `vh=${e.vh}` : null,
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const layoutSuffix = layout ? ` ${layout}` : '';
   if (e.kind === 'done') {
     const id = `Done ${e.id ?? ''}`.trim();
-    return `${e.title ? `${id} — ${e.title}` : id}${max}`;
+    return `${e.title ? `${id} — ${e.title}` : id}${max}${layoutSuffix}`;
   }
   if (e.kind === 'resize') {
     // The document height changed with no scroll — `y` is where the reader still
     // sits, `max` the new ceiling, `delta` how far it moved.
-    return `resize y=${e.y} (${sign}${e.delta ?? 0})${max}`;
+    return `resize y=${e.y} (${sign}${e.delta ?? 0})${max}${layoutSuffix}${lock}`;
   }
-  const lock = e.locked != null ? ` lock=${e.locked ? 'on' : 'off'}` : '';
+  if (e.kind === 'probe') {
+    // A post-Done animation-frame sample: where the reader sits plus the layout
+    // breakdown, so the momentary collapse's shape and composition are visible.
+    return `probe y=${e.y}${max}${layoutSuffix}${lock}`;
+  }
   return `scroll y=${e.y} (${sign}${e.delta ?? 0})${max}${lock}`;
 }
 

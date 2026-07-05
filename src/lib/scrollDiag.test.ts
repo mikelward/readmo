@@ -139,6 +139,37 @@ describe('scrollDiag', () => {
       ).toBe('resize y=1227 (-847) max=521');
     });
 
+    it('appends the layout breakdown on done and probe rows', () => {
+      // The whole point of the layout fields: localize a collapse (body vs. doc)
+      // and confirm rows didn't actually leave mid-dip.
+      expect(
+        formatDiagEntry({
+          t: 0,
+          kind: 'done',
+          y: 994,
+          id: 'z',
+          max: 561,
+          bodyH: 700,
+          docH: 800,
+          rows: 12,
+          vh: 745,
+        }),
+      ).toBe('Done z max=561 body=700 doc=800 rows=12 vh=745');
+      expect(
+        formatDiagEntry({
+          t: 0,
+          kind: 'probe',
+          y: 994,
+          max: 561,
+          bodyH: 700,
+          docH: 800,
+          rows: 12,
+          vh: 745,
+          locked: true,
+        }),
+      ).toBe('probe y=994 max=561 body=700 doc=800 rows=12 vh=745 lock=on');
+    });
+
     it('headlines a jump that followed a Done', () => {
       const headline = diagHeadline(
         summarizeDiag([

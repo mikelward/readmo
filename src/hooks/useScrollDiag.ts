@@ -34,6 +34,19 @@ export function useScrollDiag(enabled: boolean): void {
         (body.style.overflowAnchor === 'none' || body.style.minHeight !== '')
       );
     };
+    // The layout breakdown at a moment in time: the list body's own height vs.
+    // the whole document, the rendered row count, and the viewport. Recorded on
+    // done/resize/probe so a collapse can be localized (body vs. chrome) and a
+    // reflow dip (rows unchanged) told apart from real removal.
+    const readLayout = () => {
+      const body = document.querySelector('.item-list__body');
+      return {
+        bodyH: body instanceof HTMLElement ? body.offsetHeight : 0,
+        docH: document.documentElement.scrollHeight,
+        rows: document.querySelectorAll('[data-item-id]').length,
+        vh: window.innerHeight,
+      };
+    };
 
     let lastY = Math.round(window.scrollY);
     const onScroll = () => {
@@ -66,10 +79,52 @@ export function useScrollDiag(enabled: boolean): void {
           delta: m - lastMax,
           max: m,
           locked: bodyLocked(),
+          ...readLayout(),
         });
         lastMax = m;
       }
     }, HEIGHT_SAMPLE_MS);
+
+    // The document collapse a dismiss triggers is over within a couple of frames
+    // — far faster than the 150ms height sampler. On each Done, sample the layout
+    // for a short animation-frame burst so the dip's shape and composition
+    // (body vs. chrome height, row count) are captured. Deduped: a frame is
+    // recorded only when the body/document height moved materially since the last
+    // one (plus the first and last), so a steady stretch doesn't flood the buffer.
+    const PROBE_FRAMES = 12;
+    const PROBE_MATERIAL_PX = 8;
+    const canRaf = typeof requestAnimationFrame === 'function';
+    const pendingProbeRafs = new Set<number>();
+    const startProbeBurst = () => {
+      if (!canRaf) return;
+      let frame = 0;
+      let last: { bodyH: number; docH: number } | null = null;
+      const tick = () => {
+        const layout = readLayout();
+        const material =
+          last === null ||
+          frame === PROBE_FRAMES - 1 ||
+          Math.abs(layout.bodyH - last.bodyH) >= PROBE_MATERIAL_PX ||
+          Math.abs(layout.docH - last.docH) >= PROBE_MATERIAL_PX;
+        if (material) {
+          recordDiag({
+            kind: 'probe',
+            y: Math.round(window.scrollY),
+            max: maxScroll(),
+            locked: bodyLocked(),
+            ...layout,
+          });
+          last = { bodyH: layout.bodyH, docH: layout.docH };
+        }
+        frame += 1;
+        if (frame < PROBE_FRAMES) {
+          const next = requestAnimationFrame(tick);
+          pendingProbeRafs.add(next);
+        }
+      };
+      const id = requestAnimationFrame(tick);
+      pendingProbeRafs.add(id);
+    };
 
     const unsubscribe = ds.stateStore.subscribeMutations((id, changed) => {
       // Only a fresh Done flip — pins/favorites/opened and un-dones don't move
@@ -85,13 +140,17 @@ export function useScrollDiag(enabled: boolean): void {
       // `max` here is the pre-removal ceiling; comparing it with the jump's
       // post-removal `max` shows how far the document shrank. `locked` is left to
       // the scroll entries — this handler may run before ItemList's lock does.
+      // The layout breakdown localizes the collapse the following probe burst
+      // then tracks frame-by-frame.
       recordDiag({
         kind: 'done',
         y: Math.round(window.scrollY),
         id,
         title,
         max: maxScroll(),
+        ...readLayout(),
       });
+      startProbeBurst();
       showToast({
         message: 'Done',
         actionLabel: 'Report bug',
@@ -110,6 +169,10 @@ export function useScrollDiag(enabled: boolean): void {
     return () => {
       window.removeEventListener('scroll', onScroll);
       window.clearInterval(heightTimer);
+      if (canRaf) {
+        for (const id of pendingProbeRafs) cancelAnimationFrame(id);
+        pendingProbeRafs.clear();
+      }
       unsubscribe();
     };
   }, [enabled, ds, showToast, navigate]);
