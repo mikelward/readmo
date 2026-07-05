@@ -1,0 +1,57 @@
+name: Deploy legal pages to GitHub Pages
+
+# Publishes the static legal pages in docs/ (privacy, terms, DMCA) to
+# https://mikelward.github.io/readmo/. The app itself deploys separately
+# (Vercel today, Cloudflare Pages under proposal) — this is only the docs/
+# site.
+#
+# Why an explicit workflow instead of the built-in "Deploy from a branch":
+# the built-in pages-build-deployment ran on *every* push to main, so the
+# legal pages — which change maybe once a month — were redeployed dozens of
+# times a day. GitHub's Pages deploy backend fails intermittently with
+# "Deployment failed, try again later", so every one of those pointless
+# redeploys was another chance to hit that transient and email a failure.
+# Scoping to docs/** changes means we deploy only when the pages actually
+# change, and a rare transient can be re-run from the Actions tab.
+#
+# One-time setup required: in repo Settings -> Pages, set Source to
+# "GitHub Actions" (was "Deploy from a branch"). Until that flip lands this
+# workflow's deploy and the old branch deploy both target the github-pages
+# environment.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let an in-flight deploy finish rather than cancelling it, but never run two
+# at once against the github-pages environment.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Upload docs/ artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./docs
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
