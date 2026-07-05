@@ -2730,9 +2730,30 @@ content. Closest mirror of newshacker.
   re-checks `/sw.js` at the moment the user opens the app; any newer SW found
   surfaces through the same `controllerchange` toast (no forced reload). One
   conditional GET per launch — negligible bandwidth.
-- A lazy route chunk that 404s after a deploy (stale client referencing a gone
-  hash) auto-reloads once via `LazyRouteBoundary` (`src/components/`), guarded by
-  a one-shot `readmo:chunk-reload` session flag against a reload loop.
+- **Stale-chunk auto-reload after a deploy.** Because `autoUpdate` activates a
+  new worker (skipWaiting + clientsClaim + cleanupOutdatedCaches) while a tab may
+  still hold a stale `index.html`, the first load after a deploy can reference a
+  gone content-hashed asset — the entry `/assets/index-<oldhash>.js` or a lazy
+  chunk. That asset 404s (the SPA rewrite excludes `/assets/`, so a miss is a real
+  404, not the HTML shell served as JS), which without recovery paints an empty
+  page until a manual refresh. Three surfaces auto-reload once to fetch the
+  current `index.html` + hashes, split across two one-shot session guards keyed
+  by what "resolved" means (so a reload can never loop):
+  - An **inline boot guard** in `index.html` runs before the entry module — the
+    only thing that can catch the *entry* itself failing — and spends the
+    `readmo:entry-reload` budget, which `main.tsx` clears the moment it evaluates
+    (a boot proves the entry loaded, so a second stale entry later in the same
+    session re-arms; loop-safe because a permanently-broken entry never boots).
+  - **`installGlobalChunkReloadGuard`** (`src/lib/chunkReload.ts`, wired in
+    `main.tsx`, post-boot `vite:preloadError` / dynamic-import rejections /
+    hashed-asset resource errors) and **`LazyRouteBoundary`** (`src/components/`,
+    a lazy route chunk failing during React render) spend the
+    `readmo:chunk-reload` budget, cleared only when a lazy route mounts
+    successfully — not on boot, which would loop the reload for a still-failing
+    lazy chunk.
+
+  The shared logic (`isChunkLoadError`, `reloadOnceForChunkError`, the two
+  clear helpers) lives in `src/lib/chunkReload.ts`.
 - Disabled in `npm run dev`.
 
 ### Caching strategy

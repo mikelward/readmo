@@ -42,7 +42,29 @@ import {
   reconcileUserCachesOnBoot,
   rqCacheKey,
 } from './lib/userCache';
+import {
+  clearEntryReloadGuard,
+  installGlobalChunkReloadGuard,
+} from './lib/chunkReload';
 import './styles/global.css';
+
+// Reaching this line proves the entry chunk evaluated, so any stale-entry
+// failure the inline boot guard (index.html) reloaded to recover from is
+// resolved — clear its one-shot budget so a *second* stale entry later in the
+// same session (a tab left open across two deploys) auto-reloads again instead
+// of blanking. Loop-safe: a permanently-broken entry never boots, so this never
+// runs to clear a budget the guard still needs. This is the ENTRY budget only;
+// the post-boot CHUNK budget is deliberately left alone (see chunkReload.ts).
+clearEntryReloadGuard();
+
+// Recover from a stale-chunk failure that surfaces after boot (a dynamic import
+// or module preload that 404s during a deploy). The entry script failing before
+// this code runs is handled by the inline boot guard in index.html; a lazy
+// route chunk failing during render is handled by LazyRouteBoundary. These
+// post-boot failures share the readmo:chunk-reload budget, cleared only when a
+// lazy route mounts successfully — not on boot, which would loop the reload for
+// a still-failing lazy chunk.
+installGlobalChunkReloadGuard();
 
 // Bump to invalidate the persisted query cache on a breaking shape change.
 const CACHE_BUSTER = '1';
