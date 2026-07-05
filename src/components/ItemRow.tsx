@@ -125,11 +125,9 @@ export function ItemRow({
     ? articleSourceDomain(item.url, feed.siteUrl ?? feed.url)
     : '';
   // Larger Article-layout card variants (Settings → Appearance → Article
-  // layout). 'title' is the compact default; 'thumbnail' adds a left image and
-  // 'excerpt' a preview of the feed body. Both extra elements live INSIDE the
-  // row-body link, so the row keeps its two tap zones (guardrail #2). A row with
-  // no usable image collapses to the title-only look, and an image that fails to
-  // load does the same via `imageFailed` — never an empty box.
+  // layout). 'title' is the compact default; 'thumbnail' adds a right-floated
+  // image and 'excerpt' a preview of the feed body. Both extra elements live
+  // INSIDE the row-body link, so the row keeps its two tap zones (guardrail #2).
   const { listLayout } = useListLayout();
   const [imageFailed, setImageFailed] = useState(false);
   const leadImage = useMemo(
@@ -137,9 +135,16 @@ export function ItemRow({
     [listLayout, item],
   );
   const showLeadImage = leadImage != null && !imageFailed;
+  // Excerpt layout always previews the body; thumbnail layout falls back to the
+  // same preview when the row has no usable image — none found, or it failed to
+  // load (`imageFailed`) — so a thumbnail-mode row is never a bare title, it
+  // shows the excerpt instead. (An image-bearing thumbnail row shows the image
+  // and no excerpt.)
+  const wantExcerpt =
+    listLayout === 'excerpt' || (listLayout === 'thumbnail' && !showLeadImage);
   const previewText = useMemo(
-    () => (listLayout === 'excerpt' ? itemPreviewText(item) : ''),
-    [listLayout, item],
+    () => (wantExcerpt ? itemPreviewText(item) : ''),
+    [wantExcerpt, item],
   );
   // The feed's per-feed open mode resolves to an external link target for this
   // row, or null to fall back to the in-app reader. "Open original" wins over
