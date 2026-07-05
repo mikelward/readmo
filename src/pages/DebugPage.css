@@ -136,8 +136,20 @@
   color: var(--rm-danger);
 }
 
-.scroll-diag__clear {
+/* Copy / Clear sit side by side with a comfortable gap so neither is a
+   cramped tap target (guardrail #2). */
+.scroll-diag__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.scroll-diag__button {
   min-height: 44px;
   padding: 8px 16px;
   font-size: 0.9rem;
+}
+
+.scroll-diag__button:disabled {
+  opacity: 0.5;
 }

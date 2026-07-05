@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ScrollDiagPage } from './ScrollDiagPage';
 import { clearDiag, freezeDiagReport, recordDiag } from '../lib/scrollDiag';
@@ -48,5 +48,32 @@ describe('ScrollDiagPage', () => {
     recordDiag({ kind: 'scroll', y: 300, delta: 300 });
     renderPage();
     expect(screen.getByText(/Timeline \(live\)/)).toBeInTheDocument();
+  });
+
+  it('disables Copy when there is nothing to copy', () => {
+    renderPage();
+    expect(
+      screen.getByRole('button', { name: 'Copy timeline' }),
+    ).toBeDisabled();
+  });
+
+  it('copies the formatted timeline to the clipboard', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+    recordDiag({ kind: 'done', y: 1200, id: 'x' });
+    recordDiag({ kind: 'scroll', y: 0, delta: -1200 });
+    freezeDiagReport();
+
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy timeline' }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const copied = writeText.mock.calls[0][0] as string;
+    expect(copied).toContain('Jumped -1200px toward the top');
+    expect(copied).toContain('Done x');
+    expect(copied).toContain('scroll y=0 (-1200)');
   });
 });
