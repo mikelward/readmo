@@ -35,8 +35,9 @@ import { usePersistentStore } from './usePersistentStore';
 //    useSummaryPrewarm). A family-only control (the toggle is offered only to
 //    family users in Settings); off-list users never fire the Edge call anyway.
 //  - list-layout (default 'title'): how much of each article a feed row shows —
-//    the compact title-only row ('title', today's default), a larger title with
-//    a left thumbnail ('thumbnail'), or a larger title with a preview excerpt
+//    the compact title-only row ('title', today's default), the compact row plus
+//    a small right thumbnail ('thumbnail-small'), a larger title with a large
+//    right thumbnail ('thumbnail'), or a larger title with a preview excerpt
 //    ('excerpt'). See ItemRow / lib/itemPreview.
 
 export const HIDE_ON_SCROLL_KEY = 'readmo:hide-on-scroll';
@@ -57,9 +58,10 @@ const DEFAULT_BOTTOM_BAR: BottomBarPosition = 'list';
 const DEFAULT_ITEM_SORT: ItemSort = 'newest';
 
 /** How much of each article a feed row shows. 'title' = compact title-only row
- * (the default, unchanged from today); 'thumbnail' = larger title + left
- * thumbnail; 'excerpt' = larger title + a preview excerpt. */
-export type ListLayout = 'title' | 'thumbnail' | 'excerpt';
+ * (the default, unchanged from today); 'thumbnail-small' = the compact row + a
+ * small right thumbnail; 'thumbnail' = larger title + a large right thumbnail;
+ * 'excerpt' = larger title + a preview excerpt. */
+export type ListLayout = 'title' | 'thumbnail-small' | 'thumbnail' | 'excerpt';
 const DEFAULT_LIST_LAYOUT: ListLayout = 'title';
 
 const CHANGE_EVENT = 'readmo:reading-pref-changed';
@@ -116,7 +118,9 @@ const listLayoutStore = createPersistentStore<ListLayout>({
   changeEvent: CHANGE_EVENT,
   defaultValue: DEFAULT_LIST_LAYOUT,
   parse: (raw) =>
-    raw === 'thumbnail' || raw === 'excerpt' ? raw : DEFAULT_LIST_LAYOUT,
+    raw === 'thumbnail-small' || raw === 'thumbnail' || raw === 'excerpt'
+      ? raw
+      : DEFAULT_LIST_LAYOUT,
 });
 
 /** Whether unpinned articles are auto-marked Done as they scroll off the top. */
@@ -236,7 +240,8 @@ export function useAutoSummarizePinned(): {
 }
 
 /** Chronological order aside, how much of each article a feed row shows —
- * title-only ('title', default), title + left thumbnail ('thumbnail'), or
+ * title-only ('title', default), compact + small right thumbnail
+ * ('thumbnail-small'), larger title + large right thumbnail ('thumbnail'), or
  * title + preview excerpt ('excerpt'). Per-device. See ItemRow. */
 export function useListLayout(): {
   listLayout: ListLayout;

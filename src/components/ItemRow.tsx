@@ -124,17 +124,21 @@ export function ItemRow({
   const domain = feed.title
     ? articleSourceDomain(item.url, feed.siteUrl ?? feed.url)
     : '';
-  // Larger Article-layout card variants (Settings → Appearance → Article
-  // layout). 'title' is the compact default; 'thumbnail' adds a right-floated
-  // image and 'excerpt' a preview of the feed body. Both extra elements live
+  // Article-layout card variants (Settings → Appearance → Article layout).
+  // 'title' is the compact default; 'thumbnail-small' adds a small right-floated
+  // image to that compact row; 'thumbnail' is a larger card with a large
+  // right-floated image; 'excerpt' a preview of the feed body. All extras live
   // INSIDE the row-body link, so the row keeps its two tap zones (guardrail #2).
-  // A row with no usable image collapses to the title-only look, and an image
-  // that fails to load does the same via `imageFailed` — never an empty box.
+  // A thumbnail row with no usable image (or one that fails to load, via
+  // `imageFailed`) keeps its card styling and simply shows the title with no
+  // image — it does NOT fall back to the excerpt — never an empty box.
   const { listLayout } = useListLayout();
+  const wantsThumbnail =
+    listLayout === 'thumbnail' || listLayout === 'thumbnail-small';
   const [imageFailed, setImageFailed] = useState(false);
   const leadImage = useMemo(
-    () => (listLayout === 'thumbnail' ? leadImageUrl(item) : null),
-    [listLayout, item],
+    () => (wantsThumbnail ? leadImageUrl(item) : null),
+    [wantsThumbnail, item],
   );
   const showLeadImage = leadImage != null && !imageFailed;
   const previewText = useMemo(
@@ -312,6 +316,7 @@ export function ItemRow({
     (isDismissing ? ' item-row--dismissing' : '') +
     (opened ? ' item-row--opened' : '') +
     (listLayout === 'thumbnail' ? ' item-row--thumbnail' : '') +
+    (listLayout === 'thumbnail-small' ? ' item-row--thumbnail-small' : '') +
     (listLayout === 'excerpt' ? ' item-row--excerpt' : '');
 
   const handleRowKeyDown = useCallback(

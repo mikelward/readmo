@@ -264,7 +264,8 @@ describe('useReadingPrefs', () => {
 
   describe('article layout', () => {
     const order: Record<string, string> = {
-      title: 'thumbnail',
+      title: 'thumbnail-small',
+      'thumbnail-small': 'thumbnail',
       thumbnail: 'excerpt',
       excerpt: 'title',
     };
@@ -299,8 +300,18 @@ describe('useReadingPrefs', () => {
       expect(screen.getByRole('button')).toHaveTextContent('title');
     });
 
-    it('persists a change through all three values', () => {
+    it("reads a persisted 'thumbnail-small' choice on mount", () => {
+      window.localStorage.setItem(LIST_LAYOUT_KEY, 'thumbnail-small');
+      resetReadingPrefsCacheForTest();
       render(<LayoutProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent('thumbnail-small');
+    });
+
+    it('persists a change through all four values', () => {
+      render(<LayoutProbe />);
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('thumbnail-small');
+      expect(window.localStorage.getItem(LIST_LAYOUT_KEY)).toBe('thumbnail-small');
       act(() => screen.getByRole('button').click());
       expect(screen.getByRole('button')).toHaveTextContent('thumbnail');
       expect(window.localStorage.getItem(LIST_LAYOUT_KEY)).toBe('thumbnail');

@@ -1870,24 +1870,31 @@ Identical to newshacker's *Story row layout*; only the meta content differs
 
 The row above is the compact default. **Settings → Appearance → Article layout**
 (`readmo:list-layout`, per-device localStorage, default `title`) lets the reader
-trade density for a larger card, in three steps:
+trade density for a larger card, in four steps:
 
 - **Title only** (`title`, default) — the compact row described above; unchanged
   from before this setting existed. Absent key ⇒ this, so existing installs and
   the first paint keep today's look.
-- **Title + thumbnail** (`thumbnail`) — a larger title (up to three lines) with a
-  **right-floated thumbnail**; the title wraps beside the image and the meta line
-  sits below. **No excerpt.** The image is sourced client-side from data already
-  present — the first proxied image in the sanitized `contentHtml`, else the
-  first `image/*` **enclosure** routed through the `/api/img` proxy (guardrail
-  #6; never a direct publisher fetch). A row with **no usable image**, or whose
-  image fails to load, **collapses to the title-only look** — never an empty box.
-  When the headline is a **hidden sports spoiler** (the row shows the
-  spoiler-free rewrite — see *Spoiler-free sports headlines*), the thumbnail is
-  **blurred** and carries a centered `VisibilityOff` marker, since the article's
-  own image can reveal the result (a scoreboard, a celebration); the row-body tap
-  still opens the full article to reveal it.
-- **Title + excerpt** (`excerpt`) — a larger title with a **three-line preview**
+- **Small thumbnail** (`thumbnail-small`) — the **compact title-only row**
+  (same padding, title size, and two-line clamp) with a **small right-floated
+  thumbnail**; the title wraps beside the image and the meta line sits below.
+  **No excerpt.** Same image source and spoiler handling as the large thumbnail
+  (below).
+- **Large thumbnail** (`thumbnail`) — a larger title (up to three lines) with a
+  **large right-floated thumbnail**; the title wraps beside the image and the
+  meta line sits below. **No excerpt.** The image is sourced client-side from
+  data already present — the first proxied image in the sanitized `contentHtml`,
+  else the first `image/*` **enclosure** routed through the `/api/img` proxy
+  (guardrail #6; never a direct publisher fetch). For **either** thumbnail size,
+  a row with **no usable image**, or whose image fails to load, **shows just the
+  title** — the row's card styling stays, the image slot is simply omitted (no
+  excerpt fallback), never an empty box. When the headline is a **hidden sports
+  spoiler** (the row shows the spoiler-free rewrite — see *Spoiler-free sports
+  headlines*), the thumbnail is **blurred** and carries a centered
+  `VisibilityOff` marker, since the article's own image can reveal the result (a
+  scoreboard, a celebration); the row-body tap still opens the full article to
+  reveal it.
+- **Excerpt** (`excerpt`) — a larger title with a **three-line preview**
   of the feed body (`contentHtml` stripped to plain text, entities decoded; *not*
   the AI `summary`), no image. When the headline itself is a **hidden sports
   spoiler** (the row shows the spoiler-free rewrite — see *Spoiler-free sports
@@ -1902,8 +1909,8 @@ add no fourth tappable (guardrail #2). This is a **client-only** feature: it
 reads existing item fields and the `/api/img` proxy (a Vercel function that ships
 with the frontend), so it needs no migration or Edge Function deploy and works
 against the currently deployed backend. Sourcing thumbnails from feed content
-means coverage depends on the feed — image-less feeds simply render the
-title-only collapse under the thumbnail option.
+means coverage depends on the feed — under either thumbnail option an image-less
+row simply shows its title (the image slot omitted).
 
 Display-only meta (plain text inside the row link): **source** (feed/site
 name, trimmed to the registrable domain the way newshacker trims

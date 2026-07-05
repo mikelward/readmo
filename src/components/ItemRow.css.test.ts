@@ -42,4 +42,11 @@ describe('thumbnail placement contract', () => {
     // left. A revert to the old `2px 12px 4px 0` (left-float gutter) fails here.
     expect(declarationsFor('.item-row__lead').margin).toBe('2px 0 4px 12px');
   });
+
+  it('shrinks the thumbnail (still right, gutter on the left) in the small variant', () => {
+    const decl = declarationsFor('.item-row--thumbnail-small .item-row__lead');
+    // Smaller than the base 116px, and the gutter stays on the left.
+    expect(decl.width).toBe('72px');
+    expect(decl.margin).toBe('0 0 0 12px');
+  });
 });

@@ -339,17 +339,20 @@ describe('SettingsPage — Article layout', () => {
   const group = () =>
     screen.getByRole('radiogroup', { name: 'Article layout' });
 
-  it('offers the three layout options, defaulting to Title only', () => {
+  it('offers the four layout options, defaulting to Title only', () => {
     renderWithProviders(<SettingsPage />);
     expect(within(group()).getByRole('radio', { name: 'Title only' })).toHaveAttribute(
       'aria-checked',
       'true',
     );
     expect(
-      within(group()).getByRole('radio', { name: 'Title + thumbnail' }),
+      within(group()).getByRole('radio', { name: 'Small thumbnail' }),
     ).toBeInTheDocument();
     expect(
-      within(group()).getByRole('radio', { name: 'Title + excerpt' }),
+      within(group()).getByRole('radio', { name: 'Large thumbnail' }),
+    ).toBeInTheDocument();
+    expect(
+      within(group()).getByRole('radio', { name: 'Excerpt' }),
     ).toBeInTheDocument();
   });
 
@@ -357,11 +360,11 @@ describe('SettingsPage — Article layout', () => {
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
     await user.click(
-      within(group()).getByRole('radio', { name: 'Title + thumbnail' }),
+      within(group()).getByRole('radio', { name: 'Small thumbnail' }),
     );
-    expect(window.localStorage.getItem(LIST_LAYOUT_KEY)).toBe('thumbnail');
+    expect(window.localStorage.getItem(LIST_LAYOUT_KEY)).toBe('thumbnail-small');
     expect(
-      within(group()).getByRole('radio', { name: 'Title + thumbnail' }),
+      within(group()).getByRole('radio', { name: 'Small thumbnail' }),
     ).toHaveAttribute('aria-checked', 'true');
   });
 });
