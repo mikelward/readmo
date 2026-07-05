@@ -10,6 +10,7 @@ import {
   HIDE_SPORTS_SPOILERS_KEY,
   AUTO_SUMMARIZE_PINNED_KEY,
   ITEM_SORT_KEY,
+  LIST_LAYOUT_KEY,
   SHOW_ROW_FAVICON_KEY,
   SHOW_GROUP_FAVICON_KEY,
   resetReadingPrefsCacheForTest,
@@ -326,5 +327,41 @@ describe('SettingsPage — Font picker', () => {
     expect(within(group).getByRole('radio', { name: 'System' })).toHaveStyle({
       fontFamily: FONT_STACKS.system,
     });
+  });
+});
+
+describe('SettingsPage — Article layout', () => {
+  afterEach(() => {
+    localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+
+  const group = () =>
+    screen.getByRole('radiogroup', { name: 'Article layout' });
+
+  it('offers the three layout options, defaulting to Title only', () => {
+    renderWithProviders(<SettingsPage />);
+    expect(within(group()).getByRole('radio', { name: 'Title only' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(
+      within(group()).getByRole('radio', { name: 'Title + thumbnail' }),
+    ).toBeInTheDocument();
+    expect(
+      within(group()).getByRole('radio', { name: 'Title + excerpt' }),
+    ).toBeInTheDocument();
+  });
+
+  it('persists the chosen layout to localStorage', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    await user.click(
+      within(group()).getByRole('radio', { name: 'Title + thumbnail' }),
+    );
+    expect(window.localStorage.getItem(LIST_LAYOUT_KEY)).toBe('thumbnail');
+    expect(
+      within(group()).getByRole('radio', { name: 'Title + thumbnail' }),
+    ).toHaveAttribute('aria-checked', 'true');
   });
 });

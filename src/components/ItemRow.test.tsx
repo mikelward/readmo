@@ -10,6 +10,7 @@ import { consumeDoneMirrorSuppression } from '../lib/newshackerMirrorSuppress';
 import { recallHackerNewsItemId } from '../lib/newshackerItemIds';
 import {
   HIDE_SPORTS_SPOILERS_KEY,
+  LIST_LAYOUT_KEY,
   resetReadingPrefsCacheForTest,
 } from '../hooks/useReadingPrefs';
 import type { FeedItem } from '../lib/types';
@@ -720,6 +721,60 @@ describe('ItemRow', () => {
       renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
       expect(screen.getByTestId('item-title')).toHaveTextContent('A test headline');
       expect(screen.queryByTestId('item-spoiler-flag')).toBeNull();
+    });
+  });
+
+  describe('article layout variants', () => {
+    afterEach(() => {
+      window.localStorage.clear();
+      resetReadingPrefsCacheForTest();
+    });
+
+    function renderLayout(layout: string, feedItem: FeedItem = FEED_ITEM) {
+      window.localStorage.setItem(LIST_LAYOUT_KEY, layout);
+      resetReadingPrefsCacheForTest();
+      renderWithProviders(<ItemRow feedItem={feedItem} />);
+    }
+
+    const PROXIED_IMG =
+      '/api/img?url=' + encodeURIComponent('https://cdn.example.com/lead.jpg');
+    const withImage: FeedItem = {
+      item: {
+        ...FEED_ITEM.item,
+        contentHtml: `<p>Body text of the article.</p><img src="${PROXIED_IMG}" alt="">`,
+      },
+      feed: FEED_ITEM.feed,
+    };
+
+    it("title-only (default) shows neither an excerpt nor a thumbnail", () => {
+      renderLayout('title', withImage);
+      expect(screen.queryByTestId('item-excerpt')).toBeNull();
+      expect(screen.queryByTestId('item-lead-image')).toBeNull();
+    });
+
+    it('excerpt layout shows a plain-text preview of the feed body', () => {
+      renderLayout('excerpt', withImage);
+      const excerpt = screen.getByTestId('item-excerpt');
+      expect(excerpt).toHaveTextContent('Body text of the article.');
+      // The excerpt layout carries no image.
+      expect(screen.queryByTestId('item-lead-image')).toBeNull();
+    });
+
+    it('thumbnail layout renders the content image inside the body link', () => {
+      renderLayout('thumbnail', withImage);
+      const img = screen.getByTestId('item-lead-image');
+      expect(img).toHaveAttribute('src', PROXIED_IMG);
+      // The image lives inside the stretched body link — no new tap zone.
+      expect(screen.getByTestId('item-title')).toContainElement(img);
+      // Thumbnail layout carries no excerpt.
+      expect(screen.queryByTestId('item-excerpt')).toBeNull();
+    });
+
+    it('thumbnail layout collapses to no image when the item has none', () => {
+      renderLayout('thumbnail', FEED_ITEM); // contentHtml is '<p>Body</p>', no image
+      expect(screen.queryByTestId('item-lead-image')).toBeNull();
+      // Still a normal, tappable row.
+      expect(screen.getByTestId('item-title')).toHaveTextContent('A test headline');
     });
   });
 });

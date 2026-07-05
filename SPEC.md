@@ -1854,6 +1854,35 @@ Identical to newshacker's *Story row layout*; only the meta content differs
   empty (their right-side button already names the row's intent). Same high
   bar for any further use.
 
+### Article layout (card size)
+
+The row above is the compact default. **Settings → Appearance → Article layout**
+(`readmo:list-layout`, per-device localStorage, default `title`) lets the reader
+trade density for a larger card, in three steps:
+
+- **Title only** (`title`, default) — the compact row described above; unchanged
+  from before this setting existed. Absent key ⇒ this, so existing installs and
+  the first paint keep today's look.
+- **Title + thumbnail** (`thumbnail`) — a larger title (up to three lines) with a
+  **left-floated thumbnail**; the title wraps beside the image and the meta line
+  sits below. **No excerpt.** The image is sourced client-side from data already
+  present — the first proxied image in the sanitized `contentHtml`, else the
+  first `image/*` **enclosure** routed through the `/api/img` proxy (guardrail
+  #6; never a direct publisher fetch). A row with **no usable image**, or whose
+  image fails to load, **collapses to the title-only look** — never an empty box.
+- **Title + excerpt** (`excerpt`) — a larger title with a **three-line preview**
+  of the feed body (`contentHtml` stripped to plain text, entities decoded; *not*
+  the AI `summary`), no image.
+
+The thumbnail and excerpt both render **inside the row-body link**, so the row
+keeps its **two tap zones** (body link + right-side button) — the image/excerpt
+add no fourth tappable (guardrail #2). This is a **client-only** feature: it
+reads existing item fields and the `/api/img` proxy (a Vercel function that ships
+with the frontend), so it needs no migration or Edge Function deploy and works
+against the currently deployed backend. Sourcing thumbnails from feed content
+means coverage depends on the feed — image-less feeds simply render the
+title-only collapse under the thumbnail option.
+
 Display-only meta (plain text inside the row link): **source** (feed/site
 name, trimmed to the registrable domain the way newshacker trims
 domains — `old.reddit.com` → `reddit.com`); **article domain** when it differs

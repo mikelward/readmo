@@ -13,7 +13,8 @@ import { usePointerDevice } from '../hooks/usePointerDevice';
 import { useWideViewport } from '../hooks/useWideViewport';
 import { useSwipeToDismiss } from '../hooks/useSwipeToDismiss';
 import { useItemState } from '../hooks/useItemState';
-import { useHideSportsSpoilers } from '../hooks/useReadingPrefs';
+import { useHideSportsSpoilers, useListLayout } from '../hooks/useReadingPrefs';
+import { leadImageUrl, itemPreviewText } from '../lib/itemPreview';
 import { useCapabilities, canUseFullText } from '../hooks/useCapabilities';
 import { displayTitle } from '../lib/spoilerHeadline';
 import { ItemRowMenu, type ItemRowMenuItem } from './ItemRowMenu';
@@ -123,6 +124,23 @@ export function ItemRow({
   const domain = feed.title
     ? articleSourceDomain(item.url, feed.siteUrl ?? feed.url)
     : '';
+  // Larger Article-layout card variants (Settings → Appearance → Article
+  // layout). 'title' is the compact default; 'thumbnail' adds a left image and
+  // 'excerpt' a preview of the feed body. Both extra elements live INSIDE the
+  // row-body link, so the row keeps its two tap zones (guardrail #2). A row with
+  // no usable image collapses to the title-only look, and an image that fails to
+  // load does the same via `imageFailed` — never an empty box.
+  const { listLayout } = useListLayout();
+  const [imageFailed, setImageFailed] = useState(false);
+  const leadImage = useMemo(
+    () => (listLayout === 'thumbnail' ? leadImageUrl(item) : null),
+    [listLayout, item],
+  );
+  const showLeadImage = leadImage != null && !imageFailed;
+  const previewText = useMemo(
+    () => (listLayout === 'excerpt' ? itemPreviewText(item) : ''),
+    [listLayout, item],
+  );
   // The feed's per-feed open mode resolves to an external link target for this
   // row, or null to fall back to the in-app reader. "Open original" wins over
   // "open on newshacker" if both flags are somehow set — the same precedence as
@@ -292,7 +310,9 @@ export function ItemRow({
     'item-row' +
     (dragging ? ' item-row--dragging' : '') +
     (isDismissing ? ' item-row--dismissing' : '') +
-    (opened ? ' item-row--opened' : '');
+    (opened ? ' item-row--opened' : '') +
+    (listLayout === 'thumbnail' ? ' item-row--thumbnail' : '') +
+    (listLayout === 'excerpt' ? ' item-row--excerpt' : '');
 
   const handleRowKeyDown = useCallback(
     (e: KeyboardEvent<HTMLAnchorElement>) => {
@@ -371,6 +391,22 @@ export function ItemRow({
   // "open original" external anchor so the two only differ in where they go.
   const bodyContent = (
     <>
+      {showLeadImage ? (
+        // Decorative (the title names the article), so alt="" + aria-hidden keeps
+        // it out of the accessible name and adds no extra tap zone. Lazy so
+        // off-screen rows don't fetch until scrolled near.
+        <span className="item-row__lead" aria-hidden="true">
+          <img
+            className="item-row__lead-img"
+            src={leadImage ?? undefined}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            data-testid="item-lead-image"
+            onError={() => setImageFailed(true)}
+          />
+        </span>
+      ) : null}
       <span className="item-row__title-text">
         {title}
         {headline.rewritten ? (
@@ -388,6 +424,11 @@ export function ItemRow({
           </span>
         ) : null}
       </span>
+      {previewText ? (
+        <span className="item-row__excerpt" data-testid="item-excerpt">
+          {previewText}
+        </span>
+      ) : null}
       <span className="item-row__meta" data-testid="item-meta">
         {/* Per-row favicon only in non-grouped views (showFavicon). In
             group-by-feed view the icon lives on the section header instead, so

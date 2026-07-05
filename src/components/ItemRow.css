@@ -103,6 +103,86 @@
   object-fit: contain;
 }
 
+/* ── Larger Article-layout variants (Settings → Appearance → Article layout) ──
+ * Title-only is the compact base above. These add a bigger title plus either a
+ * left thumbnail or a preview excerpt. The image and excerpt render INSIDE the
+ * body link, so the row keeps its two tap zones (guardrail #2). Both variants
+ * top-align the row (title can run to three lines) and pad out to a card. */
+
+/* Title + excerpt: bigger title, up to three preview lines, no image. */
+.item-row--excerpt {
+  align-items: flex-start;
+  padding: 12px;
+}
+.item-row--excerpt .item-row__body {
+  justify-content: flex-start;
+  gap: 6px;
+}
+.item-row--excerpt .item-row__title-text {
+  font-size: 1.2rem;
+  font-weight: 600;
+  line-height: 1.25;
+  -webkit-line-clamp: 3;
+}
+.item-row--excerpt .pin-btn {
+  align-self: flex-start;
+}
+
+/* The preview line. Only rendered in the excerpt layout, so it needs no
+ * per-variant visibility gate — just its own clamp. */
+.item-row__excerpt {
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: var(--rm-read);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Title + thumbnail: image floated left, bigger title beside it wrapping
+ * underneath, no excerpt. The body switches to block flow so the float works
+ * and the title/meta can reclaim the full width below the image. */
+.item-row--thumbnail {
+  align-items: flex-start;
+  padding: 12px;
+}
+.item-row--thumbnail .item-row__body {
+  display: block;
+}
+.item-row--thumbnail .item-row__title-text {
+  font-size: 1.14rem;
+  font-weight: 600;
+  line-height: 1.26;
+  margin-bottom: 4px;
+  -webkit-line-clamp: 3;
+}
+.item-row--thumbnail .item-row__meta {
+  margin: 0;
+}
+.item-row--thumbnail .pin-btn {
+  align-self: flex-start;
+}
+
+.item-row__lead {
+  display: block;
+  float: left;
+  width: 116px;
+  aspect-ratio: 3 / 2;
+  margin: 2px 12px 4px 0;
+  border-radius: 8px;
+  overflow: hidden;
+  /* A tint while the image loads (and the box a failed load would leave — but
+   * onError drops the element entirely, so that box is never actually shown). */
+  background: var(--rm-border);
+}
+.item-row__lead-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 /* Right-side icon button (Pin/Unpin, or a library inverse action). */
 .pin-btn {
   flex: 0 0 auto;
