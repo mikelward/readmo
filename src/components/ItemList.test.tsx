@@ -1341,6 +1341,115 @@ describe('ItemList', () => {
     expect(scroll.getScrollY()).toBe(0);
   });
 
+  it('holds the scroll-anchoring opt-out across a single dismiss’s whole refetch, so a slow sync can’t rewind to the top', async () => {
+    // Regression (reported): swiping an article Done below the fold jumped the
+    // reader to the top — but only intermittently, when the invalidated refetch
+    // "hung a bit". The single-dismiss anchor opt-out used to be dropped one
+    // frame after the LOCAL removal, long before a slow refetch's landing
+    // re-render; with the browser's scroll anchoring live again, that late
+    // re-render rewound window.scrollY toward the top. A fast sync landed before
+    // the opt-out was dropped, which is why it was hit-or-miss. The opt-out must
+    // now stay applied until the background refresh settles (like the min-height
+    // freeze), so the refetch's render is laid out with anchoring suppressed.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ groupByFeed: true, limit: 100 });
+    let release: (() => void) | null = null;
+    let callCount = 0;
+    const fetchPage = vi.fn(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({ items: seed.items, nextCursor: null });
+      }
+      // Hold the post-dismiss refetch open — the "hung sync" the reader saw.
+      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>(
+        (resolve) => {
+          release = () => resolve({ items: seed.items, nextCursor: null });
+        },
+      );
+    });
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`gp-dismiss-anchor-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+    const body = screen.getByTestId('item-list-body');
+
+    // Dismiss a single visible row (what a swipe-right / Done commit does).
+    const victim = container
+      .querySelectorAll('[data-item-id]')[2]
+      .getAttribute('data-item-id')!;
+    act(() => {
+      source.stateStore.set(victim, 'done', true);
+    });
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+
+    // The refetch is still in flight (the slow sync): the opt-out is STILL
+    // applied, so the browser can't rewind the scroll when it lands.
+    expect(body.style.overflowAnchor).toBe('none');
+
+    // Once the refresh settles, anchoring is handed back.
+    act(() => release?.());
+    await waitFor(() => expect(body.style.overflowAnchor).toBe(''));
+  });
+
+  it('still drops the anchor opt-out a frame after a dismiss when hide-on-scroll is on (auto-hide keeps anchoring)', async () => {
+    // Hide-on-scroll wires auto-hide-on-scroll, whose scroll-driven
+    // above-viewport removals rely on the browser's anchoring during the same
+    // refetch — so the dismiss opt-out must NOT be held across the refresh there.
+    // It reverts to the one-frame drop.
+    window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+    resetReadingPrefsCacheForTest();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ groupByFeed: true, limit: 100 });
+    let release: (() => void) | null = null;
+    let callCount = 0;
+    const fetchPage = vi.fn(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({ items: seed.items, nextCursor: null });
+      }
+      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>(
+        (resolve) => {
+          release = () => resolve({ items: seed.items, nextCursor: null });
+        },
+      );
+    });
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`gp-dismiss-hos-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+    const body = screen.getByTestId('item-list-body');
+    const anchorWrites = recordOverflowAnchorWrites(body);
+
+    const victim = container
+      .querySelectorAll('[data-item-id]')[2]
+      .getAttribute('data-item-id')!;
+    act(() => {
+      source.stateStore.set(victim, 'done', true);
+    });
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+
+    // The opt-out was applied for the collapse, then dropped a frame later —
+    // even though the refetch is still in flight — so a mid-refresh auto-hide
+    // keeps the browser's anchoring.
+    expect(anchorWrites).toContain('none');
+    expect(body.style.overflowAnchor).toBe('');
+
+    act(() => release?.());
+    await waitFor(() => expect(body.style.minHeight).toBe(''));
+  });
+
   it('counts trailing in-flow content (the relative bottom bar) when releasing the deferred hold', async () => {
     // Codex P2 on #321: the deferred release decides whether the natural document
     // can hold the offset. In the default bottom-bar mode a relative ListToolbar
@@ -1599,9 +1708,10 @@ describe('ItemList', () => {
     // drops that row from the rendered list. The browser's scroll anchoring
     // would react by rewinding window.scrollY to keep a row below the removed
     // one fixed — moving the scroll position and shifting every row above. The
-    // single-dismiss path now takes the same anchor opt-out (+ height freeze)
-    // the Sweep uses, scoped to the frame the row leaves the DOM, so the offset
-    // holds exactly and only the rows below the dismissed one slide up.
+    // single-dismiss path takes the same anchor opt-out (+ height freeze) the
+    // Sweep uses so the offset holds exactly and only the rows below the
+    // dismissed one slide up — but, unlike Sweep, holds the opt-out until the
+    // refetch settles (see the held-across-refetch regression below).
     const source = new MockDataSource(`test-${Math.random()}`);
     const seed = await source.getHomeItems();
 
@@ -1648,17 +1758,20 @@ describe('ItemList', () => {
     // the shrinking document can't be clamped toward the top either.
     expect(anchorWrites).toContain('none');
     expect(body.style.minHeight).toBe('1000px');
-    // The opt-out is dropped a frame after the removal, not held for the whole
-    // refetch — anchoring is back on by the time effects flush.
-    expect(body.style.overflowAnchor).toBe('');
+    // The opt-out is HELD across the whole refetch (unlike Sweep's one-frame
+    // drop): a slow sync's landing re-render must not rewind the scroll to the
+    // top. See the dedicated held-across-refetch regression below.
+    expect(body.style.overflowAnchor).toBe('none');
     // Sanity: the dismissed row really did leave the rendered list.
     expect(
       container.querySelector(`[data-item-id="${firstId}"]`),
     ).toBeNull();
 
-    // Releasing the held refetch settles isRefreshing and frees the height lock.
+    // Releasing the held refetch settles isRefreshing, frees the height lock, and
+    // hands anchoring back.
     act(() => release?.());
     await waitFor(() => expect(body.style.minHeight).toBe(''));
+    expect(body.style.overflowAnchor).toBe('');
   });
 
   it('opts out of scroll anchoring even when a background refresh already holds the height lock', async () => {

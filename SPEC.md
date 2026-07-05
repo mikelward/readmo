@@ -1444,7 +1444,17 @@ negligible and off every critical path. See the External services table in
      the dismissed row's gap closes from below and nothing above moves. It's
      distinguished from auto-hide (which must keep anchoring) by the removed
      row's position: an in-viewport Done opts out; a row that left the top does
-     not.
+     not. Unlike a Sweep, a single Done **holds the opt-out until the
+     invalidated refetch settles** (like the height lock), not just the
+     removal frame: the refetch re-renders the list a beat later — longer on a
+     slow/hung sync — and dropping the opt-out early left anchoring live for
+     that landing render, which could rewind the scroll toward the top (the
+     jump was intermittent because a fast sync landed before the opt-out was
+     dropped). Holding it across the refresh is safe here precisely because
+     auto-hide on scroll — the one consumer that needs mid-refetch anchoring —
+     is only wired when *hide-on-scroll* is on; with it off (the default) a
+     single Done holds the opt-out, and with it on the single Done keeps the
+     Sweep-style one-frame drop.
    - **Pin-to-download promo bar** above the first row ("Pin an article to
      download it"), explaining that pinning warms the offline cache (see
      *Prefetch on Pin/Favorite*). Shown only once rows exist; dismissable via a
