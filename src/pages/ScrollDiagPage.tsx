@@ -1,12 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { useToast } from '../hooks/useToast';
 import {
   clearDiag,
+  diagHeadline,
+  formatDiagEntry,
+  formatDiagReport,
   getDiagBuffer,
   getDiagReport,
   summarizeDiag,
-  type DiagEntry,
 } from '../lib/scrollDiag';
 import './DebugPage.css';
 import './PageHeader.css';
@@ -15,17 +18,12 @@ import './PageHeader.css';
 // rather than ordinary momentum — highlighted in the timeline.
 const JUMP_HIGHLIGHT_PX = 150;
 
-function describeEntry(e: DiagEntry): string {
-  if (e.kind === 'done') return `Done ${e.id ?? ''}`.trim();
-  const sign = (e.delta ?? 0) > 0 ? '+' : '';
-  return `scroll y=${e.y} (${sign}${e.delta ?? 0})`;
-}
-
 /** `/debug/scroll` — the frozen scroll-jump timeline captured when the reader
  * taps "Report bug" on a Done toast (see useScrollDiag). Open to everyone (no
  * auth gate); shows only scroll offsets and item ids, no secrets. */
 export function ScrollDiagPage() {
   useDocumentTitle('Scroll diagnostics · readmo');
+  const { showToast } = useToast();
   // Re-read on Clear. The frozen report (captured at Report-bug time) is what we
   // show; fall back to the live buffer when the page is opened directly.
   const [nonce, setNonce] = useState(0);
@@ -40,21 +38,29 @@ export function ScrollDiagPage() {
   }, [nonce]);
   const summary = useMemo(() => summarizeDiag(entries), [entries]);
 
+  const copyReport = useCallback(async () => {
+    const text = formatDiagReport(entries);
+    try {
+      // navigator.clipboard is HTTPS/localhost-only and absent in some webviews;
+      // fall through to the error toast rather than throwing when it's missing.
+      if (!navigator.clipboard) throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(text);
+      showToast({ message: 'Copied timeline' });
+    } catch {
+      showToast({
+        message: "Couldn't copy — select the text manually",
+        detail: text,
+      });
+    }
+  }, [entries, showToast]);
+
   return (
     <div className="debug">
       <div className="page-header">
         <h1 className="page-header__title">Scroll diagnostics</h1>
       </div>
 
-      <p className="debug__summary">
-        {summary.entries === 0
-          ? 'No timeline recorded yet.'
-          : summary.jumpAfterDoneMs != null && summary.biggestJump
-            ? `Jumped ${summary.biggestJump.delta}px toward the top ${summary.jumpAfterDoneMs}ms after Done.`
-            : summary.biggestJump
-              ? `Biggest jump ${summary.biggestJump.delta}px (no Done before it).`
-              : 'No upward jump recorded.'}
-      </p>
+      <p className="debug__summary">{diagHeadline(summary)}</p>
 
       <section className="debug__section">
         <h2 className="debug__heading">
@@ -84,17 +90,25 @@ export function ScrollDiagPage() {
                 }
               >
                 <span className="scroll-diag__t">{e.t}ms</span>
-                <span className="scroll-diag__desc">{describeEntry(e)}</span>
+                <span className="scroll-diag__desc">{formatDiagEntry(e)}</span>
               </li>
             ))}
           </ol>
         )}
       </section>
 
-      <section className="debug__section">
+      <section className="debug__section scroll-diag__actions">
         <button
           type="button"
-          className="scroll-diag__clear"
+          className="scroll-diag__button"
+          disabled={entries.length === 0}
+          onClick={copyReport}
+        >
+          Copy timeline
+        </button>
+        <button
+          type="button"
+          className="scroll-diag__button"
           onClick={() => {
             clearDiag();
             setNonce((n) => n + 1);

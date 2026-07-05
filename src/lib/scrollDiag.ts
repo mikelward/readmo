@@ -112,3 +112,35 @@ export function summarizeDiag(entries: DiagEntry[]): DiagSummary {
     biggestJump && doneBeforeJump ? biggestJump.t - doneBeforeJump.t : null;
   return { entries: entries.length, biggestJump, lastDone, jumpAfterDoneMs };
 }
+
+/** One timeline row as text: `Done <id>` for a dismiss, else the scroll offset
+ * and its signed delta. Shared by the page's rendered rows and the copyable
+ * report. */
+export function formatDiagEntry(e: DiagEntry): string {
+  if (e.kind === 'done') return `Done ${e.id ?? ''}`.trim();
+  const sign = (e.delta ?? 0) > 0 ? '+' : '';
+  return `scroll y=${e.y} (${sign}${e.delta ?? 0})`;
+}
+
+/** The one-line headline: how far the view jumped toward the top and whether
+ * that jump followed a dismiss. Shared by the page and {@link formatDiagReport}
+ * so the rendered summary and the copied text never drift. */
+export function diagHeadline(summary: DiagSummary): string {
+  if (summary.entries === 0) return 'No timeline recorded yet.';
+  if (summary.jumpAfterDoneMs != null && summary.biggestJump) {
+    return `Jumped ${summary.biggestJump.delta}px toward the top ${summary.jumpAfterDoneMs}ms after Done.`;
+  }
+  if (summary.biggestJump) {
+    return `Biggest jump ${summary.biggestJump.delta}px (no Done before it).`;
+  }
+  return 'No upward jump recorded.';
+}
+
+/** The whole report as plain text — headline then one tab-separated row per
+ * event — for the page's "Copy timeline" button, so the reader can paste it
+ * back without wrestling with mobile text selection. */
+export function formatDiagReport(entries: DiagEntry[]): string {
+  const headline = diagHeadline(summarizeDiag(entries));
+  const rows = entries.map((e) => `${e.t}ms\t${formatDiagEntry(e)}`);
+  return [headline, ...rows].join('\n');
+}

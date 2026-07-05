@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   clearDiag,
+  diagHeadline,
+  formatDiagEntry,
+  formatDiagReport,
   freezeDiagReport,
   getDiagBuffer,
   getDiagReport,
@@ -95,6 +98,44 @@ describe('scrollDiag', () => {
       ]);
       expect(summary.biggestJump).toBeNull();
       expect(summary.jumpAfterDoneMs).toBeNull();
+    });
+  });
+
+  describe('formatting', () => {
+    it('formats a Done row and a scroll row with a signed delta', () => {
+      expect(formatDiagEntry({ t: 0, kind: 'done', y: 10, id: 'abc' })).toBe(
+        'Done abc',
+      );
+      expect(formatDiagEntry({ t: 0, kind: 'scroll', y: 400, delta: 40 })).toBe(
+        'scroll y=400 (+40)',
+      );
+      expect(formatDiagEntry({ t: 0, kind: 'scroll', y: 0, delta: -800 })).toBe(
+        'scroll y=0 (-800)',
+      );
+    });
+
+    it('headlines a jump that followed a Done', () => {
+      const headline = diagHeadline(
+        summarizeDiag([
+          { t: 0, kind: 'done', y: 1200, id: 'x' },
+          { t: 40, kind: 'scroll', y: 0, delta: -1200 },
+        ]),
+      );
+      expect(headline).toBe('Jumped -1200px toward the top 40ms after Done.');
+    });
+
+    it('serializes the whole report as pasteable text: headline then rows', () => {
+      const text = formatDiagReport([
+        { t: 0, kind: 'done', y: 1200, id: 'x' },
+        { t: 40, kind: 'scroll', y: 0, delta: -1200 },
+      ]);
+      expect(text).toBe(
+        [
+          'Jumped -1200px toward the top 40ms after Done.',
+          '0ms\tDone x',
+          '40ms\tscroll y=0 (-1200)',
+        ].join('\n'),
+      );
     });
   });
 });
