@@ -140,6 +140,14 @@
   overflow: hidden;
 }
 
+/* Spoiler placeholder standing in for a hidden excerpt: muted + italic so it
+ * reads as a hint ("Spoilers hidden. Tap to see article.") rather than as the
+ * article's own preview text. */
+.item-row__excerpt--spoiler {
+  font-style: italic;
+  color: var(--rm-meta);
+}
+
 /* Title + thumbnail: image floated right, bigger title beside it wrapping
  * underneath, no excerpt. The body switches to block flow so the float works
  * and the title/meta can reclaim the full width below the image. */

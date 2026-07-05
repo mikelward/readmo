@@ -425,9 +425,23 @@ export function ItemRow({
         ) : null}
       </span>
       {previewText ? (
-        <span className="item-row__excerpt" data-testid="item-excerpt">
-          {previewText}
-        </span>
+        // Excerpt layout: when the headline itself is a hidden spoiler
+        // (`headline.rewritten`), the feed body almost always repeats the
+        // result the rewrite just concealed — so swap the preview for a
+        // placeholder rather than leak the scoreline in the excerpt. The
+        // row-body link still opens the full article on tap.
+        headline.rewritten ? (
+          <span
+            className="item-row__excerpt item-row__excerpt--spoiler"
+            data-testid="item-excerpt"
+          >
+            Spoilers hidden. Tap to see article.
+          </span>
+        ) : (
+          <span className="item-row__excerpt" data-testid="item-excerpt">
+            {previewText}
+          </span>
+        )
       ) : null}
       <span className="item-row__meta" data-testid="item-meta">
         {/* Per-row favicon only in non-grouped views (showFavicon). In
