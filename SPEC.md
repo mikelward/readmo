@@ -1412,7 +1412,17 @@ negligible and off every critical path. See the External services table in
      toggling above the fold, rows shifting) out from under the reader's scroll.
      A mutation staying local is what makes "dismiss keeps your place" reliable.
      (This is `refetchType: 'none'` on the feed invalidation; the caches still go
-     stale, they just don't refetch the active view.)
+     stale, they just don't refetch the active view.) Three deliberate exceptions:
+     (1) the **unread-count** query (`['feed','unread-counts',…]`) keeps
+     refetching — it's a cheap number that never reflows the list, and suppressing
+     it would let a grouped badge read a stale server count and jump back up after
+     a sync; (2) **Undo forces a refetch** — it must *restore* rows, and if a
+     focus/PTR refresh already reconciled a dismissed row out of `items[]`,
+     restoring its state alone can't bring it back; (3) the **global "More"
+     pager** shrinks its next-page offset by the count of locally-dismissed rows
+     it has loaded, since the server's offset sequence has dropped them and a
+     plain fetch would otherwise skip the rows that shifted up (the per-section
+     "More" recomputes its cursor the same way).
    - **Scroll position holds across the removal.** A dismiss/Sweep removes rows
      the instant it commits, so — anchored on the first dismissed card — nothing
      above it moves and everything below slides up to close the gap. Two browser
