@@ -20,10 +20,31 @@ export function useScrollDiag(enabled: boolean): void {
   useEffect(() => {
     if (!enabled || typeof window === 'undefined') return;
 
+    // Max scrollable offset right now — if a jump's `y` lands here the document
+    // became too short and the browser clamped; if it stays above the prior `y`
+    // the scroll moved with room to spare (an anchoring rewind).
+    const maxScroll = () =>
+      Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    // Whether the list body's scroll-anchor/height lock is active — the
+    // single-dismiss guard sets overflow-anchor:none (and a min-height) on it.
+    const bodyLocked = () => {
+      const body = document.querySelector('.item-list__body');
+      return (
+        body instanceof HTMLElement &&
+        (body.style.overflowAnchor === 'none' || body.style.minHeight !== '')
+      );
+    };
+
     let lastY = Math.round(window.scrollY);
     const onScroll = () => {
       const y = Math.round(window.scrollY);
-      recordDiag({ kind: 'scroll', y, delta: y - lastY });
+      recordDiag({
+        kind: 'scroll',
+        y,
+        delta: y - lastY,
+        max: maxScroll(),
+        locked: bodyLocked(),
+      });
       lastY = y;
     };
     window.addEventListener('scroll', onScroll, { passive: true });
@@ -39,7 +60,16 @@ export function useScrollDiag(enabled: boolean): void {
       const title =
         row?.querySelector('.item-row__title-text')?.textContent?.trim() ||
         undefined;
-      recordDiag({ kind: 'done', y: Math.round(window.scrollY), id, title });
+      // `max` here is the pre-removal ceiling; comparing it with the jump's
+      // post-removal `max` shows how far the document shrank. `locked` is left to
+      // the scroll entries — this handler may run before ItemList's lock does.
+      recordDiag({
+        kind: 'done',
+        y: Math.round(window.scrollY),
+        id,
+        title,
+        max: maxScroll(),
+      });
       showToast({
         message: 'Done',
         actionLabel: 'Report bug',

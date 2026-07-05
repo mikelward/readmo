@@ -20,7 +20,9 @@ const JUMP_HIGHLIGHT_PX = 150;
 
 /** `/debug/scroll` — the frozen scroll-jump timeline captured when the reader
  * taps "Report bug" on a Done toast (see useScrollDiag). Open to everyone (no
- * auth gate); shows only scroll offsets and item ids, no secrets. */
+ * auth gate); the timeline is a per-device in-memory buffer (scroll offsets +
+ * the dismissed article's id/headline — the caller's own content, never server
+ * data or another user's). */
 export function ScrollDiagPage() {
   useDocumentTitle('Scroll diagnostics · readmo');
   const { showToast } = useToast();

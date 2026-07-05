@@ -26,6 +26,17 @@ export interface DiagEntry {
    * row so the timeline reads as titles rather than opaque UUIDs. Absent when
    * the row isn't in this view's DOM (e.g. dismissed from the reader). */
   title?: string;
+  /** Max scrollable offset (`scrollHeight − innerHeight`) at record time. When a
+   * jump's `y` lands on `max`, the document became too short and the browser
+   * CLAMPED the scroll (height-lock failure); when `max` still exceeds the prior
+   * `y`, the scroll moved with room to spare — an anchoring rewind. */
+  max?: number;
+  /** 'scroll' only: whether the list body's scroll-anchor/height lock was active
+   * (`.item-list__body` opted out of anchoring or holding a min-height) when the
+   * event fired. `false` at the jump ⇒ the single-dismiss guard wasn't in force.
+   * Read on scroll (not done) events, which fire after the synchronous mutation
+   * handlers have run, so the lock state is settled. */
+  locked?: boolean;
 }
 
 /** Ring-buffer cap — a few seconds of scrolling plus the surrounding Done
@@ -121,12 +132,14 @@ export function summarizeDiag(entries: DiagEntry[]): DiagSummary {
  * and its signed delta. Shared by the page's rendered rows and the copyable
  * report. */
 export function formatDiagEntry(e: DiagEntry): string {
+  const max = e.max != null ? ` max=${e.max}` : '';
   if (e.kind === 'done') {
     const id = `Done ${e.id ?? ''}`.trim();
-    return e.title ? `${id} — ${e.title}` : id;
+    return `${e.title ? `${id} — ${e.title}` : id}${max}`;
   }
   const sign = (e.delta ?? 0) > 0 ? '+' : '';
-  return `scroll y=${e.y} (${sign}${e.delta ?? 0})`;
+  const lock = e.locked != null ? ` lock=${e.locked ? 'on' : 'off'}` : '';
+  return `scroll y=${e.y} (${sign}${e.delta ?? 0})${max}${lock}`;
 }
 
 /** The one-line headline: how far the view jumped toward the top and whether
