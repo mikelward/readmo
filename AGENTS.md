@@ -107,9 +107,14 @@ supabase/        Postgres migrations + Edge Functions (poller, discover,
 ```
 
 The data layer is abstracted behind **`src/lib/data/DataSource.ts`**.
-`MockDataSource` backs it today; a `SupabaseDataSource` replaces it later
-without touching callers — build features against the interface, not a concrete
-source.
+`SupabaseDataSource` is the live implementation whenever Supabase is configured
+(real RLS-scoped subscriptions + item state, written through to the server via
+the async outbox); `MockDataSource` is the backend-less local/demo fallback
+(`main.tsx` picks between them). Both satisfy the same interface — build features
+against `DataSource`, not a concrete source, and remember that on the live source
+a mutation's server write lands **asynchronously** (the outbox drains after the
+optimistic local update), so anything that reads server truth right after a write
+must tolerate the lag.
 
 ## External services
 
