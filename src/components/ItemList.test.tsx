@@ -87,7 +87,14 @@ function installScrollModel(
   },
 ) {
   let rawScrollY = 0;
+  // When set, overrides the row-count-derived natural height — used to model the
+  // momentary, self-inflicted document collapse a dismiss triggers (the list
+  // reflows to a far shorter height for a beat, then recovers). The min-height
+  // freeze must span it; `bodyHeight` still floors at any applied min-height, so
+  // an engaged freeze keeps the document tall through the injected collapse.
+  let naturalOverride: number | null = null;
   const naturalHeight = () =>
+    naturalOverride ??
     container.querySelectorAll('[data-item-id]').length * rowHeight;
   const bodyHeight = () =>
     Math.max(naturalHeight(), parseFloat(body.style.minHeight) || 0);
@@ -132,6 +139,47 @@ function installScrollModel(
     },
     getScrollY: clamped,
     maxScroll,
+    // Inject (px) or clear (null) a transient natural-height collapse.
+    setNaturalCollapse: (px: number | null) => {
+      naturalOverride = px;
+    },
+  };
+}
+
+// A controllable requestAnimationFrame: queues callbacks so a test can flush
+// them deterministically (the no-refetch height-freeze release is deferred a few
+// animation frames — see DISMISS_SETTLE_FRAMES). Returns a `flush` that drains
+// the queue repeatedly until it stays empty, so a chain that re-schedules itself
+// each frame runs to completion, and a `restore` to reinstate the real timers.
+function installManualRaf() {
+  let nextId = 1;
+  let queue: Array<{ id: number; cb: FrameRequestCallback }> = [];
+  const realRaf = globalThis.requestAnimationFrame;
+  const realCancel = globalThis.cancelAnimationFrame;
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+    const id = nextId++;
+    queue.push({ id, cb });
+    return id;
+  });
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => {
+    queue = queue.filter((entry) => entry.id !== id);
+  });
+  const flush = () => {
+    // Drain in waves: a callback may enqueue the next frame, so keep going until
+    // no new frames are pending (bounded so a runaway self-reschedule can't hang
+    // the test).
+    for (let guard = 0; guard < 100 && queue.length > 0; guard += 1) {
+      const wave = queue;
+      queue = [];
+      for (const entry of wave) entry.cb(performance.now());
+    }
+  };
+  return {
+    flush,
+    restore: () => {
+      vi.stubGlobal('requestAnimationFrame', realRaf);
+      vi.stubGlobal('cancelAnimationFrame', realCancel);
+    },
   };
 }
 
@@ -1129,6 +1177,10 @@ describe('ItemList', () => {
 
     const body = screen.getByTestId('item-list-body');
     const scroll = installScrollModel(body, container, { innerHeight: 400, rowHeight: 100 });
+    // The no-refetch release is deferred a few animation frames (it spans the
+    // dismiss's momentary collapse); drive those frames deterministically so the
+    // deferred-on-scroll slack is armed before the reader scrolls.
+    const raf = installManualRaf();
     // The reader is scrolled to the very bottom of the loaded list.
     const rowsBefore = container.querySelectorAll('[data-item-id]').length;
     scroll.setScrollY(scroll.maxScroll());
@@ -1149,6 +1201,11 @@ describe('ItemList', () => {
     await waitFor(() => expect(body.style.minHeight).not.toBe(''));
     expect(scroll.getScrollY()).toBe(before);
 
+    // The settle frames elapse: the freeze hands off to the deferred-on-scroll
+    // slack (still holding the offset — the document is genuinely shorter now).
+    raf.flush();
+    expect(scroll.getScrollY()).toBe(before);
+
     // The reader scrolls back up to where the natural document can hold the
     // offset: the held slack drops to nothing, so there's no persistent blank
     // tail, and the scroll lands exactly where they put it.
@@ -1158,6 +1215,7 @@ describe('ItemList', () => {
     });
     expect(body.style.minHeight).toBe('');
     expect(scroll.getScrollY()).toBe(0);
+    raf.restore();
   });
 
   it('keeps the reader in place when sweeping the bottom group leaves a sub-viewport document', async () => {
@@ -1195,6 +1253,7 @@ describe('ItemList', () => {
       rowHeight: 100,
       chromeHeight: 100,
     });
+    const raf = installManualRaf();
     const rowsBefore = container.querySelectorAll('[data-item-id]').length;
     const sweeps = screen.getAllByTestId('group-sweep');
     // Reader is at the very bottom of the loaded list.
@@ -1218,6 +1277,10 @@ describe('ItemList', () => {
     await waitFor(() => expect(body.style.minHeight).not.toBe(''));
     expect(scroll.getScrollY()).toBe(before);
 
+    // Let the settle frames elapse so the deferred-on-scroll slack is armed.
+    raf.flush();
+    expect(scroll.getScrollY()).toBe(before);
+
     // On the reader's next scroll up to the top, the slack clears — no blank tail.
     scroll.setScrollY(0);
     act(() => {
@@ -1225,6 +1288,7 @@ describe('ItemList', () => {
     });
     expect(body.style.minHeight).toBe('');
     expect(scroll.getScrollY()).toBe(0);
+    raf.restore();
   });
 
   it('counts trailing in-flow content (the relative bottom bar) when releasing the deferred hold', async () => {
@@ -1260,6 +1324,7 @@ describe('ItemList', () => {
       rowHeight: 100,
       footerHeight: 100,
     });
+    const raf = installManualRaf();
     const rowsBefore = container.querySelectorAll('[data-item-id]').length;
     const sweeps = screen.getAllByTestId('group-sweep');
     scroll.setScrollY(scroll.maxScroll());
@@ -1275,6 +1340,9 @@ describe('ItemList', () => {
     // Held at the pre-sweep offset (the offset sits past the post-sweep bottom).
     await waitFor(() => expect(body.style.minHeight).not.toBe(''));
     expect(scroll.getScrollY()).toBe(before);
+    // Let the settle frames elapse so the deferred-on-scroll slack is armed and
+    // sized to the natural (recovered) document.
+    raf.flush();
     // The hold is sized EXACTLY: the held max scroll is the offset itself, not a
     // footer's height past it. Sizing the body as if it were the final document
     // content (no trailing subtraction) would leave `footerHeight` of extra
@@ -1298,6 +1366,7 @@ describe('ItemList', () => {
     // slack is fully released — no lingering blank tail.
     expect(body.style.minHeight).toBe('');
     expect(scroll.getScrollY()).toBe(target);
+    raf.restore();
   });
 
   it('counts the footer even when the post-sweep document is sub-viewport (scrollHeight floored)', async () => {
@@ -1533,6 +1602,134 @@ describe('ItemList', () => {
     // transient freeze is released and anchoring is handed back.
     await waitFor(() => expect(body.style.minHeight).toBe(''));
     expect(body.style.overflowAnchor).toBe('');
+  });
+
+  it('holds the scroll offset through the momentary document collapse a single Done triggers', async () => {
+    // Regression (scroll-jump diagnostics): a dismiss triggers a self-inflicted
+    // document collapse a beat AFTER the row-removal paints — the list reflows to
+    // a fraction of its height for ~2 frames, then recovers. The freeze is taken
+    // (correctly, at the tall pre-collapse height) when the row is marked Done,
+    // but used to be cleared on the removal commit — BEFORE the dip — so the
+    // browser clamped window.scrollY toward the top and the clamp stuck once the
+    // height recovered. The freeze is now held across the settle frames, so the
+    // document never gets short enough to clamp.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`single-done-collapse-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    const rows = await screen.findAllByTestId('item-row');
+    const firstId = rows[0].closest('li')!.getAttribute('data-item-id')!;
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    // Sit at the offset the list will still hold AFTER one row leaves, so the
+    // only thing that could clamp is the transient collapse — not the permanent
+    // one-row shrink.
+    const rowCount = container.querySelectorAll('[data-item-id]').length;
+    const target = (rowCount - 1) * 100 - 400;
+    expect(target).toBeGreaterThan(0);
+    scroll.setScrollY(target);
+    expect(scroll.getScrollY()).toBe(target);
+
+    // Mark the first (visible) row Done — takes the freeze synchronously while
+    // the row is still on screen (measured at the tall pre-collapse height).
+    act(() => {
+      source.stateStore.hide(firstId);
+    });
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
+    );
+
+    // The release is deferred (settle frames still pending), so the freeze is
+    // engaged. Now the dismiss's momentary collapse hits: the document reflows to
+    // a fraction of its height for a couple of frames.
+    expect(body.style.minHeight).not.toBe('');
+    scroll.setNaturalCollapse(200);
+    // The freeze holds the document tall through the dip — the offset is NOT
+    // clamped (with the old immediate release it would snap toward the top here).
+    expect(scroll.getScrollY()).toBe(target);
+
+    // The collapse recovers, then the settle frames elapse and the freeze
+    // releases onto the settled (recovered) height. The offset is preserved.
+    scroll.setNaturalCollapse(null);
+    raf.flush();
+    expect(scroll.getScrollY()).toBe(target);
+    expect(body.style.minHeight).toBe('');
+    raf.restore();
+  });
+
+  it('holds the scroll offset through the momentary collapse a Sweep triggers', async () => {
+    // The same self-inflicted collapse fires on a Sweep (a batch local removal),
+    // not just a lone Done — both take lockBodyHeight and release through the same
+    // no-refetch effect, so the freeze must span the dip for either. A per-feed
+    // header Sweep removes one section's visible rows.
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const fetchPage = vi.fn((cursor: string | null) =>
+      source.getHomeItems({ cursor, groupByFeed: true, limit: 100 }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`sweep-collapse-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    const before = container.querySelectorAll('[data-item-id]').length;
+    // A modest offset every remaining row-set comfortably holds, so the release
+    // (a genuine multi-row shrink) doesn't itself clamp — the collapse is what
+    // we're guarding against.
+    const target = 300;
+    scroll.setScrollY(target);
+    expect(scroll.getScrollY()).toBe(target);
+
+    await user.click(screen.getAllByTestId('group-sweep')[0]);
+    await waitFor(() =>
+      expect(container.querySelectorAll('[data-item-id]').length).toBeLessThan(
+        before,
+      ),
+    );
+    // Enough rows survived that the settled document still holds `target` — so a
+    // clamp here can only come from the transient, not the permanent shrink.
+    const survivors = container.querySelectorAll('[data-item-id]').length;
+    expect(survivors * 100 - 400).toBeGreaterThanOrEqual(target);
+
+    // Freeze still engaged (settle deferred); inject the momentary collapse.
+    expect(body.style.minHeight).not.toBe('');
+    scroll.setNaturalCollapse(200);
+    expect(scroll.getScrollY()).toBe(target);
+
+    // Recover + settle: the freeze releases onto the settled height, offset kept.
+    scroll.setNaturalCollapse(null);
+    raf.flush();
+    expect(scroll.getScrollY()).toBe(target);
+    await waitFor(() => expect(body.style.minHeight).toBe(''));
+    raf.restore();
   });
 
   it('opts out of scroll anchoring even when a background refresh already holds the height lock', async () => {
