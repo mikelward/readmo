@@ -22,6 +22,10 @@ export interface DiagEntry {
   delta?: number;
   /** 'done' only: the dismissed item's id. */
   id?: ItemId;
+  /** 'done' only: the dismissed item's headline, captured from the still-present
+   * row so the timeline reads as titles rather than opaque UUIDs. Absent when
+   * the row isn't in this view's DOM (e.g. dismissed from the reader). */
+  title?: string;
 }
 
 /** Ring-buffer cap — a few seconds of scrolling plus the surrounding Done
@@ -117,7 +121,10 @@ export function summarizeDiag(entries: DiagEntry[]): DiagSummary {
  * and its signed delta. Shared by the page's rendered rows and the copyable
  * report. */
 export function formatDiagEntry(e: DiagEntry): string {
-  if (e.kind === 'done') return `Done ${e.id ?? ''}`.trim();
+  if (e.kind === 'done') {
+    const id = `Done ${e.id ?? ''}`.trim();
+    return e.title ? `${id} — ${e.title}` : id;
+  }
   const sign = (e.delta ?? 0) > 0 ? '+' : '';
   return `scroll y=${e.y} (${sign}${e.delta ?? 0})`;
 }

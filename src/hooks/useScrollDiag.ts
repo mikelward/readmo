@@ -32,7 +32,14 @@ export function useScrollDiag(enabled: boolean): void {
       // Only a fresh Done flip — pins/favorites/opened and un-dones don't move
       // the list the way a dismiss does.
       if (changed.done !== true) return;
-      recordDiag({ kind: 'done', y: Math.round(window.scrollY), id });
+      // The listener fires synchronously inside hide(), before React re-renders,
+      // so the dismissed row is still mounted — read its headline for a legible
+      // timeline. Absent (undefined) when the row isn't in this view's DOM.
+      const row = document.querySelector(`[data-item-id="${id}"]`);
+      const title =
+        row?.querySelector('.item-row__title-text')?.textContent?.trim() ||
+        undefined;
+      recordDiag({ kind: 'done', y: Math.round(window.scrollY), id, title });
       showToast({
         message: 'Done',
         actionLabel: 'Report bug',
