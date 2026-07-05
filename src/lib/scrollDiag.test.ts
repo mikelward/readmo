@@ -117,6 +117,22 @@ describe('scrollDiag', () => {
       );
     });
 
+    it('appends the scroll ceiling and lock state when present', () => {
+      expect(
+        formatDiagEntry({
+          t: 0,
+          kind: 'scroll',
+          y: 534,
+          delta: -622,
+          max: 534,
+          locked: false,
+        }),
+      ).toBe('scroll y=534 (-622) max=534 lock=off');
+      expect(
+        formatDiagEntry({ t: 0, kind: 'done', y: 1156, id: 'z', title: 'T', max: 1178 }),
+      ).toBe('Done z — T max=1178');
+    });
+
     it('headlines a jump that followed a Done', () => {
       const headline = diagHeadline(
         summarizeDiag([
