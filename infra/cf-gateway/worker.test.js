@@ -26,6 +26,12 @@ describe('isGatedPath', () => {
     expect(isGatedPath('/functions/v1/refresh')).toBe(true);
   });
 
+  it('gates every browser-invoked Edge Function that fronts the gateway', () => {
+    for (const fn of ['discover', 'refresh', 'summary', 'fulltext', 'newshacker-sync']) {
+      expect(isGatedPath(`/functions/v1/${fn}`)).toBe(true);
+    }
+  });
+
   it('never gates auth navigations or storage (no x-readmo-build header on those)', () => {
     expect(isGatedPath('/auth/v1/authorize')).toBe(false);
     expect(isGatedPath('/auth/v1/token')).toBe(false);

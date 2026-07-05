@@ -7,12 +7,33 @@ per-request rate limit on the REST/RPC path).
 
 ```
 client → https://api.readmo.app   (Cloudflare WAF rate-limit → this Worker)   →  https://<ref>.supabase.co
+             /rest/v1/…  (PostgREST reads/writes + RPC)
+             /functions/v1/…  (Edge Functions: discover, refresh, summary, fulltext, newshacker-sync)
+             /auth/v1/… /storage/v1/…  (proxied, but never rate-limited or version-gated)
 ```
 
 The client points `VITE_SUPABASE_URL` at `api.readmo.app`; the Worker rewrites
-each request to the real Supabase origin. **No Supabase custom-domain add-on
-($10/mo) is needed** — that's only for proxying straight to Supabase's origin,
-which the Worker sidesteps.
+each request to the real Supabase origin. This is path-agnostic, so it fronts
+**both** the REST/RPC API (`/rest/v1/`) **and the browser-invoked Edge
+Functions** (`/functions/v1/`) — supabase-js's `functions.invoke()` builds its
+URL off the same base, so the moment the client points at the gateway, function
+calls route through it too, with the same CORS and version-gate handling. **No
+Supabase custom-domain add-on ($10/mo) is needed** — that's only for proxying
+straight to Supabase's origin, which the Worker sidesteps.
+
+### What reaches the gateway (and what bypasses it)
+
+Only **browser-originated** traffic hits `api.readmo.app`. Server-to-server
+calls keep talking to Supabase directly and are unaffected by anything here —
+which is intended, since they're trusted and can't carry `x-readmo-build`:
+
+| Edge Function | Reaches the gateway? | Why |
+|---|---|---|
+| `discover`, `refresh`, `summary`, `fulltext`, `newshacker-sync` | **Yes** — `/functions/v1/<fn>` | Browser-invoked via supabase-js `functions.invoke()`; CORS-enabled. |
+| `poll` | No | Invoked by `pg_cron` inside Postgres — never leaves the DB. |
+| `notify-signup` | No | Fired by the `auth.users` insert trigger via `pg_net` — server-side. |
+| `db-perf` | No | Called out-of-band (runbook / Grafana → Supabase directly) with the `service_role` **Bearer** token (`Authorization: Bearer $SERVICE_ROLE_KEY`). |
+| `img` | No | Browser `<img>` → Vercel `/api/img` shim → server-side fetch to `SUPABASE_URL` (kept **direct**, see step 5). Images are cached separately (SETUP §6), so the functions rate-limit never throttles them. |
 
 ## Cost
 
@@ -38,24 +59,39 @@ step 4), which is enough to shed a loop.
 3. **Bind the hostname:** add `api.readmo.app` as a Worker **Custom Domain**
    (Workers & Pages → your Worker → Settings → Domains & Routes). This provisions
    DNS + TLS. (Alternatively uncomment the `routes` block in `wrangler.toml`.)
-4. **Add the rate-limit rule** (the actual protection) — Security → WAF → Rate
-   limiting rules → Create. **Free-plan compatible version:**
-   - **If** `http.request.uri.path` contains `/rest/v1/` (path is a Free-tier
-     expression field; start here, add `/functions/v1/` later).
+4. **Add the rate-limit rule(s)** (the actual protection) — Security → WAF →
+   Rate limiting rules → Create. **Free-plan compatible version:**
+   - **REST/RPC rule — `http.request.uri.path` contains `/rest/v1/`.** This is
+     the proven incident vector (the June refetch loop was 116M `set_config`
+     calls, all REST). Path is a Free-tier expression field.
+   - **Edge-functions rule — `http.request.uri.path` contains
+     `/functions/v1/`.** A second rule (same builder) covers the function path.
+     Give it a **lower** threshold than REST: a session makes far fewer function
+     calls (a handful of `summary`/`fulltext`/`discover`/`refresh` requests) than
+     PostgREST reads, and `summary`/`fulltext` are seconds-long AI calls you
+     never want a client hammering. `img` doesn't count here — it bypasses the
+     gateway (see the table above), so this rule won't throttle images.
    - **Rate:** > N requests per **10 s** (Free's only counting period), keyed by
      client IP (Free's default characteristic). Pick N well above a real user's
-     10 s burst, well below a loop's.
+     10 s burst, well below a loop's — tuned per rule (REST higher, functions
+     lower).
    - **Action: Block** (returns 429). **Not** "Managed Challenge" — no CAPTCHA.
    - Free can't match on `http.request.method`, so it can't exempt `OPTIONS` —
      but that's fine here: CORS preflights are cached 24 h (the Worker's
-     `Access-Control-Max-Age`) and a refetch loop sends GETs, not preflights, so
-     OPTIONS volume never trips a sane threshold.
+     `Access-Control-Max-Age`) and a refetch loop sends GETs/POSTs, not
+     preflights, so OPTIONS volume never trips a sane threshold.
+   - **If your plan caps the number of rate-limiting rules** (Free is limited —
+     check the availability table below), keep the **`/rest/v1/`** rule (the
+     proven vector) and rely on the Worker's version gate plus Supabase's own
+     per-function limits to bound functions; add the `/functions/v1/` rule when
+     you have the rule budget or move to Paid.
 
    **Paid WAF** unlocks a longer window (e.g. 1 min), matching on
-   `http.request.method` (to exempt `OPTIONS` explicitly) and other fields, and
+   `http.request.method` (to exempt `OPTIONS` explicitly) and other fields,
    custom characteristics (e.g. key by the `Authorization` header for
-   per-session limiting). Check Cloudflare's *Rate limiting rules → Availability*
-   table for exactly which fields/periods your plan exposes.
+   per-session limiting), and enough rules to run both paths at once. Check
+   Cloudflare's *Rate limiting rules → Availability* table for exactly which
+   fields/periods/rule-counts your plan exposes.
 5. **Point the *client* at it:** set `VITE_SUPABASE_URL=https://api.readmo.app`
    in Vercel and redeploy. **Test on a preview deployment first** (see below) — a
    CORS gap would break the live app.
@@ -71,17 +107,26 @@ step 4), which is enough to shed a loop.
 ## Test before flipping production
 
 Point a Vercel **preview** at the gateway and exercise sign-in, the feed, "More"
-pagination (this checks `Content-Range` is exposed), pinning/marking done, and
-add-feed. Or by hand:
+pagination (this checks `Content-Range` is exposed), pinning/marking done,
+add-feed (exercises the `discover` **function** through the gateway), and pull-to
+-refresh (the `refresh` function). Or by hand:
 
 ```
-# Preflight should echo the requested headers:
+# Preflight should echo the requested headers (same handler for REST and functions):
 curl -i -X OPTIONS https://api.readmo.app/rest/v1/ \
   -H 'Origin: https://readmo.app' \
   -H 'Access-Control-Request-Headers: apikey, authorization, x-readmo-build'
 
 # A normal read should pass through (401/empty is fine — proves routing + CORS):
 curl -i https://api.readmo.app/rest/v1/ -H 'Origin: https://readmo.app'
+
+# An Edge Function preflight + call should route the same way (401 without a JWT
+# is fine — it proves /functions/v1/ reaches Supabase through the gateway):
+curl -i -X OPTIONS https://api.readmo.app/functions/v1/refresh \
+  -H 'Origin: https://readmo.app' \
+  -H 'Access-Control-Request-Headers: authorization, content-type, x-readmo-build'
+curl -i -X POST https://api.readmo.app/functions/v1/refresh \
+  -H 'Origin: https://readmo.app' -H 'content-type: application/json' -d '{}'
 ```
 
 ## Rollback
