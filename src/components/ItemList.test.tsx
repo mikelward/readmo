@@ -1693,6 +1693,41 @@ describe('ItemList', () => {
     await waitFor(() => expect(bodyB.style.minHeight).toBe(''));
   });
 
+  it('forces a refetch on Undo so a row already reconciled out of items[] comes back (Codex P2 #375)', async () => {
+    // A normal dismiss marks the feed stale WITHOUT refetching (so the reader's
+    // scroll isn't reflowed) and relies on the local overlay to drop the row.
+    // But Undo must RESTORE a row, and if a focus/PTR refresh already reconciled
+    // a dismissed row out of items[], restoring its state alone can't bring it
+    // back. Undo therefore forces the refetch that re-includes it.
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems();
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    renderWithProviders(
+      <ItemList
+        viewKey={`undo-refetch-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    const rows = await screen.findAllByTestId('item-row');
+    const id = rows[0].closest('li')!.getAttribute('data-item-id')!;
+
+    // Dismiss one row → the dismiss itself does NOT refetch (the whole point).
+    act(() => {
+      source.stateStore.hide(id);
+    });
+    const undo = await screen.findByTestId('undo-btn');
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+
+    // Undo forces a refetch.
+    await user.click(undo);
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+  });
+
   it('releases the sweep height lock when no refresh starts (offline partial sweep), so there is no stuck blank tail', async () => {
     // Regression (Codex review on #184): the sweep pre-lock relies on a
     // background refresh to drive its release. Offline, a *partial* sweep

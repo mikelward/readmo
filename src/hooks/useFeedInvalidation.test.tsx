@@ -1,5 +1,5 @@
 import { act, screen, waitFor } from '@testing-library/react';
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, useQuery } from '@tanstack/react-query';
 import { vi } from 'vitest';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { ItemList } from '../components/ItemList';
@@ -90,5 +90,42 @@ describe('boot-time feed invalidation after persist restore', () => {
     act(() => { releaseRefetch!(); });
     await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
     expect(hasDoneTitle()).toBe(false);
+  });
+});
+
+describe('useFeedInvalidation query scoping', () => {
+  it('refetches the unread-count query on a mutation but only marks feed-items stale', async () => {
+    // Codex P2 on #375: the unread-count query key (['feed','unread-counts',…])
+    // shares the ['feed'] prefix, so a blanket refetchType:'none' would suppress
+    // it too — and after an outbox write syncs and clears the local pending
+    // adjustment, the badge would read a stale server count and jump back up.
+    // The count is a cheap number that never reflows the list, so it must keep
+    // refetching; only the feed-ITEMS query is left stale-without-refetch.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const itemsFetch = vi.fn().mockResolvedValue({ items: [], nextCursor: null });
+    const countsFetch = vi.fn().mockResolvedValue({ 'feed-a': 3 });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: 60_000 } },
+    });
+
+    // renderWithProviders mounts useFeedInvalidation; these two observers make
+    // both queries "active" so an invalidation's default refetchType can refetch.
+    function Probe() {
+      useQuery({ queryKey: ['feed', 'home-all'], queryFn: itemsFetch });
+      useQuery({ queryKey: ['feed', 'unread-counts', 'feed-a'], queryFn: countsFetch });
+      return null;
+    }
+    renderWithProviders(<Probe />, { source, queryClient });
+    await waitFor(() => expect(itemsFetch).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(countsFetch).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      source.stateStore.set('item-1', 'done', true);
+    });
+
+    // The count query refetches (a number, no list reflow)…
+    await waitFor(() => expect(countsFetch).toHaveBeenCalledTimes(2));
+    // …but the feed-items query is only marked stale — no refetch under the reader.
+    expect(itemsFetch).toHaveBeenCalledTimes(1);
   });
 });

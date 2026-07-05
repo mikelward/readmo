@@ -34,12 +34,32 @@ export function dedupeFeedPages(pages: Array<Page<FeedItem>>): FeedItem[] {
  * (mounted in App) so mutations on the reader page take effect even while
  * this hook is unmounted.
  */
-export function useFeedItems(viewKey: string, fetchPage: FetchPage) {
+export function useFeedItems(
+  viewKey: string,
+  fetchPage: FetchPage,
+  /**
+   * Optional hook to correct the next-page offset before it's fetched. Because a
+   * mutation no longer refetches (see useFeedInvalidation), the loaded pages can
+   * carry locally Done/Hidden rows the server has already dropped from its
+   * sequence — so the server's offset-based `nextCursor` would skip rows on the
+   * next "More". The caller (ItemList) subtracts the distinct dismissed rows it
+   * has loaded. React Query evaluates `getNextPageParam` at `fetchNextPage` time,
+   * so this reads the store fresh at the moment the reader taps "More".
+   * (Codex P1 on #375.)
+   */
+  adjustNextCursor?: (
+    rawCursor: string | null,
+    pages: Array<Page<FeedItem>>,
+  ) => string | null,
+) {
   const query = useInfiniteQuery({
     queryKey: ['feed', viewKey],
     queryFn: ({ pageParam }) => fetchPage(pageParam),
     initialPageParam: null as string | null,
-    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    getNextPageParam: (lastPage, allPages) =>
+      adjustNextCursor
+        ? adjustNextCursor(lastPage.nextCursor, allPages)
+        : lastPage.nextCursor,
     // refetchOnWindowFocus: true so a tab that regains focus after >5 min
     // picks up new items (SPEC.md "refetch-on-focus + PTR"). The global
     // staleTime (5 min, main.tsx) gates this — no request fires if the data

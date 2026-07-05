@@ -190,6 +190,39 @@ export function ItemList({
   // the app header + top toolbar, so a pinned header sits flush under them.
   // Only meaningful (and only applied below) when grouping, where headers exist.
   const topChromeHeight = useTopChromeHeight();
+  // Correct the global pager's next-page offset for locally-dismissed rows.
+  // Since a mutation no longer refetches, the loaded pages still carry Done/Hidden
+  // rows the server has already dropped from its offset-based sequence — so the
+  // server's `nextCursor` (an offset) points past the rows that shifted up into
+  // it, and a plain "More" would skip them. When any loaded row is dismissed, the
+  // correct next offset is the count of *distinct live (non-dismissed) rows* we've
+  // loaded: those occupy the first N positions of the server's current sequence,
+  // so the next page starts at N. This is an absolute count, not a decrement of
+  // the incoming cursor, so it stays stable across successive "More" taps (a
+  // decrement re-subtracts the same dismissed rows each time and re-fetches the
+  // same page forever — Codex P2 on #376). When nothing is dismissed, defer to the
+  // server's cursor so useFeedItems' offset-drift dedup keeps working untouched.
+  // Evaluated at fetchNextPage time, so it reads the store fresh when the reader
+  // taps "More". (Codex P1 on #375; the per-section "More" path recomputes its own
+  // cursor in handleFeedMore.)
+  const adjustNextCursor = useCallback(
+    (rawCursor: string | null, pages: Array<Page<FeedItem>>): string | null => {
+      if (rawCursor == null) return rawCursor;
+      const offset = Number.parseInt(rawCursor, 10);
+      if (!Number.isFinite(offset)) return rawCursor;
+      let dismissed = 0;
+      const live = new Set<ItemId>();
+      for (const page of pages) {
+        for (const fi of page.items) {
+          const st = ds.stateStore.get(fi.item.id);
+          if (st.done || st.hidden) dismissed += 1;
+          else live.add(fi.item.id);
+        }
+      }
+      return dismissed > 0 ? String(live.size) : rawCursor;
+    },
+    [ds],
+  );
   const {
     items,
     isLoading,
@@ -203,7 +236,7 @@ export function ItemList({
     isRefreshing,
     refreshFailed,
     error,
-  } = useFeedItems(viewKey, fetchPage);
+  } = useFeedItems(viewKey, fetchPage, adjustNextCursor);
 
   // Surface the FULL read failure in the browser console (desktop debugging) —
   // the on-screen panel shows a friendly headline + a curated one-line detail,
@@ -466,11 +499,24 @@ export function ItemList({
   // settles without surfacing the rows here, we drop the request (see the effect
   // below) so a later unrelated refetch can't scroll this view by surprise.
   const undoScrollSawFetchRef = useRef(false);
-  const handleUndoScroll = useCallback((restoredIds: ItemId[]) => {
-    pendingUndoScrollIds.current =
-      restoredIds.length > 0 ? new Set(restoredIds) : null;
-    undoScrollSawFetchRef.current = false;
-  }, []);
+  const handleUndoScroll = useCallback(
+    (restoredIds: ItemId[]) => {
+      pendingUndoScrollIds.current =
+        restoredIds.length > 0 ? new Set(restoredIds) : null;
+      undoScrollSawFetchRef.current = false;
+      // Undo is the one action where we DO want a refetch. A normal mutation
+      // only marks the feed stale (no refetch, so the reader's scroll isn't
+      // reflowed) and relies on the local overlay to drop the row — but Undo
+      // must RESTORE a row, and if a focus/PTR refresh already reconciled it out
+      // of `items[]`, restoring its state alone can't bring it back (it's gone
+      // from the cached page). A refetch re-includes it, and the pending-scroll
+      // effect below rides that same refetch to bring the topmost restored row
+      // on screen. Harmless when the row is still cached — `visibleItems` already
+      // re-includes it and the refetch just reconciles. (Codex P2 on #375.)
+      if (restoredIds.length > 0) void refetch();
+    },
+    [refetch],
+  );
 
   // When the bottom toolbar is pinned to the viewport foot it's always on
   // screen, so `hasMore` alone (another *page* is fetchable) can't drive "More"

@@ -29,9 +29,19 @@ export function useFeedInvalidation() {
 
   useEffect(() => {
     return ds.stateStore.subscribe(() => {
+      // Feed-items queries: mark stale, but don't refetch under the reader.
       void queryClient.invalidateQueries({
         queryKey: ['feed'],
         refetchType: 'none',
+        predicate: (query) => query.queryKey[1] !== 'unread-counts',
+      });
+      // Unread-count badges (`['feed','unread-counts',…]`): a cheap number that
+      // never reflows the list, so refetch it normally — otherwise, once an
+      // outbox write syncs and clears the local pending-adjustment, the badge
+      // reads a stale server count and jumps back up until the next focus/PTR
+      // (Codex P2 on #375).
+      void queryClient.invalidateQueries({
+        queryKey: ['feed', 'unread-counts'],
       });
     });
   }, [ds, queryClient]);
