@@ -65,6 +65,29 @@ describe('useScrollDiag', () => {
     expect(buf.at(-1)).toMatchObject({ kind: 'done', y: 1200, id: 'item-1' });
   });
 
+  it('captures the dismissed row headline when it is in the DOM', () => {
+    render(
+      <DataSourceProvider source={source}>
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/']}>
+            <Harness enabled={true} />
+            <ul>
+              <li data-item-id="item-1">
+                <span className="item-row__title-text">Big News</span>
+              </li>
+            </ul>
+          </MemoryRouter>
+        </ToastProvider>
+      </DataSourceProvider>,
+    );
+    act(() => source.stateStore.hide('item-1'));
+    expect(getDiagBuffer().at(-1)).toMatchObject({
+      kind: 'done',
+      id: 'item-1',
+      title: 'Big News',
+    });
+  });
+
   it('records window scroll positions with deltas', () => {
     renderDiag(true, source);
     setScrollY(800);

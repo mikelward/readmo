@@ -106,6 +106,9 @@ describe('scrollDiag', () => {
       expect(formatDiagEntry({ t: 0, kind: 'done', y: 10, id: 'abc' })).toBe(
         'Done abc',
       );
+      expect(
+        formatDiagEntry({ t: 0, kind: 'done', y: 10, id: 'abc', title: 'Big news' }),
+      ).toBe('Done abc — Big news');
       expect(formatDiagEntry({ t: 0, kind: 'scroll', y: 400, delta: 40 })).toBe(
         'scroll y=400 (+40)',
       );
