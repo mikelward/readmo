@@ -2515,6 +2515,90 @@ describe('ItemList', () => {
       }
     });
 
+    it('clears the release-time scroll pin if the setting turns off while it is active', async () => {
+      // A held-touch auto-hide flush temporarily disables browser scroll
+      // anchoring on the list body while it pins a surviving row in place. If
+      // the reader turns the setting off before the next scroll/input releases
+      // that pin, the effect cleanup must clear `overflow-anchor: none`;
+      // otherwise the mounted list keeps anchoring disabled and later
+      // dismissals/sweeps can jump again.
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      const ROW = 80;
+      let scrollY = 240;
+      const scrollYSpy = vi
+        .spyOn(window, 'scrollY', 'get')
+        .mockImplementation(() => scrollY);
+      const scrollBySpy = vi.fn((_x: number, y: number) => {
+        scrollY += y;
+      });
+      vi.stubGlobal('scrollBy', scrollBySpy);
+      const rectSpy = vi
+        .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+        .mockImplementation(function (this: HTMLElement) {
+          const li = this.matches?.('li[data-item-id]')
+            ? this
+            : this.closest?.('li[data-item-id]');
+          if (li) {
+            const all = [...document.querySelectorAll('li[data-item-id]')];
+            const top = all.indexOf(li) * ROW - scrollY;
+            return {
+              top, bottom: top + ROW, height: ROW, left: 0, right: 0,
+              width: 0, x: 0, y: top, toJSON: () => ({}),
+            } as DOMRect;
+          }
+          return {
+            top: 0, bottom: 0, height: 0, left: 0, right: 0, width: 0,
+            x: 0, y: 0, toJSON: () => ({}),
+          } as DOMRect;
+        });
+
+      try {
+        const source = new MockDataSource(`test-${Math.random()}`);
+        renderWithProviders(
+          <ItemList
+            viewKey={`toggle-pin-${viewKeySeq++}`}
+            fetchPage={(cursor) =>
+              source.getHomeItems({ cursor, groupByFeed: true, limit: 100 })
+            }
+            emptyLabel="All caught up."
+            groupByFeed
+          />,
+          { source },
+        );
+
+        const lis = (await screen.findAllByTestId('item-row')).map(
+          (r) => r.closest('li')!,
+        );
+        const body = screen.getByTestId('item-list-body');
+
+        act(() => {
+          document.dispatchEvent(new Event('touchstart'));
+        });
+        act(() => {
+          for (const li of lis.slice(0, 3)) setVisibilityForTest(li, 0);
+        });
+        await act(async () => {
+          const ev = new Event('touchend');
+          Object.defineProperty(ev, 'touches', { value: [] });
+          document.dispatchEvent(ev);
+        });
+
+        expect(body.style.overflowAnchor).toBe('none');
+
+        act(() => {
+          window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '0');
+          window.dispatchEvent(new Event('readmo:reading-pref-changed'));
+        });
+
+        expect(body.style.overflowAnchor).toBe('');
+      } finally {
+        rectSpy.mockRestore();
+        scrollYSpy.mockRestore();
+        vi.unstubAllGlobals();
+      }
+    });
+
     it('releases the scroll pin on post-flick momentum scroll, so it does not fight the fling', async () => {
       // Regression (Codex review on #253): after the release flush arms the pin,
       // a flick keeps scrolling as momentum/inertia — which fires no touch,
