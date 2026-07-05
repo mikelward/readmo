@@ -6,6 +6,7 @@ import {
   HIDE_ON_SCROLL_KEY,
   HIDE_SPORTS_SPOILERS_KEY,
   ITEM_SORT_KEY,
+  LIST_LAYOUT_KEY,
   SHOW_ROW_FAVICON_KEY,
   resetReadingPrefsCacheForTest,
   useBottomBarPosition,
@@ -13,6 +14,7 @@ import {
   useHideOnScroll,
   useHideSportsSpoilers,
   useItemSort,
+  useListLayout,
   useShowRowFavicon,
 } from './useReadingPrefs';
 
@@ -257,6 +259,54 @@ describe('useReadingPrefs', () => {
       });
       expect(screen.getByRole('button')).toHaveTextContent('list');
       expect(window.localStorage.getItem(BOTTOM_BAR_KEY)).toBe('list');
+    });
+  });
+
+  describe('article layout', () => {
+    const order: Record<string, string> = {
+      title: 'thumbnail',
+      thumbnail: 'excerpt',
+      excerpt: 'title',
+    };
+    function LayoutProbe() {
+      const { listLayout, setListLayout } = useListLayout();
+      return (
+        <button
+          type="button"
+          onClick={() => setListLayout(order[listLayout] as 'title')}
+        >
+          {listLayout}
+        </button>
+      );
+    }
+
+    it("defaults to 'title' (the compact row)", () => {
+      render(<LayoutProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent('title');
+    });
+
+    it("reads a persisted 'thumbnail' choice on mount", () => {
+      window.localStorage.setItem(LIST_LAYOUT_KEY, 'thumbnail');
+      resetReadingPrefsCacheForTest();
+      render(<LayoutProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent('thumbnail');
+    });
+
+    it("falls back to 'title' for an unknown persisted value", () => {
+      window.localStorage.setItem(LIST_LAYOUT_KEY, 'bogus');
+      resetReadingPrefsCacheForTest();
+      render(<LayoutProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent('title');
+    });
+
+    it('persists a change through all three values', () => {
+      render(<LayoutProbe />);
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('thumbnail');
+      expect(window.localStorage.getItem(LIST_LAYOUT_KEY)).toBe('thumbnail');
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('excerpt');
+      expect(window.localStorage.getItem(LIST_LAYOUT_KEY)).toBe('excerpt');
     });
   });
 });

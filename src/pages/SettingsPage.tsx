@@ -9,7 +9,9 @@ import {
   useShowGroupFavicon,
   useHideSportsSpoilers,
   useAutoSummarizePinned,
+  useListLayout,
   type BottomBarPosition,
+  type ListLayout,
 } from '../hooks/useReadingPrefs';
 import type { ItemSort } from '../lib/data/DataSource';
 import { useCapabilities, canUseFullText } from '../hooks/useCapabilities';
@@ -38,6 +40,7 @@ export function SettingsPage() {
   const { hideSportsSpoilers, setHideSportsSpoilers } = useHideSportsSpoilers();
   const { autoSummarizePinned, setAutoSummarizePinned } =
     useAutoSummarizePinned();
+  const { listLayout, setListLayout } = useListLayout();
   const capabilities = useCapabilities();
   // The spoiler-free rewrite only shows for allowlisted callers, so the toggle is
   // a no-op for anyone off the list — hide it there rather than offer a dead
@@ -70,6 +73,13 @@ export function SettingsPage() {
   const sortOrders: { value: ItemSort; label: string }[] = [
     { value: 'newest', label: 'Newest first' },
     { value: 'oldest', label: 'Oldest first' },
+  ];
+  // Default first (SPEC.md *Item row layout → Article layout*): the compact
+  // title-only row is the default; the larger cards are the opt-in.
+  const articleLayouts: { value: ListLayout; label: string }[] = [
+    { value: 'title', label: 'Title only' },
+    { value: 'thumbnail', label: 'Title + thumbnail' },
+    { value: 'excerpt', label: 'Title + excerpt' },
   ];
 
   return (
@@ -178,6 +188,28 @@ export function SettingsPage() {
               onClick={() => setFont(f)}
             >
               {FONT_LABELS[f]}
+            </button>
+          ))}
+        </div>
+
+        <h3 className="settings__subheading">Article layout</h3>
+        <div
+          className="settings__theme"
+          role="radiogroup"
+          aria-label="Article layout"
+        >
+          {articleLayouts.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={listLayout === value}
+              className={
+                'settings__theme-btn' + (listLayout === value ? ' is-active' : '')
+              }
+              onClick={() => setListLayout(value)}
+            >
+              {label}
             </button>
           ))}
         </div>

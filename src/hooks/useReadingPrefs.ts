@@ -34,6 +34,10 @@ import { usePersistentStore } from './usePersistentStore';
 //    articles so it's ready before the reader opens them (see
 //    useSummaryPrewarm). A family-only control (the toggle is offered only to
 //    family users in Settings); off-list users never fire the Edge call anyway.
+//  - list-layout (default 'title'): how much of each article a feed row shows —
+//    the compact title-only row ('title', today's default), a larger title with
+//    a left thumbnail ('thumbnail'), or a larger title with a preview excerpt
+//    ('excerpt'). See ItemRow / lib/itemPreview.
 
 export const HIDE_ON_SCROLL_KEY = 'readmo:hide-on-scroll';
 export const BOTTOM_BAR_KEY = 'readmo:bottom-bar';
@@ -43,6 +47,7 @@ export const SHOW_ROW_FAVICON_KEY = 'readmo:show-row-favicon';
 export const SHOW_GROUP_FAVICON_KEY = 'readmo:show-group-favicon';
 export const HIDE_SPORTS_SPOILERS_KEY = 'readmo:hide-sports-spoilers';
 export const AUTO_SUMMARIZE_PINNED_KEY = 'readmo:auto-summarize-pinned';
+export const LIST_LAYOUT_KEY = 'readmo:list-layout';
 
 /** Where the bottom action bar sits. 'list' = relative footer at the end of the
  * list (the default); 'screen' = pinned to the bottom of the viewport. */
@@ -50,6 +55,12 @@ export type BottomBarPosition = 'list' | 'screen';
 const DEFAULT_BOTTOM_BAR: BottomBarPosition = 'list';
 
 const DEFAULT_ITEM_SORT: ItemSort = 'newest';
+
+/** How much of each article a feed row shows. 'title' = compact title-only row
+ * (the default, unchanged from today); 'thumbnail' = larger title + left
+ * thumbnail; 'excerpt' = larger title + a preview excerpt. */
+export type ListLayout = 'title' | 'thumbnail' | 'excerpt';
+const DEFAULT_LIST_LAYOUT: ListLayout = 'title';
 
 const CHANGE_EVENT = 'readmo:reading-pref-changed';
 
@@ -98,6 +109,14 @@ const itemSortStore = createPersistentStore<ItemSort>({
   changeEvent: CHANGE_EVENT,
   defaultValue: DEFAULT_ITEM_SORT,
   parse: (raw) => (raw === 'oldest' ? 'oldest' : DEFAULT_ITEM_SORT),
+});
+
+const listLayoutStore = createPersistentStore<ListLayout>({
+  storageKey: LIST_LAYOUT_KEY,
+  changeEvent: CHANGE_EVENT,
+  defaultValue: DEFAULT_LIST_LAYOUT,
+  parse: (raw) =>
+    raw === 'thumbnail' || raw === 'excerpt' ? raw : DEFAULT_LIST_LAYOUT,
 });
 
 /** Whether unpinned articles are auto-marked Done as they scroll off the top. */
@@ -216,6 +235,21 @@ export function useAutoSummarizePinned(): {
   return { autoSummarizePinned, setAutoSummarizePinned };
 }
 
+/** Chronological order aside, how much of each article a feed row shows —
+ * title-only ('title', default), title + left thumbnail ('thumbnail'), or
+ * title + preview excerpt ('excerpt'). Per-device. See ItemRow. */
+export function useListLayout(): {
+  listLayout: ListLayout;
+  setListLayout: (next: ListLayout) => void;
+} {
+  const listLayout = usePersistentStore(listLayoutStore);
+  const setListLayout = useCallback(
+    (next: ListLayout) => listLayoutStore.set(next),
+    [],
+  );
+  return { listLayout, setListLayout };
+}
+
 /** Test-only: drop the stores' parse memos so `localStorage.clear()` alone
  * resets state between cases. */
 export function resetReadingPrefsCacheForTest(): void {
@@ -227,4 +261,5 @@ export function resetReadingPrefsCacheForTest(): void {
   autoSummarizePinnedStore.resetForTest();
   bottomBarStore.resetForTest();
   itemSortStore.resetForTest();
+  listLayoutStore.resetForTest();
 }
