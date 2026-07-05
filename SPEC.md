@@ -1418,11 +1418,19 @@ negligible and off every critical path. See the External services table in
      it would let a grouped badge read a stale server count and jump back up after
      a sync; (2) **Undo forces a refetch** — it must *restore* rows, and if a
      focus/PTR refresh already reconciled a dismissed row out of `items[]`,
-     restoring its state alone can't bring it back; (3) the **global "More"
-     pager** shrinks its next-page offset by the count of locally-dismissed rows
-     it has loaded, since the server's offset sequence has dropped them and a
-     plain fetch would otherwise skip the rows that shifted up (the per-section
-     "More" recomputes its cursor the same way).
+     restoring its state alone can't bring it back. On the live Supabase source
+     the restoring write is delivered through the async outbox, so that immediate
+     refetch can race ahead of it and read server truth that still marks the row
+     dismissed; the store's `subscribeSynced` channel re-fetches once the outbox
+     **drains**, and the pending-scroll request is held open (rather than dropped
+     after the racing refetch) while `pendingItemIds()` still lists a restored id;
+     (3) the **global "More" pager**, when any loaded row is locally dismissed,
+     maps its next-page offset to the count of *distinct live (non-dismissed)
+     rows* it has loaded — an absolute count, not a decrement of the server
+     cursor, so it stays stable across successive taps — since the server's offset
+     sequence has dropped the dismissed rows and a plain fetch would otherwise skip
+     the rows that shifted up (the per-section "More" recomputes its cursor the
+     same way).
    - **Scroll position holds across the removal.** A dismiss/Sweep removes rows
      the instant it commits, so — anchored on the first dismissed card — nothing
      above it moves and everything below slides up to close the gap. Two browser

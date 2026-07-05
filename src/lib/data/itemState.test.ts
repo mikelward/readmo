@@ -155,6 +155,31 @@ describe('ItemStateStore', () => {
     expect(events).toHaveLength(2); // unchanged — no mutation event for hydrate
   });
 
+  it('subscribeSynced fires only on notifySynced (outbox drain), not on mutation', () => {
+    const store = new ItemStateStore(memoryPersistence());
+    let synced = 0;
+    let general = 0;
+    const off = store.subscribeSynced(() => synced++);
+    store.subscribe(() => general++);
+
+    // A user mutation wakes the general listeners but NOT subscribeSynced.
+    store.set('a', 'done', true, NOW);
+    expect(general).toBe(1);
+    expect(synced).toBe(0);
+
+    // An outbox drain wakes both: subscribeSynced (the drain-specific channel)
+    // and the general listeners (so the unread-count query re-reads).
+    store.notifySynced();
+    expect(synced).toBe(1);
+    expect(general).toBe(2);
+
+    // Unsubscribing stops the drain callbacks.
+    off();
+    store.notifySynced();
+    expect(synced).toBe(1);
+    expect(general).toBe(3);
+  });
+
   it('hidden→Done migration (constructor) surfaces a legacy hidden row in /done', () => {
     // A legacy hidden row: the constructor migrates it to Done so it surfaces in
     // /done instead of being invisible with no recovery path.

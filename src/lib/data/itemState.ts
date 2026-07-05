@@ -188,6 +188,7 @@ export class ItemStateStore {
   private map: Record<ItemId, ItemState>;
   private listeners = new Set<StateListener>();
   private mutationListeners = new Set<MutationListener>();
+  private syncedListeners = new Set<() => void>();
   // Per-id cache of the retention-applied snapshot so `get()` returns a
   // referentially-stable object between store changes. Without this, an item
   // whose Hidden/Opened flag has aged past the TTL would yield a fresh object
@@ -585,14 +586,27 @@ export class ItemStateStore {
     };
   }
 
+  /** Subscribe to outbox drains specifically — fired by {@link notifySynced}
+   * when a queued write commits server-side, and never by a local mutation or
+   * hydration. Lets a consumer that issued a refetch racing the async write
+   * (notably Undo, which must resurface a row the server still reports dismissed)
+   * re-fetch once server truth actually reflects the write. */
+  subscribeSynced(listener: () => void): () => void {
+    this.syncedListeners.add(listener);
+    return () => {
+      this.syncedListeners.delete(listener);
+    };
+  }
+
   /** Notify subscribers without a local state change. Used by the durable outbox
    * after a write commits server-side: the local store is unchanged, but
    * subscribers that derive from *server* reads — notably the per-feed
    * unread-count query, which refetches on feed invalidation — must re-validate
    * now that the server reflects the just-synced write. Without this, that query
    * would keep the count it refetched optimistically (before the write landed)
-   * cached for the stale window. */
+   * cached for the stale window. Also wakes {@link subscribeSynced} listeners. */
   notifySynced(): void {
+    for (const l of this.syncedListeners) l();
     this.emit();
   }
 

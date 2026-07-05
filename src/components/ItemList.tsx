@@ -513,10 +513,31 @@ export function ItemList({
       // effect below rides that same refetch to bring the topmost restored row
       // on screen. Harmless when the row is still cached — `visibleItems` already
       // re-includes it and the refetch just reconciles. (Codex P2 on #375.)
+      //
+      // On the live Supabase source the restoring write is delivered through the
+      // async outbox, so THIS refetch can race ahead of it and read server truth
+      // that still marks the row dismissed — leaving a reconciled-out row absent
+      // until the next focus/PTR. The subscribeSynced effect below re-fetches once
+      // the outbox drains, and the pending-scroll effect holds the request open
+      // while `ds.pendingItemIds()` still lists a restored id (Codex P2 on #376).
       if (restoredIds.length > 0) void refetch();
     },
     [refetch],
   );
+
+  // When an Undo restore is still pending and the outbox drains its writes
+  // server-side, refetch so a reconciled-out row that the immediate post-Undo
+  // refetch couldn't resurface (it raced the async write) comes back now that
+  // server truth reflects the restore. Reset the saw-fetch latch so the
+  // pending-scroll effect waits for THIS refetch to settle before giving up.
+  // No-op on the mock (its store is authoritative, so notifySynced never fires).
+  useEffect(() => {
+    return ds.stateStore.subscribeSynced(() => {
+      if (!pendingUndoScrollIds.current) return;
+      undoScrollSawFetchRef.current = false;
+      void refetch();
+    });
+  }, [ds, refetch]);
 
   // When the bottom toolbar is pinned to the viewport foot it's always on
   // screen, so `hasMore` alone (another *page* is fetchable) can't drive "More"
@@ -1360,13 +1381,27 @@ export function ItemList({
     if (!pending) return;
     const restoredInList = visibleItems.filter((fi) => pending.has(fi.item.id));
     if (restoredInList.length === 0) {
+      // Does a restored id still have a write queued in the async outbox? Empty
+      // on the mock (authoritative store); on Supabase, true until the restoring
+      // write drains. Read imperatively — the effect re-runs when isFetching
+      // flips (the drain refetch settling), so this is re-evaluated each pass.
+      const pend = ds.pendingItemIds?.();
+      const restoredHavePendingWrites =
+        pend != null && pend.size > 0 && [...pending].some((id) => pend.has(id));
       // Rows aren't in this view (yet). Undo invalidates the feed query, so a
       // refetch re-includes a same-view burst — wait for it. But once that
       // refetch has run and settled without surfacing the rows, the batch
       // belongs to another view the reader navigated from; drop the request so a
       // later unrelated refetch can't scroll this view (Codex P2 on PR #229).
+      //
+      // Exception: on the live Supabase source the restoring write drains
+      // asynchronously, so the immediate post-Undo refetch settles against
+      // still-dismissed server truth. While any restored id still has an
+      // un-synced write, hold the request open — the subscribeSynced effect
+      // refetches on drain, and only then (write landed, row still absent → truly
+      // another view) do we give up (Codex P2 on PR #376).
       if (isFetching) undoScrollSawFetchRef.current = true;
-      else if (undoScrollSawFetchRef.current) {
+      else if (undoScrollSawFetchRef.current && !restoredHavePendingWrites) {
         pendingUndoScrollIds.current = null;
         undoScrollSawFetchRef.current = false;
       }
@@ -1401,7 +1436,7 @@ export function ItemList({
       top: Math.max(0, top + window.scrollY - chrome),
       behavior: 'smooth',
     });
-  }, [visibleItems, isFetching, groupByFeed]);
+  }, [visibleItems, isFetching, groupByFeed, ds]);
 
   // Which feed sections should show a "More" at their foot, and which are
   // mid-fetch. A feed has more when it already holds extras that aren't
