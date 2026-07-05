@@ -78,8 +78,9 @@ export function SettingsPage() {
   // title-only row is the default; the larger cards are the opt-in.
   const articleLayouts: { value: ListLayout; label: string }[] = [
     { value: 'title', label: 'Title only' },
-    { value: 'thumbnail', label: 'Title + thumbnail' },
-    { value: 'excerpt', label: 'Title + excerpt' },
+    { value: 'thumbnail-small', label: 'Small thumbnail' },
+    { value: 'thumbnail', label: 'Large thumbnail' },
+    { value: 'excerpt', label: 'Excerpt' },
   ];
 
   return (

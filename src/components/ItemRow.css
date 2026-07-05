@@ -103,11 +103,12 @@
   object-fit: contain;
 }
 
-/* ── Larger Article-layout variants (Settings → Appearance → Article layout) ──
- * Title-only is the compact base above. These add a bigger title plus either a
- * left thumbnail or a preview excerpt. The image and excerpt render INSIDE the
- * body link, so the row keeps its two tap zones (guardrail #2). Both variants
- * top-align the row (title can run to three lines) and pad out to a card. */
+/* ── Article-layout variants (Settings → Appearance → Article layout) ──
+ * Title-only is the compact base above. These add a right thumbnail (small or
+ * large) or a preview excerpt. The image and excerpt render INSIDE the body
+ * link, so the row keeps its two tap zones (guardrail #2). The large-thumbnail
+ * and excerpt variants top-align the row and pad out to a card; the small
+ * thumbnail keeps the compact title-only row and just floats a smaller image. */
 
 /* Title + excerpt: bigger title, up to three preview lines, no image. */
 .item-row--excerpt {
@@ -170,6 +171,24 @@
 }
 .item-row--thumbnail .pin-btn {
   align-self: flex-start;
+}
+
+/* Title + small thumbnail: the compact title-only row (base padding, base title
+ * size and two-line clamp) with a smaller right-floated image. Only the body
+ * switches to block flow so the float works and the meta line can reclaim the
+ * full width below the image; everything else stays the compact base. */
+.item-row--thumbnail-small .item-row__body {
+  display: block;
+}
+.item-row--thumbnail-small .item-row__title-text {
+  margin-bottom: 2px;
+}
+.item-row--thumbnail-small .item-row__meta {
+  margin: 0;
+}
+.item-row--thumbnail-small .item-row__lead {
+  width: 72px;
+  margin: 0 0 0 12px;
 }
 
 .item-row__lead {

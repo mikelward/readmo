@@ -816,10 +816,10 @@ describe('ItemRow', () => {
       expect(screen.queryByTestId('item-excerpt')).toBeNull();
     });
 
-    it('thumbnail layout collapses to the title-only look when the item has no image', () => {
+    it('thumbnail layout shows just the title when the item has no image', () => {
       renderLayout('thumbnail', withImageless);
-      // No image, no excerpt — it collapses to a plain title-only row (it does
-      // NOT fall back to showing the body excerpt).
+      // No image and no excerpt — the row keeps the thumbnail card but shows
+      // only the title; it does NOT fall back to showing the body excerpt.
       expect(screen.queryByTestId('item-lead-image')).toBeNull();
       expect(screen.queryByTestId('item-excerpt')).toBeNull();
       // Still a normal, tappable row.
@@ -854,6 +854,23 @@ describe('ItemRow', () => {
       const img = screen.getByTestId('item-lead-image');
       expect(img).not.toHaveClass('item-row__lead-img--spoiler');
       expect(screen.queryByTestId('item-lead-spoiler-icon')).toBeNull();
+    });
+
+    it('small-thumbnail layout renders the content image inside the body link', () => {
+      renderLayout('thumbnail-small', withImage);
+      const img = screen.getByTestId('item-lead-image');
+      expect(img).toHaveAttribute('src', PROXIED_IMG);
+      // The image lives inside the stretched body link — no new tap zone.
+      expect(screen.getByTestId('item-title')).toContainElement(img);
+      // Like the large thumbnail, it carries no excerpt.
+      expect(screen.queryByTestId('item-excerpt')).toBeNull();
+    });
+
+    it('small-thumbnail layout shows just the title when the item has no image', () => {
+      renderLayout('thumbnail-small', withImageless);
+      expect(screen.queryByTestId('item-lead-image')).toBeNull();
+      expect(screen.queryByTestId('item-excerpt')).toBeNull();
+      expect(screen.getByTestId('item-title')).toHaveTextContent('A test headline');
     });
   });
 });
