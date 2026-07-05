@@ -1728,6 +1728,74 @@ describe('ItemList', () => {
     await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
   });
 
+  it('refetches again when the outbox drains so an Undo restore survives the async write (Codex P2 #376)', async () => {
+    // On the live Supabase source the restoring write is delivered through the
+    // async outbox, so the immediate post-Undo refetch races ahead of it and
+    // reads server truth that still marks the row dismissed — a reconciled-out
+    // row would stay gone until the next focus/PTR. The store's subscribeSynced
+    // fires on the outbox drain; ItemList refetches then, and holds the
+    // pending-scroll request open (rather than giving up after the racing
+    // refetch) while `pendingItemIds()` still lists a restored id.
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems();
+    const rowId = seed.items[0].item.id;
+    const withoutRow = seed.items.slice(1);
+    const rowInDom = () =>
+      document.querySelector(`[data-item-id="${rowId}"]`) != null;
+
+    // The server omits the row until its restoring write drains; then it returns.
+    let serverHasRow = false;
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({
+        items: serverHasRow ? seed.items : withoutRow,
+        nextCursor: null,
+      }),
+    );
+    // Model the async outbox: the restoring write is pending until we drain it.
+    let pending = new Set<string>();
+    source.pendingItemIds = () => pending;
+
+    renderWithProviders(
+      <ItemList
+        viewKey={`undo-drain-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+    expect(rowInDom()).toBe(false); // reconciled out of the server's pages
+
+    // The row was dismissed earlier (recorded as the undoable batch); its
+    // restoring write will sit in the outbox once we Undo.
+    act(() => {
+      source.stateStore.hide(rowId);
+    });
+    pending = new Set([rowId]);
+    const undo = await screen.findByTestId('undo-btn');
+
+    // Undo fires the immediate (racing) refetch — server still omits the row.
+    await user.click(undo);
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+    expect(rowInDom()).toBe(false);
+    // The racing refetch settled without the row, but the request is NOT dropped
+    // because the write is still pending — no third refetch has fired yet.
+    await Promise.resolve();
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+
+    // The outbox drains: server truth now reflects the restore. subscribeSynced
+    // refetches, and the row comes back on screen.
+    serverHasRow = true;
+    pending = new Set();
+    act(() => {
+      source.stateStore.notifySynced();
+    });
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(rowInDom()).toBe(true));
+  });
+
   it('releases the sweep height lock when no refresh starts (offline partial sweep), so there is no stuck blank tail', async () => {
     // Regression (Codex review on #184): the sweep pre-lock relies on a
     // background refresh to drive its release. Offline, a *partial* sweep
