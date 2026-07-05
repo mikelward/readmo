@@ -1877,11 +1877,12 @@ trade density for a larger card, in three steps:
   the first paint keep today's look.
 - **Title + thumbnail** (`thumbnail`) — a larger title (up to three lines) with a
   **right-floated thumbnail**; the title wraps beside the image and the meta line
-  sits below. **No excerpt.** The image is sourced client-side from data already
-  present — the first proxied image in the sanitized `contentHtml`, else the
-  first `image/*` **enclosure** routed through the `/api/img` proxy (guardrail
-  #6; never a direct publisher fetch). A row with **no usable image**, or whose
-  image fails to load, **collapses to the title-only look** — never an empty box.
+  sits below. The image is sourced client-side from data already present — the
+  first proxied image in the sanitized `contentHtml`, else the first `image/*`
+  **enclosure** routed through the `/api/img` proxy (guardrail #6; never a direct
+  publisher fetch). A row with **no usable image**, or whose image fails to load,
+  **falls back to the "Title + excerpt" look** (the same three-line body preview
+  below) — never a bare title-only row or an empty box.
 - **Title + excerpt** (`excerpt`) — a larger title with a **three-line preview**
   of the feed body (`contentHtml` stripped to plain text, entities decoded; *not*
   the AI `summary`), no image. When the headline itself is a **hidden sports

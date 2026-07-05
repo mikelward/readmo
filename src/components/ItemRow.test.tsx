@@ -745,6 +745,15 @@ describe('ItemRow', () => {
       },
       feed: FEED_ITEM.feed,
     };
+    // Same body copy as `withImage` but no image — the thumbnail layout's
+    // excerpt-fallback case.
+    const withImageless: FeedItem = {
+      item: {
+        ...FEED_ITEM.item,
+        contentHtml: `<p>Body text of the article.</p>`,
+      },
+      feed: FEED_ITEM.feed,
+    };
 
     it("title-only (default) shows neither an excerpt nor a thumbnail", () => {
       renderLayout('title', withImage);
@@ -807,11 +816,22 @@ describe('ItemRow', () => {
       expect(screen.queryByTestId('item-excerpt')).toBeNull();
     });
 
-    it('thumbnail layout collapses to no image when the item has none', () => {
-      renderLayout('thumbnail', FEED_ITEM); // contentHtml is '<p>Body</p>', no image
+    it('thumbnail layout falls back to the excerpt when the item has no image', () => {
+      renderLayout('thumbnail', withImageless);
+      // No image found, so the row shows the body excerpt instead of a bare title.
       expect(screen.queryByTestId('item-lead-image')).toBeNull();
+      expect(screen.getByTestId('item-excerpt')).toHaveTextContent(
+        'Body text of the article.',
+      );
       // Still a normal, tappable row.
       expect(screen.getByTestId('item-title')).toHaveTextContent('A test headline');
+    });
+
+    it('thumbnail layout shows the image and no excerpt when the item has one', () => {
+      renderLayout('thumbnail', withImage);
+      expect(screen.getByTestId('item-lead-image')).toBeInTheDocument();
+      // The image wins; the excerpt fallback stays hidden.
+      expect(screen.queryByTestId('item-excerpt')).toBeNull();
     });
   });
 });
