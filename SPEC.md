@@ -52,7 +52,8 @@ copy it:
   and a **3-day feed freshness window** drops old items (Pinned exempt). See
   *Item state model* below.
 - **Pinned prepended to the top of every feed**, rendered once, oldest-pinned
-  first; pinning a body row keeps its position; **Sweep** consolidates.
+  first; pinning a body row keeps its position; consolidation to the top block
+  lands on the next refetch (PTR / focus / fresh load), not on the local action.
 - **Swipe gestures** — swipe-right = Done (dismiss), swipe-left = Pin,
   rubber-band shields with outcome labels.
 - **Library views** — `/pinned`, `/favorites`, `/done`, `/opened`,
@@ -229,19 +230,20 @@ the only difference is they're DB columns instead of localStorage keys.
   the finger and snaps back; the revealed edge label names the outcome
   (`Pinned` on both edges of a pinned row; otherwise `Done` / `Pin`). Same
   `useSwipeToDismiss` fall-through-to-`setOffset(0)` mechanism.
-- **Dismissal swipes hold off-screen until the data layer drops the row.**
-  Because the feed list is paginated via React Query and the refetch that
-  removes a Done row takes a tick, the swipe-right exit animation keeps the
-  row translated off-screen + opacity 0 after `handleHide` fires instead of
-  resetting to rest. Otherwise the row would visibly snap back into place
-  during the async unmount window and flash before disappearing. Swipe-left
-  Pin still snaps back (the row stays mounted and reflows to the top).
-- **The feed view filters Done/Hidden client-side, in addition to the
-  DataSource's fetch-time filter.** The DataSource always returns clean
-  pages, but a local mutation (single-row swipe, Sweep) flips the store
-  synchronously while the invalidating refetch is still in flight — or may
-  fail outright (offline, network error). Without the client-side overlay
-  the dismissed row's `<li>` would keep its 56px in the flow while only its
+- **Dismissal swipes hold off-screen until the row unmounts.** Marking a row
+  Done flips the store, and the client-side `visibleItems` filter drops it on
+  the next React commit (a tick later) — so the swipe-right exit animation keeps
+  the row translated off-screen + opacity 0 after `handleHide` fires instead of
+  resetting to rest, covering that brief window. Otherwise the row would visibly
+  snap back into place before it unmounts. Swipe-left Pin still snaps back (the
+  row stays mounted and reflows to the top).
+- **The feed view filters Done/Hidden client-side; that overlay IS the removal.**
+  A local mutation (single-row swipe, Sweep) no longer refetches the active view
+  (mutations mark the feed stale but reconcile lazily — see *Feed views → A
+  dismiss never refetches*), so the client-side overlay is what drops the row,
+  not a refetch. The DataSource still returns clean pages on the next genuine
+  fetch, but until then the store overlay is authoritative. Without it the
+  dismissed row's `<li>` would keep its 56px in the flow while only its
   `<article>` was translated off-screen, leaving an indefinite blank gap.
   `ItemList` subscribes to `ItemStateStore` via `useSyncExternalStore` and
   excludes any item whose `done`/`hidden` flag is set so the row unmounts
@@ -1028,8 +1030,9 @@ negligible and off every critical path. See the External services table in
   wins the same LWW. A local row the read omits is kept only while it still has a
   **pending** write (a brand-new row that hasn't reached the server, or raced the
   read), else
-  dropped as gone. The store emits on change → the feed-invalidation hook
-  refetches and the library pages re-read.
+  dropped as gone. The store emits on change → the feed-invalidation hook marks
+  the feed **stale** (reconciled on the next mount/focus/pull-to-refresh, not
+  refetched under the reader) and the library pages re-read.
   - **`item_state` reads are `NetworkOnly`** — a dedicated Workbox route
     (`supabaseItemStatePattern`, registered ahead of the NetworkFirst REST route
     — `vite.config.ts`) serves them with no cache fallback, so item-state
@@ -1231,10 +1234,16 @@ negligible and off every critical path. See the External services table in
      oldest-pinned first; **pinning a body row keeps its position** — the click
      marks it pinned but doesn't yank it into the top block under the reader's
      eye, so they don't lose their place. Consolidation re-groups in-body pins
-     into the top block: **Sweep**, a **pull-to-refresh**, or a fresh load. This
-     is newshacker's exact *Story feeds* rule. (When grouping by feed — below —
-     pinned items lead **their own feed's section** rather than a global top
-     section.)
+     into the top block, and — because pinned-first ordering is applied
+     server-side — it lands on the next **refetch**: a **pull-to-refresh**, a
+     **tab-focus** refresh, or a **fresh load**. A **Sweep** releases the
+     in-session hold, but since a mutation no longer refetches the view (see
+     *Feed views → A dismiss never refetches*) the actual re-group waits for one
+     of those refetches rather than snapping on the Sweep itself. (newshacker
+     consolidated on Sweep because Sweep refetched; readmo defers it so nothing
+     reorders under the reader on a local action.) (When grouping by feed —
+     below — pinned items lead **their own feed's section** rather than a global
+     top section.)
    - **Sort & grouping** (per-device — see *Settings → Sort order* and *Group by
      feed*; applied server-side so they hold across pages, not a client re-sort
      of loaded pages):
@@ -1351,12 +1360,15 @@ negligible and off every critical path. See the External services table in
        - **Sticky displayed window per section.** Each section's displayed set
          is anchored from its first read (the opening `PER_FEED_WINDOW` rows)
          and extended only by tapping "More". Refetches that bring fresh
-         server-newer rows into the top of `items` — post-Sweep refills,
-         cross-device drift, RSS items polled in — leave those rows in the
-         cache but **do not paint them**: the section stays anchored on what
-         the reader is already viewing. Concretely this means **Sweep does not
-         auto-refill** (sweeping unpinned rows clears the section to its
-         pinned rows; tap "More" to pull the next full page); and **pinning
+         server-newer rows into the top of `items` — a pull-to-refresh, window
+         focus, or the global pager, plus cross-device drift and RSS items
+         polled in — leave those rows in the cache but **do not paint them**: the
+         section stays anchored on what the reader is already viewing. (A dismiss
+         or Sweep no longer refetches at all — see *A dismiss never refetches* —
+         so it can't refill; the guarantee below holds trivially for them and via
+         the sticky gate for the genuine refetches.) Concretely this means
+         **Sweep does not auto-refill** (sweeping unpinned rows clears the section
+         to its pinned rows; tap "More" to pull the next full page); and **pinning
          an "extra" row does not shrink the section** (the pinned id is in
          the sticky set so promoting it into the base window is a no-op for
          the displayed list). When a swept section has no pins to anchor it,
@@ -1389,72 +1401,54 @@ negligible and off every critical path. See the External services table in
    - **Background refresh status strip** at the foot ("Checking for new
      items…" / "Couldn't refresh." + Retry), appearing only when rows are
      already on screen. Verbatim mirror.
-   - **Scroll position holds across a background refresh.** A pin/dismiss
-     invalidates the feed query, and React Query refetches the loaded pages
-     *sequentially*, so the rendered list briefly shrinks mid-refetch. The list
-     body's height is frozen for the duration of the refresh so the document
-     can't get shorter than the current scroll offset and bounce the reader to
-     the top — most visible with collapsed feed sections, which leave the
-     document short to begin with. The lock releases once the refresh settles.
-     **Sweep** is the sharper case: it drops its rows the instant the refetch
-     starts (in the same commit), so it grabs the pre-sweep height itself —
-     before the rows leave the DOM — rather than waiting for the refresh edge to
-     measure an already-shrunken list. Matters most when a whole grouped section
-     is swept at once. The height-lock is paired with a **sweep-scoped scroll-
-     anchoring opt-out** (`overflow-anchor: none` set on the body only while the
-     sweep's rows leave the DOM): sweeping a section the reader has scrolled into
-     collapses it by up to a viewport of height, and anchoring would otherwise
-     rewind `scrollY` by that amount to keep a row below the swept ones fixed —
-     snapping the reader to the top when the collapse is taller than the current
-     scroll offset. The swept rows all sit inside the viewport, so the scroll
-     offset holds exactly where it is: the lock stops the document-too-short
-     clamp, the anchor opt-out stops the rewind. The opt-out is **scoped to the
-     sweep** so it doesn't touch **auto-hide on scroll**, which removes rows
-     *above* the viewport and depends on anchoring to keep the first still-
-     visible row fixed — and it's **dropped one frame after the swept rows leave
-     the DOM**, not held for the whole post-sweep refetch like the height lock,
-     so an auto-hide triggered by scrolling mid-refetch still gets anchoring.
-     **Releasing the height lock can't shrink the document under the scroll
-     either.** A Sweep removes rows for good, so once the refetch returns the
-     survivors the document is *permanently* shorter — and if the reader swept a
-     feed near the bottom of the loaded list, the offset they're holding now sits
-     past the natural bottom. Clearing the lock there would let the browser clamp
-     `scrollY` toward the top and slide every still-pinned group header down (the
-     "group header moves when you sweep a group" jump). So the release keeps just
-     enough `min-height` to hold the current scroll (restoring the momentary
-     clamp before paint) and **defers the final drop to the reader's next
-     scroll** — the held slack shrinks in lockstep as they scroll up and clears
-     the instant the natural document can hold the offset, so the headers never
-     move and no blank tail persists. The needed height is sized from the body's
-     *document-space top* (its `getBoundingClientRect().top + scrollY`), **not**
-     `documentElement.scrollHeight` — the browser floors that at the viewport
-     height, so when the post-sweep survivors are shorter than one viewport (a
-     bottom group swept out of an otherwise-collapsed list) a scrollHeight-based
-     deficit reads as zero, under-provisions the hold, and the page still snaps to
-     the top. The body-top measurement isn't clamped, so a sub-viewport document
-     is held correctly too. (The clear-to-measure momentarily clamps `scrollY` and
-     the browser fires a `scroll` event for it; the deferred release ignores a
-     scroll that lands back on the offset it is already holding, so its own reflow
-     echo can't be mistaken for the reader scrolling to the top.)
-     **Marking a single article Done** (the row's Done action, the `d`
-     shortcut, or a swipe-right — a Sweep of one) takes the same anchor opt-out:
-     it removes one row the reader can currently see, so without it the browser
-     would rewind `scrollY` to keep a row below fixed, moving the scroll
-     position and shifting every row above. With it, the offset holds exactly —
-     the dismissed row's gap closes from below and nothing above moves. It's
-     distinguished from auto-hide (which must keep anchoring) by the removed
-     row's position: an in-viewport Done opts out; a row that left the top does
-     not. Unlike a Sweep, a single Done **holds the opt-out until the
-     invalidated refetch settles** (like the height lock), not just the
-     removal frame: the refetch re-renders the list a beat later — longer on a
-     slow/hung sync — and dropping the opt-out early left anchoring live for
-     that landing render, which could rewind the scroll toward the top (the
-     jump was intermittent because a fast sync landed before the opt-out was
-     dropped). Holding it across the refresh is safe here precisely because
-     auto-hide on scroll — the one consumer that needs mid-refetch anchoring —
-     is only wired when *hide-on-scroll* is on; with it off (the default) a
-     single Done holds the opt-out, and with it on the single Done keeps the
-     Sweep-style one-frame drop.
+   - **A dismiss never refetches — it settles locally.** Marking an item
+     Done/Hidden, pinning, and Sweep update the rendered list **from the local
+     store overlay alone**: `visibleItems` drops Done/Hidden rows and pins
+     reorder, both synchronously, so the change shows on the next commit with no
+     server round-trip. The feed query is marked *stale* (so the next mount,
+     window-focus, or pull-to-refresh reconciles it) but is **not** auto-refetched
+     under the reader — deliberately, because that refetch re-renders the whole
+     list a beat later and can reflow it (a section's "More"/refresh footer
+     toggling above the fold, rows shifting) out from under the reader's scroll.
+     A mutation staying local is what makes "dismiss keeps your place" reliable.
+     (This is `refetchType: 'none'` on the feed invalidation; the caches still go
+     stale, they just don't refetch the active view.)
+   - **Scroll position holds across the removal.** A dismiss/Sweep removes rows
+     the instant it commits, so — anchored on the first dismissed card — nothing
+     above it moves and everything below slides up to close the gap. Two browser
+     reflexes would otherwise break that, so the list body guards both for the
+     removal: it **freezes its height** (`min-height` = the pre-removal height,
+     grabbed while the rows are still on screen) so the shorter document can't
+     clamp `scrollY` toward the top, and it **opts out of scroll anchoring**
+     (`overflow-anchor: none`) so the browser doesn't rewind `scrollY` to keep a
+     row *below* the removed ones fixed. Both are scoped to the removal: the
+     anchor opt-out is dropped one frame after the rows leave the DOM (so
+     **auto-hide on scroll**, which removes rows *above* the viewport and relies
+     on anchoring to keep the first still-visible row fixed, keeps it), and the
+     height freeze is released right after — but **the release can't shrink the
+     document under the scroll either.** When the survivors are permanently
+     shorter and the reader was near the bottom (a whole grouped section swept, or
+     a bottom-group dismiss), clearing the freeze would clamp `scrollY` toward the
+     top and slide every still-pinned group header down. So the release keeps just
+     enough `min-height` to hold the current scroll and **defers the final drop to
+     the reader's next scroll** — the held slack shrinks in lockstep as they
+     scroll up and clears the instant the natural document can hold the offset, so
+     the headers never move and no blank tail persists. The needed height is sized
+     from the body's *document-space top* (its `getBoundingClientRect().top +
+     scrollY`), **not** `documentElement.scrollHeight` — the browser floors that
+     at the viewport height, so when the survivors are shorter than one viewport a
+     scrollHeight-based deficit reads as zero, under-provisions the hold, and the
+     page still snaps to the top; the body-top measurement isn't clamped, so a
+     sub-viewport document is held correctly. (The clear-to-measure momentarily
+     clamps `scrollY` and the browser fires a `scroll` event for it; the deferred
+     release ignores a scroll that lands back on the offset it is already holding,
+     so its own reflow echo can't be mistaken for the reader scrolling to the top.)
+   - **A genuine background refresh still freezes the height.** Pull-to-refresh,
+     window-focus, and remount *do* refetch, and React Query refetches the loaded
+     pages *sequentially*, so the rendered list can briefly shrink mid-refetch.
+     The same height freeze covers that window so a shrink can't clamp the scroll —
+     most visible with collapsed feed sections, which leave the document short to
+     begin with. The lock releases once the refresh settles.
    - **Pin-to-download promo bar** above the first row ("Pin an article to
      download it"), explaining that pinning warms the offline cache (see
      *Prefetch on Pin/Favorite*). Shown only once rows exist; dismissable via a
