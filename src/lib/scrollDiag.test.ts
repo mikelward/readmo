@@ -133,6 +133,12 @@ describe('scrollDiag', () => {
       ).toBe('Done z — T max=1178');
     });
 
+    it('formats a resize row: where the reader sits, the ceiling, and its change', () => {
+      expect(
+        formatDiagEntry({ t: 0, kind: 'resize', y: 1227, delta: -847, max: 521 }),
+      ).toBe('resize y=1227 (-847) max=521');
+    });
+
     it('headlines a jump that followed a Done', () => {
       const headline = diagHeadline(
         summarizeDiag([

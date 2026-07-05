@@ -8,7 +8,7 @@ import type { ItemId } from './types';
 // feed to the diagnostics page (the recording component unmounts, the buffer
 // doesn't). Purely diagnostic — never read on any user-facing path.
 
-export type DiagKind = 'scroll' | 'done';
+export type DiagKind = 'scroll' | 'done' | 'resize';
 
 export interface DiagEntry {
   /** ms since the first recorded entry — a relative clock so the buffer reads
@@ -17,8 +17,10 @@ export interface DiagEntry {
   kind: DiagKind;
   /** window.scrollY when the entry was recorded. */
   y: number;
-  /** 'scroll' only: y minus the previous scroll's y. Negative = moved toward
-   * the top (the jump we're hunting). */
+  /** 'scroll': y minus the previous scroll's y (negative = toward the top, the
+   * jump we're hunting). 'resize': the change in `max` since the last resize
+   * entry (negative = the document got shorter — the collapse that sets up a
+   * clamp). */
   delta?: number;
   /** 'done' only: the dismissed item's id. */
   id?: ItemId;
@@ -133,11 +135,16 @@ export function summarizeDiag(entries: DiagEntry[]): DiagSummary {
  * report. */
 export function formatDiagEntry(e: DiagEntry): string {
   const max = e.max != null ? ` max=${e.max}` : '';
+  const sign = (e.delta ?? 0) > 0 ? '+' : '';
   if (e.kind === 'done') {
     const id = `Done ${e.id ?? ''}`.trim();
     return `${e.title ? `${id} — ${e.title}` : id}${max}`;
   }
-  const sign = (e.delta ?? 0) > 0 ? '+' : '';
+  if (e.kind === 'resize') {
+    // The document height changed with no scroll — `y` is where the reader still
+    // sits, `max` the new ceiling, `delta` how far it moved.
+    return `resize y=${e.y} (${sign}${e.delta ?? 0})${max}`;
+  }
   const lock = e.locked != null ? ` lock=${e.locked ? 'on' : 'off'}` : '';
   return `scroll y=${e.y} (${sign}${e.delta ?? 0})${max}${lock}`;
 }
