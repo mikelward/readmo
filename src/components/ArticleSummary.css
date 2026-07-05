@@ -48,12 +48,12 @@
   display: inline-flex;
   align-items: center;
   min-height: var(--rm-tap);
-  padding: 6px 14px;
+  padding: 6px 12px;
   border: 1px solid var(--rm-border);
   background: var(--rm-bg-card);
   color: var(--rm-accent);
   border-radius: 999px;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
 }
