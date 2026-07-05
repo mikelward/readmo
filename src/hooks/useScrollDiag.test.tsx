@@ -120,6 +120,71 @@ describe('useScrollDiag', () => {
     vi.useRealTimers();
   });
 
+  it('records the layout breakdown on a Done and probes the frames after it', () => {
+    // Drive requestAnimationFrame by hand so the post-Done probe burst is
+    // deterministic (each tick reschedules the next; shifting the queue runs
+    // them in order).
+    const rafQueue: FrameRequestCallback[] = [];
+    let nextId = 1;
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      rafQueue.push(cb);
+      return nextId++;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const flushFrames = (n: number) => {
+      for (let i = 0; i < n && rafQueue.length > 0; i += 1) rafQueue.shift()!(0);
+    };
+
+    render(
+      <DataSourceProvider source={source}>
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/']}>
+            <Harness enabled={true} />
+            <div className="item-list__body" data-testid="body" />
+            <ul>
+              <li data-item-id="a" />
+              <li data-item-id="b" />
+            </ul>
+          </MemoryRouter>
+        </ToastProvider>
+      </DataSourceProvider>,
+    );
+    const body = screen.getByTestId('body');
+    // Model the momentary collapse: the body is tall at the Done, dips short for
+    // a couple of frames, then recovers — with the row count never changing.
+    let bodyH = 1600;
+    Object.defineProperty(body, 'offsetHeight', {
+      configurable: true,
+      get: () => bodyH,
+    });
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      configurable: true,
+      get: () => bodyH + 100,
+    });
+
+    act(() => source.stateStore.hide('a'));
+    // The Done row captured the tall, pre-collapse layout.
+    expect(getDiagBuffer().find((e) => e.kind === 'done')).toMatchObject({
+      bodyH: 1600,
+      docH: 1700,
+      rows: 2,
+    });
+
+    // Collapse for the first frames, then recover while the burst runs.
+    bodyH = 800;
+    flushFrames(2);
+    bodyH = 1600;
+    flushFrames(12);
+
+    const probes = getDiagBuffer().filter((e) => e.kind === 'probe');
+    expect(probes.length).toBeGreaterThan(0);
+    // The burst caught the dip's floor...
+    expect(Math.min(...probes.map((p) => p.bodyH ?? Infinity))).toBe(800);
+    // ...and no rows left mid-dip — it's a reflow, not a removal.
+    expect(probes.every((p) => p.rows === 2)).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
   it('records window scroll positions with deltas', () => {
     renderDiag(true, source);
     setScrollY(800);
