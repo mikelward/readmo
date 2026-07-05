@@ -1433,13 +1433,29 @@ negligible and off every critical path. See the External services table in
      same way).
    - **Scroll position holds across the removal.** A dismiss/Sweep removes rows
      the instant it commits, so — anchored on the first dismissed card — nothing
-     above it moves and everything below slides up to close the gap. Two browser
-     reflexes would otherwise break that, so the list body guards both for the
-     removal: it **freezes its height** (`min-height` = the pre-removal height,
-     grabbed while the rows are still on screen) so the shorter document can't
-     clamp `scrollY` toward the top, and it **opts out of scroll anchoring**
-     (`overflow-anchor: none`) so the browser doesn't rewind `scrollY` to keep a
-     row *below* the removed ones fixed. Both are scoped to the removal: the
+     above it moves and everything below slides up to close the gap.
+   - **A single in-view Done pins the reader's position** (row menu Done, the
+     Done button, the `d` shortcut, or swipe-right). This path does *not* refetch,
+     and removing the row briefly collapses the document before it settles a row
+     shorter; if the reader is scrolled past that momentary floor the browser
+     clamps `scrollY` toward the top and never restores it (the "jump to top on
+     dismiss" bug). Rather than freeze the document tall, it **captures the
+     reader's offset the instant the Done lands and restores it** (plain
+     `scrollTo`) once the document has recovered enough to hold it — watching a
+     few frames, aborting the moment the reader scrolls/touches/keys. Portable
+     (no reliance on `overflow-anchor`, which iOS Safari doesn't support) and
+     self-contained (`src/lib/scrollPin.ts`), so it can't disturb the Sweep /
+     auto-hide / refetch height-freeze machinery. *(TODO: extend this pin to
+     Sweep and auto-hide too and retire the height-freeze/anchor-opt-out
+     machinery below.)*
+   - **Sweep and background refetch freeze the height instead.** A Sweep removes
+     a batch of in-view rows at once; two browser reflexes would break the hold,
+     so the list body guards both: it **freezes its height** (`min-height` = the
+     pre-removal height, grabbed while the rows are still on screen) so the
+     shorter document can't clamp `scrollY` toward the top, and it **opts out of
+     scroll anchoring** (`overflow-anchor: none`) so the browser doesn't rewind
+     `scrollY` to keep a row *below* the removed ones fixed. Both are scoped to
+     the removal: the
      anchor opt-out is dropped one frame after the rows leave the DOM (so
      **auto-hide on scroll**, which removes rows *above* the viewport and relies
      on anchoring to keep the first still-visible row fixed, keeps it), and the

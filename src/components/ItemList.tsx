@@ -23,6 +23,7 @@ import { useTopChromeHeight } from '../hooks/useTopChromeHeight';
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
 import type { FeedId, FeedItem, ItemId } from '../lib/types';
 import { placeStayInBodyPins } from '../lib/feedOrder';
+import { pinScrollAcross } from '../lib/scrollPin';
 import { measureStickyBottomInset, measureTopChromeHeight } from '../lib/stickyInset';
 import { adjustUnreadCounts } from '../lib/unreadAdjust';
 import { loadFailureCopy, presentableDetail } from '../lib/loadErrorCopy';
@@ -276,6 +277,13 @@ export function ItemList({
   // ids here lets that subscription, which runs synchronously inside hideMany,
   // tell an auto-hide Done flip from a reader's in-view mark-done and skip it.
   const autoHideInFlightRef = useRef<Set<ItemId> | null>(null);
+  // The ids of a Sweep batch, flagged for the synchronous window of its hideMany
+  // — same purpose as autoHideInFlightRef, for the other batch path. Sweep
+  // removes many in-view rows at once and holds the list height itself
+  // (lockBodyHeight before its hideMany), so the single-dismiss scroll-pin
+  // subscription must NOT also fire for each swept id (its scrollTo would fight
+  // Sweep's own scroll handling). Flagging lets that subscription skip them.
+  const sweepInFlightRef = useRef<Set<ItemId> | null>(null);
   // The reader's scroll anchor across a release-time top-exit flush: a row under
   // their eyes and where it sits on screen, held there until they next act on
   // the viewport. The browser's own scroll anchoring can't be trusted across
@@ -1850,36 +1858,76 @@ export function ItemList({
   // Never leave a deferred-release scroll listener attached past unmount.
   useEffect(() => detachHeightRelease, [detachHeightRelease]);
 
+  // The active dismiss scroll-pin's cancel fn (see pinScrollAcrossDismiss), so a
+  // rapid second dismiss supersedes the first and unmount tears it down.
+  const dismissPinCancelRef = useRef<(() => void) | null>(null);
+  const pinScrollAcrossDismiss = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    // Supersede any in-flight pin — the newest dismiss owns the position.
+    dismissPinCancelRef.current?.();
+    const targetY = Math.round(window.scrollY);
+    dismissPinCancelRef.current = pinScrollAcross(targetY, {
+      scrollY: () => Math.round(window.scrollY),
+      maxScroll: () =>
+        Math.max(0, document.documentElement.scrollHeight - window.innerHeight),
+      scrollTo: (y) => window.scrollTo(0, y),
+      requestFrame: (cb) => window.requestAnimationFrame(cb),
+      cancelFrame: (h) => window.cancelAnimationFrame(h),
+      onInterrupt: (cb) => {
+        // Any fresh viewport input means the reader took over — stop restoring.
+        // Listen to input events, NOT `scroll`, so our own scrollTo can't abort
+        // the pin. `once` so a fired listener self-removes; detach clears the rest.
+        const opts = { passive: true, once: true } as const;
+        window.addEventListener('wheel', cb, opts);
+        window.addEventListener('touchstart', cb, opts);
+        window.addEventListener('keydown', cb, { once: true });
+        return () => {
+          window.removeEventListener('wheel', cb);
+          window.removeEventListener('touchstart', cb);
+          window.removeEventListener('keydown', cb);
+        };
+      },
+    });
+  }, []);
+  useEffect(() => () => dismissPinCancelRef.current?.(), []);
+
   // A single in-viewport mark-done — the row menu's Done, the wide-viewport Done
   // button, the `d` shortcut, or a swipe-right (all route through `store.hide`)
-  // — flips one row Done, which drops it from `visibleItems` in the very next
-  // commit. Like a Sweep, that row leaving the DOM lets the browser's scroll
-  // anchoring rewind window.scrollY to keep a row *below* it fixed, shifting
-  // everything above and yanking the scroll position out from under the reader.
-  // Take the same anchor opt-out (+ height freeze) the instant the flip lands —
-  // synchronously, while the row is still on screen — so the offset holds
-  // exactly: the dismissed row's gap closes from below and nothing above moves.
+  // — flips one row Done and drops it from `visibleItems` in the next commit.
+  // Unlike a pin/Sweep this path does NOT refetch (useFeedInvalidation marks the
+  // feed stale with refetchType: 'none'), so nothing holds the list height while
+  // the removal reflows. The reflow briefly collapses the document (a transient
+  // dip, ~a frame) before it settles one row shorter; if the reader is scrolled
+  // past that momentary floor the browser clamps the scroll toward the top and
+  // never restores it — the "jump to top on dismiss" bug.
+  //
+  // Instead of freezing the document tall (the fragile min-height/overflow-anchor
+  // lock the other paths use — and overflow-anchor is a no-op on iOS), pin the
+  // reader's position: capture where they are the instant the flip lands (before
+  // the browser clamps), and put them back once the document recovers enough to
+  // hold that offset. Portable (plain scrollTo), self-contained, and it can't
+  // regress Sweep/auto-hide because it touches none of their machinery. See
+  // lib/scrollPin (which carries the TODO to extend this to those paths and
+  // retire the lock machinery).
   //
   // Excluded:
   //  - Auto-hide-on-scroll removes rows that just left the TOP of the viewport
-  //    and depends on anchoring to keep the first still-visible row fixed; its
-  //    ids are flagged in `autoHideInFlightRef` for the synchronous window of
-  //    their hideMany, so they're skipped here.
-  //  - Sweep already calls lockBodyHeight itself before its hideMany; the second
-  //    idempotent call this triggers is harmless.
+  //    and has its own release-time anchor pin; its ids are flagged in
+  //    `autoHideInFlightRef` for the synchronous window of their hideMany.
+  //  - Sweep dismisses a whole batch and holds the list height itself
+  //    (lockBodyHeight); its ids are flagged in `sweepInFlightRef` so the pin's
+  //    scrollTo doesn't fight Sweep's scroll handling.
   //  - A Done flip on a row not rendered in this list (another view dismissing on
   //    the shared store) has no element here, so it's a no-op.
-  // The opt-out is dropped a frame after the removal paints by the existing
-  // post-paint release effect (keyed on visibleItems.length); the height lock
-  // releases when the background refresh settles.
   useEffect(() => {
     return ds.stateStore.subscribeMutations((id, changed) => {
       if (changed.done !== true) return;
       if (autoHideInFlightRef.current?.has(id)) return;
+      if (sweepInFlightRef.current?.has(id)) return;
       if (!document.querySelector(`[data-item-id="${id}"]`)) return;
-      lockBodyHeight();
+      pinScrollAcrossDismiss();
     });
-  }, [ds, lockBodyHeight]);
+  }, [ds, pinScrollAcrossDismiss]);
 
   const commitSweep = useCallback(() => {
     const ids = sweepPendingIdsRef.current;
@@ -1890,8 +1938,12 @@ export function ItemList({
       sweepFallbackTimerRef.current = null;
     }
     // Capture the height while the swept rows are still on screen, then hide.
+    // Flag the ids so the single-dismiss scroll-pin subscription skips them
+    // (Sweep holds the height itself; see sweepInFlightRef).
     lockBodyHeight();
+    sweepInFlightRef.current = new Set(ids);
     ds.stateStore.hideMany(ids);
+    sweepInFlightRef.current = null;
     // Sweep consolidates: in-body pins snap into the top block (SPEC.md).
     setStayInBodyIds(new Set());
     setSweepingIds((prev) => {
@@ -1909,7 +1961,9 @@ export function ItemList({
     return () => {
       const ids = sweepPendingIdsRef.current;
       if (ids) {
+        sweepInFlightRef.current = new Set(ids);
         hideManyRef.current(ids);
+        sweepInFlightRef.current = null;
         sweepPendingIdsRef.current = null;
       }
       if (sweepFallbackTimerRef.current != null) {
@@ -1947,7 +2001,9 @@ export function ItemList({
         // No animation to wait on, so the rows leave immediately — grab the
         // height first, same as the animated commitSweep path does.
         lockBodyHeight();
+        sweepInFlightRef.current = new Set(batch);
         ds.stateStore.hideMany(batch);
+        sweepInFlightRef.current = null;
         // Sweep consolidates: in-body pins snap into the top block (SPEC.md).
         setStayInBodyIds(new Set());
         beginSweepCooldown();

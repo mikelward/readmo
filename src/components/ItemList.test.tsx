@@ -1355,14 +1355,15 @@ describe('ItemList', () => {
     expect(scroll.maxScroll()).toBe(before);
   });
 
-  it('folds the held offset into a fresh lock when a second in-viewport Done lands before the reader scrolls', async () => {
+  it('leaves the held sweep slack untouched when a second in-viewport Done lands before the reader scrolls', async () => {
     // Codex P2 on #300: after a bottom sweep deferred the release, the slack
     // min-height is the only thing keeping window.scrollY off the natural (now
-    // shorter) bottom. A second in-viewport Done/Sweep before any scroll takes a
-    // fresh lock via lockBodyHeight — which must NOT clear that slack first, or
-    // the browser clamps the scroll back and re-measures the already-short
-    // document, bringing the header jump back. The fresh lock measures with the
-    // slack still applied so the held offset survives.
+    // shorter) bottom. A second in-viewport Done before any scroll must NOT clear
+    // that slack, or the browser clamps the scroll back and re-measures the
+    // already-short document, bringing the header jump back. The single-dismiss
+    // path now uses the portable scroll-pin (which never touches min-height), so
+    // the sweep's held slack survives the second Done untouched. (A Sweep, by
+    // contrast, still takes a fresh lockBodyHeight that folds the slack in.)
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
     const fetchPage = vi.fn((cursor: string | null) =>
@@ -1483,26 +1484,46 @@ describe('ItemList', () => {
     await waitFor(() => expect(body.style.minHeight).toBe(''));
   });
 
-  it('opts out of scroll anchoring when a single row is marked Done, so the scroll position and the rows above hold', async () => {
-    // Regression: marking ONE visible article Done (row menu Done, the Done
-    // button, the `d` shortcut, or swipe-right — all route through store.hide)
-    // drops that row from the rendered list. The browser's scroll anchoring
-    // would react by rewinding window.scrollY to keep a row below the removed
-    // one fixed — moving the scroll position and shifting every row above. The
-    // single-dismiss path takes the same anchor opt-out (+ height freeze) the
-    // Sweep uses so the offset holds exactly and only the rows below the
-    // dismissed one slide up. The opt-out is applied synchronously around the
-    // local removal (a mutation no longer refetches, so there's nothing to hold
-    // it through) and handed back once the shorter row-list has painted.
+  it('pins the reader’s scroll position after a single in-view Done — no anchor/height freeze', async () => {
+    // Marking ONE visible article Done (row menu Done, the Done button, the `d`
+    // shortcut, or swipe-right — all route through store.hide) drops that row and
+    // briefly collapses the list before it settles a row shorter; if the reader
+    // is scrolled past that momentary floor the browser clamps the scroll toward
+    // the top and never restores it. The single-dismiss path no longer freezes
+    // the body height / opts out of scroll anchoring (the fragile, iOS-unsupported
+    // mechanism the other paths use); instead it captures the reader's offset and
+    // restores it once the document can hold it again (see lib/scrollPin).
     const source = new MockDataSource(`test-${Math.random()}`);
     const seed = await source.getHomeItems();
     const fetchPage = vi.fn(() =>
       Promise.resolve({ items: seed.items, nextCursor: null }),
     );
 
+    // Model the viewport/document ourselves so we can inject the transient
+    // collapse+clamp the real jsdom layout can't produce, and drive rAF by hand.
+    let scrollY = 994;
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 });
+    Object.defineProperty(window, 'scrollY', { configurable: true, get: () => scrollY });
+    // The settled document holds 994 (max = 2000 − 800 = 1200); only the transient
+    // dip clamps the reader.
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      configurable: true,
+      get: () => 2000,
+    });
+    const scrollToSpy = vi.fn((_x: number, y: number) => {
+      scrollY = y;
+    });
+    vi.stubGlobal('scrollTo', scrollToSpy);
+    const rafCbs: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      rafCbs.push(cb);
+      return rafCbs.length;
+    });
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+
     const { container } = renderWithProviders(
       <ItemList
-        viewKey={`single-done-anchor-${viewKeySeq++}`}
+        viewKey={`single-done-pin-${viewKeySeq++}`}
         fetchPage={fetchPage}
         emptyLabel="All caught up."
       />,
@@ -1510,29 +1531,29 @@ describe('ItemList', () => {
     );
     const rowsBefore = await screen.findAllByTestId('item-row');
     const firstId = rowsBefore[0].closest('li')!.getAttribute('data-item-id')!;
-
     const body = screen.getByTestId('item-list-body');
-    Object.defineProperty(body, 'offsetHeight', { value: 1000, configurable: true });
     const anchorWrites = recordOverflowAnchorWrites(body);
 
-    // Mark the first (visible) row Done — the single-dismiss store path every
-    // row-level Done action funnels through. The height freeze + anchor opt-out
-    // are applied synchronously, while the row is still on screen.
+    // Dismiss the first visible row. The pin captures scrollY (994) synchronously
+    // and schedules a watch frame.
     act(() => {
       source.stateStore.hide(firstId);
     });
-
-    // The dismissed row really did leave the rendered list...
     await waitFor(() =>
       expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
     );
-    // ...and the body was opted out of scroll anchoring for the frame in which
-    // the row left the DOM, so its removal couldn't rewind window.scrollY.
-    expect(anchorWrites).toContain('none');
-    // No refetch to hold the lock through: once the shorter list paints, the
-    // transient freeze is released and anchoring is handed back.
-    await waitFor(() => expect(body.style.minHeight).toBe(''));
-    expect(body.style.overflowAnchor).toBe('');
+
+    // The fragile freeze is gone from this path: no min-height, no anchor opt-out.
+    expect(anchorWrites).not.toContain('none');
+    expect(body.style.minHeight).toBe('');
+
+    // The browser clamps the reader toward the top during the transient dip...
+    scrollY = 561;
+    // ...and the pin's watch frame puts them back once the document holds 994.
+    act(() => {
+      for (const cb of rafCbs.splice(0)) cb(0);
+    });
+    expect(scrollToSpy).toHaveBeenCalledWith(0, 994);
   });
 
   it('opts out of scroll anchoring even when a background refresh already holds the height lock', async () => {
