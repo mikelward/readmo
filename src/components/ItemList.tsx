@@ -99,6 +99,11 @@ const MAX_AUTO_SKIP_PAGES = 10;
 // frame lands mid-collapse, so the exact count isn't load-bearing.
 const DISMISS_SETTLE_FRAMES = 4;
 
+// Tolerance (px) for treating the scroll as "pinned" at the ceiling and for
+// comparing a pinned ceiling against the settled one — absorbs sub-pixel /
+// rounding noise in scrollY and scrollHeight measurements.
+const PIN_EPSILON_PX = 2;
+
 /** How many list elements a page set renders: in the group-by-feed view, one
  * header per feed section plus each non-collapsed row (a collapsed feed shows
  * only its header); otherwise just the row count. The list is contiguous by
@@ -1647,6 +1652,16 @@ export function ItemList({
   // height BEFORE it removes any rows — see `lockBodyHeight` below.
   const bodyRef = useRef<HTMLDivElement>(null);
   const heightLockedRef = useRef(false);
+  // The reader's last genuine scroll offset, tracked so a dismiss can restore it
+  // if the browser clamped it. Updated on scroll ONLY while the height lock is
+  // off: a clamp fires a scroll event too, but always while the lock is engaged
+  // (during a dismiss's settle window), so gating on the lock keeps the clamped
+  // value from poisoning the ref — it holds the pre-dismiss offset instead.
+  const readerScrollYRef = useRef<number | null>(null);
+  // The scroll offset the settle sampler last saw. Persists across settle-effect
+  // restarts so a rescheduled settle's first sample can tell a reader scroll made
+  // during the previous (locked) window from a clamp, and carry it forward.
+  const lastSampledScrollYRef = useRef<number | null>(null);
   // The sweep's scroll-anchoring opt-out (overflow-anchor: none) has a SHORTER
   // life than the height lock: it's needed only for the single layout where the
   // swept in-viewport rows leave the DOM, whereas the min-height freeze must
@@ -1876,6 +1891,20 @@ export function ItemList({
 
   // Never leave a deferred-release scroll listener attached past unmount.
   useEffect(() => detachHeightRelease, [detachHeightRelease]);
+
+  // Track the reader's genuine scroll offset so a dismiss can restore it after a
+  // clamp (see the release effect). Only recorded while the height lock is off —
+  // a clamp fires a scroll event while the lock is engaged, and letting that
+  // through would overwrite the pre-dismiss offset with the clamped one.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onScroll = () => {
+      if (!heightLockedRef.current) readerScrollYRef.current = Math.round(window.scrollY);
+    };
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
 
   // A single in-viewport mark-done — the row menu's Done, the wide-viewport Done
   // button, the `d` shortcut, or a swipe-right (all route through `store.hide`)
@@ -2305,6 +2334,38 @@ export function ItemList({
     // (A fresh removal reschedules; a refresh taking over cancels for good.)
     cancelDismissRelease();
     if (isRefreshing || !heightLockedRef.current || !bodyRef.current) return;
+    const curMaxScroll = () =>
+      typeof window === 'undefined'
+        ? 0
+        : Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    // The lowest ceiling at which the scroll sat pinned during the settle. A
+    // transient viewport clamp (Chromium's dynamic toolbar reporting a doubled
+    // innerHeight) forces scrollY down onto a maxScroll that dips BELOW where the
+    // document finally settles — the signature we key the restore on. A genuine
+    // reader scroll during the settle leaves headroom below the ceiling, so it
+    // never produces such a frame and never triggers the restore.
+    let minPinnedMax = Number.POSITIVE_INFINITY;
+    // Sample the scroll: classify it as a clamp (pinned at the ceiling) or a
+    // genuine reader move (a change to a NON-pinned headroom offset — a browser
+    // clamp lands ON the ceiling, and a viewport revert doesn't move scrollY, so
+    // only the reader produces one). On a reader move, keep `readerScrollYRef`
+    // current so the restore targets where they actually are (making it a no-op
+    // there, not a snap-back). `lastSampledScrollYRef` PERSISTS across effect
+    // restarts, so the synchronous sample at the start of a rescheduled settle
+    // still detects a scroll made during the previous (locked, possibly
+    // un-sampled) window and carries it forward — closing the delayed-rAF gap.
+    const sample = () => {
+      if (typeof window === 'undefined') return;
+      const maxScroll = curMaxScroll();
+      const y = Math.round(window.scrollY);
+      const last = lastSampledScrollYRef.current;
+      if (y >= maxScroll - PIN_EPSILON_PX) {
+        minPinnedMax = Math.min(minPinnedMax, maxScroll);
+      } else if (last !== null && Math.abs(y - last) > PIN_EPSILON_PX) {
+        readerScrollYRef.current = y;
+      }
+      lastSampledScrollYRef.current = y;
+    };
     const runRelease = () => {
       const el = bodyRef.current;
       if (!el) return;
@@ -2314,9 +2375,37 @@ export function ItemList({
         anchorLockedRef.current = false;
       }
       heightLockedRef.current = false;
+      // The min-height freeze holds scrollHeight, but a dismiss can still clamp
+      // the scroll via a transient window.innerHeight jump — Chromium's dynamic
+      // toolbar momentarily reports a doubled viewport, which slashes the max
+      // scroll (maxScroll = scrollHeight − innerHeight) and yanks the reader
+      // toward the top; the viewport reverts a frame later but the clamped offset
+      // sticks. No min-height can counter an innerHeight change, so restore the
+      // reader once the viewport has settled. Gated on `minPinnedMax` so it fires
+      // ONLY when a real clamp was observed (scroll pinned at a ceiling below the
+      // settled one). Because `readerScrollYRef` tracks the reader's own moves
+      // during the settle, `target` equals their current offset when they scrolled
+      // — so a scroll is never overridden (the restore is a no-op) — and a no-op
+      // for the deferred bottom-sweep hold, whose shorter document keeps the
+      // pinned ceiling AT the settled max (not below it).
+      const intended = readerScrollYRef.current;
+      if (intended != null && typeof window !== 'undefined') {
+        const settledMax = curMaxScroll();
+        const clamped = minPinnedMax < settledMax - PIN_EPSILON_PX;
+        const target = Math.min(intended, settledMax);
+        if (clamped && target - Math.round(window.scrollY) > 1) {
+          window.scrollTo(0, target);
+        }
+      }
+      // Sync the tracked offset to where the reader actually ended up (restored,
+      // their own settle scroll, or unchanged) so the next dismiss starts fresh.
+      if (typeof window !== 'undefined') {
+        readerScrollYRef.current = Math.round(window.scrollY);
+      }
     };
     if (typeof requestAnimationFrame !== 'function') {
-      // No rAF (SSR / older jsdom): release synchronously, as before.
+      // No rAF (SSR / older jsdom): release synchronously, as before. No frames
+      // to sample, so the restore stays inert here.
       runRelease();
       return;
     }
@@ -2328,6 +2417,7 @@ export function ItemList({
         dismissReleaseRafRef.current = null;
         return;
       }
+      sample();
       if (frames > 0) {
         frames -= 1;
         dismissReleaseRafRef.current = requestAnimationFrame(step);
@@ -2336,6 +2426,9 @@ export function ItemList({
       dismissReleaseRafRef.current = null;
       runRelease();
     };
+    // Sample once synchronously too — the clamp is often already in force by the
+    // time this effect runs (a beat after the flip), so catch it before frame 1.
+    sample();
     dismissReleaseRafRef.current = requestAnimationFrame(step);
     return cancelDismissRelease;
   }, [isRefreshing, visibleItems.length, releaseBodyHeight, cancelDismissRelease]);
