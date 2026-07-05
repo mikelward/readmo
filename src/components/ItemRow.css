@@ -174,6 +174,7 @@
 
 .item-row__lead {
   display: block;
+  position: relative;
   float: right;
   width: 116px;
   aspect-ratio: 3 / 2;
@@ -189,6 +190,30 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+/* Spoiler thumbnail: the article's own image can reveal the result the
+ * rewritten headline hid, so blur it heavily. scale(1.08) grows the image past
+ * the frame so the blur's semi-transparent edge is clipped away by the lead's
+ * overflow:hidden instead of showing the background tint. The row-body tap
+ * still opens the full article to reveal it. */
+.item-row__lead-img--spoiler {
+  filter: blur(14px);
+  transform: scale(1.08);
+}
+
+/* The VisibilityOff marker centered over the blurred thumbnail. Non-interactive
+ * (inside the aria-hidden lead span, no handler) so it adds no tap zone; the
+ * scrim + shadow keep it legible over any image. */
+.item-row__lead-spoiler-icon {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.28);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
 }
 
 /* Right-side icon button (Pin/Unpin, or a library inverse action). */
