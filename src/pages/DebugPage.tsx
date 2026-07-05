@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { useDebugScrollJumps } from '../hooks/useReadingPrefs';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { useAuth } from '../hooks/useAuth';
 import { useDataSource } from '../lib/data/context';
@@ -85,6 +87,7 @@ export function DebugPage() {
   const online = useOnlineStatus();
   const { user } = useAuth();
   const dataSource = useDataSource();
+  const { debugScrollJumps, setDebugScrollJumps } = useDebugScrollJumps();
   useDocumentTitle('Debug · readmo');
 
   // Live backend reachability, the readmo analog of newshacker's /debug Services
@@ -133,6 +136,22 @@ export function DebugPage() {
       <DebugSection title="Runtime" rows={runtime} />
       <DebugSection title="Configuration" rows={configRows()} />
       <DebugSection title="Account" rows={accountRows} />
+
+      <section className="debug__section">
+        <h2 className="debug__heading">Diagnostics</h2>
+        <label className="debug__toggle">
+          <input
+            type="checkbox"
+            className="debug__toggle-check"
+            checked={debugScrollJumps}
+            onChange={(e) => setDebugScrollJumps(e.target.checked)}
+          />
+          <span className="debug__toggle-title">Scroll-jump diagnostics</span>
+        </label>
+        <Link to="/debug/scroll" className="debug__link">
+          Scroll-jump timeline
+        </Link>
+      </section>
     </div>
   );
 }

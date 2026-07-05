@@ -12,6 +12,8 @@ import { useSummaryPrewarm } from './hooks/useSummaryPrewarm';
 import { useFeedInvalidation } from './hooks/useFeedInvalidation';
 import { useStateSync } from './hooks/useStateSync';
 import { useNewshackerSync } from './hooks/useNewshackerSync';
+import { useScrollDiag } from './hooks/useScrollDiag';
+import { useDebugScrollJumps } from './hooks/useReadingPrefs';
 import { HomePage, FolderPage, FeedPage } from './pages/FeedPages';
 import {
   PinnedPage,
@@ -32,6 +34,7 @@ import { AdminFeedUsersPage } from './pages/AdminFeedUsersPage';
 import { AboutPage } from './pages/AboutPage';
 import { LegalPage } from './pages/LegalPage';
 import { DebugPage } from './pages/DebugPage';
+import { ScrollDiagPage } from './pages/ScrollDiagPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { LazyRouteBoundary } from './components/LazyRouteBoundary';
 
@@ -78,6 +81,11 @@ export default function App() {
   // when the account has linked a newshacker token (no-op otherwise). SPEC.md
   // *Mirror dismissals and pins to newshacker*.
   useNewshackerSync();
+  // Scroll-jump diagnostics (off unless the /debug switch is on): record scroll
+  // positions + Done flips and raise a "Done — Report bug" toast on dismiss, so
+  // a jump-to-top can be inspected at /debug/scroll. A no-op while disabled.
+  const { debugScrollJumps } = useDebugScrollJumps();
+  useScrollDiag(debugScrollJumps);
   // Gate rendering across an auth transition: while the previous user's caches
   // are being purged and the app reloads, paint nothing so the next user can't
   // briefly see the previous user's cached content (guardrail #8).
@@ -97,6 +105,8 @@ export default function App() {
             <Route path="/legal" element={<LegalPage />} />
             {/* Open to everyone (no auth gate) — diagnostics only, no secrets. */}
             <Route path="/debug" element={<DebugPage />} />
+            {/* Open to everyone (no auth gate) — scroll-jump timeline, no secrets. */}
+            <Route path="/debug/scroll" element={<ScrollDiagPage />} />
             <Route
               path="/*"
               element={

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 import {
   BOTTOM_BAR_KEY,
+  DEBUG_SCROLL_JUMPS_KEY,
   GROUP_BY_FEED_KEY,
   HIDE_ON_SCROLL_KEY,
   HIDE_SPORTS_SPOILERS_KEY,
@@ -10,6 +11,7 @@ import {
   SHOW_ROW_FAVICON_KEY,
   resetReadingPrefsCacheForTest,
   useBottomBarPosition,
+  useDebugScrollJumps,
   useGroupByFeed,
   useHideOnScroll,
   useHideSportsSpoilers,
@@ -92,6 +94,34 @@ describe('useReadingPrefs', () => {
     expect(screen.getByRole('button')).toHaveTextContent('hide:0 bar:screen');
     expect(window.localStorage.getItem(BOTTOM_BAR_KEY)).toBe('screen');
     expect(window.localStorage.getItem(HIDE_ON_SCROLL_KEY)).toBeNull();
+  });
+
+  describe('scroll-jump diagnostics', () => {
+    function DebugProbe() {
+      const { debugScrollJumps, setDebugScrollJumps } = useDebugScrollJumps();
+      return (
+        <button
+          type="button"
+          onClick={() => setDebugScrollJumps(!debugScrollJumps)}
+        >
+          {debugScrollJumps ? 'on' : 'off'}
+        </button>
+      );
+    }
+
+    it('defaults to off', () => {
+      render(<DebugProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent('off');
+    });
+
+    it('persists a toggle to localStorage', () => {
+      render(<DebugProbe />);
+      act(() => {
+        screen.getByRole('button').click();
+      });
+      expect(screen.getByRole('button')).toHaveTextContent('on');
+      expect(window.localStorage.getItem(DEBUG_SCROLL_JUMPS_KEY)).toBe('1');
+    });
   });
 
   describe('item sort order', () => {
