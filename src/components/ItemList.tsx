@@ -216,6 +216,10 @@ export function ItemList({
   const listRef = useListKeyboardNav();
   const { registerSweep } = useFeedBar();
   const { hideOnScroll } = useHideOnScroll();
+  // Mirror into a ref so the single-dismiss mutation subscription (which stays
+  // subscribed across renders) reads the latest value without re-subscribing.
+  const hideOnScrollRef = useRef(hideOnScroll);
+  hideOnScrollRef.current = hideOnScroll;
 
   // Auto-hide-on-scroll: when enabled, mark unpinned rows Done the moment they
   // scroll off the top of the viewport (the user scrolled past them without
@@ -1552,6 +1556,25 @@ export function ItemList({
   // by scrolling during that refetch (those remove rows above the viewport and
   // depend on anchoring to hold the first still-visible row steady).
   const anchorLockedRef = useRef(false);
+  // A single in-viewport dismiss (swipe-right / Done) is different from a Sweep:
+  // the invalidated refetch that follows it re-renders the whole list a beat
+  // later (~100ms, longer on a slow/hung sync), and that re-render can shift
+  // layout — so the anchor opt-out must survive until the refresh settles, not
+  // just the one collapsing layout the sweep opt-out covers. Dropping it a frame
+  // after the local removal (the post-paint effect below) leaves the browser's
+  // scroll anchoring live when the refetch lands: if that render shifts anything,
+  // anchoring rewinds window.scrollY — snapping the reader toward the top, and
+  // worse the slower the sync (the fast path lands before the opt-out is even
+  // dropped, which is why the jump is intermittent). This flag holds the opt-out
+  // across the refresh for the dismiss path; the sweep path leaves it unset and
+  // keeps its one-frame drop.
+  const holdAnchorThroughRefreshRef = useRef(false);
+  // Set true while a Sweep's hideMany runs. The single-dismiss mutation
+  // subscription fires for every Done flip — including the batch a Sweep emits —
+  // so it uses this to tell a Sweep (which manages its own, one-frame anchor
+  // opt-out) from a lone swipe/Done, and only arms the hold-through-refresh
+  // behavior for the latter.
+  const sweepCommittingRef = useRef(false);
   // A deferred height-lock release armed on the reader's next scroll — see
   // releaseBodyHeight. Held here so it can be torn down on unmount and whenever
   // a fresh lock is taken.
@@ -1787,6 +1810,18 @@ export function ItemList({
       if (autoHideInFlightRef.current?.has(id)) return;
       if (!document.querySelector(`[data-item-id="${id}"]`)) return;
       lockBodyHeight();
+      // Hold the anchor opt-out across the invalidated refetch (not just the
+      // local-removal frame), so a slow sync's late re-render can't rewind the
+      // scroll to the top. Released once the refresh settles (the effect below).
+      // Skipped when hide-on-scroll is on: that mode wires auto-hide-on-scroll,
+      // whose scroll-driven above-viewport removals rely on the browser's
+      // anchoring during the same refetch — so there we keep the one-frame drop
+      // (its self-shortening list rarely leaves the reader far below the fold
+      // anyway). With hide-on-scroll off there is no such consumer, so holding
+      // the opt-out is pure upside.
+      if (!hideOnScrollRef.current && !sweepCommittingRef.current) {
+        holdAnchorThroughRefreshRef.current = true;
+      }
     });
   }, [ds, lockBodyHeight]);
 
@@ -1800,7 +1835,9 @@ export function ItemList({
     }
     // Capture the height while the swept rows are still on screen, then hide.
     lockBodyHeight();
+    sweepCommittingRef.current = true;
     ds.stateStore.hideMany(ids);
+    sweepCommittingRef.current = false;
     // Sweep consolidates: in-body pins snap into the top block (SPEC.md).
     setStayInBodyIds(new Set());
     setSweepingIds((prev) => {
@@ -1856,7 +1893,9 @@ export function ItemList({
         // No animation to wait on, so the rows leave immediately — grab the
         // height first, same as the animated commitSweep path does.
         lockBodyHeight();
+        sweepCommittingRef.current = true;
         ds.stateStore.hideMany(batch);
+        sweepCommittingRef.current = false;
         // Sweep consolidates: in-body pins snap into the top block (SPEC.md).
         setStayInBodyIds(new Set());
         beginSweepCooldown();
@@ -2200,9 +2239,30 @@ export function ItemList({
   // guard makes every other run a no-op.
   useEffect(() => {
     if (!anchorLockedRef.current) return;
+    // A single dismiss holds the opt-out across its refetch (see the flag's
+    // declaration); the refresh-settle effect below drops it. Sweep leaves the
+    // flag unset and drops here, one frame after its collapse.
+    if (holdAnchorThroughRefreshRef.current) return;
     anchorLockedRef.current = false;
     if (bodyRef.current) bodyRef.current.style.overflowAnchor = '';
   }, [visibleItems.length]);
+
+  // Drop a dismiss's held anchor opt-out once the invalidated refetch it armed
+  // has settled — a post-paint effect keyed on `isRefreshing`, so the refetch's
+  // landing render (which committed while the opt-out was still 'none') has been
+  // laid out without an anchor rewind before anchoring is handed back. Runs on
+  // the isRefreshing→false edge; the flag guard makes every other run a no-op.
+  // (A dismiss whose refetch never flips isRefreshing — e.g. offline, the query
+  // paused — leaves the opt-out until the next refresh, which is harmless: it
+  // only suppresses anchoring, and the min-height freeze already holds the
+  // scroll.)
+  useEffect(() => {
+    if (isRefreshing) return;
+    if (!holdAnchorThroughRefreshRef.current) return;
+    holdAnchorThroughRefreshRef.current = false;
+    anchorLockedRef.current = false;
+    if (bodyRef.current) bodyRef.current.style.overflowAnchor = '';
+  }, [isRefreshing]);
 
   return (
     <div
