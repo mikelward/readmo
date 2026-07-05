@@ -103,9 +103,14 @@ function installScrollModel(
   // sits above the body, `footer` (the relative-mode bottom toolbar / refresh
   // strip) in flow below it — both count toward the document height but only
   // chrome shifts the body's top.
+  // The live viewport height. Mutable so a test can model a transient
+  // window.innerHeight change (Chromium's dynamic toolbar momentarily reporting
+  // a doubled viewport at the bottom) — which shrinks maxScroll and clamps the
+  // scroll even though scrollHeight is unchanged.
+  let vh = innerHeight;
   const docHeight = () =>
-    Math.max(chromeHeight + bodyHeight() + footerHeight, innerHeight);
-  const maxScroll = () => Math.max(0, docHeight() - innerHeight);
+    Math.max(chromeHeight + bodyHeight() + footerHeight, vh);
+  const maxScroll = () => Math.max(0, docHeight() - vh);
   const clamped = () => Math.min(Math.max(0, rawScrollY), maxScroll());
   Object.defineProperty(body, 'offsetHeight', { configurable: true, get: bodyHeight });
   // The body sits `chromeHeight` below the document top; getBoundingClientRect
@@ -125,7 +130,7 @@ function installScrollModel(
     configurable: true,
     get: docHeight,
   });
-  Object.defineProperty(window, 'innerHeight', { configurable: true, value: innerHeight });
+  Object.defineProperty(window, 'innerHeight', { configurable: true, get: () => vh });
   Object.defineProperty(window, 'scrollY', { configurable: true, get: clamped });
   Object.defineProperty(window, 'scrollTo', {
     configurable: true,
@@ -142,6 +147,11 @@ function installScrollModel(
     // Inject (px) or clear (null) a transient natural-height collapse.
     setNaturalCollapse: (px: number | null) => {
       naturalOverride = px;
+    },
+    // Change the live viewport height, modeling a transient window.innerHeight
+    // jump (the dynamic-toolbar clamp at the bottom of the list).
+    setViewport: (px: number) => {
+      vh = px;
     },
   };
 }
@@ -174,8 +184,17 @@ function installManualRaf() {
       for (const entry of wave) entry.cb(performance.now());
     }
   };
+  // Run exactly one frame (the currently-queued callbacks) without draining the
+  // frames they schedule — lets a test hold state (e.g. a doubled viewport)
+  // across a single settle frame before advancing.
+  const flushOne = () => {
+    const wave = queue;
+    queue = [];
+    for (const entry of wave) entry.cb(performance.now());
+  };
   return {
     flush,
+    flushOne,
     restore: () => {
       vi.stubGlobal('requestAnimationFrame', realRaf);
       vi.stubGlobal('cancelAnimationFrame', realCancel);
@@ -1729,6 +1748,421 @@ describe('ItemList', () => {
     raf.flush();
     expect(scroll.getScrollY()).toBe(target);
     await waitFor(() => expect(body.style.minHeight).toBe(''));
+    raf.restore();
+  });
+
+  it('restores the reader after a dismiss at the bottom clamps via a transient viewport jump', async () => {
+    // Regression (scroll-jump diagnostics, Pixel/Brave): dismissing at the very
+    // bottom of the list snapped the page toward the top. The probe timeline
+    // showed the document height (scrollHeight) was stable — what changed was
+    // window.innerHeight, which momentarily DOUBLED (Chromium's dynamic toolbar
+    // reporting a doubled viewport for a frame). maxScroll = scrollHeight −
+    // innerHeight, so the doubled viewport slashed the ceiling and the browser
+    // clamped the reader down; the viewport reverted a frame later but the clamp
+    // stuck. The min-height freeze can't counter an innerHeight change (it only
+    // holds scrollHeight), so the release now restores the reader's tracked
+    // offset once the viewport settles.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`bottom-viewport-clamp-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    const rows = await screen.findAllByTestId('item-row');
+    const firstId = rows[0].closest('li')!.getAttribute('data-item-id')!;
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    const rowCount = container.querySelectorAll('[data-item-id]').length;
+    // Need enough rows that a doubled (800px) viewport still clamps below the
+    // reader's bottom offset.
+    expect(rowCount).toBeGreaterThan(8);
+    // The reader is scrolled to the very bottom — a genuine scroll, so the
+    // tracked offset is recorded while the lock is off.
+    scroll.setScrollY(scroll.maxScroll());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    const before = scroll.getScrollY();
+    expect(before).toBe(rowCount * 100 - 400);
+
+    // Dismiss a row (the freeze is taken, the lock goes on).
+    act(() => {
+      source.stateStore.hide(firstId);
+    });
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
+    );
+
+    // The dynamic toolbar doubles the viewport for a frame: maxScroll collapses
+    // and the browser clamps the reader down and BAKES that offset in (a real
+    // browser mutates the scroll position, it doesn't just clamp on read).
+    scroll.setViewport(800);
+    scroll.setScrollY(scroll.getScrollY());
+    // The clamp fires a scroll event — but the lock is on, so the tracked offset
+    // is NOT overwritten with the clamped value.
+    act(() => window.dispatchEvent(new Event('scroll')));
+    expect(scroll.getScrollY()).toBeLessThan(before);
+
+    // One settle frame runs WHILE the viewport is still doubled, so the release
+    // observes the clamp (scroll pinned at a ceiling below where the document
+    // settles). The viewport then reverts and the remaining frames elapse.
+    raf.flushOne();
+    scroll.setViewport(400);
+    raf.flush();
+    // Without the restore the reader would be stuck near the top; with it they
+    // land at the new bottom (one row shorter), never clamped away.
+    expect(scroll.getScrollY()).toBe(before - 100);
+    expect(body.style.minHeight).toBe('');
+    raf.restore();
+  });
+
+  it('does NOT override a scroll the reader makes during the dismiss settle window', async () => {
+    // Codex P2 on #394: the restore must fire only for a genuine viewport clamp,
+    // never for a scroll the reader performs during the settle. A reader scroll
+    // leaves headroom below the ceiling, so no settle frame samples the
+    // pinned-below-settled signature and the restore stays inert — the reader
+    // keeps exactly where they scrolled.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`settle-reader-scroll-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    const rows = await screen.findAllByTestId('item-row');
+    const firstId = rows[0].closest('li')!.getAttribute('data-item-id')!;
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    const rowCount = container.querySelectorAll('[data-item-id]').length;
+    // Reader starts at the bottom (the scenario where the clamp bites).
+    const start = rowCount * 100 - 400;
+    scroll.setScrollY(start);
+    act(() => window.dispatchEvent(new Event('scroll')));
+
+    act(() => {
+      source.stateStore.hide(firstId);
+    });
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
+    );
+
+    // The reader deliberately scrolls UP during the settle window (no viewport
+    // clamp — the ceiling is unchanged, so this is a genuine scroll with
+    // headroom). The lock is still on, but the restore must not fight it.
+    const scrolledTo = 120;
+    scroll.setScrollY(scrolledTo);
+    act(() => window.dispatchEvent(new Event('scroll')));
+
+    raf.flush();
+    // Left exactly where the reader scrolled — NOT snapped back toward the bottom.
+    expect(scroll.getScrollY()).toBe(scrolledTo);
+    expect(body.style.minHeight).toBe('');
+    raf.restore();
+  });
+
+  it('does NOT override a reader scroll that follows a clamp within the same settle window', async () => {
+    // Codex P2 (follow-up) on #394: a clamp sampled early must not lock in the
+    // restore. If the reader scrolls AFTER the clamp — later in a delayed settle —
+    // that scroll (a move to a headroom offset) supersedes the clamp, so the
+    // release leaves them where they scrolled rather than snapping to the bottom.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`clamp-then-scroll-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    const rows = await screen.findAllByTestId('item-row');
+    const firstId = rows[0].closest('li')!.getAttribute('data-item-id')!;
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    const rowCount = container.querySelectorAll('[data-item-id]').length;
+    expect(rowCount).toBeGreaterThan(8);
+    scroll.setScrollY(scroll.maxScroll());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    const before = scroll.getScrollY();
+
+    act(() => {
+      source.stateStore.hide(firstId);
+    });
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
+    );
+
+    // The viewport doubles and the clamp is sampled on the first settle frame.
+    scroll.setViewport(800);
+    scroll.setScrollY(scroll.getScrollY());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    raf.flushOne();
+    expect(scroll.getScrollY()).toBeLessThan(before);
+
+    // The viewport reverts and the reader THEN scrolls up — a later settle frame
+    // samples that headroom move, superseding the earlier clamp.
+    scroll.setViewport(400);
+    const scrolledTo = 120;
+    scroll.setScrollY(scrolledTo);
+    act(() => window.dispatchEvent(new Event('scroll')));
+    raf.flushOne();
+
+    raf.flush();
+    // The reader keeps their scroll — the clamp does not snap them back.
+    expect(scroll.getScrollY()).toBe(scrolledTo);
+    expect(body.style.minHeight).toBe('');
+    raf.restore();
+  });
+
+  it('syncs the tracked offset on release so a second dismiss does not restore against a stale one', async () => {
+    // Codex P2 (2nd follow-up) on #394: scroll events are ignored while locked,
+    // so after the settle honors a reader scroll the tracked offset would still
+    // be the PRE-dismiss value. If the reader dismisses again before any further
+    // scroll event, a clamp on that second dismiss would restore against the
+    // stale offset and snap them to the old bottom. The release syncs the tracked
+    // offset to the reader's actual position, so the second restore uses it.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`stale-offset-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    const rowCount = container.querySelectorAll('[data-item-id]').length;
+    expect(rowCount).toBeGreaterThan(9);
+
+    // Reader at the bottom; dismiss #1.
+    scroll.setScrollY(scroll.maxScroll());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    const idOf = () =>
+      container.querySelector('[data-item-id]')!.getAttribute('data-item-id')!;
+    const firstId = idOf();
+    act(() => source.stateStore.hide(firstId));
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
+    );
+
+    // The reader scrolls UP (headroom, no clamp) during settle #1; it's honored
+    // (no restore) and the release must sync the tracked offset to here. No
+    // further scroll event is dispatched afterwards — that's the crux.
+    const mid = 300;
+    scroll.setScrollY(mid);
+    act(() => window.dispatchEvent(new Event('scroll')));
+    raf.flush();
+    expect(scroll.getScrollY()).toBe(mid);
+
+    // Dismiss #2, with the reader still at `mid`. A big viewport jump clamps even
+    // from mid (short frozen document once doubled).
+    const secondId = idOf();
+    act(() => source.stateStore.hide(secondId));
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${secondId}"]`)).toBeNull(),
+    );
+    const frozen2 = (rowCount - 1) * 100; // min-height frozen at dismiss #2
+    scroll.setViewport(frozen2 - 100); // maxScroll = 100 < mid → clamp
+    scroll.setScrollY(scroll.getScrollY());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    raf.flushOne();
+    expect(scroll.getScrollY()).toBeLessThan(mid);
+    scroll.setViewport(400);
+    raf.flush();
+
+    // Restored to where the reader actually was (`mid`) — NOT the stale old
+    // bottom the pre-dismiss-#1 offset would have snapped them to.
+    expect(scroll.getScrollY()).toBe(mid);
+    raf.restore();
+  });
+
+  it('carries a settle-window scroll forward when a second dismiss reschedules the settle', async () => {
+    // Codex P2 (3rd follow-up) on #394: if a second dismiss lands BEFORE the
+    // first settle releases, the effect is torn down and restarted with a fresh
+    // closure (readerMovedDuringSettle back to false, no release-time sync ran).
+    // The scroll the reader already made during the first (locked) settle must
+    // still be reflected in the tracked offset, or the rescheduled settle's clamp
+    // restores against the stale pre-dismiss offset. sample() syncs the tracked
+    // offset the moment it sees the reader move, so it survives the restart.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`resched-settle-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    const rowCount = container.querySelectorAll('[data-item-id]').length;
+    expect(rowCount).toBeGreaterThan(9);
+    const idOf = () =>
+      container.querySelector('[data-item-id]')!.getAttribute('data-item-id')!;
+
+    scroll.setScrollY(scroll.maxScroll());
+    act(() => window.dispatchEvent(new Event('scroll')));
+
+    // Dismiss #1 — settle #1 is scheduled but NOT drained.
+    const firstId = idOf();
+    act(() => source.stateStore.hide(firstId));
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
+    );
+
+    // The reader scrolls up during settle #1; ONE settle frame samples that move
+    // (and syncs the tracked offset), then a second dismiss reschedules the
+    // settle before it releases — discarding settle #1's per-window state.
+    const mid = 300;
+    scroll.setScrollY(mid);
+    act(() => window.dispatchEvent(new Event('scroll')));
+    raf.flushOne();
+    const secondId = idOf();
+    act(() => source.stateStore.hide(secondId));
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${secondId}"]`)).toBeNull(),
+    );
+
+    // Settle #2 hits a viewport clamp. The min-height is still frozen at the
+    // dismiss-#1 height (the lock never released), so double past it.
+    scroll.setViewport(rowCount * 100 - 100); // maxScroll = 100 < mid → clamp
+    scroll.setScrollY(scroll.getScrollY());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    raf.flushOne();
+    expect(scroll.getScrollY()).toBeLessThan(mid);
+    scroll.setViewport(400);
+    raf.flush();
+
+    // Restored to the reader's carried-forward position (`mid`), not the stale
+    // pre-dismiss-#1 bottom.
+    expect(scroll.getScrollY()).toBe(mid);
+    raf.restore();
+  });
+
+  it('carries a settle-window scroll forward even when no frame sampled it (delayed rAF)', async () => {
+    // Codex P2 (4th follow-up) on #394: if rAF is delayed, the reader can scroll
+    // during the first (locked) settle and dismiss again before ANY frame runs,
+    // so the in-frame carry-forward never fires. The persistent last-sample lets
+    // the rescheduled settle's synchronous start-sample still detect that scroll
+    // (vs. the pre-dismiss baseline) and carry it forward, so a later clamp
+    // restores to it rather than the stale offset.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`delayed-raf-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    const rowCount = container.querySelectorAll('[data-item-id]').length;
+    expect(rowCount).toBeGreaterThan(9);
+    const idOf = () =>
+      container.querySelector('[data-item-id]')!.getAttribute('data-item-id')!;
+
+    scroll.setScrollY(scroll.maxScroll());
+    act(() => window.dispatchEvent(new Event('scroll')));
+
+    // Dismiss #1 — settle #1's synchronous start-sample records the bottom, then
+    // NO frame runs (rAF delayed).
+    const firstId = idOf();
+    act(() => source.stateStore.hide(firstId));
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
+    );
+
+    // Reader scrolls up; the event is ignored (locked) and no frame samples it.
+    const mid = 300;
+    scroll.setScrollY(mid);
+    act(() => window.dispatchEvent(new Event('scroll')));
+
+    // Dismiss #2 reschedules the settle — its start-sample compares the current
+    // (scrolled) offset against the persisted bottom baseline and carries it.
+    const secondId = idOf();
+    act(() => source.stateStore.hide(secondId));
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${secondId}"]`)).toBeNull(),
+    );
+
+    // Clamp in settle #2.
+    scroll.setViewport(rowCount * 100 - 100);
+    scroll.setScrollY(scroll.getScrollY());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    raf.flushOne();
+    expect(scroll.getScrollY()).toBeLessThan(mid);
+    scroll.setViewport(400);
+    raf.flush();
+
+    // Restored to where the reader actually was, not the stale bottom.
+    expect(scroll.getScrollY()).toBe(mid);
     raf.restore();
   });
 
