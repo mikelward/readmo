@@ -1868,18 +1868,18 @@ Identical to newshacker's *Story row layout*; only the meta content differs
 
 ### Article layout (card size)
 
-The row above is the compact default. **Settings → Appearance → Article layout**
-(`readmo:list-layout`, per-device localStorage, default `title`) lets the reader
-trade density for a larger card, in four steps:
+The row above is the compact base. **Settings → Appearance → Article layout**
+(`readmo:list-layout`, per-device localStorage, default `thumbnail-small`) lets
+the reader trade density for a larger card — or drop the thumbnail entirely — in
+four steps:
 
-- **Title only** (`title`, default) — the compact row described above; unchanged
-  from before this setting existed. Absent key ⇒ this, so existing installs and
-  the first paint keep today's look.
-- **Small thumbnail** (`thumbnail-small`) — the **compact title-only row**
-  (same padding, title size, and two-line clamp) with a **small right-floated
-  thumbnail**; the title wraps beside the image and the meta line sits below.
-  **No excerpt.** Same image source and spoiler handling as the large thumbnail
-  (below).
+- **Title only** (`title`) — the compact row described above, with no thumbnail.
+- **Small thumbnail** (`thumbnail-small`, default) — the **compact title-only
+  row** (same padding, title size, and two-line clamp) with a **small
+  right-floated thumbnail**; the title wraps beside the image and the meta line
+  sits below. **No excerpt.** Same image source and spoiler handling as the large
+  thumbnail (below). Absent key ⇒ this, so a fresh install shows the small
+  thumbnail; an image-less feed under it looks exactly like *Title only*.
 - **Large thumbnail** (`thumbnail`) — a larger title (up to three lines) with a
   **large right-floated thumbnail**; the title wraps beside the image and the
   meta line sits below. **No excerpt.** The image is sourced client-side from
