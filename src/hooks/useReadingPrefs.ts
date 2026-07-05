@@ -49,6 +49,7 @@ export const SHOW_GROUP_FAVICON_KEY = 'readmo:show-group-favicon';
 export const HIDE_SPORTS_SPOILERS_KEY = 'readmo:hide-sports-spoilers';
 export const AUTO_SUMMARIZE_PINNED_KEY = 'readmo:auto-summarize-pinned';
 export const LIST_LAYOUT_KEY = 'readmo:list-layout';
+export const DEBUG_SCROLL_JUMPS_KEY = 'readmo:debug-scroll-jumps';
 
 /** Where the bottom action bar sits. 'list' = relative footer at the end of the
  * list (the default); 'screen' = pinned to the bottom of the viewport. */
@@ -81,6 +82,7 @@ function boolStore(storageKey: string): PersistentStore<boolean> {
 const hideOnScrollStore = boolStore(HIDE_ON_SCROLL_KEY);
 const groupByFeedStore = boolStore(GROUP_BY_FEED_KEY);
 const showRowFaviconStore = boolStore(SHOW_ROW_FAVICON_KEY);
+const debugScrollJumpsStore = boolStore(DEBUG_SCROLL_JUMPS_KEY);
 
 // Default-ON boolean store: absent → true, '0' → false, '1' → true. Used where a
 // fresh install should opt IN (spoiler-hiding; group-header favicons, which the
@@ -258,10 +260,27 @@ export function useListLayout(): {
   return { listLayout, setListLayout };
 }
 
+/** Whether scroll-jump diagnostics are on (default off). When on, useScrollDiag
+ * records window scroll positions and Done flips into an in-memory timeline and
+ * surfaces a "Done — Report bug" toast on each dismiss, so a jump-to-top can be
+ * inspected at /debug/scroll on a device with no console. Per-device. */
+export function useDebugScrollJumps(): {
+  debugScrollJumps: boolean;
+  setDebugScrollJumps: (next: boolean) => void;
+} {
+  const debugScrollJumps = usePersistentStore(debugScrollJumpsStore);
+  const setDebugScrollJumps = useCallback(
+    (next: boolean) => debugScrollJumpsStore.set(next),
+    [],
+  );
+  return { debugScrollJumps, setDebugScrollJumps };
+}
+
 /** Test-only: drop the stores' parse memos so `localStorage.clear()` alone
  * resets state between cases. */
 export function resetReadingPrefsCacheForTest(): void {
   hideOnScrollStore.resetForTest();
+  debugScrollJumpsStore.resetForTest();
   groupByFeedStore.resetForTest();
   showRowFaviconStore.resetForTest();
   showGroupFaviconStore.resetForTest();
