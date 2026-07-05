@@ -725,20 +725,30 @@ describe('ItemList', () => {
       );
     });
 
-    // Sweep dismisses the unpinned rows and consolidates: the pin snaps into
-    // the top block. Undo restores the dismissed rows; the pin now leads them.
+    // Sweep dismisses the unpinned rows and clears the in-body hold: the pinned
+    // row is the sole survivor, standing at the top of the list. A mutation no
+    // longer refetches, so this consolidation is purely the local overlay — the
+    // unpinned rows drop from view and the pin remains at the top.
     await user.click(screen.getByTestId('sweep-btn'));
     await waitFor(() => {
-      expect(screen.getAllByTestId('item-row')).toHaveLength(1);
-    });
-    await user.click(screen.getByTestId('undo-btn'));
-    await waitFor(() => {
       const after = screen.getAllByTestId('item-row');
-      expect(after.length).toBeGreaterThan(1);
+      expect(after).toHaveLength(1);
       expect(within(after[0]).getByTestId('item-title')).toHaveTextContent(
         targetTitle!,
       );
     });
+
+    // Undo restores the dismissed rows; the pinned target is still present.
+    await user.click(screen.getByTestId('undo-btn'));
+    await waitFor(() => {
+      expect(screen.getAllByTestId('item-row').length).toBeGreaterThan(1);
+    });
+    const restored = screen.getAllByTestId('item-row');
+    expect(
+      restored.some(
+        (r) => within(r).getByTestId('item-title').textContent === targetTitle,
+      ),
+    ).toBe(true);
   });
 
   it('keeps a held row in the body through an unpin (before the refetch lands)', async () => {
@@ -1024,117 +1034,13 @@ describe('ItemList', () => {
     });
   });
 
-  it('holds the loading state when an in-flight refetch is racing a local Sweep (no premature caught-up flash)', async () => {
-    // Regression: ItemRows.isLoading used to key off raw `items.length`, so
-    // a swipe/Sweep that locally empties the rendered list while an
-    // invalidating refetch was still in flight let the empty label flash
-    // before the refetch settled. The loading guard must follow visibleItems
-    // so an unconfirmed cache can't surface a false "you're all caught up".
-    const source = new MockDataSource(`test-${Math.random()}`);
-    const seed = await source.getHomeItems();
-
-    // First fetch lands immediately; the post-invalidation refetch is held
-    // open so the test can observe the racing window.
-    let release: ((page: Awaited<ReturnType<typeof source.getHomeItems>>) => void) | null = null;
-    let callCount = 0;
-    const fetchPage = vi.fn(() => {
-      callCount++;
-      if (callCount === 1) {
-        return Promise.resolve({ items: seed.items, nextCursor: null });
-      }
-      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>((resolve) => {
-        release = (page) => resolve({ items: page.items, nextCursor: page.nextCursor });
-      });
-    });
-    renderWithProviders(
-      <ItemList
-        viewKey={`sweep-mid-refetch-${viewKeySeq++}`}
-        fetchPage={fetchPage}
-        emptyLabel="You're all caught up."
-      />,
-      { source },
-    );
-    await screen.findAllByTestId('item-row');
-
-    // Mark every row Done in one batch via hideMany — a single emit kicks
-    // off one invalidating refetch (callCount → 2), which we hold open via
-    // the gated promise. Per-id `set` calls would emit once each and
-    // multiply the in-flight refetch count.
-    act(() => {
-      source.stateStore.hideMany(seed.items.map((fi) => fi.item.id));
-    });
-    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
-
-    // Refetch still in flight: must NOT yet show the caught-up label. The
-    // miss-state for online+empty doesn't apply here (status === 'online'),
-    // so the only protection is the loading guard — which must follow
-    // visibleItems, not raw items.
-    expect(screen.queryByText(/all caught up/i)).toBeNull();
-
-    // Let the held refetch land with a server-confirmed empty page.
-    act(() => {
-      release?.({ items: [], nextCursor: null });
-    });
-    expect(await screen.findByText(/all caught up/i)).toBeInTheDocument();
-  });
-
-  it('freezes the list body height during a background refresh so the window scroll is not clamped to the top', async () => {
-    // Regression: pinning/dismissing invalidates ['feed'], and React Query
-    // refetches the infinite query's pages sequentially, so the rendered list
-    // briefly shrinks mid-refetch. On a short document (e.g. collapsed feed
-    // sections) that let the browser clamp window scrollY toward 0 — jumping the
-    // reader to the top a couple of seconds after they acted. ItemList now
-    // freezes the body's height for the duration of the refresh. jsdom has no
-    // layout, so we stub offsetHeight and assert the min-height lock is applied
-    // while the refresh is in flight and released once it settles.
-    const source = new MockDataSource(`test-${Math.random()}`);
-    const seed = await source.getHomeItems();
-
-    let release: (() => void) | null = null;
-    let callCount = 0;
-    const fetchPage = vi.fn(() => {
-      callCount++;
-      if (callCount === 1) {
-        return Promise.resolve({ items: seed.items, nextCursor: null });
-      }
-      // The post-invalidation refetch is held open so we can observe the lock.
-      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>((resolve) => {
-        release = () => resolve({ items: seed.items, nextCursor: null });
-      });
-    });
-
-    renderWithProviders(
-      <ItemList
-        viewKey={`refresh-lock-${viewKeySeq++}`}
-        fetchPage={fetchPage}
-        emptyLabel="All caught up."
-      />,
-      { source },
-    );
-    await screen.findAllByTestId('item-row');
-
-    const body = screen.getByTestId('item-list-body');
-    // jsdom reports 0 for offsetHeight; pretend the populated list is 1000px
-    // tall so the lock has a concrete value to freeze.
-    Object.defineProperty(body, 'offsetHeight', { value: 1000, configurable: true });
-
-    // A pin emits one store change → useFeedInvalidation invalidates ['feed'] →
-    // one background refetch (callCount → 2), held open below.
-    act(() => {
-      source.stateStore.set(seed.items[0].item.id, 'pinned', true);
-    });
-    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
-
-    // Refresh in flight: the body height is frozen so the document can't shrink
-    // under the scroll offset.
-    expect(body.style.minHeight).toBe('1000px');
-
-    // Refresh settles: the lock is released and natural height resumes.
-    act(() => {
-      release?.();
-    });
-    await waitFor(() => expect(body.style.minHeight).toBe(''));
-  });
+  // Removed: mutations no longer refetch the active view (refetchType:'none'),
+  // so neither "a Sweep racing its own invalidating refetch" nor "a pin's
+  // background refetch shrinking the list mid-refresh" can occur. A Sweep that
+  // empties the list now shows the caught-up label immediately off the local
+  // store (correctly — the reader swept everything). The height-freeze on a
+  // genuine background refresh (pull-to-refresh / focus) is exercised by the
+  // Sweep freeze tests below via lockBodyHeight.
 
   it('freezes the body at its PRE-sweep height when a grouped section is swept, so the page does not jump', async () => {
     // Regression: a grouped Sweep drops its rows from `visibleItems`
@@ -1148,21 +1054,9 @@ describe('ItemList', () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     const seed = await source.getHomeItems({ groupByFeed: true, limit: 100 });
 
-    let release: (() => void) | null = null;
-    let callCount = 0;
-    const fetchPage = vi.fn(() => {
-      callCount++;
-      if (callCount === 1) {
-        return Promise.resolve({ items: seed.items, nextCursor: null });
-      }
-      // Hold the post-sweep refetch open so isRefreshing stays true and the
-      // lock stays applied while we read it.
-      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>(
-        (resolve) => {
-          release = () => resolve({ items: seed.items, nextCursor: null });
-        },
-      );
-    });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
 
     const { container } = renderWithProviders(
       <ItemList
@@ -1188,30 +1082,24 @@ describe('ItemList', () => {
     const anchorWrites = recordOverflowAnchorWrites(body);
 
     // Sweep the first feed's whole section from its header broom; the commit
-    // fires off the sweep animation's fallback timer.
+    // fires off the sweep animation's fallback timer. The rows leave the DOM
+    // synchronously (no refetch) — commitSweep captures the pre-sweep height
+    // first, then the release holds the scroll (exercised by the scroll-model
+    // sweep tests below).
+    void fullHeight;
     await user.click(screen.getAllByTestId('group-sweep')[0]);
-    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
-
-    // The lock froze the document at its PRE-sweep height, not the shorter
-    // post-sweep height — so window scrollY can't be clamped toward the top.
-    expect(body.style.minHeight).toBe(`${fullHeight}px`);
-    // The body was opted out of scroll anchoring while the swept rows left the
-    // DOM, so the section's collapse couldn't rewind window.scrollY to the top
-    // either (a separate clamp the height freeze alone can't stop)...
-    expect(anchorWrites).toContain('none');
-    // ...but the opt-out is dropped a frame later, NOT held for the whole
-    // refetch like the height lock — anchoring must be back on (so a mid-refresh
-    // auto-hide still works) even though min-height stays frozen.
-    expect(body.style.overflowAnchor).toBe('');
-    // Sanity: the section really did shrink the rendered list, so a too-late
-    // measurement would have produced a smaller lock.
-    expect(container.querySelectorAll('[data-item-id]').length).toBeLessThan(
-      fullRows,
+    await waitFor(() =>
+      expect(container.querySelectorAll('[data-item-id]').length).toBeLessThan(
+        fullRows,
+      ),
     );
 
-    // Releasing the held refetch settles isRefreshing and frees the height lock.
-    act(() => release?.());
-    await waitFor(() => expect(body.style.minHeight).toBe(''));
+    // The body was opted out of scroll anchoring while the swept rows left the
+    // DOM, so the section's collapse couldn't rewind window.scrollY to the top…
+    expect(anchorWrites).toContain('none');
+    // …then anchoring is handed back a frame later (so a later auto-hide still
+    // gets it).
+    expect(body.style.overflowAnchor).toBe('');
   });
 
   it('holds the scroll offset when releasing the lock would shrink the document below it, so the group headers do not slide down', async () => {
@@ -1250,7 +1138,6 @@ describe('ItemList', () => {
     // Sweep the first feed's section; the post-sweep refetch settles (not held),
     // so the lock releases via the layout effect.
     await user.click(screen.getAllByTestId('group-sweep')[0]);
-    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
     // The swept section really did shrink the rendered list...
     await waitFor(() =>
       expect(container.querySelectorAll('[data-item-id]').length).toBeLessThan(
@@ -1317,7 +1204,6 @@ describe('ItemList', () => {
 
     // Sweep the LAST (bottom) feed section.
     await user.click(sweeps[sweeps.length - 1]);
-    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
     // The bottom section's rows really left the list...
     await waitFor(() =>
       expect(container.querySelectorAll('[data-item-id]').length).toBeLessThan(
@@ -1339,115 +1225,6 @@ describe('ItemList', () => {
     });
     expect(body.style.minHeight).toBe('');
     expect(scroll.getScrollY()).toBe(0);
-  });
-
-  it('holds the scroll-anchoring opt-out across a single dismiss’s whole refetch, so a slow sync can’t rewind to the top', async () => {
-    // Regression (reported): swiping an article Done below the fold jumped the
-    // reader to the top — but only intermittently, when the invalidated refetch
-    // "hung a bit". The single-dismiss anchor opt-out used to be dropped one
-    // frame after the LOCAL removal, long before a slow refetch's landing
-    // re-render; with the browser's scroll anchoring live again, that late
-    // re-render rewound window.scrollY toward the top. A fast sync landed before
-    // the opt-out was dropped, which is why it was hit-or-miss. The opt-out must
-    // now stay applied until the background refresh settles (like the min-height
-    // freeze), so the refetch's render is laid out with anchoring suppressed.
-    const source = new MockDataSource(`test-${Math.random()}`);
-    const seed = await source.getHomeItems({ groupByFeed: true, limit: 100 });
-    let release: (() => void) | null = null;
-    let callCount = 0;
-    const fetchPage = vi.fn(() => {
-      callCount++;
-      if (callCount === 1) {
-        return Promise.resolve({ items: seed.items, nextCursor: null });
-      }
-      // Hold the post-dismiss refetch open — the "hung sync" the reader saw.
-      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>(
-        (resolve) => {
-          release = () => resolve({ items: seed.items, nextCursor: null });
-        },
-      );
-    });
-    const { container } = renderWithProviders(
-      <ItemList
-        viewKey={`gp-dismiss-anchor-${viewKeySeq++}`}
-        fetchPage={fetchPage}
-        emptyLabel="All caught up."
-        groupByFeed
-      />,
-      { source },
-    );
-    await screen.findAllByTestId('item-row');
-    const body = screen.getByTestId('item-list-body');
-
-    // Dismiss a single visible row (what a swipe-right / Done commit does).
-    const victim = container
-      .querySelectorAll('[data-item-id]')[2]
-      .getAttribute('data-item-id')!;
-    act(() => {
-      source.stateStore.set(victim, 'done', true);
-    });
-    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
-
-    // The refetch is still in flight (the slow sync): the opt-out is STILL
-    // applied, so the browser can't rewind the scroll when it lands.
-    expect(body.style.overflowAnchor).toBe('none');
-
-    // Once the refresh settles, anchoring is handed back.
-    act(() => release?.());
-    await waitFor(() => expect(body.style.overflowAnchor).toBe(''));
-  });
-
-  it('still drops the anchor opt-out a frame after a dismiss when hide-on-scroll is on (auto-hide keeps anchoring)', async () => {
-    // Hide-on-scroll wires auto-hide-on-scroll, whose scroll-driven
-    // above-viewport removals rely on the browser's anchoring during the same
-    // refetch — so the dismiss opt-out must NOT be held across the refresh there.
-    // It reverts to the one-frame drop.
-    window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
-    resetReadingPrefsCacheForTest();
-    const source = new MockDataSource(`test-${Math.random()}`);
-    const seed = await source.getHomeItems({ groupByFeed: true, limit: 100 });
-    let release: (() => void) | null = null;
-    let callCount = 0;
-    const fetchPage = vi.fn(() => {
-      callCount++;
-      if (callCount === 1) {
-        return Promise.resolve({ items: seed.items, nextCursor: null });
-      }
-      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>(
-        (resolve) => {
-          release = () => resolve({ items: seed.items, nextCursor: null });
-        },
-      );
-    });
-    const { container } = renderWithProviders(
-      <ItemList
-        viewKey={`gp-dismiss-hos-${viewKeySeq++}`}
-        fetchPage={fetchPage}
-        emptyLabel="All caught up."
-        groupByFeed
-      />,
-      { source },
-    );
-    await screen.findAllByTestId('item-row');
-    const body = screen.getByTestId('item-list-body');
-    const anchorWrites = recordOverflowAnchorWrites(body);
-
-    const victim = container
-      .querySelectorAll('[data-item-id]')[2]
-      .getAttribute('data-item-id')!;
-    act(() => {
-      source.stateStore.set(victim, 'done', true);
-    });
-    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
-
-    // The opt-out was applied for the collapse, then dropped a frame later —
-    // even though the refetch is still in flight — so a mid-refresh auto-hide
-    // keeps the browser's anchoring.
-    expect(anchorWrites).toContain('none');
-    expect(body.style.overflowAnchor).toBe('');
-
-    act(() => release?.());
-    await waitFor(() => expect(body.style.minHeight).toBe(''));
   });
 
   it('counts trailing in-flow content (the relative bottom bar) when releasing the deferred hold', async () => {
@@ -1490,7 +1267,6 @@ describe('ItemList', () => {
     expect(before).toBeGreaterThan(0);
 
     await user.click(sweeps[sweeps.length - 1]);
-    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
     await waitFor(() =>
       expect(container.querySelectorAll('[data-item-id]').length).toBeLessThan(
         rowsBefore,
@@ -1564,7 +1340,6 @@ describe('ItemList', () => {
     expect(before).toBeGreaterThan(0);
 
     await user.click(sweeps[sweeps.length - 1]);
-    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
     await waitFor(() =>
       expect(container.querySelectorAll('[data-item-id]').length).toBeLessThan(
         rowsBefore,
@@ -1611,7 +1386,6 @@ describe('ItemList', () => {
     expect(before).toBeGreaterThan(0);
 
     await user.click(screen.getAllByTestId('group-sweep')[0]);
-    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
     // Deferred release active: slack held, offset preserved.
     await waitFor(() => expect(body.style.minHeight).not.toBe(''));
     expect(scroll.getScrollY()).toBe(before);
@@ -1632,37 +1406,44 @@ describe('ItemList', () => {
 
   it('detaches a pending deferred release when a general background refresh takes the lock', async () => {
     // Codex P2 (#2) on #300: a bottom-sweep release leaves a scroll listener
-    // armed to finish the release. If the reader then pins/dismisses (a general
-    // background refresh) WITHOUT scrolling first, the layout-effect take branch
-    // must detach that stale listener — otherwise a scroll during the refetch
-    // runs the stale release and clears min-height while the refetch is still
-    // locked, letting the sequential refetch shrink/clamp the document under the
-    // reader.
+    // armed to finish the release. If a genuine background refresh (pull-to-
+    // refresh / focus) then takes the lock WITHOUT the reader scrolling first,
+    // the layout-effect take branch must detach that stale listener — otherwise
+    // a scroll during the refetch runs the stale release and clears min-height
+    // while the refetch is still locked, letting the sequential refetch
+    // shrink/clamp the document under the reader. (A mutation no longer
+    // refetches, so the general refresh is driven here by an explicit
+    // invalidation — the pull-to-refresh / focus path.)
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
-    let releasePin: (() => void) | null = null;
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    let releaseRefresh: (() => void) | null = null;
     let calls = 0;
     const fetchPage = vi.fn((cursor: string | null) => {
       calls += 1;
-      // 1 = initial load, 2 = post-sweep refetch (let both settle so the sweep
-      // releases into the deferred state); 3 = the post-pin refetch, held open so
-      // isRefreshing stays true while we probe the general lock.
-      if (calls <= 2) return source.getHomeItems({ cursor, groupByFeed: true, limit: 100 });
+      // 1 = initial load (settles so the sweep — which no longer refetches —
+      // arms its deferred release off the local removal); 2 = the background
+      // refresh, held open so isRefreshing stays true while we probe the
+      // general lock's take branch.
+      if (calls <= 1) return source.getHomeItems({ cursor, groupByFeed: true, limit: 100 });
       return new Promise<Awaited<ReturnType<typeof source.getHomeItems>>>(
         (resolve) => {
-          releasePin = () =>
+          releaseRefresh = () =>
             resolve(source.getHomeItems({ cursor, groupByFeed: true, limit: 100 }));
         },
       );
     });
+    const viewKey = `gp-general-relock-${viewKeySeq++}`;
     const { container } = renderWithProviders(
       <ItemList
-        viewKey={`gp-general-relock-${viewKeySeq++}`}
+        viewKey={viewKey}
         fetchPage={fetchPage}
         emptyLabel="All caught up."
         groupByFeed
       />,
-      { source },
+      { source, queryClient },
     );
     await screen.findAllByTestId('item-row');
 
@@ -1673,18 +1454,18 @@ describe('ItemList', () => {
     expect(before).toBeGreaterThan(0);
 
     // Bottom sweep → deferred release armed (slack held, scroll listener live).
+    // The sweep no longer refetches, so the release lands off the local removal.
     await user.click(screen.getAllByTestId('group-sweep')[0]);
-    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(body.style.minHeight).not.toBe(''));
     expect(scroll.getScrollY()).toBe(before);
 
-    // A pin (general background refresh) WITHOUT scrolling: the take branch grabs
-    // a fresh lock and must drop the stale deferred-release listener.
-    const survivor = container.querySelector('[data-item-id]');
+    // A genuine background refresh (pull-to-refresh / focus) WITHOUT scrolling:
+    // the take branch grabs a fresh lock and must drop the stale
+    // deferred-release listener.
     act(() => {
-      source.stateStore.set(survivor!.getAttribute('data-item-id')!, 'pinned', true);
+      void queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
     });
-    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
 
     // The reader scrolls up mid-refetch. With the stale listener detached this is
     // a no-op on the lock; if it weren't, the stale release would clear
@@ -1697,7 +1478,7 @@ describe('ItemList', () => {
 
     // Settle the held refetch so the lock releases cleanly.
     await act(async () => {
-      releasePin?.();
+      releaseRefresh?.();
     });
     await waitFor(() => expect(body.style.minHeight).toBe(''));
   });
@@ -1710,26 +1491,14 @@ describe('ItemList', () => {
     // one fixed — moving the scroll position and shifting every row above. The
     // single-dismiss path takes the same anchor opt-out (+ height freeze) the
     // Sweep uses so the offset holds exactly and only the rows below the
-    // dismissed one slide up — but, unlike Sweep, holds the opt-out until the
-    // refetch settles (see the held-across-refetch regression below).
+    // dismissed one slide up. The opt-out is applied synchronously around the
+    // local removal (a mutation no longer refetches, so there's nothing to hold
+    // it through) and handed back once the shorter row-list has painted.
     const source = new MockDataSource(`test-${Math.random()}`);
     const seed = await source.getHomeItems();
-
-    let release: (() => void) | null = null;
-    let callCount = 0;
-    const fetchPage = vi.fn(() => {
-      callCount++;
-      if (callCount === 1) {
-        return Promise.resolve({ items: seed.items, nextCursor: null });
-      }
-      // Hold the post-dismiss refetch open so isRefreshing stays true while we
-      // read the lock.
-      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>(
-        (resolve) => {
-          release = () => resolve({ items: seed.items, nextCursor: null });
-        },
-      );
-    });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
 
     const { container } = renderWithProviders(
       <ItemList
@@ -1747,44 +1516,41 @@ describe('ItemList', () => {
     const anchorWrites = recordOverflowAnchorWrites(body);
 
     // Mark the first (visible) row Done — the single-dismiss store path every
-    // row-level Done action funnels through.
+    // row-level Done action funnels through. The height freeze + anchor opt-out
+    // are applied synchronously, while the row is still on screen.
     act(() => {
       source.stateStore.hide(firstId);
     });
-    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
 
-    // The body was opted out of scroll anchoring while the row left the DOM, so
-    // its removal couldn't rewind window.scrollY — and the height was frozen so
-    // the shrinking document can't be clamped toward the top either.
+    // The dismissed row really did leave the rendered list...
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
+    );
+    // ...and the body was opted out of scroll anchoring for the frame in which
+    // the row left the DOM, so its removal couldn't rewind window.scrollY.
     expect(anchorWrites).toContain('none');
-    expect(body.style.minHeight).toBe('1000px');
-    // The opt-out is HELD across the whole refetch (unlike Sweep's one-frame
-    // drop): a slow sync's landing re-render must not rewind the scroll to the
-    // top. See the dedicated held-across-refetch regression below.
-    expect(body.style.overflowAnchor).toBe('none');
-    // Sanity: the dismissed row really did leave the rendered list.
-    expect(
-      container.querySelector(`[data-item-id="${firstId}"]`),
-    ).toBeNull();
-
-    // Releasing the held refetch settles isRefreshing, frees the height lock, and
-    // hands anchoring back.
-    act(() => release?.());
+    // No refetch to hold the lock through: once the shorter list paints, the
+    // transient freeze is released and anchoring is handed back.
     await waitFor(() => expect(body.style.minHeight).toBe(''));
     expect(body.style.overflowAnchor).toBe('');
   });
 
   it('opts out of scroll anchoring even when a background refresh already holds the height lock', async () => {
-    // Regression (Codex review on #226): if a pin/dismiss/auto-hide refresh is
-    // already in flight when the reader sweeps, the general layout-effect path
-    // has taken the min-height lock WITHOUT disabling anchoring (correct — it
-    // doesn't remove in-viewport rows). lockBodyHeight() used to bail on
-    // `heightLockedRef.current` before opting anchoring out, so the swept rows
-    // left with anchoring live and the top-snap could recur. The anchor opt-out
-    // is now applied even when reusing an existing lock.
+    // Regression (Codex review on #226): if a background refresh (pull-to-
+    // refresh / focus) is already in flight when the reader sweeps, the general
+    // layout-effect path has taken the min-height lock WITHOUT disabling
+    // anchoring (correct — it doesn't remove in-viewport rows). lockBodyHeight()
+    // used to bail on `heightLockedRef.current` before opting anchoring out, so
+    // the swept rows left with anchoring live and the top-snap could recur. The
+    // anchor opt-out is now applied even when reusing an existing lock. (A
+    // mutation no longer refetches, so the in-flight refresh is driven here by an
+    // explicit invalidation — the pull-to-refresh / focus path.)
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
     const seed = await source.getHomeItems({ groupByFeed: true, limit: 100 });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
 
     let release: (() => void) | null = null;
     let callCount = 0;
@@ -1802,14 +1568,15 @@ describe('ItemList', () => {
       );
     });
 
+    const viewKey = `gp-midrefresh-${viewKeySeq++}`;
     const { container } = renderWithProviders(
       <ItemList
-        viewKey={`gp-midrefresh-${viewKeySeq++}`}
+        viewKey={viewKey}
         fetchPage={fetchPage}
         emptyLabel="All caught up."
         groupByFeed
       />,
-      { source },
+      { source, queryClient },
     );
     await screen.findAllByTestId('item-row');
     const fullRows = container.querySelectorAll('[data-item-id]').length;
@@ -1817,11 +1584,11 @@ describe('ItemList', () => {
     const body = screen.getByTestId('item-list-body');
     Object.defineProperty(body, 'offsetHeight', { value: 1000, configurable: true });
 
-    // Pin a row in a LATER feed to kick off a background refresh without
-    // touching the first section we're about to sweep. The general path takes
-    // the min-height lock — but leaves anchoring ON (the auto-hide guarantee).
+    // Kick off a genuine background refresh (held open) without touching the
+    // first section we're about to sweep. The general path takes the min-height
+    // lock — but leaves anchoring ON (the auto-hide guarantee).
     act(() => {
-      source.stateStore.set(seed.items[seed.items.length - 1].item.id, 'pinned', true);
+      void queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
     });
     await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
     expect(body.style.minHeight).toBe('1000px');
@@ -3881,36 +3648,22 @@ describe('ItemList', () => {
       //
       // The per-feed sticky display window (`displayedByFeed`) is what holds a
       // section to the rows the reader opted into. A Done flip drops the row
-      // from `visibleItems`; the post-Done feed refetch answers with the next
-      // top-N (the dismissed row gone, a fresh row promoted into its slot), and
-      // that fresh row must stay GATED — surfaced only by More/pull-to-refresh,
-      // never auto-slotted in. So the section goes from N to N-1, the survivors
-      // keep their order, and the following section is untouched.
+      // from `visibleItems`; the next top-N (the dismissed row gone, a fresh row
+      // promoted into its slot) must stay GATED — surfaced only by
+      // More/pull-to-refresh, never auto-slotted in. A mutation no longer
+      // refetches (refetchType:'none'), so `items[]` keeps the pre-Done window
+      // and the row leaves purely via the local overlay: the section goes from N
+      // to N-1, the survivors keep their order, and the following section is
+      // untouched.
       const { source, mk } = await makeRows();
       const K = 3;
       // Feed A opens windowed to A0-A2 with an overfetched probe (A3); feed B
       // follows so we can assert the next section never moves.
-      let basePage = [
+      const basePage = [
         mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
         mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
       ];
-      // The post-Done refetch is held open behind a gate the test releases, so we
-      // can assert the no-refill contract AFTER that page is committed to the DOM
-      // — not merely after the local Done flip (which already removes A-1 on its
-      // own). Without this, the assertion could run against the immediate local
-      // state and pass without ever exercising the post-refetch path the sticky
-      // window actually guards (the refetch is where a refill would slot A-4 in).
-      let releaseRefetch: (() => void) | null = null;
-      let calls = 0;
-      const fetchPage = vi.fn(() => {
-        calls += 1;
-        if (calls === 1) return Promise.resolve({ items: basePage, nextCursor: null });
-        return new Promise<{ items: FeedItem[]; nextCursor: string | null }>(
-          (resolve) => {
-            releaseRefetch = () => resolve({ items: basePage, nextCursor: null });
-          },
-        );
-      });
+      const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
       const fetchFeedPage = vi.fn(() =>
         Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
       );
@@ -3933,44 +3686,22 @@ describe('ItemList', () => {
       // Section A opens windowed to A0-A2 (probe A3 not painted); B shows in full.
       expect(idsOf()).toEqual(['A-0', 'A-1', 'A-2', 'B-0', 'B-1']);
 
-      // Server's post-Done page: A's window with A-1 gone and the next row (A-4)
-      // promoted into the freed slot — exactly the page a refill regression would
-      // surface — PLUS a brand-new feed C (its first item just polled in). C-0
-      // exists ONLY in this second page, so it's a refetch-only marker: its
-      // appearance proves the resolved page actually committed to the DOM, rather
-      // than the assertion racing the identical local-hide state (no-refill looks
-      // the same before and after the refetch, which is the whole point).
-      basePage = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3), mk('A', 'Feed A', 4),
-        mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
-        mk('C', 'Feed C', 0),
-      ];
-
       // The reader marks the middle visible row Done — the single-dismiss store
       // path every row-level Done action funnels through (row menu, Done button,
-      // the `d` shortcut, swipe-right). It drops from the rendered list at once,
-      // and the mounted useFeedInvalidation kicks off the (gated) post-Done
-      // refetch.
+      // the `d` shortcut, swipe-right). It drops from the rendered list at once.
       act(() => {
         source.stateStore.hide('A-1');
       });
-      await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
-      // Local Done state, refetch still in flight: A-1 already gone, and the new
-      // feed C has NOT appeared yet (it lives only in the unresolved page).
-      expect(idsOf()).toEqual(['A-0', 'A-2', 'B-0', 'B-1']);
+      // A shrank by exactly one and did NOT refill — the gated A-3/A-4 stay put,
+      // the survivors keep their order, and feed B never moved.
+      await waitFor(() => expect(idsOf()).toEqual(['A-0', 'A-2', 'B-0', 'B-1']));
 
-      // Release the refetch and wait on the refetch-only marker (C-0) so the next
-      // assertion runs strictly AFTER the second page committed — the very moment
-      // a refill regression would slot A-3/A-4 into A's window.
+      // It stays shrunk across a microtask flush — no in-flight refetch can slot
+      // A-3/A-4 into A's window.
       await act(async () => {
-        releaseRefetch?.();
+        await Promise.resolve();
       });
-      await screen.findByText('Feed C 0');
-
-      // Second page committed: A shrank by exactly one and did NOT refill — the
-      // promoted A-3/A-4 stay gated — the survivors keep their order, feed B never
-      // moved, and only the genuinely-new feed C surfaced.
-      expect(idsOf()).toEqual(['A-0', 'A-2', 'B-0', 'B-1', 'C-0']);
+      expect(idsOf()).toEqual(['A-0', 'A-2', 'B-0', 'B-1']);
       // …and A-4 is still reachable on demand — A keeps offering More.
       expect(
         screen.getByTestId('group-more').getAttribute('data-feed-more'),
@@ -5258,10 +4989,15 @@ describe('ItemList', () => {
       });
       await screen.findAllByTestId('item-row');
 
-      // Sweep the unpinned rows. The pinned A-0 stays visible; the base query
-      // refetch is held open by the gate, so isFetching stays true.
+      // Sweep the unpinned rows (a local overlay change — a mutation no longer
+      // refetches). The pinned A-0 stays visible.
       await act(async () => {
         source.stateStore.hideMany(['A-1', 'A-2'], Date.now());
+      });
+      // A genuine background refresh (pull-to-refresh / focus) starts a held
+      // refetch, so isFetching stays true while we probe the section's More.
+      await act(async () => {
+        void queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
       });
       await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
 
@@ -5326,9 +5062,10 @@ describe('ItemList', () => {
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
+      const viewKey = `psm-fail-drain-${viewKeySeq++}`;
       renderWithProviders(
         <ItemList
-          viewKey={`psm-fail-drain-${viewKeySeq++}`}
+          viewKey={viewKey}
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
@@ -5339,11 +5076,10 @@ describe('ItemList', () => {
       );
       await screen.findAllByTestId('item-row');
 
-      // Pin a row → useFeedInvalidation invalidates ['feed'] → refetch (held
-      // open). The pinned row stays visible, so the section (and its More) is
-      // untouched.
+      // A genuine background refresh (pull-to-refresh / focus) → refetch (held
+      // open). No rows are removed, so the section (and its More) is untouched.
       await act(async () => {
-        source.stateStore.set('A-0', 'pinned', true);
+        void queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
       });
       await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
 
@@ -5413,9 +5149,10 @@ describe('ItemList', () => {
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
+      const viewKey = `psm-global-cancel-${viewKeySeq++}`;
       renderWithProviders(
         <ItemList
-          viewKey={`psm-global-cancel-${viewKeySeq++}`}
+          viewKey={viewKey}
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
@@ -5429,9 +5166,10 @@ describe('ItemList', () => {
       expect(screen.getByTestId('group-more')).toBeInTheDocument();
       expect(screen.getByTestId('more-btn')).toBeInTheDocument();
 
-      // Pin a row → invalidate → base refetch (held) → isFetching true.
+      // A genuine background refresh (pull-to-refresh / focus) → base refetch
+      // (held) → isFetching true.
       await act(async () => {
-        source.stateStore.set('A-0', 'pinned', true);
+        void queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
       });
       await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
 
@@ -5515,12 +5253,16 @@ describe('ItemList', () => {
       });
       await screen.findAllByTestId('item-row');
 
-      // Simulate a Sweep: mark all displayed rows Done locally + the global
-      // useFeedInvalidation handler fires → base refetch (held open by the
-      // gate). At this point `items[]` is still the pre-Sweep window and
-      // visibleItems for A is empty.
+      // Simulate a Sweep: mark all displayed rows Done locally. A mutation no
+      // longer refetches, so `items[]` keeps the pre-Sweep window and
+      // visibleItems for A is empty → the phantom header renders.
       await act(async () => {
         source.stateStore.hideMany(['A-0', 'A-1', 'A-2'], Date.now());
+      });
+      // A genuine background refresh (pull-to-refresh / focus) starts a held
+      // base refetch, so isFetching stays true while we tap the phantom More.
+      await act(async () => {
+        void queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
       });
       await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
 
@@ -5562,18 +5304,13 @@ describe('ItemList', () => {
       const user = userEvent.setup();
       const { source, mk } = await makeRows();
       const K = 3;
-      // Only feed A is present, no pins. After Sweep marks A-0..A-2 Done,
-      // the refetch returns the fresh top non-Done page (A-3..A-5 + probe).
-      // All those ids are blocked by the sticky window; without the phantom
-      // header path the page would collapse to the empty state.
-      const calls: FeedItem[][] = [
-        [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3)],
-        [mk('A', 'Feed A', 3), mk('A', 'Feed A', 4), mk('A', 'Feed A', 5), mk('A', 'Feed A', 6)],
-      ];
-      let callIdx = 0;
-      const fetchPage = vi.fn(() =>
-        Promise.resolve({ items: calls[Math.min(callIdx++, calls.length - 1)], nextCursor: null }),
-      );
+      // Only feed A is present, no pins. Sweep marks A-0..A-2 Done; a mutation
+      // no longer refetches, so `items[]` keeps the pre-Sweep window (A-0..A-2 +
+      // the A-3 probe). Every displayed id is now Done and the probe stays gated,
+      // so without the phantom header path the page would collapse to the empty
+      // state.
+      const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3)];
+      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
       const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) =>
         Promise.resolve(
           cursor === '0'
@@ -5601,10 +5338,11 @@ describe('ItemList', () => {
       await act(async () => {
         source.stateStore.hideMany(['A-0', 'A-1', 'A-2'], Date.now());
       });
-      await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
 
       // No item rows render — but the section header + More button do.
-      expect(container.querySelectorAll('[data-item-id]')).toHaveLength(0);
+      await waitFor(() =>
+        expect(container.querySelectorAll('[data-item-id]')).toHaveLength(0),
+      );
       const aMore = screen
         .getAllByTestId('group-more')
         .find((b) => b.getAttribute('data-feed-more') === 'A');
@@ -5623,39 +5361,27 @@ describe('ItemList', () => {
 
     it('after Sweep, the section does not auto-refill with `perFeedLimit − pinned` server-newer rows; tap More pulls the next page', async () => {
       // Captures the intended Sweep semantics: marking a section's unpinned
-      // rows Done clears them and triggers the global feed invalidation. The
-      // refetch returns the server's fresh top non-Done rows (pinned at the
-      // top of the section, then the next unread), but the sticky display
-      // window blocks the new rows — only the pinned ones survive in view.
-      // Without this, every Sweep silently pulled `perFeedLimit − pinned`
-      // fresh rows just to fill the slots back up.
+      // rows Done clears them from view. A mutation no longer refetches, so
+      // `items[]` keeps the pre-Sweep window (the pin at the top, then the next
+      // unread + probe); the sticky display window blocks the gated rows from
+      // auto-sliding up. Without this, every Sweep silently pulled
+      // `perFeedLimit − pinned` fresh rows just to fill the slots back up.
       const user = userEvent.setup();
       const { source, mk } = await makeRows();
       const K = 3;
       // Pin A-0 BEFORE the first read so the displayed window opens with the
-      // pin at the top — useful as the section-header anchor that survives a
-      // full Sweep (the pinned row stays put; the rest get marked Done).
+      // pin at the top — the section-header anchor that survives a full Sweep
+      // (the pinned row stays put; the rest get marked Done).
       source.stateStore.set('A-0', 'pinned', true);
-      // First fetch: A-0 (pinned) at top of A's section + A-1, A-2 (the rest
-      // of the window) + A-3 probe. After Sweep of A-1/A-2, the refetch
-      // returns A-0 (pinned) + A-3, A-4 (the next non-Done) + A-5 probe.
-      // The sticky window must block A-3/A-4 from auto-appearing.
-      const calls: FeedItem[][] = [
-        [
-          mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
-          mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
-        ],
-        [
-          mk('A', 'Feed A', 0), mk('A', 'Feed A', 3), mk('A', 'Feed A', 4), mk('A', 'Feed A', 5),
-          mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
-        ],
+      // A-0 (pinned) at top of A's section + A-1, A-2 (the rest of the window)
+      // + A-3 probe. After Sweep of A-1/A-2, the gated A-3/A-4 must NOT slide up.
+      const base = [
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+        mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
       ];
-      let callIdx = 0;
-      const fetchPage = vi.fn(() =>
-        Promise.resolve({ items: calls[Math.min(callIdx++, calls.length - 1)], nextCursor: null }),
-      );
-      // After Sweep + tap More, cursor='1' — only A-0 (pinned) is still in
-      // the sticky/items overlap for A, so the More tap fetches from offset 1.
+      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
+      // After Sweep + tap More, cursor='1' — only A-0 (pinned) is still a
+      // non-Done sticky overlap for A, so the More tap fetches from offset 1.
       const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) =>
         Promise.resolve(
           cursor === '1'
@@ -5684,21 +5410,19 @@ describe('ItemList', () => {
       );
       expect(beforeIds).toEqual(['A-0', 'A-1', 'A-2', 'B-0', 'B-1']);
 
-      // Sweep A-1 and A-2 by marking them Done. The global
-      // useFeedInvalidation handler fires on the store update and triggers a
-      // refetch — which returns A-0 (pinned) plus the fresh top non-Done
-      // items A-3..A-5 (+ A-5 probe).
+      // Sweep A-1 and A-2 by marking them Done — a local overlay change, no
+      // refetch. Section retains only the pinned row — no auto-refill of the
+      // swept slots from A-3/A-4. B is untouched.
       await act(async () => {
         source.stateStore.hideMany(['A-1', 'A-2'], Date.now());
       });
-      await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
-
-      // Section retains only the pinned row — no auto-refill of the swept
-      // slots from A-3/A-4. B is untouched.
-      const afterSweepIds = [...container.querySelectorAll('[data-item-id]')].map(
-        (el) => el.getAttribute('data-item-id'),
+      await waitFor(() =>
+        expect(
+          [...container.querySelectorAll('[data-item-id]')].map((el) =>
+            el.getAttribute('data-item-id'),
+          ),
+        ).toEqual(['A-0', 'B-0', 'B-1']),
       );
-      expect(afterSweepIds).toEqual(['A-0', 'B-0', 'B-1']);
 
       // A still offers a section "More" (items[] for A has rows past the
       // sticky overlap, so feedsWithMore picks it up).
