@@ -11,10 +11,10 @@ compatibility_date = "2024-11-01"
 # Variables). Real secrets (service_role key, JWT secret) never go here — this
 # Worker doesn't need them.
 #
-# [vars]
-# SUPABASE_ORIGIN  = "https://<your-ref>.supabase.co"   # the origin to forward to
-# APP_ORIGINS      = "https://readmo.app,https://www.readmo.app"  # CORS allow-list
-# MIN_CLIENT_BUILD = "0"   # version gate: "0" = disarmed; raise past a bad build
+[vars]
+SUPABASE_ORIGIN  = "https://psjfdgsfvmwnntxptnin.supabase.co"   # the origin to forward to
+APP_ORIGINS      = "https://readmo.app,https://www.readmo.app"  # CORS allow-list
+MIN_CLIENT_BUILD = "0"   # version gate: "0" = disarmed; raise past a bad build
 
 # Bind api.readmo.app to this Worker. Either keep this route block (the zone must
 # be in this Cloudflare account), or instead add api.readmo.app as a Worker
