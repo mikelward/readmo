@@ -1868,7 +1868,7 @@ trade density for a larger card, in three steps:
   from before this setting existed. Absent key ⇒ this, so existing installs and
   the first paint keep today's look.
 - **Title + thumbnail** (`thumbnail`) — a larger title (up to three lines) with a
-  **left-floated thumbnail**; the title wraps beside the image and the meta line
+  **right-floated thumbnail**; the title wraps beside the image and the meta line
   sits below. **No excerpt.** The image is sourced client-side from data already
   present — the first proxied image in the sanitized `contentHtml`, else the
   first `image/*` **enclosure** routed through the `/api/img` proxy (guardrail

@@ -140,7 +140,7 @@
   overflow: hidden;
 }
 
-/* Title + thumbnail: image floated left, bigger title beside it wrapping
+/* Title + thumbnail: image floated right, bigger title beside it wrapping
  * underneath, no excerpt. The body switches to block flow so the float works
  * and the title/meta can reclaim the full width below the image. */
 .item-row--thumbnail {
@@ -166,10 +166,10 @@
 
 .item-row__lead {
   display: block;
-  float: left;
+  float: right;
   width: 116px;
   aspect-ratio: 3 / 2;
-  margin: 2px 12px 4px 0;
+  margin: 2px 0 4px 12px;
   border-radius: 8px;
   overflow: hidden;
   /* A tint while the image loads (and the box a failed load would leave — but
