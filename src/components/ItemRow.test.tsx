@@ -760,6 +760,43 @@ describe('ItemRow', () => {
       expect(screen.queryByTestId('item-lead-image')).toBeNull();
     });
 
+    it('excerpt layout hides the preview behind a placeholder when the headline is a spoiler', () => {
+      // Default provider stack: allowed + "Hide sports spoilers" on → the
+      // rewrite is shown, so the body would repeat the hidden result.
+      const spoiler: FeedItem = {
+        item: {
+          ...FEED_ITEM.item,
+          title: 'Man Utd beat Arsenal 3-1 to go top',
+          spoilerFreeTitle: 'EPL MNU v ARS spoiler',
+          contentHtml: '<p>Man Utd beat Arsenal 3-1 at Old Trafford.</p>',
+        },
+        feed: FEED_ITEM.feed,
+      };
+      renderLayout('excerpt', spoiler);
+      const excerpt = screen.getByTestId('item-excerpt');
+      expect(excerpt).toHaveTextContent('Spoilers hidden. Tap to see article.');
+      // The real body — and the scoreline in it — never renders.
+      expect(excerpt).not.toHaveTextContent('3-1');
+      expect(excerpt).toHaveClass('item-row__excerpt--spoiler');
+    });
+
+    it('excerpt layout shows the real preview when spoiler hiding is off', () => {
+      window.localStorage.setItem(HIDE_SPORTS_SPOILERS_KEY, '0');
+      const spoiler: FeedItem = {
+        item: {
+          ...FEED_ITEM.item,
+          title: 'Man Utd beat Arsenal 3-1 to go top',
+          spoilerFreeTitle: 'EPL MNU v ARS spoiler',
+          contentHtml: '<p>Man Utd beat Arsenal 3-1 at Old Trafford.</p>',
+        },
+        feed: FEED_ITEM.feed,
+      };
+      renderLayout('excerpt', spoiler);
+      const excerpt = screen.getByTestId('item-excerpt');
+      expect(excerpt).toHaveTextContent('Man Utd beat Arsenal 3-1 at Old Trafford.');
+      expect(excerpt).not.toHaveClass('item-row__excerpt--spoiler');
+    });
+
     it('thumbnail layout renders the content image inside the body link', () => {
       renderLayout('thumbnail', withImage);
       const img = screen.getByTestId('item-lead-image');

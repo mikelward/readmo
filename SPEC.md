@@ -1876,7 +1876,12 @@ trade density for a larger card, in three steps:
   image fails to load, **collapses to the title-only look** — never an empty box.
 - **Title + excerpt** (`excerpt`) — a larger title with a **three-line preview**
   of the feed body (`contentHtml` stripped to plain text, entities decoded; *not*
-  the AI `summary`), no image.
+  the AI `summary`), no image. When the headline itself is a **hidden sports
+  spoiler** (the row shows the spoiler-free rewrite — see *Spoiler-free sports
+  headlines*), the preview is replaced by a muted placeholder — **"Spoilers
+  hidden. Tap to see article."** — since the feed body almost always repeats the
+  result the headline just concealed; the row-body tap still opens the full
+  article.
 
 The thumbnail and excerpt both render **inside the row-body link**, so the row
 keeps its **two tap zones** (body link + right-side button) — the image/excerpt
@@ -2496,7 +2501,10 @@ page's discipline is unchanged.
     setting-off, or no rewrite cached → the original headline, untouched. The
     rewritten row/headline carries a **subtle, non-interactive marker**
     (`VisibilityOff` glyph, no tap zone — guardrail #2) whose native tooltip
-    reveals the original. **Share** (row and reader) sends the *displayed*
+    reveals the original. In the **Title + excerpt** layout the body preview is
+    likewise replaced by a **"Spoilers hidden. Tap to see article."**
+    placeholder (the feed body would otherwise repeat the concealed result — see
+    *Article layout*). **Share** (row and reader) sends the *displayed*
     headline too, so it never leaks the hidden scoreline into the share sheet.
     TODO: make it per-feed as well as per-user.
   - **Backwards compatible (guardrail #11).** The client ships first and safe:
