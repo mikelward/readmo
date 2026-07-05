@@ -34,11 +34,11 @@ import { usePersistentStore } from './usePersistentStore';
 //    articles so it's ready before the reader opens them (see
 //    useSummaryPrewarm). A family-only control (the toggle is offered only to
 //    family users in Settings); off-list users never fire the Edge call anyway.
-//  - list-layout (default 'title'): how much of each article a feed row shows —
-//    the compact title-only row ('title', today's default), the compact row plus
-//    a small right thumbnail ('thumbnail-small'), a larger title with a large
-//    right thumbnail ('thumbnail'), or a larger title with a preview excerpt
-//    ('excerpt'). See ItemRow / lib/itemPreview.
+//  - list-layout (default 'thumbnail-small'): how much of each article a feed
+//    row shows — the compact title-only row ('title'), the compact row plus a
+//    small right thumbnail ('thumbnail-small', the default), a larger title with
+//    a large right thumbnail ('thumbnail'), or a larger title with a preview
+//    excerpt ('excerpt'). See ItemRow / lib/itemPreview.
 
 export const HIDE_ON_SCROLL_KEY = 'readmo:hide-on-scroll';
 export const BOTTOM_BAR_KEY = 'readmo:bottom-bar';
@@ -57,12 +57,12 @@ const DEFAULT_BOTTOM_BAR: BottomBarPosition = 'list';
 
 const DEFAULT_ITEM_SORT: ItemSort = 'newest';
 
-/** How much of each article a feed row shows. 'title' = compact title-only row
- * (the default, unchanged from today); 'thumbnail-small' = the compact row + a
- * small right thumbnail; 'thumbnail' = larger title + a large right thumbnail;
- * 'excerpt' = larger title + a preview excerpt. */
+/** How much of each article a feed row shows. 'title' = compact title-only row;
+ * 'thumbnail-small' = the compact row + a small right thumbnail (the default);
+ * 'thumbnail' = larger title + a large right thumbnail; 'excerpt' = larger title
+ * + a preview excerpt. */
 export type ListLayout = 'title' | 'thumbnail-small' | 'thumbnail' | 'excerpt';
-const DEFAULT_LIST_LAYOUT: ListLayout = 'title';
+const DEFAULT_LIST_LAYOUT: ListLayout = 'thumbnail-small';
 
 const CHANGE_EVENT = 'readmo:reading-pref-changed';
 
@@ -118,7 +118,10 @@ const listLayoutStore = createPersistentStore<ListLayout>({
   changeEvent: CHANGE_EVENT,
   defaultValue: DEFAULT_LIST_LAYOUT,
   parse: (raw) =>
-    raw === 'thumbnail-small' || raw === 'thumbnail' || raw === 'excerpt'
+    raw === 'title' ||
+    raw === 'thumbnail-small' ||
+    raw === 'thumbnail' ||
+    raw === 'excerpt'
       ? raw
       : DEFAULT_LIST_LAYOUT,
 });
@@ -240,9 +243,9 @@ export function useAutoSummarizePinned(): {
 }
 
 /** Chronological order aside, how much of each article a feed row shows —
- * title-only ('title', default), compact + small right thumbnail
- * ('thumbnail-small'), larger title + large right thumbnail ('thumbnail'), or
- * title + preview excerpt ('excerpt'). Per-device. See ItemRow. */
+ * title-only ('title'), compact + small right thumbnail ('thumbnail-small', the
+ * default), larger title + large right thumbnail ('thumbnail'), or title +
+ * preview excerpt ('excerpt'). Per-device. See ItemRow. */
 export function useListLayout(): {
   listLayout: ListLayout;
   setListLayout: (next: ListLayout) => void;

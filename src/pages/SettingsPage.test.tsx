@@ -339,14 +339,13 @@ describe('SettingsPage — Article layout', () => {
   const group = () =>
     screen.getByRole('radiogroup', { name: 'Article layout' });
 
-  it('offers the four layout options, defaulting to Title only', () => {
+  it('offers the four layout options, defaulting to Small thumbnail', () => {
     renderWithProviders(<SettingsPage />);
-    expect(within(group()).getByRole('radio', { name: 'Title only' })).toHaveAttribute(
-      'aria-checked',
-      'true',
-    );
     expect(
       within(group()).getByRole('radio', { name: 'Small thumbnail' }),
+    ).toHaveAttribute('aria-checked', 'true');
+    expect(
+      within(group()).getByRole('radio', { name: 'Title only' }),
     ).toBeInTheDocument();
     expect(
       within(group()).getByRole('radio', { name: 'Large thumbnail' }),
@@ -359,12 +358,13 @@ describe('SettingsPage — Article layout', () => {
   it('persists the chosen layout to localStorage', async () => {
     const user = userEvent.setup();
     renderWithProviders(<SettingsPage />);
+    // Pick a non-default option so the click actually changes the stored value.
     await user.click(
-      within(group()).getByRole('radio', { name: 'Small thumbnail' }),
+      within(group()).getByRole('radio', { name: 'Large thumbnail' }),
     );
-    expect(window.localStorage.getItem(LIST_LAYOUT_KEY)).toBe('thumbnail-small');
+    expect(window.localStorage.getItem(LIST_LAYOUT_KEY)).toBe('thumbnail');
     expect(
-      within(group()).getByRole('radio', { name: 'Small thumbnail' }),
+      within(group()).getByRole('radio', { name: 'Large thumbnail' }),
     ).toHaveAttribute('aria-checked', 'true');
   });
 });

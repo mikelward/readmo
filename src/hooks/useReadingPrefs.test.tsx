@@ -281,9 +281,9 @@ describe('useReadingPrefs', () => {
       );
     }
 
-    it("defaults to 'title' (the compact row)", () => {
+    it("defaults to 'thumbnail-small' (the compact row + a small thumbnail)", () => {
       render(<LayoutProbe />);
-      expect(screen.getByRole('button')).toHaveTextContent('title');
+      expect(screen.getByRole('button')).toHaveTextContent('thumbnail-small');
     });
 
     it("reads a persisted 'thumbnail' choice on mount", () => {
@@ -293,11 +293,11 @@ describe('useReadingPrefs', () => {
       expect(screen.getByRole('button')).toHaveTextContent('thumbnail');
     });
 
-    it("falls back to 'title' for an unknown persisted value", () => {
+    it("falls back to the default for an unknown persisted value", () => {
       window.localStorage.setItem(LIST_LAYOUT_KEY, 'bogus');
       resetReadingPrefsCacheForTest();
       render(<LayoutProbe />);
-      expect(screen.getByRole('button')).toHaveTextContent('title');
+      expect(screen.getByRole('button')).toHaveTextContent('thumbnail-small');
     });
 
     it("reads a persisted 'thumbnail-small' choice on mount", () => {
@@ -308,6 +308,10 @@ describe('useReadingPrefs', () => {
     });
 
     it('persists a change through all four values', () => {
+      // Start from 'title' explicitly so the cycle covers every value regardless
+      // of which one is the default.
+      window.localStorage.setItem(LIST_LAYOUT_KEY, 'title');
+      resetReadingPrefsCacheForTest();
       render(<LayoutProbe />);
       act(() => screen.getByRole('button').click());
       expect(screen.getByRole('button')).toHaveTextContent('thumbnail-small');
