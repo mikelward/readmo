@@ -17,8 +17,9 @@ export function DataSourceProvider({
   );
 }
 
-/** Access the active DataSource. PR1 provides a MockDataSource; PR2 swaps in
- * SupabaseDataSource with no change to any consumer. */
+/** Access the active DataSource. `main.tsx` provides a `SupabaseDataSource` when
+ * Supabase is configured (the live path) and a `MockDataSource` otherwise (the
+ * backend-less local/demo fallback) — consumers see only this interface. */
 export function useDataSource(): DataSource {
   const ctx = useContext(DataSourceContext);
   if (!ctx) {
