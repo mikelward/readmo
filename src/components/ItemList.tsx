@@ -86,6 +86,19 @@ const SWEEP_COOLDOWN_MS = 400;
 // this bounds it while still skipping past hidden runs to the next visible rows.
 const MAX_AUTO_SKIP_PAGES = 10;
 
+// Animation frames the no-refetch height freeze is held past the row-removal
+// commit before it's released. A dismiss (a lone Done or a Sweep) triggers a
+// momentary, self-inflicted document collapse: the list reflows and briefly
+// reports a far shorter height, recovering within ~2 frames. Releasing the
+// freeze on the removal commit — before that dip bottoms out — leaves the
+// collapse unguarded, so the browser clamps window.scrollY toward the top and
+// the clamped offset sticks once the height recovers (the jump-to-top after a
+// dismiss). Holding the min-height across these frames keeps the document tall
+// the whole time, so the offset is never clamped. Kept generous enough to clear
+// the dip on a 60Hz display; releaseBodyHeight still restores the offset if a
+// frame lands mid-collapse, so the exact count isn't load-bearing.
+const DISMISS_SETTLE_FRAMES = 4;
+
 /** How many list elements a page set renders: in the group-by-feed view, one
  * header per feed section plus each non-collapsed row (a collapsed feed shows
  * only its header); otherwise just the row count. The list is contiguous by
@@ -1653,6 +1666,11 @@ export function ItemList({
   // that self-induced echo (scrollY back on this value) from a real reader
   // scroll, so it never mistakes its own reflow for the reader scrolling up.
   const heldReleaseScrollYRef = useRef<number | null>(null);
+  // The animation-frame chain deferring a no-refetch freeze release across the
+  // dismiss's momentary document collapse (see DISMISS_SETTLE_FRAMES and the
+  // release effect near the bottom of the component). Held so a fresh lock, a
+  // background refresh, or unmount can cancel it.
+  const dismissReleaseRafRef = useRef<number | null>(null);
   // Tear down a deferred height-lock release (the scroll listener armed by
   // releaseBodyHeight). Safe to call when none is pending.
   const detachHeightRelease = useCallback(() => {
@@ -1661,6 +1679,15 @@ export function ItemList({
       heightReleaseScrollRef.current = null;
     }
     heldReleaseScrollYRef.current = null;
+  }, []);
+  // Cancel a pending settle-frame release (see the release effect below). Safe to
+  // call when none is scheduled.
+  const cancelDismissRelease = useCallback(() => {
+    if (dismissReleaseRafRef.current !== null) {
+      if (typeof cancelAnimationFrame === 'function')
+        cancelAnimationFrame(dismissReleaseRafRef.current);
+      dismissReleaseRafRef.current = null;
+    }
   }, []);
   // Freeze the body at its current rendered height. Idempotent: a no-op if the
   // lock is already held (so a sweep landing mid-refresh doesn't re-measure at a
@@ -2255,28 +2282,63 @@ export function ItemList({
     }
   }, [isRefreshing, showMissState, releaseBodyHeight, detachHeightRelease]);
 
-  // Backstop release for the sweep pre-lock. lockBodyHeight() takes the lock
-  // synchronously at sweep time and relies on a background refresh to drive the
-  // release (the layout effect above, on the isRefreshing→false edge). But that
-  // refresh might never start: when the reader is offline and sweeps only PART
-  // of the list, React Query's invalidated refetch is paused (isRefreshing never
-  // flips) and — because rows remain — `showMissState` stays false, so the
-  // layout effect never re-runs. The body would then keep its pre-sweep
-  // min-height forever: a persistent blank tail below the surviving rows. This
-  // post-paint effect lets a held lock go once nothing is actually refreshing,
-  // so the document settles to its natural height. It's a no-op online, where
-  // isRefreshing is held true across the bridging refetch (the layout effect
-  // still owns that release), and re-runs after a sweep via `visibleItems`.
+  // Backstop release for a no-refetch freeze (a lone Done or a Sweep — neither
+  // refetches, so `isRefreshing` never flips and the layout effect above never
+  // drives the release). lockBodyHeight() takes the freeze synchronously while
+  // the dismissed rows are still on screen; this post-paint effect drives the
+  // release once nothing is refreshing. It also covers the offline partial-sweep
+  // case the layout effect misses: with rows remaining, `showMissState` stays
+  // false so that effect never re-runs, and without this the body would keep its
+  // pre-dismiss min-height forever (a persistent blank tail). Re-runs after a
+  // dismiss via `visibleItems`; a no-op online, where isRefreshing is held true
+  // across a bridging refetch and the layout effect still owns that release.
+  //
+  // The release is deferred a few animation frames past the row-removal commit
+  // rather than run on it — see DISMISS_SETTLE_FRAMES. A dismiss triggers a
+  // momentary document collapse a beat AFTER the removal paints; clearing the
+  // freeze on the removal commit leaves that dip unguarded and the browser clamps
+  // window.scrollY toward the top (the reported jump). Holding the min-height
+  // across the settle frames keeps the document tall through the dip, so the
+  // offset is never clamped; the release then lands on the recovered height.
   useEffect(() => {
-    if (!isRefreshing && heightLockedRef.current && bodyRef.current) {
+    // Any re-run supersedes a pending settle: cancel it, then re-decide below.
+    // (A fresh removal reschedules; a refresh taking over cancels for good.)
+    cancelDismissRelease();
+    if (isRefreshing || !heightLockedRef.current || !bodyRef.current) return;
+    const runRelease = () => {
+      const el = bodyRef.current;
+      if (!el) return;
       releaseBodyHeight();
       if (anchorLockedRef.current) {
-        bodyRef.current.style.overflowAnchor = '';
+        el.style.overflowAnchor = '';
         anchorLockedRef.current = false;
       }
       heightLockedRef.current = false;
+    };
+    if (typeof requestAnimationFrame !== 'function') {
+      // No rAF (SSR / older jsdom): release synchronously, as before.
+      runRelease();
+      return;
     }
-  }, [isRefreshing, visibleItems.length, releaseBodyHeight]);
+    let frames = DISMISS_SETTLE_FRAMES;
+    const step = () => {
+      // A background refresh grabbing the lock, or the body unmounting, aborts —
+      // the refresh's own layout effect (or the next mount) then owns the release.
+      if (isRefreshing || !heightLockedRef.current || !bodyRef.current) {
+        dismissReleaseRafRef.current = null;
+        return;
+      }
+      if (frames > 0) {
+        frames -= 1;
+        dismissReleaseRafRef.current = requestAnimationFrame(step);
+        return;
+      }
+      dismissReleaseRafRef.current = null;
+      runRelease();
+    };
+    dismissReleaseRafRef.current = requestAnimationFrame(step);
+    return cancelDismissRelease;
+  }, [isRefreshing, visibleItems.length, releaseBodyHeight, cancelDismissRelease]);
 
   // Drop the sweep's scroll-anchoring opt-out one frame after the swept rows
   // leave the DOM — a passive (post-paint) effect, so the browser has already
