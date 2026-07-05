@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast';
@@ -38,6 +38,11 @@ function setScrollY(y: number) {
   Object.defineProperty(window, 'scrollY', { value: y, configurable: true });
 }
 
+// The max scrollable offset the sampler computes for a given document height.
+function maxOf(scrollHeight: number) {
+  return Math.max(0, scrollHeight - window.innerHeight);
+}
+
 describe('useScrollDiag', () => {
   let source: MockDataSource;
 
@@ -50,6 +55,11 @@ describe('useScrollDiag', () => {
   afterEach(() => {
     clearDiag();
     setScrollY(0);
+    vi.useRealTimers();
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      value: 0,
+      configurable: true,
+    });
   });
 
   it('records a Done flip and shows a sticky "Done — Report bug" toast', () => {
@@ -86,6 +96,28 @@ describe('useScrollDiag', () => {
       id: 'item-1',
       title: 'Big News',
     });
+  });
+
+  it('samples document height and records a resize when it collapses without a scroll', () => {
+    vi.useFakeTimers();
+    const setHeight = (h: number) =>
+      Object.defineProperty(document.documentElement, 'scrollHeight', {
+        value: h,
+        configurable: true,
+      });
+    setHeight(2000); // max = 2000 − innerHeight
+    renderDiag(true, source);
+    const before = maxOf(2000);
+    // The document collapses (e.g. a background resync reshaping the list) with
+    // no scroll event — the sampler should still catch it.
+    setHeight(1000);
+    act(() => vi.advanceTimersByTime(200));
+
+    const resize = getDiagBuffer().find((e) => e.kind === 'resize');
+    expect(resize).toBeTruthy();
+    expect(resize?.max).toBe(maxOf(1000));
+    expect(resize?.delta).toBe(maxOf(1000) - before);
+    vi.useRealTimers();
   });
 
   it('records window scroll positions with deltas', () => {

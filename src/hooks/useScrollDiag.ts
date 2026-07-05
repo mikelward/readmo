@@ -49,6 +49,28 @@ export function useScrollDiag(enabled: boolean): void {
     };
     window.addEventListener('scroll', onScroll, { passive: true });
 
+    // Sample the document height so a collapse that happens WITHOUT a scroll —
+    // e.g. a background resync/refetch reshaping the list while the reader sits
+    // idle — is recorded with its timing. That collapse is what leaves the
+    // document too short, so the next interaction clamps the scroll. Only a
+    // material change is logged (not every pixel), and only while enabled.
+    const HEIGHT_SAMPLE_MS = 150;
+    const MATERIAL_MAX_DELTA_PX = 40;
+    let lastMax = maxScroll();
+    const heightTimer = window.setInterval(() => {
+      const m = maxScroll();
+      if (Math.abs(m - lastMax) >= MATERIAL_MAX_DELTA_PX) {
+        recordDiag({
+          kind: 'resize',
+          y: Math.round(window.scrollY),
+          delta: m - lastMax,
+          max: m,
+          locked: bodyLocked(),
+        });
+        lastMax = m;
+      }
+    }, HEIGHT_SAMPLE_MS);
+
     const unsubscribe = ds.stateStore.subscribeMutations((id, changed) => {
       // Only a fresh Done flip — pins/favorites/opened and un-dones don't move
       // the list the way a dismiss does.
@@ -87,6 +109,7 @@ export function useScrollDiag(enabled: boolean): void {
 
     return () => {
       window.removeEventListener('scroll', onScroll);
+      window.clearInterval(heightTimer);
       unsubscribe();
     };
   }, [enabled, ds, showToast, navigate]);
