@@ -12,6 +12,38 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="readmo" />
     <title>readmo</title>
+    <script>
+      // Boot guard: recover from a blank first load after a deploy. The service
+      // worker can briefly hand a stale index.html that references the previous
+      // build's content-hashed entry (/assets/index-<oldhash>.js); that file is
+      // gone from the current deployment, so the module fails to load and the
+      // page paints empty until a manual refresh. Reload once (one-shot, guarded
+      // against a loop) to fetch the current index.html + hashes. Must run before
+      // the entry <script> so it can catch that entry failing — which is why this
+      // is inline here rather than in a module. Uses its own one-shot budget
+      // (readmo:entry-reload, mirrors ENTRY_RELOAD_GUARD_KEY in
+      // src/lib/chunkReload.ts) which main.tsx clears on a successful boot, so a
+      // second stale entry later in the session auto-reloads again.
+      (function () {
+        var KEY = 'readmo:entry-reload';
+        window.addEventListener(
+          'error',
+          function (event) {
+            var el = event && event.target;
+            if (!el || (el.tagName !== 'SCRIPT' && el.tagName !== 'LINK')) return;
+            if (!/\/assets\//.test(el.src || el.href || '')) return;
+            try {
+              if (sessionStorage.getItem(KEY) !== null) return;
+              sessionStorage.setItem(KEY, '1');
+            } catch (e) {
+              return;
+            }
+            location.reload();
+          },
+          true,
+        );
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
