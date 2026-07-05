@@ -397,7 +397,14 @@ export function ItemRow({
         // off-screen rows don't fetch until scrolled near.
         <span className="item-row__lead" aria-hidden="true">
           <img
-            className="item-row__lead-img"
+            className={
+              'item-row__lead-img' +
+              // Thumbnail layout: the article's own image can reveal the result
+              // the rewritten headline hid (a scoreboard, a celebration), so
+              // blur it. A body tap still opens the full article to reveal it —
+              // no extra tap zone (guardrail #2).
+              (headline.rewritten ? ' item-row__lead-img--spoiler' : '')
+            }
             src={leadImage ?? undefined}
             alt=""
             loading="lazy"
@@ -405,6 +412,17 @@ export function ItemRow({
             data-testid="item-lead-image"
             onError={() => setImageFailed(true)}
           />
+          {headline.rewritten ? (
+            // Centered marker over the blur so the obscured image reads as
+            // deliberate (spoiler-free), not a broken/loading thumbnail — the
+            // same VisibilityOff glyph the title carries. Non-interactive.
+            <span
+              className="item-row__lead-spoiler-icon"
+              data-testid="item-lead-spoiler-icon"
+            >
+              <VisibilityOff width={22} height={22} />
+            </span>
+          ) : null}
         </span>
       ) : null}
       <span className="item-row__title-text">

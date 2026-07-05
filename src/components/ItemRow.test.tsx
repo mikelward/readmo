@@ -825,5 +825,35 @@ describe('ItemRow', () => {
       // Still a normal, tappable row.
       expect(screen.getByTestId('item-title')).toHaveTextContent('A test headline');
     });
+
+    const spoilerWithImage: FeedItem = {
+      item: {
+        ...withImage.item,
+        title: 'Man Utd beat Arsenal 3-1 to go top',
+        spoilerFreeTitle: 'EPL MNU v ARS spoiler',
+      },
+      feed: FEED_ITEM.feed,
+    };
+
+    it('thumbnail layout blurs the image and marks it when the headline is a spoiler', () => {
+      // Default provider stack: allowed + "Hide sports spoilers" on → the image
+      // (which could show the scoreboard) is blurred rather than shown.
+      renderLayout('thumbnail', spoilerWithImage);
+      const img = screen.getByTestId('item-lead-image');
+      // Still the same proxied image, still inside the body link (no new tap
+      // zone) — just blurred, with a marker so it reads as deliberate.
+      expect(img).toHaveAttribute('src', PROXIED_IMG);
+      expect(img).toHaveClass('item-row__lead-img--spoiler');
+      expect(screen.getByTestId('item-title')).toContainElement(img);
+      expect(screen.getByTestId('item-lead-spoiler-icon')).toBeInTheDocument();
+    });
+
+    it('thumbnail layout shows the image un-blurred when spoiler hiding is off', () => {
+      window.localStorage.setItem(HIDE_SPORTS_SPOILERS_KEY, '0');
+      renderLayout('thumbnail', spoilerWithImage);
+      const img = screen.getByTestId('item-lead-image');
+      expect(img).not.toHaveClass('item-row__lead-img--spoiler');
+      expect(screen.queryByTestId('item-lead-spoiler-icon')).toBeNull();
+    });
   });
 });
