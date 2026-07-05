@@ -381,7 +381,10 @@ export function ItemList({
     // keyboard scroll — means the reader is taking control again, so drop any
     // pending scroll pin and stop re-anchoring to the old row.
     const releasePin = () => {
-      if (!exitTopAnchorRef.current) return;
+      // Always clear the inline style, even if the anchor ref was already
+      // consumed (for example because the anchor row disappeared before cleanup).
+      // The style is global to the rendered list body and must not leak across
+      // unmounts or setting toggles.
       exitTopAnchorRef.current = null;
       pinnedScrollYRef.current = null;
       setBodyOverflowAnchor('');
@@ -435,7 +438,11 @@ export function ItemList({
       document.removeEventListener('wheel', releasePin);
       document.removeEventListener('keydown', releasePin);
       document.removeEventListener('scroll', onScroll);
-      // Toggling the feature off mid-gesture must not strand buffered ids.
+      // Toggling the feature off (or unmounting during a release-time scroll
+      // pin) must not strand buffered ids OR the temporary overflow-anchor
+      // opt-out. Otherwise the next list would inherit anchoring disabled and
+      // the stale pin could keep fighting scroll after the feature is gone.
+      releasePin();
       touchActiveRef.current = false;
       buffered.clear();
     };
