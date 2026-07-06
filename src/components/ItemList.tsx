@@ -1760,6 +1760,21 @@ export function ItemList({
   // tracker skipped the spike, so the ref still holds it) keeps the restore aimed
   // at where the reader really was. First-write-wins; consumed by the settle.
   const spikeIntendedYRef = useRef<number | null>(null);
+  // WRITE-ONCE latch: has this device EVER exhibited the dynamic-toolbar
+  // innerHeight spike in this view? Set the first time a spike is observed in a
+  // dismiss/sweep flow (the commit sample, the sweep tap, or the settle watch) and
+  // NEVER reset.
+  // `holdFor` reads it to size the deferred hold spike-safe (a durable extra
+  // viewport of tail so a later spike can't clamp) on a spiking device, tight on an
+  // ordinary one. Deliberately coarse — "does this device spike?", not "did THIS
+  // dismiss spike?": a per-dismiss flag has to be set/preserved/reset correctly
+  // across the fresh-lock, reused-lock, sweep-tap, settle, hold-clear, and restore
+  // paths, and every one of those transitions was a bug (Codex P2s ×4 on #406). A
+  // monotonic latch has no lifecycle, so none of those edges exist. The cost is
+  // that once a device has spiked, its later honest dismisses also get the
+  // (off-screen, protective) tail — harmless, since it genuinely is a spiking
+  // device. A fresh mount re-latches on the first spike it sees.
+  const deviceSpikesRef = useRef(false);
   // The sweep's scroll-anchoring opt-out (overflow-anchor: none) has a SHORTER
   // life than the height lock: it's needed only for the single layout where the
   // swept in-viewport rows leave the DOM, whereas the min-height freeze must
@@ -1833,6 +1848,7 @@ export function ItemList({
     // settle restores the right place even if no async event samples the spike.
     if (!viewportIsHonest()) {
       spikeSeenAtCommitRef.current = true;
+      deviceSpikesRef.current = true; // latch: this device spikes
       if (spikeIntendedYRef.current === null)
         spikeIntendedYRef.current = readerScrollYRef.current;
     }
@@ -2022,22 +2038,38 @@ export function ItemList({
       const trailing = root
         ? Math.max(0, root.getBoundingClientRect().bottom - bodyRect.bottom)
         : 0;
+      // How much viewport the hold must keep below `target`. TIGHT (`innerHeight`) on
+      // an ordinary device — no spurious blank tail. SPIKE-SAFE (`2 × innerHeight`)
+      // once this device has EVER shown the dynamic-toolbar spike (`deviceSpikesRef`).
+      // A tight hold keeps `target` scrollable only at the honest viewport, but on a
+      // spiking device the toolbar keeps doubling `innerHeight` for SECONDS after the
+      // dismiss settles, and each spike drops `maxScroll = doc − innerHeight` below
+      // `target` and clamps the reader up (the reported "still jumping": a spike after
+      // the Done dragged them −262px). Holding `target + 2 × innerHeight` keeps
+      // `maxScroll` at or above `target` even under a doubled viewport, so a later
+      // spike can't clamp. The extra ~1 viewport of tail is the intended
+      // empty-below-after-a-bottom-sweep state; it clears as the reader scrolls up.
+      const holdViewport = deviceSpikesRef.current
+        ? VIEWPORT_SPIKE_PEAK_RATIO * layoutViewportHeight()
+        : window.innerHeight;
       // The unlocked document's true content height and max scroll, used to decide
       // whether the natural document already holds `target` (i.e. whether to
       // release). Floor-free: chrome above + body + trailing footer below.
       const naturalDocHeight = bodyTopDoc + naturalBody + trailing;
-      const naturalMax = Math.max(0, naturalDocHeight - window.innerHeight);
+      const naturalMax = Math.max(0, naturalDocHeight - holdViewport);
       if (target <= naturalMax) {
-        // The natural (unlocked) document already holds `target`.
+        // The natural (unlocked) document already holds `target` — no min-height
+        // needed. Still restore a clamped reader to `target` (a spike restore hands
+        // us the pre-clamp offset while `window.scrollY` is the clamped one); a no-op
+        // for the on-scroll path, where `target` IS the current offset.
         heldReleaseScrollYRef.current = null;
+        if (Math.round(window.scrollY) !== target) window.scrollTo(0, target);
         return 0;
       }
-      // Body height that keeps the document tall enough to scroll to `target`.
-      // The trailing footer sits below the body, so the body needs `trailing` LESS
-      // height to put `target` at the document's max scroll — without subtracting
-      // it the footer is pushed a toolbar's height below the fold and that much
-      // extra slack stays scrollable until the release clears.
-      const neededBody = target + window.innerHeight - bodyTopDoc - trailing;
+      // Body height that keeps the document tall enough to scroll to `target`. The
+      // trailing footer sits below the body, so the body needs `trailing` LESS height
+      // to put `target` at the document's max scroll.
+      const neededBody = target + holdViewport - bodyTopDoc - trailing;
       el.style.minHeight = `${neededBody}px`;
       // Force the just-applied min-height to reflow BEFORE restoring the scroll,
       // so window.scrollTo clamps against the new (taller) max rather than the
@@ -2057,14 +2089,15 @@ export function ItemList({
     // scrollY.
     const holdTarget = targetY ?? Math.round(window.scrollY);
     if (holdFor(holdTarget) <= 0) return;
-    // Slack still held: shrink it in lockstep as the reader scrolls (they're now
+    // Slack still held: shrink it in lockstep as the reader scrolls UP (they're now
     // driving, so the settle reads as their scrolling, not a jump), and drop it
-    // entirely once the natural document can hold where they are.
+    // entirely once the natural document can hold where they are under a spike.
     const onScroll = () => {
       if (!bodyRef.current) {
         detachHeightRelease();
         return;
       }
+      const y = Math.round(window.scrollY);
       // Clearing then re-applying min-height inside holdFor momentarily clamps
       // window.scrollY (the document shrinks for one synchronous beat), and the
       // browser fires a `scroll` event for that clamp even though holdFor
@@ -2073,13 +2106,17 @@ export function ItemList({
       // reader. Acting on it would run holdFor(clampedTop) and drop the slack —
       // snapping the reader to the top after a bottom-group sweep, the very jump
       // this whole mechanism exists to prevent.
-      if (
-        heldReleaseScrollYRef.current !== null &&
-        Math.round(window.scrollY) === heldReleaseScrollYRef.current
-      ) {
+      if (heldReleaseScrollYRef.current !== null && y === heldReleaseScrollYRef.current) {
         return;
       }
-      if (holdFor(Math.round(window.scrollY)) <= 0) detachHeightRelease();
+      // Reader scrolled DOWN into the held blank tail (at or past the held offset):
+      // leave the spike-safe hold intact. Re-running holdFor here would either yank
+      // them back up to the held offset or grow the tail to chase them downward —
+      // both wrong. The tail is theirs to scroll into (it's the swept rows' space).
+      if (y >= holdTarget) return;
+      // Reader scrolled UP: shrink the hold to match their new position (still
+      // spike-safe), releasing entirely once the natural document holds them.
+      if (holdFor(y) <= 0) detachHeightRelease();
     };
     heightReleaseScrollRef.current = onScroll;
     window.addEventListener('scroll', onScroll, { passive: true });
@@ -2215,6 +2252,7 @@ export function ItemList({
       // Both persist until the settle pass (which the commit kicks off) consumes them.
       if (!viewportIsHonest()) {
         spikeSeenAtCommitRef.current = true;
+        deviceSpikesRef.current = true; // latch: this device spikes
         if (spikeIntendedYRef.current === null)
           spikeIntendedYRef.current = readerScrollYRef.current;
       }
@@ -2609,8 +2647,10 @@ export function ItemList({
       if (!viewportIsHonest()) {
         // Spiking: the ceiling is bogusly low and the browser may clamp scrollY.
         // Absorb whatever it does (record y) so the clamp jump isn't later read
-        // as a reader move once the viewport is honest again.
+        // as a reader move once the viewport is honest again. This device spikes, so
+        // the deferred hold must be spike-safe (durable) once we release.
         sawSpike = true;
+        deviceSpikesRef.current = true; // latch: this device spikes
         lastWatchY = y;
         return;
       }
@@ -2636,30 +2676,30 @@ export function ItemList({
       // OLD bottom, not the row-shorter new one. `curMaxScroll` reads the true
       // settled height only once the freeze is released.
       if (heightLockedRef.current) return;
-      if (intended > max + 1) {
-        // A sweep/dismiss near the bottom removed more in-viewport content than the
-        // reader had below them, so the pre-spike offset now sits past the collapsed
-        // natural bottom. Sweeps only ever remove rows the reader can see (never
-        // off-screen content above them), so the content ABOVE the reader is
-        // unchanged and they must stay exactly where they were — with a blank tail
-        // below — not snap down to the new bottom (the reported jump: they land at
-        // the shortened bottom instead of holding position). Hand the offset to the
-        // deferred-release min-height hold (the same mechanism a non-spike bottom
-        // sweep uses), which keeps `intended` a valid offset and shrinks the tail in
-        // lockstep as the reader scrolls up. Stop the spike-watch so the two don't
-        // fight over the scroll position.
+      if (intended > max + 1 || intended - y > 1) {
+        // Restore the reader's pre-spike offset AND size the deferred hold to keep it
+        // valid. `releaseBodyHeight(intended)` handles both cases: when `intended`
+        // sits past the collapsed natural bottom (a sweep removed more on-screen
+        // content than the reader had below them) it holds a blank tail so they stay
+        // exactly put rather than snapping to the new bottom; when it fits, it
+        // restores them there. On a spiking device the hold is spike-safe, so a LATER
+        // spike can't re-clamp the offset it just restored — sizing the hold for the
+        // still-clamped `window.scrollY` instead would leave it spike-vulnerable.
+        // Stop the spike-watch so the two don't fight over the scroll position.
         releaseBodyHeight(intended);
         intended = null;
         return;
-      }
-      if (intended - y > 1) {
-        window.scrollTo(0, intended);
       }
     };
     const runRelease = () => {
       const el = bodyRef.current;
       if (!el) return;
-      releaseBodyHeight();
+      // Size the release for the offset the reader will END UP at. When a spike is
+      // pending restore that's `intended` (the pre-spike offset), NOT the still-
+      // clamped `window.scrollY` — otherwise the hold is sized for the clamp and the
+      // watch's follow-up restore to `intended` sits above the held max. With no
+      // spike pending, hold the reader's current offset as before.
+      releaseBodyHeight(sawSpike && intended != null ? intended : undefined);
       if (anchorLockedRef.current) {
         el.style.overflowAnchor = '';
         anchorLockedRef.current = false;

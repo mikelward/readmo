@@ -2241,6 +2241,281 @@ describe('ItemList', () => {
     }
   });
 
+  it('holds the reader through a LATE spike that arrives after the settle released', async () => {
+    // Regression (scroll-jump capture after #402/#405): the freeze held during the
+    // dismiss, but the settle then relaxed to a TIGHT hold — and on this device the
+    // dynamic toolbar kept spiking. ~8s later a fresh spike ramped innerHeight and
+    // dropped maxScroll below the reader, dragging them −262px toward the top. Because
+    // this device spiked during the dismiss, the deferred hold is now sized SPIKE-SAFE
+    // (a durable ~1-viewport tail), so a later spike keeps maxScroll ≥ the offset and
+    // can't clamp.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`late-spike-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    const rows = await screen.findAllByTestId('item-row');
+    const lastId = rows[rows.length - 1]
+      .closest('li')!
+      .getAttribute('data-item-id')!;
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    const rowCount = container.querySelectorAll('[data-item-id]').length;
+    expect(rowCount).toBeGreaterThan(8);
+    scroll.setScrollY(scroll.maxScroll());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    const before = scroll.getScrollY();
+
+    // Dismiss at the bottom while the viewport is spiking (innerHeight 800 vs. true
+    // 400) — the device exhibits the bug, so the hold becomes spike-safe.
+    act(() => {
+      scroll.setViewport(800);
+      scroll.setScrollY(scroll.getScrollY());
+      source.stateStore.hide(lastId);
+      scroll.setViewport(400);
+    });
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${lastId}"]`)).toBeNull(),
+    );
+    raf.flush();
+    // Held at the offset with a durable (spike-safe) tail.
+    expect(scroll.getScrollY()).toBe(before);
+    expect(body.style.minHeight).not.toBe('');
+
+    // SECONDS LATER: a fresh dynamic-toolbar spike (no dismiss, no settle running).
+    // The tight hold would have let maxScroll = doc − 800 drop below `before` and
+    // clamped the reader up; the spike-safe hold keeps doc = before + 800, so
+    // maxScroll stays at `before` and they do NOT move.
+    act(() => {
+      scroll.setViewport(800);
+      scroll.setScrollY(scroll.getScrollY());
+      window.dispatchEvent(new Event('resize'));
+    });
+    expect(scroll.getScrollY()).toBe(before);
+    raf.restore();
+  });
+
+  it('keeps a spike-restored offset spike-safe even when the clamp fit under the natural max', async () => {
+    // A big spike can bake a clamp to a LOW offset that fits under the 2× natural
+    // max, so runRelease's release must be sized for the HIGH pre-spike offset it
+    // restores the reader to (`intended`), not that clamped offset — otherwise the
+    // hold sits below where the restore puts them and a later spike clamps again.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`fit-under-max-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    const rows = await screen.findAllByTestId('item-row');
+    const lastId = rows[rows.length - 1]
+      .closest('li')!
+      .getAttribute('data-item-id')!;
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    const rowCount = container.querySelectorAll('[data-item-id]').length;
+    expect(rowCount).toBeGreaterThan(8);
+    scroll.setScrollY(scroll.maxScroll());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    const before = scroll.getScrollY();
+
+    // A HUGE spike bakes the clamp all the way to 0 (fits under the 2× natural max)
+    // BEFORE the freeze is taken, so the restore — not the freeze — is what recovers.
+    act(() => {
+      scroll.setViewport(rowCount * 100 + 800);
+      scroll.setScrollY(scroll.getScrollY());
+      source.stateStore.hide(lastId);
+      scroll.setViewport(400);
+    });
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${lastId}"]`)).toBeNull(),
+    );
+    raf.flush();
+    expect(scroll.getScrollY()).toBe(before);
+    expect(body.style.minHeight).not.toBe('');
+
+    // A later ordinary 2× toolbar expansion must not re-clamp the restored offset.
+    act(() => {
+      scroll.setViewport(800);
+      scroll.setScrollY(scroll.getScrollY());
+      window.dispatchEvent(new Event('resize'));
+    });
+    expect(scroll.getScrollY()).toBe(before);
+    raf.restore();
+  });
+
+  it('holds later dismisses spike-safe once the device has ever spiked (the latch)', async () => {
+    // Option #1 (write-once device-spikes latch): after a device shows the toolbar
+    // spike even once, its LATER dismisses are held spike-safe too — even a fully
+    // honest one — so a subsequent toolbar expansion can't clamp. This is the whole
+    // point of the latch: no per-dismiss flag to reset to tight on the honest second
+    // dismiss (which is where the earlier flag lifecycle kept springing leaks).
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`latch-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    const lastId = () =>
+      [...container.querySelectorAll('li[data-item-id]')].pop()!.getAttribute(
+        'data-item-id',
+      )!;
+
+    // 1) A first dismiss WHILE spiking latches the device.
+    scroll.setScrollY(scroll.maxScroll());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    const firstId = lastId();
+    act(() => {
+      scroll.setViewport(800);
+      scroll.setScrollY(scroll.getScrollY());
+      source.stateStore.hide(firstId);
+      scroll.setViewport(400);
+    });
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
+    );
+    raf.flush();
+
+    // 2) Scroll to the top so the first hold clears.
+    scroll.setScrollY(0);
+    act(() => window.dispatchEvent(new Event('scroll')));
+    expect(body.style.minHeight).toBe('');
+
+    // 3) Back at the bottom, a SECOND, fully HONEST dismiss (no spike at all).
+    scroll.setScrollY(scroll.maxScroll());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    const before = scroll.getScrollY();
+    const secondId = lastId();
+    act(() => {
+      source.stateStore.hide(secondId);
+    });
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${secondId}"]`)).toBeNull(),
+    );
+    raf.flush();
+    // Held with a durable (spike-safe) tail even though this dismiss was honest —
+    // the latch persists. A per-dismiss flag would have gone tight here.
+    expect(scroll.getScrollY()).toBe(before);
+    expect(body.style.minHeight).not.toBe('');
+
+    // 4) A later toolbar expansion must not clamp the reader.
+    act(() => {
+      scroll.setViewport(800);
+      scroll.setScrollY(scroll.getScrollY());
+      window.dispatchEvent(new Event('resize'));
+    });
+    expect(scroll.getScrollY()).toBe(before);
+    raf.restore();
+  });
+
+  it('keeps the hold spike-safe when a Sweep samples a tap-time spike that reverts before commit', async () => {
+    // The animated Sweep observes a tap-time toolbar spike in sweepThese (which
+    // latches the device), then reverts before the ~200ms commit. The durable hold
+    // must still be spike-safe, or the next toolbar expansion re-clamps the reader.
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`tap-spike-revert-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    const lis = [...container.querySelectorAll('li[data-item-id]')];
+    const rowCount = lis.length;
+    expect(rowCount).toBeGreaterThan(8);
+    // Only the bottom four rows are in view, so Sweep removes just those (the list
+    // stays non-empty).
+    act(() =>
+      lis.forEach((li, i) =>
+        setVisibilityForTest(li as HTMLElement, i >= rowCount - 4 ? 1 : 0),
+      ),
+    );
+    scroll.setScrollY(scroll.maxScroll());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    const before = scroll.getScrollY();
+
+    // Spike is live at the TAP (sweepThese samples it), then reverts before the
+    // animated ~200ms commit runs lockBodyHeight.
+    act(() => scroll.setViewport(800));
+    await user.click(screen.getByTestId('sweep-btn'));
+    act(() => scroll.setViewport(400));
+    await waitFor(() =>
+      expect(container.querySelectorAll('[data-item-id]').length).toBeLessThan(
+        rowCount,
+      ),
+    );
+    raf.flush();
+    expect(scroll.getScrollY()).toBe(before);
+    expect(body.style.minHeight).not.toBe('');
+
+    // A later toolbar expansion must not clamp — the hold stayed spike-safe even
+    // though the tap-time spike had reverted by commit.
+    act(() => {
+      scroll.setViewport(800);
+      scroll.setScrollY(scroll.getScrollY());
+      window.dispatchEvent(new Event('resize'));
+    });
+    expect(scroll.getScrollY()).toBe(before);
+    raf.restore();
+  });
+
   it('does NOT treat pinch-zoom as a viewport spike (no snap to a stale offset on zoom-out)', async () => {
     // Codex P2 on #402: while pinch-zoomed the visual viewport is legitimately far
     // shorter than the layout innerHeight (scale > 1) — that is NOT a toolbar
@@ -2534,7 +2809,13 @@ describe('ItemList', () => {
     raf.flush();
     // The reader keeps their scroll — the clamp does not snap them back.
     expect(scroll.getScrollY()).toBe(scrolledTo);
+    // This device spiked, so the hold is spike-safe (durable); on a short list the
+    // reader's new spot can still be within a spike's reach of the bottom, so a
+    // small tail persists to protect it. It clears once they scroll up out of reach.
+    scroll.setScrollY(0);
+    act(() => window.dispatchEvent(new Event('scroll')));
     expect(body.style.minHeight).toBe('');
+    expect(scroll.getScrollY()).toBe(0);
     raf.restore();
   });
 
