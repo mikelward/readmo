@@ -1462,6 +1462,21 @@ negligible and off every critical path. See the External services table in
      clamps `scrollY` and the browser fires a `scroll` event for it; the deferred
      release ignores a scroll that lands back on the offset it is already holding,
      so its own reflow echo can't be mistaken for the reader scrolling to the top.)
+   - **A transient viewport spike is restored, not just the height.** The height
+     freeze holds `scrollHeight`, but a dismiss can still clamp the scroll a
+     different way: Chromium's mobile dynamic toolbar occasionally reports a
+     bogus, momentarily-doubled `window.innerHeight` for a frame or two right as
+     the row leaves. Since `maxScroll = scrollHeight − innerHeight`, the doubled
+     viewport slashes the ceiling below where the reader sits and the browser
+     clamps `scrollY` toward the top; the viewport reverts a frame later but the
+     clamped offset sticks. No `min-height` can counter an `innerHeight` change,
+     so after a dismiss the list **restores the reader's pre-dismiss offset once
+     the viewport un-spikes**. The spike fires-and-reverts on the browser's own
+     clock — often before the removal-settle frames even start, with the revert
+     lagging them — so the restore watches the real `scroll`/`resize` events for a
+     short bounded window (not just animation frames), keyed off the `innerHeight`
+     spike itself so a genuine reader scroll (which never spikes the viewport) is
+     never overridden.
    - **A genuine background refresh still freezes the height.** Pull-to-refresh,
      window-focus, and remount *do* refetch, and React Query refetches the loaded
      pages *sequentially*, so the rendered list can briefly shrink mid-refetch.
