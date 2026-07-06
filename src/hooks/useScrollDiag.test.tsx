@@ -194,9 +194,12 @@ describe('useScrollDiag', () => {
 
     const scrolls = getDiagBuffer().filter((e) => e.kind === 'scroll');
     expect(scrolls).toHaveLength(2);
-    expect(scrolls[0]).toMatchObject({ y: 800, delta: 800 });
+    // Every scroll carries the live viewport, so a transient innerHeight spike
+    // that clamps the scroll (and reverts before the next done/resize/probe) is
+    // captured on the scroll event the clamp itself fires.
+    expect(scrolls[0]).toMatchObject({ y: 800, delta: 800, vh: window.innerHeight });
     // The jump toward the top shows as a negative delta.
-    expect(scrolls[1]).toMatchObject({ y: 0, delta: -800 });
+    expect(scrolls[1]).toMatchObject({ y: 0, delta: -800, vh: window.innerHeight });
   });
 
   it('freezes the report and navigates to /debug/scroll on Report bug', () => {

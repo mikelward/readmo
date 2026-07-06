@@ -128,6 +128,31 @@ describe('scrollDiag', () => {
           locked: false,
         }),
       ).toBe('scroll y=534 (-622) max=534 lock=off');
+    });
+
+    it('shows the viewport height on a scroll row (between max and lock)', () => {
+      // A viewport SPIKE clamps the scroll for a frame; the scroll event it fires
+      // is the only sample that still sees it, so vh must render on scroll rows —
+      // right next to max (max = doc − vh), so a clamp from a spiked viewport is
+      // legible at the jump rather than reading as an unexplained drop.
+      expect(
+        formatDiagEntry({
+          t: 0,
+          kind: 'scroll',
+          y: 3058,
+          delta: -615,
+          max: 3911,
+          vh: 852,
+          locked: true,
+        }),
+      ).toBe('scroll y=3058 (-615) max=3911 vh=852 lock=on');
+      // Omitted when absent (older buffers / SSR), so existing rows are unchanged.
+      expect(formatDiagEntry({ t: 0, kind: 'scroll', y: 10, delta: 5 })).toBe(
+        'scroll y=10 (+5)',
+      );
+    });
+
+    it('appends the ceiling to a titled done row', () => {
       expect(
         formatDiagEntry({ t: 0, kind: 'done', y: 1156, id: 'z', title: 'T', max: 1178 }),
       ).toBe('Done z — T max=1178');

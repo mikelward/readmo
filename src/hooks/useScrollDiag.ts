@@ -57,6 +57,12 @@ export function useScrollDiag(enabled: boolean): void {
         delta: y - lastY,
         max: maxScroll(),
         locked: bodyLocked(),
+        // Capture the viewport on every scroll: the dynamic-toolbar innerHeight
+        // spike that clamps the scroll reverts within a frame, so the scroll
+        // event the clamp fires is the only sample that still sees it (the next
+        // done/resize/probe is too late). Without it a viewport clamp reads as an
+        // unexplained jump-to-top.
+        vh: window.innerHeight,
       });
       lastY = y;
     };
