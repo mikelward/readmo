@@ -1465,11 +1465,14 @@ describe('ItemList', () => {
     const survivors = container.querySelectorAll('[data-item-id]').length;
     // Post-sweep document is genuinely sub-viewport (content < innerHeight).
     expect(survivors * 100 + 100).toBeLessThan(1000);
-    // Held exactly at the offset — the floored scrollHeight didn't hide the footer,
-    // so there's no toolbar-height of extra scrollable slack.
-    await waitFor(() => expect(body.style.minHeight).not.toBe(''));
+    // Held at the offset. The defensive freeze first over-provisions the tail (to
+    // survive a viewport spike), then relaxes to the tight hold once the settle
+    // releases — at which point the floored scrollHeight still counts the footer,
+    // so there's no toolbar-height of extra scrollable slack. Wait for that tight
+    // release (min-height stays non-empty throughout).
+    await waitFor(() => expect(scroll.maxScroll()).toBe(before));
     expect(scroll.getScrollY()).toBe(before);
-    expect(scroll.maxScroll()).toBe(before);
+    expect(body.style.minHeight).not.toBe('');
   });
 
   it('folds the held offset into a fresh lock when a second in-viewport Done lands before the reader scrolls', async () => {
@@ -1780,17 +1783,18 @@ describe('ItemList', () => {
     raf.restore();
   });
 
-  it('restores the reader after a dismiss at the bottom clamps via a transient viewport jump', async () => {
+  it('defensively holds the reader when a dismiss at the bottom triggers a viewport spike', async () => {
     // Regression (scroll-jump diagnostics, Pixel/Brave): dismissing at the very
     // bottom of the list snapped the page toward the top. The probe timeline
     // showed the document height (scrollHeight) was stable — what changed was
     // window.innerHeight, which momentarily DOUBLED (Chromium's dynamic toolbar
     // reporting a doubled viewport for a frame). maxScroll = scrollHeight −
     // innerHeight, so the doubled viewport slashed the ceiling and the browser
-    // clamped the reader down; the viewport reverted a frame later but the clamp
-    // stuck. The min-height freeze can't counter an innerHeight change (it only
-    // holds scrollHeight), so the release now restores the reader's tracked
-    // offset once the viewport settles.
+    // clamped the reader down. Rather than let that clamp fire and undo it after
+    // (a visible jump-then-restore), the freeze is now sized to survive a PEAK
+    // spike: it holds enough height that even a doubled innerHeight keeps maxScroll
+    // at or above where the reader sits, so the clamp never happens in the first
+    // place — the reader holds position with a blank tail below.
     const source = new MockDataSource(`test-${Math.random()}`);
     const seed = await source.getHomeItems({ limit: 100 });
     const fetchPage = vi.fn(() =>
@@ -1839,24 +1843,22 @@ describe('ItemList', () => {
       expect(container.querySelector(`[data-item-id="${lastId}"]`)).toBeNull(),
     );
 
-    // The dynamic toolbar doubles the viewport for a frame: maxScroll collapses
-    // and the browser clamps the reader down and BAKES that offset in (a real
-    // browser mutates the scroll position, it doesn't just clamp on read).
+    // The dynamic toolbar doubles the viewport for a frame. Because the freeze was
+    // sized for a peak (2×) spike while the row was still on screen, maxScroll stays
+    // at or above where the reader is — so the browser does NOT clamp them. They
+    // hold exactly where they were even mid-spike (no jump to undo later).
     scroll.setViewport(800);
     scroll.setScrollY(scroll.getScrollY());
-    // The clamp fires a scroll event — but the lock is on, so the tracked offset
-    // is NOT overwritten with the clamped value.
     act(() => window.dispatchEvent(new Event('scroll')));
-    expect(scroll.getScrollY()).toBeLessThan(before);
+    expect(scroll.getScrollY()).toBe(before);
 
-    // One settle frame runs WHILE the viewport is still doubled, so the release
-    // observes the clamp (scroll pinned at a ceiling below where the document
-    // settles). The viewport then reverts and the remaining frames elapse.
+    // One settle frame runs WHILE the viewport is still doubled; the freeze holds
+    // through it (it never relaxes mid-spike). The viewport then reverts and the
+    // remaining frames release to the tight hold.
     raf.flushOne();
     scroll.setViewport(400);
     raf.flush();
-    // Without the restore the reader would be stuck near the top; with it they
-    // stay EXACTLY where they were — the removed row is below them, so a blank
+    // Held EXACTLY where they were — the removed row is below them, so a blank
     // tail (held min-height) fills the gap rather than snapping them to the new,
     // one-row-shorter bottom.
     expect(scroll.getScrollY()).toBe(before);
@@ -1870,16 +1872,14 @@ describe('ItemList', () => {
     raf.restore();
   });
 
-  it('restores the reader when the viewport spike reverts AFTER the settle frames (real-device timing)', async () => {
+  it('defensively holds through a spike that reverts on its own clock (real-device timing)', async () => {
     // Regression (scroll-jump diagnostics, second capture): the dynamic-toolbar
-    // innerHeight spike fires-and-reverts on the browser's own clock. On a real
-    // device the spike's scroll/resize events routinely arrive before the
-    // passive-effect rAF settle even begins sampling, and the revert lags the
-    // 4-frame release by 50–100 ms — so the rAF sampler alone never sees the
-    // clamp and no restore fires (the reader is left stuck near the top). The
-    // settle now also listens to the real scroll/resize events for a bounded
-    // window, catching the clamp and restoring once the viewport recovers —
-    // even when the whole freeze releases before the revert lands.
+    // innerHeight spike fires-and-reverts on the browser's own clock, its
+    // scroll/resize events routinely arriving before the passive-effect rAF settle
+    // even begins sampling. The defensive freeze doesn't depend on sampling the
+    // spike at all — it was sized for a peak spike at the commit, before the row
+    // left — so the clamp never fires regardless of when (or whether) an event or
+    // frame observes the doubled viewport. The reader holds their pre-spike offset.
     const source = new MockDataSource(`test-${Math.random()}`);
     const seed = await source.getHomeItems({ limit: 100 });
     const fetchPage = vi.fn(() =>
@@ -1918,27 +1918,24 @@ describe('ItemList', () => {
       expect(container.querySelector(`[data-item-id="${lastId}"]`)).toBeNull(),
     );
 
-    // The viewport doubles and the browser clamps — surfaced ONLY via the real
-    // resize/scroll events. Crucially, NO settle frame is flushed during the
-    // spike (unlike the test above), so the old rAF sampler would never observe
-    // the clamp. The spike then reverts, still before any settle frame runs.
+    // The viewport doubles and reverts, surfaced ONLY via the real resize/scroll
+    // events, with NO settle frame flushed during the spike. The freeze absorbs it
+    // either way — maxScroll never drops below the reader, so no clamp fires.
     act(() => {
       scroll.setViewport(800);
       scroll.setScrollY(scroll.getScrollY());
       window.dispatchEvent(new Event('resize'));
       window.dispatchEvent(new Event('scroll'));
     });
-    expect(scroll.getScrollY()).toBeLessThan(before);
+    expect(scroll.getScrollY()).toBe(before);
     act(() => {
       scroll.setViewport(400);
       window.dispatchEvent(new Event('resize'));
     });
 
-    // The settle frames now run against a viewport that already reverted — the
-    // clamp is long gone. Only because the event listeners recorded the spike
-    // does the release restore the reader — held EXACTLY at their pre-spike
-    // offset with a blank tail (the removed row was below them), not snapped down
-    // to the row-shorter bottom.
+    // The settle frames run against the reverted viewport and release to the tight
+    // hold — the reader is held EXACTLY at their pre-spike offset with a blank tail
+    // (the removed row was below them), never snapped down to the row-shorter bottom.
     raf.flush();
     expect(scroll.getScrollY()).toBe(before);
     expect(body.style.minHeight).not.toBe('');
@@ -2152,6 +2149,98 @@ describe('ItemList', () => {
     raf.restore();
   });
 
+  it('defensively holds the reader when Sweeping at the bottom triggers a viewport spike', async () => {
+    // The stated goal, for BOTH Done and Sweep: content ABOVE the removed rows must
+    // not move. This drives the real broom (reduced-motion so it commits
+    // synchronously): the reader is at the bottom with only the last rows in view,
+    // Sweep removes exactly those, and the freeze — taken in commitSweep while they
+    // were still on screen and sized for a peak spike — keeps the dynamic-toolbar
+    // innerHeight jump from clamping the reader. They hold exactly put with a blank
+    // tail where the swept rows were, no jump-then-restore flash.
+    const user = userEvent.setup();
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: query === '(prefers-reduced-motion: reduce)',
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia;
+    try {
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const seed = await source.getHomeItems({ limit: 100 });
+      const fetchPage = vi.fn(() =>
+        Promise.resolve({ items: seed.items, nextCursor: null }),
+      );
+      const { container } = renderWithProviders(
+        <ItemList
+          viewKey={`sweep-defensive-${viewKeySeq++}`}
+          fetchPage={fetchPage}
+          emptyLabel="All caught up."
+        />,
+        { source },
+      );
+      await screen.findAllByTestId('item-row');
+
+      const body = screen.getByTestId('item-list-body');
+      const scroll = installScrollModel(body, container, {
+        innerHeight: 400,
+        rowHeight: 100,
+      });
+      const raf = installManualRaf();
+
+      const lis = [...container.querySelectorAll('li[data-item-id]')];
+      const rowCount = lis.length;
+      expect(rowCount).toBeGreaterThan(8);
+      // Only the bottom four rows are in the viewport; the rest scrolled above. So
+      // Sweep removes just those four and the survivors above keep the list
+      // non-empty (the body stays mounted, so the lock isn't torn down).
+      act(() => {
+        lis.forEach((li, i) =>
+          setVisibilityForTest(li as HTMLElement, i >= rowCount - 4 ? 1 : 0),
+        );
+      });
+
+      // Reader at the very bottom, recorded while the viewport is honest.
+      scroll.setScrollY(scroll.maxScroll());
+      act(() => window.dispatchEvent(new Event('scroll')));
+      const before = scroll.getScrollY();
+      expect(before).toBeGreaterThan(0);
+
+      await user.click(screen.getByTestId('sweep-btn'));
+      await waitFor(() =>
+        expect(container.querySelectorAll('[data-item-id]').length).toBeLessThan(
+          rowCount,
+        ),
+      );
+
+      // The dynamic toolbar doubles the viewport for a frame. The freeze absorbs it
+      // — maxScroll stays at or above where the reader is — so no clamp fires.
+      scroll.setViewport(800);
+      scroll.setScrollY(scroll.getScrollY());
+      act(() => window.dispatchEvent(new Event('scroll')));
+      expect(scroll.getScrollY()).toBe(before);
+
+      scroll.setViewport(400);
+      raf.flush();
+      // Held EXACTLY put — the swept rows were below them, so a blank tail fills the
+      // gap rather than snapping to the collapsed bottom.
+      expect(scroll.getScrollY()).toBe(before);
+      expect(body.style.minHeight).not.toBe('');
+      // The tail is transient: scrolling up clears it.
+      scroll.setScrollY(0);
+      act(() => window.dispatchEvent(new Event('scroll')));
+      expect(body.style.minHeight).toBe('');
+      expect(scroll.getScrollY()).toBe(0);
+      raf.restore();
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
+  });
+
   it('does NOT treat pinch-zoom as a viewport spike (no snap to a stale offset on zoom-out)', async () => {
     // Codex P2 on #402: while pinch-zoomed the visual viewport is legitimately far
     // shorter than the layout innerHeight (scale > 1) — that is NOT a toolbar
@@ -2267,6 +2356,67 @@ describe('ItemList', () => {
     raf.restore();
   });
 
+  it('sizes the spike-proof freeze from innerHeight, not the URL-bar-shrunk visual viewport', async () => {
+    // Codex P2 on #405: with the URL bar visible, visualViewport.height (e.g. 310)
+    // is legitimately shorter than window.innerHeight (400) yet honest (< 1.35×).
+    // The clamp ceiling uses innerHeight and the spike DOUBLES it (→ 800), so the
+    // freeze must budget target + 2×innerHeight. Budgeting from the smaller visible
+    // height left it ~180px short and the browser still clamped at the bottom.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`urlbar-spike-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    const rows = await screen.findAllByTestId('item-row');
+    const lastId = rows[rows.length - 1]
+      .closest('li')!
+      .getAttribute('data-item-id')!;
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    // URL bar visible: visible height 310 < layout innerHeight 400, honest at scale 1.
+    act(() => scroll.setVisualViewport({ height: 310, scale: 1 }));
+    const rowCount = container.querySelectorAll('[data-item-id]').length;
+    expect(rowCount).toBeGreaterThan(8);
+    scroll.setScrollY(scroll.maxScroll());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    const before = scroll.getScrollY();
+
+    act(() => {
+      source.stateStore.hide(lastId);
+    });
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${lastId}"]`)).toBeNull(),
+    );
+
+    // The toolbar doubles innerHeight to 800 (visualViewport stays 310). Because the
+    // freeze was budgeted from innerHeight (400), maxScroll stays at `before` — no
+    // clamp. Sizing from the 310 visible height would have left it short and clamped.
+    scroll.setViewport(800);
+    scroll.setScrollY(scroll.getScrollY());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    expect(scroll.getScrollY()).toBe(before);
+
+    scroll.setViewport(400);
+    raf.flush();
+    expect(scroll.getScrollY()).toBe(before);
+    expect(body.style.minHeight).not.toBe('');
+    raf.restore();
+  });
+
   it('does NOT override a scroll the reader makes during the dismiss settle window', async () => {
     // Codex P2 on #394: the restore must fire only for a genuine viewport clamp,
     // never for a scroll the reader performs during the settle. A reader scroll
@@ -2364,8 +2514,10 @@ describe('ItemList', () => {
       expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
     );
 
-    // The viewport doubles and the clamp is sampled on the first settle frame.
-    scroll.setViewport(800);
+    // A spike BEYOND the defensive ceiling: the freeze absorbs an ordinary ~2×
+    // spike, so to exercise the reactive restore backstop (and the supersede logic
+    // this test covers) the viewport jumps far past 2× and the clamp still fires.
+    scroll.setViewport(rowCount * 100 + 800);
     scroll.setScrollY(scroll.getScrollY());
     act(() => window.dispatchEvent(new Event('scroll')));
     raf.flushOne();
@@ -2445,8 +2597,9 @@ describe('ItemList', () => {
     await waitFor(() =>
       expect(container.querySelector(`[data-item-id="${secondId}"]`)).toBeNull(),
     );
-    const frozen2 = (rowCount - 1) * 100; // min-height frozen at dismiss #2
-    scroll.setViewport(frozen2 - 100); // maxScroll = 100 < mid → clamp
+    // A spike beyond the defensive ceiling (an ordinary 2× spike is now absorbed),
+    // so the clamp still fires from `mid` and the stale-offset restore is exercised.
+    scroll.setViewport(rowCount * 100 + 800);
     scroll.setScrollY(scroll.getScrollY());
     act(() => window.dispatchEvent(new Event('scroll')));
     raf.flushOne();
@@ -2518,9 +2671,10 @@ describe('ItemList', () => {
       expect(container.querySelector(`[data-item-id="${secondId}"]`)).toBeNull(),
     );
 
-    // Settle #2 hits a viewport clamp. The min-height is still frozen at the
-    // dismiss-#1 height (the lock never released), so double past it.
-    scroll.setViewport(rowCount * 100 - 100); // maxScroll = 100 < mid → clamp
+    // Settle #2 hits a viewport clamp beyond the defensive ceiling (an ordinary 2×
+    // spike is now absorbed), so it fires from `mid` and the carry-forward restore
+    // is exercised. The min-height is still frozen from dismiss #1 (never released).
+    scroll.setViewport(rowCount * 100 + 800);
     scroll.setScrollY(scroll.getScrollY());
     act(() => window.dispatchEvent(new Event('scroll')));
     raf.flushOne();
@@ -2592,8 +2746,9 @@ describe('ItemList', () => {
       expect(container.querySelector(`[data-item-id="${secondId}"]`)).toBeNull(),
     );
 
-    // Clamp in settle #2.
-    scroll.setViewport(rowCount * 100 - 100);
+    // Clamp in settle #2 — beyond the defensive ceiling so it fires despite the
+    // freeze (an ordinary 2× spike is now absorbed).
+    scroll.setViewport(rowCount * 100 + 800);
     scroll.setScrollY(scroll.getScrollY());
     act(() => window.dispatchEvent(new Event('scroll')));
     raf.flushOne();
@@ -2683,6 +2838,182 @@ describe('ItemList', () => {
     expect(body.style.minHeight).toBe('1000px');
 
     act(() => release?.());
+  });
+
+  it('defends a dismiss at the bottom that lands while a background refresh holds the lock', async () => {
+    // Codex P2 on #405: when a background refresh (pull-to-refresh / focus) already
+    // holds the height lock, lockBodyHeight opts anchoring out but reused the plain
+    // pre-refresh height — and the no-refetch settle bails while isRefreshing — so a
+    // dynamic-toolbar spike after a bottom Sweep/Done could still clamp the reader.
+    // The reused-lock path now raises the freeze to spike-safe too, so they're held.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    let release: (() => void) | null = null;
+    let callCount = 0;
+    const fetchPage = vi.fn(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({ items: seed.items, nextCursor: null });
+      }
+      // Hold the refetch open so the background refresh stays in flight across the
+      // dismiss (isRefreshing true, lock held).
+      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>(
+        (resolve) => {
+          release = () => resolve({ items: seed.items, nextCursor: null });
+        },
+      );
+    });
+    const viewKey = `midrefresh-bottom-${viewKeySeq++}`;
+    const { container } = renderWithProviders(
+      <ItemList viewKey={viewKey} fetchPage={fetchPage} emptyLabel="All caught up." />,
+      { source, queryClient },
+    );
+    const rows = await screen.findAllByTestId('item-row');
+    const lastId = rows[rows.length - 1]
+      .closest('li')!
+      .getAttribute('data-item-id')!;
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    const rowCount = container.querySelectorAll('[data-item-id]').length;
+    expect(rowCount).toBeGreaterThan(8);
+    // Reader starts partway down — this is the offset the always-on tracker records.
+    scroll.setScrollY(200);
+    act(() => window.dispatchEvent(new Event('scroll')));
+
+    // Kick off a held-open background refresh — the lock is taken, and crucially the
+    // scroll tracker now freezes (it bails while the lock is held).
+    act(() => {
+      void queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
+    });
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+    expect(body.style.minHeight).not.toBe('');
+
+    // The reader scrolls to the very bottom DURING the refresh. The tracker is stale
+    // (still 200), but window.scrollY is their true, un-clamped position.
+    scroll.setScrollY(scroll.maxScroll());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    const before = scroll.getScrollY();
+    expect(before).toBeGreaterThan(200);
+
+    // Dismiss the bottom row WHILE that refresh is still in flight (the reused-lock
+    // path), then spike. Sizing must use the live scrollY (the bottom), not the stale
+    // tracker (200) — otherwise the raise is too small and the spike clamps.
+    act(() => {
+      source.stateStore.hide(lastId);
+    });
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${lastId}"]`)).toBeNull(),
+    );
+    scroll.setViewport(800);
+    scroll.setScrollY(scroll.getScrollY());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    expect(scroll.getScrollY()).toBe(before);
+
+    // Let the refresh settle; the reader is still held exactly where they were.
+    scroll.setViewport(400);
+    act(() => release?.());
+    raf.flush();
+    expect(scroll.getScrollY()).toBe(before);
+    raf.restore();
+  });
+
+  it('restores a spike-at-commit dismiss that lands mid-refresh after the reader scrolled', async () => {
+    // The deepest corner (Codex P2 on #405): a background refresh holds the lock, the
+    // reader scrolls to the bottom DURING it (so a frozen tracker would be stale), and
+    // the dynamic-toolbar spike is ALREADY live — the browser has clamped them — when
+    // they mark Done. The no-refetch settle is suppressed while isRefreshing, so
+    // lockBodyHeight raises the freeze AND restores the reader's live pre-spike offset
+    // inline (the raise makes it reachable even mid-spike). This works only because
+    // the tracker keeps recording through the refresh, so the offset is the bottom
+    // (where they actually are), not the stale pre-refresh position.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    let release: (() => void) | null = null;
+    let callCount = 0;
+    const fetchPage = vi.fn(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({ items: seed.items, nextCursor: null });
+      }
+      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>(
+        (resolve) => {
+          release = () => resolve({ items: seed.items, nextCursor: null });
+        },
+      );
+    });
+    const viewKey = `midrefresh-spike-${viewKeySeq++}`;
+    const { container } = renderWithProviders(
+      <ItemList viewKey={viewKey} fetchPage={fetchPage} emptyLabel="All caught up." />,
+      { source, queryClient },
+    );
+    const rows = await screen.findAllByTestId('item-row');
+    const lastId = rows[rows.length - 1]
+      .closest('li')!
+      .getAttribute('data-item-id')!;
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    const rowCount = container.querySelectorAll('[data-item-id]').length;
+    expect(rowCount).toBeGreaterThan(8);
+    // Reader starts partway down — the tracker's last honest sample before the lock.
+    scroll.setScrollY(200);
+    act(() => window.dispatchEvent(new Event('scroll')));
+
+    // Held-open background refresh takes the lock.
+    act(() => {
+      void queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
+    });
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+
+    // Reader scrolls to the bottom DURING the refresh — the tracker keeps recording
+    // (no clamp while the freeze holds the doc tall), so it follows to the bottom.
+    scroll.setScrollY(scroll.maxScroll());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    const before = scroll.getScrollY();
+    expect(before).toBeGreaterThan(200);
+
+    // The dynamic toolbar is ALREADY spiking (innerHeight 800 vs. the true 400) and
+    // has clamped the reader down when they mark Done.
+    act(() => {
+      scroll.setViewport(800);
+      scroll.setScrollY(scroll.getScrollY());
+    });
+    expect(scroll.getScrollY()).toBeLessThan(before);
+
+    act(() => {
+      source.stateStore.hide(lastId);
+    });
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${lastId}"]`)).toBeNull(),
+    );
+
+    // Restored inline to the bottom (their live pre-spike offset), mid-spike — not
+    // left at the clamp, and not aimed at the stale 200 the frozen tracker held.
+    expect(scroll.getScrollY()).toBe(before);
+
+    // Still held after the spike reverts and the refresh settles.
+    scroll.setViewport(400);
+    act(() => release?.());
+    raf.flush();
+    expect(scroll.getScrollY()).toBe(before);
+    raf.restore();
   });
 
   it('clears the height lock when the body unmounts (miss-state), so a later refresh re-locks the remounted body', async () => {
