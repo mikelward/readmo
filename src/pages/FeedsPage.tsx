@@ -654,13 +654,6 @@ export function FeedsPage() {
             await ds.setMuted(feedId, muted);
             invalidate();
           }}
-          onSetOpenOriginal={async (feedId, openOriginal) => {
-            await ds.setOpenOriginal(feedId, openOriginal);
-            // Re-read subscriptions so useOpenOriginalFeeds (which backs every
-            // article row) picks up the change; the row link target flips on the
-            // next render.
-            invalidate();
-          }}
           onSetOpenMode={async (feedId, mode) => {
             // One atomic write of both open-mode booleans (setOpenMode), so the
             // flags can never be left transiently both-true on a partial failure.

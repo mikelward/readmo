@@ -70,7 +70,6 @@ function setup() {
   ];
   const onReorder = vi.fn<(ids: FeedId[]) => void>();
   const onMute = vi.fn();
-  const onSetOpenOriginal = vi.fn();
   const onSetOpenMode = vi.fn();
   const onSetMarkDoneOnOpen = vi.fn();
   const onSetListLayout = vi.fn();
@@ -81,7 +80,6 @@ function setup() {
       subs={subs}
       onReorder={onReorder}
       onMute={onMute}
-      onSetOpenOriginal={onSetOpenOriginal}
       onSetOpenMode={onSetOpenMode}
       onSetMarkDoneOnOpen={onSetMarkDoneOnOpen}
       onSetListLayout={onSetListLayout}
@@ -92,7 +90,6 @@ function setup() {
   return {
     onReorder,
     onMute,
-    onSetOpenOriginal,
     onSetOpenMode,
     onSetMarkDoneOnOpen,
     onSetListLayout,
@@ -124,7 +121,7 @@ describe('ReorderableSubscriptions', () => {
     }
   });
 
-  it('opens the overflow menu with Rename / Mute / Open original / Unsubscribe and toggles closed', () => {
+  it('opens the overflow menu with Rename / Mute / Open on… / Unsubscribe and toggles closed', () => {
     setup();
     const overflow = screen.getByRole('button', { name: 'Actions for Alpha' });
     expect(overflow).toHaveAttribute('aria-expanded', 'false');
@@ -132,11 +129,13 @@ describe('ReorderableSubscriptions', () => {
     const menu = screen.getByRole('menu');
     expect(within(menu).getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
     expect(within(menu).getByRole('menuitemcheckbox', { name: 'Mute' })).toBeInTheDocument();
-    const openOriginal = within(menu).getByRole('menuitemcheckbox', {
-      name: 'Open original',
-    });
-    expect(openOriginal).toBeInTheDocument();
-    expect(openOriginal).toHaveAttribute('aria-checked', 'false');
+    // Open-mode is a drill row now, not an "Open original" checkbox.
+    expect(
+      within(menu).getByRole('menuitem', { name: 'Open on…' }),
+    ).toHaveAttribute('aria-haspopup', 'menu');
+    expect(
+      within(menu).queryByRole('menuitemcheckbox', { name: 'Open original' }),
+    ).toBeNull();
     expect(within(menu).getByRole('menuitem', { name: 'Unsubscribe' })).toBeInTheDocument();
     expect(overflow).toHaveAttribute('aria-expanded', 'true');
     // Click again to close.
@@ -289,7 +288,6 @@ describe('ReorderableSubscriptions', () => {
         subs={[entry('a', 'Alpha', 0), entry('b', 'Beta', 1), entry('c', 'Gamma', 2)]}
         onReorder={onReorder}
         onMute={vi.fn()}
-        onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
         onSetMarkDoneOnOpen={vi.fn()}
         onSetListLayout={vi.fn()}
@@ -386,11 +384,17 @@ describe('ReorderableSubscriptions', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
-  it('toggles "Open original" on via the overflow menu', () => {
-    const { onSetOpenOriginal } = setup();
+  it('sets Open original via the open-mode submenu on a normal feed', () => {
+    const { onSetOpenMode } = setup();
     openMenu('Beta');
-    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Open original' }));
-    expect(onSetOpenOriginal).toHaveBeenCalledWith('b', true);
+    drillIntoOpenMode();
+    // A normal feed offers Open here / Open original, but not newshacker.
+    expect(screen.getByRole('menuitemradio', { name: 'Open here' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('menuitemradio', { name: 'Open on newshacker' }),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Open original' }));
+    expect(onSetOpenMode).toHaveBeenCalledWith('b', 'original');
     expect(screen.queryByRole('menu')).toBeNull(); // closes after action
   });
 
@@ -410,7 +414,6 @@ describe('ReorderableSubscriptions', () => {
         subs={[entry('a', 'Alpha', 0)]}
         onReorder={vi.fn()}
         onMute={vi.fn()}
-        onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
         onSetMarkDoneOnOpen={vi.fn()}
         onSetListLayout={vi.fn()}
@@ -429,11 +432,22 @@ describe('ReorderableSubscriptions', () => {
 
   // --- Per-feed card style -------------------------------------------------
 
-  it('offers a Card style radio group defaulting to "Default" (no override)', () => {
+  // Card style is a two-level control too: a single "Card style" row drills into
+  // the submenu holding the layout radios.
+  function drillIntoCardStyle() {
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Card style' }));
+  }
+
+  it('collapses Card style behind a drill row and offers the radios after drilling in', () => {
     setup();
     openMenu('Alpha');
     const menu = screen.getByRole('menu');
-    const group = within(menu).getByRole('group', { name: 'Card style' });
+    // Top level: a single "Card style" drill row, no radio group yet.
+    expect(within(menu).queryByRole('group', { name: 'Card style' })).toBeNull();
+    const drill = within(menu).getByRole('menuitem', { name: 'Card style' });
+    expect(drill).toHaveAttribute('aria-haspopup', 'menu');
+    drillIntoCardStyle();
+    const group = screen.getByRole('group', { name: 'Card style' });
     // Default is checked when the feed carries no override (listLayout === null).
     expect(
       within(group).getByRole('menuitemradio', { name: /Default/ }),
@@ -443,14 +457,41 @@ describe('ReorderableSubscriptions', () => {
         within(group).getByRole('menuitemradio', { name }),
       ).toHaveAttribute('aria-checked', 'false');
     }
+    // The submenu replaced the top level.
+    expect(screen.queryByRole('menuitem', { name: 'Rename' })).toBeNull();
   });
 
   it('selecting a Card style calls onSetListLayout with that value', () => {
     const { onSetListLayout } = setup();
     openMenu('Beta');
+    drillIntoCardStyle();
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Excerpt' }));
     expect(onSetListLayout).toHaveBeenCalledWith('b', 'excerpt');
     expect(screen.queryByRole('menu')).toBeNull(); // closes after action
+  });
+
+  it('returns to the top level from the Card style submenu via Back', () => {
+    setup();
+    openMenu('Alpha');
+    drillIntoCardStyle();
+    expect(
+      screen.getByRole('menuitemradio', { name: /Default/ }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Back' }));
+    expect(screen.getByRole('menuitem', { name: 'Card style' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Card style' })).toBeNull();
+  });
+
+  it('moves focus into the Card style submenu and back onto its drill row', () => {
+    setup();
+    openMenu('Alpha');
+    drillIntoCardStyle();
+    const back = screen.getByRole('menuitem', { name: 'Back' });
+    expect(document.activeElement).toBe(back);
+    fireEvent.click(back);
+    expect(document.activeElement).toBe(
+      screen.getByRole('menuitem', { name: 'Card style' }),
+    );
   });
 
   it('choosing "Default" clears the override (null)', () => {
@@ -475,7 +516,6 @@ describe('ReorderableSubscriptions', () => {
         ]}
         onReorder={vi.fn()}
         onMute={vi.fn()}
-        onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
         onSetMarkDoneOnOpen={vi.fn()}
         onSetListLayout={onSetListLayout}
@@ -484,6 +524,7 @@ describe('ReorderableSubscriptions', () => {
       />,
     );
     openMenu('Alpha');
+    drillIntoCardStyle();
     const menu = screen.getByRole('menu');
     // The stored override is reflected as the checked radio.
     expect(
@@ -499,7 +540,6 @@ describe('ReorderableSubscriptions', () => {
         subs={[entry('a', 'Alpha', 0)]}
         onReorder={vi.fn()}
         onMute={vi.fn()}
-        onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
         onSetMarkDoneOnOpen={vi.fn()}
         onSetListLayout={vi.fn()}
@@ -509,19 +549,19 @@ describe('ReorderableSubscriptions', () => {
       />,
     );
     openMenu('Alpha');
+    expect(screen.queryByRole('menuitem', { name: 'Card style' })).toBeNull();
     expect(screen.queryByRole('group', { name: 'Card style' })).toBeNull();
     expect(screen.getByRole('menuitem', { name: 'Unsubscribe' })).toBeInTheDocument();
   });
 
-  it('marks "Open original" checked and toggles it back off when already set', () => {
-    const onSetOpenOriginal = vi.fn();
+  it('marks the current open mode checked and switches it when already set', () => {
+    const onSetOpenMode = vi.fn();
     render(
       <ReorderableSubscriptions
         subs={[entry('a', 'Alpha', 0, /* openOriginal */ true)]}
         onReorder={vi.fn()}
         onMute={vi.fn()}
-        onSetOpenOriginal={onSetOpenOriginal}
-        onSetOpenMode={vi.fn()}
+        onSetOpenMode={onSetOpenMode}
         onSetMarkDoneOnOpen={vi.fn()}
         onSetListLayout={vi.fn()}
         onUnsubscribe={vi.fn()}
@@ -529,19 +569,22 @@ describe('ReorderableSubscriptions', () => {
       />,
     );
     openMenu('Alpha');
-    const item = screen.getByRole('menuitemcheckbox', { name: 'Open original' });
-    expect(item).toHaveAttribute('aria-checked', 'true');
-    fireEvent.click(item);
-    expect(onSetOpenOriginal).toHaveBeenCalledWith('a', false);
+    drillIntoOpenMode();
+    // The stored open-original preference shows as the checked radio.
+    expect(
+      screen.getByRole('menuitemradio', { name: 'Open original' }),
+    ).toHaveAttribute('aria-checked', 'true');
+    // Switching back to the reader writes the 'reader' mode.
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Open here' }));
+    expect(onSetOpenMode).toHaveBeenCalledWith('a', 'reader');
   });
 
-  it('hides the "Open original" item when the backend does not support it', () => {
+  it('hides the open-mode choice when the backend does not support it', () => {
     render(
       <ReorderableSubscriptions
         subs={[entry('a', 'Alpha', 0)]}
         onReorder={vi.fn()}
         onMute={vi.fn()}
-        onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
         onSetMarkDoneOnOpen={vi.fn()}
         onSetListLayout={vi.fn()}
@@ -552,9 +595,8 @@ describe('ReorderableSubscriptions', () => {
     );
     openMenu('Alpha');
     const menu = screen.getByRole('menu');
-    expect(
-      within(menu).queryByRole('menuitemcheckbox', { name: 'Open original' }),
-    ).toBeNull();
+    // No "Open on…" drill row at all when the open_original column is absent.
+    expect(within(menu).queryByRole('menuitem', { name: 'Open on…' })).toBeNull();
     // The rest of the menu is unaffected.
     expect(within(menu).getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
     expect(within(menu).getByRole('menuitem', { name: 'Unsubscribe' })).toBeInTheDocument();
@@ -567,14 +609,12 @@ describe('ReorderableSubscriptions', () => {
     props: { showOpenOriginal?: boolean; showOpenNewshacker?: boolean } = {},
   ) {
     const onSetOpenMode = vi.fn();
-    const onSetOpenOriginal = vi.fn();
     const onSetMarkDoneOnOpen = vi.fn();
     render(
       <ReorderableSubscriptions
         subs={[hnEntry('hn', 'Hacker News', 0, sub)]}
         onReorder={vi.fn()}
         onMute={vi.fn()}
-        onSetOpenOriginal={onSetOpenOriginal}
         onSetOpenMode={onSetOpenMode}
         onSetMarkDoneOnOpen={onSetMarkDoneOnOpen}
         onSetListLayout={vi.fn()}
@@ -583,18 +623,45 @@ describe('ReorderableSubscriptions', () => {
         {...props}
       />,
     );
-    return { onSetOpenMode, onSetOpenOriginal, onSetMarkDoneOnOpen };
+    return { onSetOpenMode, onSetMarkDoneOnOpen };
   }
 
-  it('offers a three-way open-mode radio for a Hacker News feed (reader default)', () => {
+  // The three-way open-mode choice is a two-level control: the menu shows a
+  // single "Open on…" row that drills into the submenu holding the radios.
+  function drillIntoOpenMode() {
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Open on…' }));
+  }
+
+  it('collapses the three-way open-mode choice behind an "Open on…" drill row', () => {
     renderHn();
     openMenu('Hacker News');
     const menu = screen.getByRole('menu');
+    // The open-mode radios are not shown at the top level — only the drill row
+    // is. (The unrelated "Card style" group has its own radios, so scope to the
+    // open-mode ones by name / their group.)
+    expect(within(menu).queryByRole('group', { name: 'Open links in' })).toBeNull();
+    expect(
+      within(menu).queryByRole('menuitemradio', { name: 'Open on newshacker' }),
+    ).toBeNull();
+    const drill = within(menu).getByRole('menuitem', { name: 'Open on…' });
+    expect(drill).toHaveAttribute('aria-haspopup', 'menu');
+    // Sibling top-level items are present alongside it.
+    expect(within(menu).getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'Unsubscribe' })).toBeInTheDocument();
+  });
+
+  it('offers a three-way open-mode radio after drilling in (reader default)', () => {
+    renderHn();
+    openMenu('Hacker News');
+    drillIntoOpenMode();
+    const menu = screen.getByRole('menu');
+    // The submenu replaces the top level — its other items are gone.
+    expect(within(menu).queryByRole('menuitem', { name: 'Rename' })).toBeNull();
     // No two-state checkbox — the choice is mutually exclusive radios instead.
     expect(
       within(menu).queryByRole('menuitemcheckbox', { name: 'Open original' }),
     ).toBeNull();
-    const reader = within(menu).getByRole('menuitemradio', { name: 'Open in readmo' });
+    const reader = within(menu).getByRole('menuitemradio', { name: 'Open here' });
     const original = within(menu).getByRole('menuitemradio', { name: 'Open original' });
     const newshacker = within(menu).getByRole('menuitemradio', {
       name: 'Open on newshacker',
@@ -604,9 +671,130 @@ describe('ReorderableSubscriptions', () => {
     expect(newshacker).toHaveAttribute('aria-checked', 'false');
   });
 
+  it('returns to the top-level menu from the open-mode submenu via Back', () => {
+    renderHn();
+    openMenu('Hacker News');
+    drillIntoOpenMode();
+    expect(screen.getByRole('menuitemradio', { name: 'Open here' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Back' }));
+    // Back at the top level: the drill row is back, the open-mode radios gone.
+    expect(screen.getByRole('menuitem', { name: 'Open on…' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Open links in' })).toBeNull();
+  });
+
+  it('moves focus into the submenu on drill-in and back onto the drill row on return', () => {
+    renderHn();
+    openMenu('Hacker News');
+    drillIntoOpenMode();
+    // Drilling in unmounts the focused drill row; focus must land in the
+    // submenu (its Back row) rather than falling to <body>.
+    const back = screen.getByRole('menuitem', { name: 'Back' });
+    expect(document.activeElement).toBe(back);
+    fireEvent.click(back);
+    // Returning restores focus onto the drill row the user came from.
+    expect(document.activeElement).toBe(
+      screen.getByRole('menuitem', { name: 'Open on…' }),
+    );
+  });
+
+  it('does not steal focus from the trigger when the menu first opens', () => {
+    renderHn();
+    const trigger = screen.getByRole('button', { name: 'Actions for Hacker News' });
+    trigger.focus();
+    openMenu('Hacker News');
+    // Opening the menu leaves focus on the ⋯ trigger (matches the plain menu);
+    // only an explicit drill moves it.
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('returns focus to the ⋯ trigger when the submenu is dismissed via Escape', () => {
+    renderHn();
+    openMenu('Hacker News');
+    drillIntoOpenMode();
+    expect(document.activeElement).toBe(
+      screen.getByRole('menuitem', { name: 'Back' }),
+    );
+    fireEvent.keyDown(document, { key: 'Escape' });
+    // Closing from the submenu unmounts the focused control; focus must land
+    // back on the owning trigger, not <body>.
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Actions for Hacker News' }),
+    );
+  });
+
+  it('returns focus to the ⋯ trigger when a radio choice closes the submenu', () => {
+    renderHn(); // reader default
+    openMenu('Hacker News');
+    drillIntoOpenMode();
+    // Re-picking the already-checked mode closes the menu without a write.
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Open here' }));
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Actions for Hacker News' }),
+    );
+  });
+
+  it('resets the open-mode submenu when the menu is reopened', () => {
+    renderHn();
+    openMenu('Hacker News');
+    drillIntoOpenMode();
+    expect(screen.getByRole('menuitemradio', { name: 'Open here' })).toBeInTheDocument();
+    openMenu('Hacker News'); // toggle closed
+    openMenu('Hacker News'); // and open again → back at the top level
+    expect(screen.getByRole('menuitem', { name: 'Open on…' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Open links in' })).toBeNull();
+  });
+
+  it('recomputes placement when drilling into the shorter open-mode submenu', () => {
+    renderHn();
+    // A tall top-level menu near the bottom fits neither below nor above, so it
+    // stays `below`. The shorter submenu would fit above — drilling in must
+    // re-measure and flip it up rather than leaving the choices off-screen. The
+    // menu's reported height depends on its content (the Back row marks the
+    // submenu), so the two levels measure differently.
+    const real = HTMLElement.prototype.getBoundingClientRect;
+    const make = (over: Partial<DOMRect>): DOMRect =>
+      ({
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
+        width: 0,
+        height: 0,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+        ...over,
+      }) as DOMRect;
+    const spy = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.classList.contains('settings__sub-actions')) {
+          return make({ top: 740, bottom: 750, height: 10 });
+        }
+        if (this.classList.contains('settings__sub-menu')) {
+          const isSubmenu = !!this.querySelector('[aria-label="Back"]');
+          return isSubmenu
+            ? make({ top: 0, bottom: 200, width: 160, height: 200 })
+            : make({ top: 0, bottom: 760, width: 160, height: 760 });
+        }
+        return real.call(this);
+      });
+    try {
+      openMenu('Hacker News');
+      expect(screen.getByRole('menu')).toHaveAttribute('data-placement', 'below');
+      drillIntoOpenMode();
+      expect(screen.getByRole('menu')).toHaveAttribute('data-placement', 'above');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('selecting "Open on newshacker" sets the newshacker open mode', () => {
     const { onSetOpenMode } = renderHn();
     openMenu('Hacker News');
+    drillIntoOpenMode();
     fireEvent.click(
       screen.getByRole('menuitemradio', { name: 'Open on newshacker' }),
     );
@@ -617,6 +805,7 @@ describe('ReorderableSubscriptions', () => {
   it('marks the newshacker radio checked when the feed is already in that mode', () => {
     const { onSetOpenMode } = renderHn({ openNewshacker: true });
     openMenu('Hacker News');
+    drillIntoOpenMode();
     expect(
       screen.getByRole('menuitemradio', { name: 'Open on newshacker' }),
     ).toHaveAttribute('aria-checked', 'true');
@@ -630,32 +819,33 @@ describe('ReorderableSubscriptions', () => {
   it('switching a newshacker feed back to the reader sets the reader mode', () => {
     const { onSetOpenMode } = renderHn({ openNewshacker: true });
     openMenu('Hacker News');
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Open in readmo' }));
+    drillIntoOpenMode();
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Open here' }));
     expect(onSetOpenMode).toHaveBeenCalledWith('hn', 'reader');
   });
 
-  it('falls back to the Open-original checkbox for a Hacker News feed when newshacker is unsupported', () => {
+  it('drops "Open on newshacker" from a Hacker News feed when its column is unsupported', () => {
     renderHn({}, { showOpenNewshacker: false });
     openMenu('Hacker News');
-    const menu = screen.getByRole('menu');
+    drillIntoOpenMode();
+    // The submenu degrades to just Open here / Open original.
     expect(
-      within(menu).queryByRole('menuitemradio', { name: 'Open on newshacker' }),
+      screen.queryByRole('menuitemradio', { name: 'Open on newshacker' }),
     ).toBeNull();
-    expect(
-      within(menu).getByRole('menuitemcheckbox', { name: 'Open original' }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('menuitemradio', { name: 'Open here' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitemradio', { name: 'Open original' })).toBeInTheDocument();
   });
 
   it('does not offer "Open on newshacker" for a non–Hacker News feed', () => {
     setup();
     openMenu('Alpha');
-    const menu = screen.getByRole('menu');
+    drillIntoOpenMode();
     expect(
-      within(menu).queryByRole('menuitemradio', { name: 'Open on newshacker' }),
+      screen.queryByRole('menuitemradio', { name: 'Open on newshacker' }),
     ).toBeNull();
-    expect(
-      within(menu).getByRole('menuitemcheckbox', { name: 'Open original' }),
-    ).toBeInTheDocument();
+    // Still offers the two applicable modes.
+    expect(screen.getByRole('menuitemradio', { name: 'Open here' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitemradio', { name: 'Open original' })).toBeInTheDocument();
   });
 
   it('shows Unmute when the feed is already muted', () => {
@@ -667,7 +857,6 @@ describe('ReorderableSubscriptions', () => {
         subs={subs}
         onReorder={vi.fn()}
         onMute={vi.fn()}
-        onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
         onSetMarkDoneOnOpen={vi.fn()}
         onSetListLayout={vi.fn()}
@@ -784,7 +973,6 @@ describe('ReorderableSubscriptions', () => {
         subs={[entry('a', 'Alpha', 0)]}
         onReorder={vi.fn()}
         onMute={vi.fn()}
-        onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
         onSetMarkDoneOnOpen={vi.fn()}
         onSetListLayout={vi.fn()}
@@ -840,7 +1028,6 @@ describe('ReorderableSubscriptions', () => {
         subs={[entry('a', 'Alpha', 0)]}
         onReorder={vi.fn()}
         onMute={vi.fn()}
-        onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
         onSetMarkDoneOnOpen={vi.fn()}
         onSetListLayout={vi.fn()}
@@ -894,7 +1081,6 @@ describe('ReorderableSubscriptions (deep-link scroll/highlight)', () => {
         scrollToFeedId={scrollToFeedId}
         onReorder={vi.fn()}
         onMute={vi.fn()}
-        onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
         onSetMarkDoneOnOpen={vi.fn()}
         onSetListLayout={vi.fn()}

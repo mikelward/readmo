@@ -1159,7 +1159,7 @@ negligible and off every critical path. See the External services table in
    - **Open original / Open on newshacker** — the per-feed **open mode**: a
      single mutually-exclusive choice of where that feed's article rows open on
      tap.
-     - **Open in readmo** (default) — the in-app reader.
+     - **Open here** (default) — the in-app reader.
      - **Open original** — the original article on the source website directly
        (new tab) instead of the in-app reader. Falls back to the reader for any
        item without a safe http(s) URL.
@@ -1657,8 +1657,8 @@ negligible and off every critical path. See the External services table in
     - **Subscriptions** — the feed list is **drag-to-reorder**: each row stays
       within the **3-tap-zone cap** as drag handle (left), a non-interactive
       row body (title + URL), and a right-side **overflow (⋯) button** that
-      opens a per-row menu with **Rename / Mute / open mode (Open original /
-      Open on newshacker) / Mark done when opening / Card style / Unsubscribe**. The menu drops below the ⋯ button,
+      opens a per-row menu with **Rename / Mute / open mode (an **Open on…**
+      drill row) / Mark done when opening / Card style / Unsubscribe**. The menu drops below the ⋯ button,
       but **flips above it** for a row near the bottom of the viewport so the
       menu is never clipped off-screen. The drag
       handle is both pointer-draggable (mouse + touch) and keyboard-operable
@@ -1669,26 +1669,40 @@ negligible and off every critical path. See the External services table in
       **Enter** commits, **Esc** cancels, **blur** commits, and **leaving the
       input empty clears the override** so the row falls back to the
       publisher's title. Rename writes `subscriptions.title_override` and is
-      per-user; an unchanged value is a no-op. The **open mode** is a checkbox
-      menu item (**Open original**, writing `subscriptions.open_original`) for a
-      normal feed; for a **Hacker News feed** it becomes a three-way
-      `menuitemradio` group — **Open in readmo / Open original / Open on
-      newshacker** — that writes `open_original` / `open_newshacker` mutually
-      exclusively (per-user, synced). When *open original* is on, the feed's rows
-      link straight to the source website; when *open on newshacker* is on, they
-      link to the item's Hacker News discussion on `newshacker.app`; both open in
-      a new tab instead of the in-app reader. The newshacker option hides (the
-      control degrades to the *Open original* checkbox) against a backend that
-      predates the `open_newshacker` column. A separate **Mark done when opening**
+      per-user; an unchanged value is a no-op. The **open mode** is a
+      **two-level control** offered on every feed (whenever the backend has the
+      `open_original` column): the top menu shows a single **Open on…** row (with
+      a `›` chevron, `aria-haspopup="menu"`) that drills into a submenu — a **‹
+      Back** row plus a `menuitemradio` group — writing `open_original` /
+      `open_newshacker` mutually exclusively (per-user, synced). The options are
+      **Open here** (the in-app reader, the default) and **Open original**, plus
+      **Open on newshacker** *only when applicable* — i.e. only for a **Hacker
+      News feed** and only when the `open_newshacker` column exists (0034). The
+      submenu **replaces the whole menu panel** (it's never taller than the top
+      level it swapped out, so the flip-above placement stays valid), and the
+      drill level resets whenever the menu is reopened. When *open original* is
+      on, the feed's rows link straight to the source website; when *open on
+      newshacker* is on, they link to the item's Hacker News discussion on
+      `newshacker.app`; both open in a new tab instead of the in-app reader. The
+      whole open-mode control hides against a backend that predates the
+      `open_original` column (0027); the writes degrade safely (a
+      reader/original choice still persists `open_original` even where
+      `open_newshacker` is absent). A separate **Mark done when opening**
       checkbox (writing `subscriptions.mark_done_on_open`, 0037, independent of the
       open mode) makes opening an item on its original source / newshacker target
       also mark it Done — see *Feeds page → Mark done when opening* above; it hides
-      against a backend that predates the column. A **Card style**
-      `menuitemradio` group (**Default / Title only / Small thumbnail / Large
-      thumbnail / Excerpt**, writing `subscriptions.list_layout`, 0051) sets this
-      feed's per-feed article-row layout override — see *Article layout → Per-feed
-      override* above; **Default** clears it (fall back to the app-wide setting),
-      and it hides against a backend that predates the column. The overflow menu dismisses via
+      against a backend that predates the column. A **Card style** control sets
+      this feed's per-feed article-row layout override; like the open-mode choice
+      it's a **two-level control** — a single **Card style** row (with a `›`
+      chevron) drills into a submenu of a **‹ Back** row plus a `menuitemradio`
+      group (**Default / Title only / Small thumbnail / Large thumbnail /
+      Excerpt**, writing `subscriptions.list_layout`, 0051). See *Article layout →
+      Per-feed override* above; **Default** clears it (fall back to the app-wide
+      setting), and the whole control hides against a backend that predates the
+      column. Both submenus share the same drill machinery: the submenu replaces
+      the whole menu panel, focus moves into it (its Back row) on drill-in and
+      back onto the originating row on return, placement re-measures on the drill
+      transition, and the drill level resets when the menu is reopened. The overflow menu dismisses via
       the shared dropdown contract (`usePopoverDismiss`): Escape or an outside
       press closes it, and **the first press outside only dismisses** — its
       trailing click is swallowed, so dismissing the menu doesn't also activate
@@ -1919,8 +1933,9 @@ option (the image slot omitted); coverage depends on the feed.
 **Per-feed override.** The app-wide Article layout is the default, but any feed
 can override it — a photo-heavy feed can show large thumbnails while a text feed
 stays title-only. The override is set from the **Feeds page → Subscriptions →
-per-row ⋯ menu → "Card style"** (a mutually-exclusive radio group: **Default**,
-Title only, Small thumbnail, Large thumbnail, Excerpt), sitting alongside the
+per-row ⋯ menu → "Card style"** — a two-level control: the **Card style** row
+drills into a submenu of a mutually-exclusive radio group (**Default**, Title
+only, Small thumbnail, Large thumbnail, Excerpt). It sits alongside the
 existing per-feed choices (mute, rename, open mode, mark-done-on-open).
 **"Default"** clears the override and follows the app-wide setting. Unlike the
 app-wide setting (per-device `localStorage`), the per-feed override is **stored
