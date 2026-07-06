@@ -1869,7 +1869,16 @@ export function ItemList({
   // document can hold the offset, so there's never a persistent blank tail.
   // A no-op (plain clear) whenever the natural document is already tall enough —
   // every sweep except one near the very bottom.
-  const releaseBodyHeight = useCallback(() => {
+  //
+  // `targetY` overrides the offset to hold. The no-refetch/refetch release paths
+  // pass nothing and hold the reader's *current* (browser-anchored) scroll, which
+  // is already correct. The viewport-spike restore passes the reader's tracked
+  // pre-spike offset instead: an innerHeight spike clamps window.scrollY below
+  // where the reader actually was and the browser never un-clamps it, so the
+  // current offset is the wrong (clamped) value — the pre-spike offset is what
+  // must stay valid, holding the reader put with a blank tail rather than
+  // snapping them to the collapsed new bottom.
+  const releaseBodyHeight = useCallback((targetY?: number) => {
     const el = bodyRef.current;
     detachHeightRelease();
     if (!el) return;
@@ -1942,8 +1951,11 @@ export function ItemList({
     };
     // Capture the offset BEFORE clearing — clearing reflows synchronously and
     // the browser clamps window.scrollY toward the top, so reading it after the
-    // clear would already be the clamped (wrong) value.
-    if (holdFor(Math.round(window.scrollY)) <= 0) return;
+    // clear would already be the clamped (wrong) value. An explicit `targetY`
+    // (the spike restore's pre-clamp offset) wins over the live, already-clamped
+    // scrollY.
+    const holdTarget = targetY ?? Math.round(window.scrollY);
+    if (holdFor(holdTarget) <= 0) return;
     // Slack still held: shrink it in lockstep as the reader scrolls (they're now
     // driving, so the settle reads as their scrolling, not a jump), and drop it
     // entirely once the natural document can hold where they are.
@@ -2515,9 +2527,24 @@ export function ItemList({
       // OLD bottom, not the row-shorter new one. `curMaxScroll` reads the true
       // settled height only once the freeze is released.
       if (heightLockedRef.current) return;
-      const target = Math.min(intended, max);
-      if (target - y > 1) {
-        window.scrollTo(0, target);
+      if (intended > max + 1) {
+        // A sweep/dismiss near the bottom removed more in-viewport content than the
+        // reader had below them, so the pre-spike offset now sits past the collapsed
+        // natural bottom. Sweeps only ever remove rows the reader can see (never
+        // off-screen content above them), so the content ABOVE the reader is
+        // unchanged and they must stay exactly where they were — with a blank tail
+        // below — not snap down to the new bottom (the reported jump: they land at
+        // the shortened bottom instead of holding position). Hand the offset to the
+        // deferred-release min-height hold (the same mechanism a non-spike bottom
+        // sweep uses), which keeps `intended` a valid offset and shrinks the tail in
+        // lockstep as the reader scrolls up. Stop the spike-watch so the two don't
+        // fight over the scroll position.
+        releaseBodyHeight(intended);
+        intended = null;
+        return;
+      }
+      if (intended - y > 1) {
+        window.scrollTo(0, intended);
       }
     };
     const runRelease = () => {

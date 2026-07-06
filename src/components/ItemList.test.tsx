@@ -1805,7 +1805,13 @@ describe('ItemList', () => {
       { source },
     );
     const rows = await screen.findAllByTestId('item-row');
-    const firstId = rows[0].closest('li')!.getAttribute('data-item-id')!;
+    // Dismiss a row the reader can actually SEE at the bottom — a Sweep/swipe only
+    // ever removes in-viewport rows, never off-screen content above the reader, so
+    // the content above them is unchanged and they must stay put (a blank tail
+    // fills the gap), not follow the collapsed bottom up.
+    const lastId = rows[rows.length - 1]
+      .closest('li')!
+      .getAttribute('data-item-id')!;
 
     const body = screen.getByTestId('item-list-body');
     const scroll = installScrollModel(body, container, {
@@ -1825,12 +1831,12 @@ describe('ItemList', () => {
     const before = scroll.getScrollY();
     expect(before).toBe(rowCount * 100 - 400);
 
-    // Dismiss a row (the freeze is taken, the lock goes on).
+    // Dismiss the bottom row (the freeze is taken, the lock goes on).
     act(() => {
-      source.stateStore.hide(firstId);
+      source.stateStore.hide(lastId);
     });
     await waitFor(() =>
-      expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
+      expect(container.querySelector(`[data-item-id="${lastId}"]`)).toBeNull(),
     );
 
     // The dynamic toolbar doubles the viewport for a frame: maxScroll collapses
@@ -1850,9 +1856,17 @@ describe('ItemList', () => {
     scroll.setViewport(400);
     raf.flush();
     // Without the restore the reader would be stuck near the top; with it they
-    // land at the new bottom (one row shorter), never clamped away.
-    expect(scroll.getScrollY()).toBe(before - 100);
+    // stay EXACTLY where they were — the removed row is below them, so a blank
+    // tail (held min-height) fills the gap rather than snapping them to the new,
+    // one-row-shorter bottom.
+    expect(scroll.getScrollY()).toBe(before);
+    expect(body.style.minHeight).not.toBe('');
+    // The tail is transient: on the reader's next scroll up it clears with no
+    // persistent blank space.
+    scroll.setScrollY(0);
+    act(() => window.dispatchEvent(new Event('scroll')));
     expect(body.style.minHeight).toBe('');
+    expect(scroll.getScrollY()).toBe(0);
     raf.restore();
   });
 
@@ -1880,7 +1894,9 @@ describe('ItemList', () => {
       { source },
     );
     const rows = await screen.findAllByTestId('item-row');
-    const firstId = rows[0].closest('li')!.getAttribute('data-item-id')!;
+    const lastId = rows[rows.length - 1]
+      .closest('li')!
+      .getAttribute('data-item-id')!;
 
     const body = screen.getByTestId('item-list-body');
     const scroll = installScrollModel(body, container, {
@@ -1896,10 +1912,10 @@ describe('ItemList', () => {
     const before = scroll.getScrollY();
 
     act(() => {
-      source.stateStore.hide(firstId);
+      source.stateStore.hide(lastId);
     });
     await waitFor(() =>
-      expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
+      expect(container.querySelector(`[data-item-id="${lastId}"]`)).toBeNull(),
     );
 
     // The viewport doubles and the browser clamps — surfaced ONLY via the real
@@ -1920,10 +1936,12 @@ describe('ItemList', () => {
 
     // The settle frames now run against a viewport that already reverted — the
     // clamp is long gone. Only because the event listeners recorded the spike
-    // does the release restore the reader (to the row-shorter bottom).
+    // does the release restore the reader — held EXACTLY at their pre-spike
+    // offset with a blank tail (the removed row was below them), not snapped down
+    // to the row-shorter bottom.
     raf.flush();
-    expect(scroll.getScrollY()).toBe(before - 100);
-    expect(body.style.minHeight).toBe('');
+    expect(scroll.getScrollY()).toBe(before);
+    expect(body.style.minHeight).not.toBe('');
     raf.restore();
   });
 
@@ -1950,7 +1968,9 @@ describe('ItemList', () => {
       { source },
     );
     const rows = await screen.findAllByTestId('item-row');
-    const firstId = rows[0].closest('li')!.getAttribute('data-item-id')!;
+    const lastId = rows[rows.length - 1]
+      .closest('li')!
+      .getAttribute('data-item-id')!;
 
     const body = screen.getByTestId('item-list-body');
     // innerHeight 400, visual viewport stays 400 (the truth) even when we spike.
@@ -1977,19 +1997,21 @@ describe('ItemList', () => {
     expect(scroll.getScrollY()).toBeLessThan(before);
 
     act(() => {
-      source.stateStore.hide(firstId);
+      source.stateStore.hide(lastId);
     });
     await waitFor(() =>
-      expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
+      expect(container.querySelector(`[data-item-id="${lastId}"]`)).toBeNull(),
     );
 
     // The spike reverts (honest again) with no event surfacing it, then the settle
     // frames run. The synchronous capture at commit is the only reason a restore
-    // fires — landing the reader at the row-shorter bottom, not stuck near the top.
+    // fires — holding the reader EXACTLY where they were, a blank tail below (the
+    // removed row was in view, below them), not stuck near the top nor snapped to
+    // the new bottom.
     act(() => scroll.setViewport(400));
     raf.flush();
-    expect(scroll.getScrollY()).toBe(before - 100);
-    expect(body.style.minHeight).toBe('');
+    expect(scroll.getScrollY()).toBe(before);
+    expect(body.style.minHeight).not.toBe('');
     raf.restore();
   });
 
@@ -2016,7 +2038,9 @@ describe('ItemList', () => {
       { source },
     );
     const rows = await screen.findAllByTestId('item-row');
-    const firstId = rows[0].closest('li')!.getAttribute('data-item-id')!;
+    const lastId = rows[rows.length - 1]
+      .closest('li')!
+      .getAttribute('data-item-id')!;
 
     const body = screen.getByTestId('item-list-body');
     const scroll = installScrollModel(body, container, {
@@ -2034,17 +2058,97 @@ describe('ItemList', () => {
     act(() => {
       scroll.setViewport(800);
       scroll.setScrollY(scroll.getScrollY());
-      source.stateStore.hide(firstId);
+      source.stateStore.hide(lastId);
       scroll.setViewport(400);
     });
     await waitFor(() =>
-      expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
+      expect(container.querySelector(`[data-item-id="${lastId}"]`)).toBeNull(),
     );
 
     raf.flush();
-    // The restore still fires from the synchronous capture — the reader lands at
-    // the row-shorter bottom, not stuck at the clamped offset.
-    expect(scroll.getScrollY()).toBe(before - 100);
+    // The restore still fires from the synchronous capture — the reader stays
+    // EXACTLY where they were (blank tail below), not stuck at the clamped offset
+    // nor snapped to the row-shorter bottom.
+    expect(scroll.getScrollY()).toBe(before);
+    expect(body.style.minHeight).not.toBe('');
+    raf.restore();
+  });
+
+  it('holds the reader when a big bottom sweep leaves the pre-spike offset past the new bottom', async () => {
+    // Regression (scroll-jump diagnostics, latest capture): the reader was NOT at
+    // the very bottom (y=4985, max=5303 — headroom below) and a Sweep near the
+    // bottom removed more in-viewport content than that headroom. The pre-spike
+    // offset now exceeds the collapsed natural bottom, so the spike restore's old
+    // `min(intended, max)` clamped the reader to the NEW bottom (y=4853) instead of
+    // holding them at 4985 — the reported "it didn't scroll back to the correct
+    // position". A Sweep only removes rows the reader can SEE (never off-screen
+    // content above them — `inViewIds`), so the content above is unchanged and they
+    // must stay exactly put with a blank tail below, however short the survivors
+    // leave the document ("even only the More button. it should strictly not move").
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`big-bottom-sweep-headroom-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    const rows = await screen.findAllByTestId('item-row');
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    const rowCount = container.querySelectorAll('[data-item-id]').length;
+    expect(rowCount).toBeGreaterThan(8);
+    // Reader sits 200px above the bottom — genuine headroom, recorded honest.
+    const before = scroll.maxScroll() - 200;
+    scroll.setScrollY(before);
+    act(() => window.dispatchEvent(new Event('scroll')));
+    expect(scroll.getScrollY()).toBe(before);
+
+    // Sweep the four bottom rows the reader can see — 400px of removed content,
+    // more than the 200px of headroom, so the surviving document's max scroll
+    // (before − 400) ends up BELOW where the reader was (before − 200).
+    const sweptIds = rows
+      .slice(-4)
+      .map((r) => r.closest('li')!.getAttribute('data-item-id')!);
+    // The dynamic-toolbar spike is already lying (800 vs. the true 400) as the
+    // sweep commits and clamps the reader down; then it reverts.
+    act(() => {
+      scroll.setViewport(800);
+      scroll.setScrollY(scroll.getScrollY());
+      for (const id of sweptIds) source.stateStore.hide(id);
+      scroll.setViewport(400);
+    });
+    await waitFor(() =>
+      expect(
+        container.querySelector(`[data-item-id="${sweptIds[0]}"]`),
+      ).toBeNull(),
+    );
+
+    // The post-sweep document is genuinely shorter than where the reader sits.
+    const survivors = container.querySelectorAll('[data-item-id]').length;
+    expect(survivors * 100 - 400).toBeLessThan(before);
+
+    raf.flush();
+    // Held EXACTLY at the pre-spike offset via a min-height blank tail — NOT
+    // snapped to the collapsed new bottom.
+    expect(scroll.getScrollY()).toBe(before);
+    expect(body.style.minHeight).not.toBe('');
+    // And the tail is transient: scrolling up clears it, no persistent blank space.
+    scroll.setScrollY(0);
+    act(() => window.dispatchEvent(new Event('scroll')));
+    expect(body.style.minHeight).toBe('');
+    expect(scroll.getScrollY()).toBe(0);
     raf.restore();
   });
 
