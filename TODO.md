@@ -215,6 +215,23 @@ constraint is documented in more detail.
   every pin button / control keyed off it. Lean toward (a). Update `SPEC.md`'s
   story-row layout section in the same commit.
 
+- **Consider scrolling the feed in an inner container to retire the
+  dynamic-toolbar scroll-jump machinery.** The feed currently scrolls the
+  *window*, so the reader's max scroll depends on `window.innerHeight` — the
+  exact value Chromium's mobile dynamic toolbar momentarily doubles, which
+  clamps `scrollY` and produces the bottom-of-list "scroll jump." A large
+  subsystem in `ItemList.tsx` exists only to survive that: the min-height
+  freeze, spike detection (`viewportIsHonest`/`layoutViewportHeight`), the
+  spike-safe deferred hold + `deviceSpikesRef` latch, and the reactive restore
+  (settle watch). If the feed instead scrolled inside its own
+  `overflow-y: auto` region sized off a *stable* height (not the buggy viewport
+  metric), the `innerHeight` spike wouldn't reach it and most of that code
+  could be deleted. Cost: it loses native mobile URL-bar auto-hide and diverges
+  from newshacker's window-scroll (guardrail #9), so it needs a real
+  spike/experiment and a UX call, not a drive-by change. Raised while hardening
+  the window-scroll path (PRs #405/#406). Weigh against option of just keeping
+  the current, now-well-tested mechanism.
+
 ## Infrastructure / hosting
 
 - **Consider consolidating the frontend onto Cloudflare (Vercel → CF Pages).**
