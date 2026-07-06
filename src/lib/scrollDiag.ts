@@ -50,8 +50,13 @@ export interface DiagEntry {
    * with an unchanged `rows` proves no rows actually left — it's a reflow dip,
    * not real removal. */
   rows?: number;
-  /** `window.innerHeight` at record time — catches a viewport (mobile toolbar)
-   * change masquerading as a document collapse. */
+  /** `window.innerHeight` at record time. Recorded on every entry — including
+   * 'scroll' — because the transient dynamic-toolbar viewport SPIKE that clamps
+   * the scroll (maxScroll = scrollHeight − innerHeight) reverts within a frame or
+   * two, so it's usually gone by the next done/resize/probe: only the scroll
+   * event fired by the clamp itself captures it. Without it a viewport clamp
+   * reads as an unexplained jump (and a stable-looking `vh` across the sparser
+   * markers hides it). */
   vh?: number;
 }
 
@@ -177,7 +182,12 @@ export function formatDiagEntry(e: DiagEntry): string {
     // breakdown, so the momentary collapse's shape and composition are visible.
     return `probe y=${e.y}${max}${layoutSuffix}${lock}`;
   }
-  return `scroll y=${e.y} (${sign}${e.delta ?? 0})${max}${lock}`;
+  // `vh` sits next to `max` (they're related: max = doc − vh), so a maxScroll
+  // that dropped because the viewport SPIKED — not because the document shrank —
+  // is visible right at the jump. Only on the scroll line; done/resize/probe
+  // carry vh in their layout suffix above.
+  const vh = e.vh != null ? ` vh=${e.vh}` : '';
+  return `scroll y=${e.y} (${sign}${e.delta ?? 0})${max}${vh}${lock}`;
 }
 
 /** The one-line headline: how far the view jumped toward the top and whether
