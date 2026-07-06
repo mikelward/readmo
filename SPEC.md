@@ -1484,7 +1484,16 @@ negligible and off every critical path. See the External services table in
      this), so nothing async is guaranteed to observe it. A short bounded window of
      real `scroll`/`resize` events then also catches a spike that reverts late, and
      a genuine reader scroll (viewport honest, offset moved) supersedes any pending
-     restore so it is never overridden.
+     restore so it is never overridden. When the removal leaves the pre-spike
+     offset **past the collapsed natural bottom** — a big Sweep near the bottom
+     removes more on-screen content than the reader had below them — the restore
+     does **not** clamp them down to the new bottom. A Sweep only ever removes rows
+     the reader can *see* (never off-screen content above them), so the content
+     above is unchanged and the reader must **stay exactly put**, with a blank tail
+     below, however short the survivors leave the document. It hands the offset to
+     the same deferred `min-height` hold the bottom-sweep case uses, so the tail is
+     held to keep the pre-spike offset valid and shrinks in lockstep as the reader
+     scrolls up.
    - **A genuine background refresh still freezes the height.** Pull-to-refresh,
      window-focus, and remount *do* refetch, and React Query refetches the loaded
      pages *sequentially*, so the rendered list can briefly shrink mid-refetch.
