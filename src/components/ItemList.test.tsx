@@ -131,6 +131,29 @@ function installScrollModel(
     get: docHeight,
   });
   Object.defineProperty(window, 'innerHeight', { configurable: true, get: () => vh });
+  // The visual viewport reports the TRUE visible height — it does NOT follow the
+  // bogus dynamic-toolbar innerHeight spike. `setViewport` moves `vh`
+  // (window.innerHeight) only, so during a modeled spike innerHeight lies tall
+  // while this stays at the real height (the original `innerHeight`), which is how
+  // the code tells the spike from a real viewport change.
+  // Defaults to the true height at scale 1; `setVisualViewport` models pinch-zoom
+  // (a shorter visual viewport at scale > 1), which must NOT read as a spike.
+  let vvHeight = innerHeight;
+  let vvScale = 1;
+  Object.defineProperty(window, 'visualViewport', {
+    configurable: true,
+    get: () => ({
+      height: vvHeight,
+      width: 0,
+      offsetLeft: 0,
+      offsetTop: 0,
+      pageLeft: 0,
+      pageTop: 0,
+      scale: vvScale,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }),
+  });
   Object.defineProperty(window, 'scrollY', { configurable: true, get: clamped });
   Object.defineProperty(window, 'scrollTo', {
     configurable: true,
@@ -152,6 +175,12 @@ function installScrollModel(
     // jump (the dynamic-toolbar clamp at the bottom of the list).
     setViewport: (px: number) => {
       vh = px;
+    },
+    // Model the visual viewport directly — pinch-zoom shrinks its height and
+    // raises its scale above 1 while window.innerHeight (the layout viewport) holds.
+    setVisualViewport: ({ height, scale }: { height: number; scale: number }) => {
+      vvHeight = height;
+      vvScale = scale;
     },
   };
 }
@@ -1895,6 +1924,242 @@ describe('ItemList', () => {
     raf.flush();
     expect(scroll.getScrollY()).toBe(before - 100);
     expect(body.style.minHeight).toBe('');
+    raf.restore();
+  });
+
+  it('restores after a sweep when the viewport is ALREADY spiking at commit (synchronous capture)', async () => {
+    // Regression (sweep capture, third report): on this device the dynamic-toolbar
+    // spike runs on its own clock — the viewport was already lying tall BEFORE the
+    // sweep and reverted within ~40 ms, so NO scroll/resize/frame my watcher hears
+    // ever samples it (the diagnostics only caught it on the synchronous Done
+    // marker). The fix samples the viewport synchronously in lockBodyHeight (the
+    // commit), where innerHeight is observably disagreeing with the visual
+    // viewport, and restores once it's honest again. Here the spike is set before
+    // the dismiss and never surfaced via any event.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`spiked-at-commit-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    const rows = await screen.findAllByTestId('item-row');
+    const firstId = rows[0].closest('li')!.getAttribute('data-item-id')!;
+
+    const body = screen.getByTestId('item-list-body');
+    // innerHeight 400, visual viewport stays 400 (the truth) even when we spike.
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    const rowCount = container.querySelectorAll('[data-item-id]').length;
+    expect(rowCount).toBeGreaterThan(8);
+    // Reader at the bottom, recorded while the viewport is honest.
+    scroll.setScrollY(scroll.maxScroll());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    const before = scroll.getScrollY();
+
+    // The viewport is ALREADY spiking (innerHeight lies 800 vs. the true 400) when
+    // the reader taps sweep — the browser has clamped them down. No event is fired
+    // for it; only the synchronous commit sees it.
+    act(() => {
+      scroll.setViewport(800);
+      scroll.setScrollY(scroll.getScrollY());
+    });
+    expect(scroll.getScrollY()).toBeLessThan(before);
+
+    act(() => {
+      source.stateStore.hide(firstId);
+    });
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
+    );
+
+    // The spike reverts (honest again) with no event surfacing it, then the settle
+    // frames run. The synchronous capture at commit is the only reason a restore
+    // fires — landing the reader at the row-shorter bottom, not stuck near the top.
+    act(() => scroll.setViewport(400));
+    raf.flush();
+    expect(scroll.getScrollY()).toBe(before - 100);
+    expect(body.style.minHeight).toBe('');
+    raf.restore();
+  });
+
+  it('restores when the spike has already reverted before the settle first runs (Codex P2 #402)', async () => {
+    // The animated-sweep case: the spike is captured synchronously at the commit
+    // but reverts (~40ms) before the settle effect's first sample runs (commit is
+    // ~200ms behind). The settle then sees `spikeSeen=true` but an honest viewport
+    // with scrollY ALREADY clamped. If the watch seeded `lastWatchY` from the
+    // pre-clamp `intended`, that first sample would read the clamp as an honest
+    // reader move and clear `sawSpike` — no restore. Seeding from the real scrollY
+    // fixes it. Here the viewport reverts in the SAME act as the dismiss, so the
+    // settle's first run already sees it honest.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`spike-reverted-before-settle-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    const rows = await screen.findAllByTestId('item-row');
+    const firstId = rows[0].closest('li')!.getAttribute('data-item-id')!;
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    scroll.setScrollY(scroll.maxScroll());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    const before = scroll.getScrollY();
+
+    // Spike + clamp + dismiss, THEN revert — all in one act, so the dismiss's
+    // settle effect first runs against an already-honest, already-clamped viewport.
+    act(() => {
+      scroll.setViewport(800);
+      scroll.setScrollY(scroll.getScrollY());
+      source.stateStore.hide(firstId);
+      scroll.setViewport(400);
+    });
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
+    );
+
+    raf.flush();
+    // The restore still fires from the synchronous capture — the reader lands at
+    // the row-shorter bottom, not stuck at the clamped offset.
+    expect(scroll.getScrollY()).toBe(before - 100);
+    raf.restore();
+  });
+
+  it('does NOT treat pinch-zoom as a viewport spike (no snap to a stale offset on zoom-out)', async () => {
+    // Codex P2 on #402: while pinch-zoomed the visual viewport is legitimately far
+    // shorter than the layout innerHeight (scale > 1) — that is NOT a toolbar
+    // spike. Reading it as one would stop the position tracker AND arm a restore
+    // at dismiss, snapping the reader back to their pre-zoom offset when they zoom
+    // out. The scale guard keeps the viewport "honest" while zoomed, so the reader
+    // keeps being tracked and no spurious restore is armed.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`pinch-zoom-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    const rows = await screen.findAllByTestId('item-row');
+    const firstId = rows[0].closest('li')!.getAttribute('data-item-id')!;
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    // Reader at the bottom, tracked while unzoomed (honest, scale 1).
+    scroll.setScrollY(scroll.maxScroll());
+    act(() => window.dispatchEvent(new Event('scroll')));
+
+    // Pinch-zoom in: the visual viewport shrinks to 200 at scale 2; the layout
+    // innerHeight (400) is unchanged, so the height mismatch is pure zoom.
+    act(() => scroll.setVisualViewport({ height: 200, scale: 2 }));
+    // The reader scrolls to a new spot WHILE zoomed — this is their real, current
+    // position and must be tracked (the guard keeps the viewport honest at scale>1).
+    scroll.setScrollY(150);
+    act(() => window.dispatchEvent(new Event('scroll')));
+
+    // Dismiss a row while still zoomed.
+    act(() => {
+      source.stateStore.hide(firstId);
+    });
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
+    );
+
+    // Zoom back out (scale 1) during the settle window.
+    act(() => scroll.setVisualViewport({ height: 400, scale: 1 }));
+    raf.flush();
+
+    // The reader stays exactly where they scrolled to while zoomed — NOT snapped
+    // back toward the stale pre-zoom bottom.
+    expect(scroll.getScrollY()).toBe(150);
+    raf.restore();
+  });
+
+  it('does NOT treat ordinary browser chrome (URL bar) as a viewport spike', async () => {
+    // Codex P2 on #402: on mobile, innerHeight is often the large, toolbar-
+    // retracted layout viewport while visualViewport.height reflects the URL-bar-
+    // occluded visible area — a legitimate gap (tens of px, well under a doubling)
+    // at scale 1. An absolute-px honesty gate would misread that as a spike and
+    // seed a restore on an ordinary dismiss; the ratio gate keeps it honest.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`url-bar-chrome-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    const rows = await screen.findAllByTestId('item-row');
+    const firstId = rows[0].closest('li')!.getAttribute('data-item-id')!;
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    scroll.setScrollY(scroll.maxScroll());
+    act(() => window.dispatchEvent(new Event('scroll')));
+
+    // URL bar visible: the visual viewport is 90px shorter than innerHeight
+    // (> the old 80px absolute tolerance) but only ~1.29× — well under a doubling,
+    // and under the 1.35× ramp gate — at scale 1.
+    act(() => scroll.setVisualViewport({ height: 310, scale: 1 }));
+    // The reader scrolls to a new spot with the chrome up — this must be tracked
+    // (the viewport is honest: 400 ≤ 310 × 1.35), so no spike is seeded.
+    scroll.setScrollY(150);
+    act(() => window.dispatchEvent(new Event('scroll')));
+
+    act(() => {
+      source.stateStore.hide(firstId);
+    });
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
+    );
+
+    raf.flush();
+    // No spurious restore — the reader stays where they scrolled; an absolute-px
+    // gate would have marked the chrome as a spike and snapped them away.
+    expect(scroll.getScrollY()).toBe(150);
     raf.restore();
   });
 

@@ -1470,13 +1470,21 @@ negligible and off every critical path. See the External services table in
      viewport slashes the ceiling below where the reader sits and the browser
      clamps `scrollY` toward the top; the viewport reverts a frame later but the
      clamped offset sticks. No `min-height` can counter an `innerHeight` change,
-     so after a dismiss the list **restores the reader's pre-dismiss offset once
-     the viewport un-spikes**. The spike fires-and-reverts on the browser's own
-     clock — often before the removal-settle frames even start, with the revert
-     lagging them — so the restore watches the real `scroll`/`resize` events for a
-     short bounded window (not just animation frames), keyed off the `innerHeight`
-     spike itself so a genuine reader scroll (which never spikes the viewport) is
-     never overridden.
+     so after a dismiss the list **restores the reader's last honest offset once
+     the viewport tells the truth again**. The spike is told from a real viewport
+     change by `window.visualViewport.height`, which reports the *actually-visible*
+     height and does **not** follow the bogus `innerHeight` — a large disagreement
+     between the two means `innerHeight` is lying. The reader's tracked offset is
+     recorded only while the viewport is honest (so a clamp's own scroll event,
+     which lands as `innerHeight` reverts, can't be adopted as a real scroll), and
+     the spike is captured **synchronously at the dismiss commit** (`lockBodyHeight`)
+     — on this device the spike runs on its own clock and can fire-and-revert
+     entirely between the commit and the first async settle sample (a **Sweep**,
+     whose viewport was already spiking before the tap, is the case that exposed
+     this), so nothing async is guaranteed to observe it. A short bounded window of
+     real `scroll`/`resize` events then also catches a spike that reverts late, and
+     a genuine reader scroll (viewport honest, offset moved) supersedes any pending
+     restore so it is never overridden.
    - **A genuine background refresh still freezes the height.** Pull-to-refresh,
      window-focus, and remount *do* refetch, and React Query refetches the loaded
      pages *sequentially*, so the rendered list can briefly shrink mid-refetch.
