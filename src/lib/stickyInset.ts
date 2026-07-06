@@ -98,6 +98,16 @@ export function measureStickyBottomInset(): number {
   if (typeof document === 'undefined' || typeof window === 'undefined') return 0;
   const el = document.querySelector('.list-toolbar--bottom');
   if (!el) return 0;
+  // The relative (default 'list') bottom bar is `position: static` — it sits at
+  // the end of the list in normal flow, *below* the last row, and never overlaps
+  // content. Only the pinned ('screen') bar overlays rows. Without this guard the
+  // in-flow footer produces a positive intrusion the moment it scrolls into view
+  // near the foot of the list (its `top` drops inside the viewport), shrinking the
+  // sweep observer's root and dropping the last visible row(s) out of `inViewIds`
+  // — so the last feed's header broom grays out and a group Sweep skips its last
+  // item, leaving an unpinned row the reader can plainly see. A relative footer
+  // occludes nothing, so its inset is always 0.
+  if (el.classList.contains('list-toolbar--relative')) return 0;
   const rect = el.getBoundingClientRect();
   const intrusion = window.innerHeight - rect.top;
   return Math.max(0, Math.min(Math.floor(intrusion), Math.floor(rect.height)));

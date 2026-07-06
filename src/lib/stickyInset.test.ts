@@ -175,6 +175,20 @@ describe('measureStickyBottomInset', () => {
     expect(measureStickyBottomInset()).toBe(Math.floor(768 - 719.6));
   });
 
+  it('returns 0 for the relative (default list-mode) footer even when it is on screen', () => {
+    // Regression: the default bottom bar is `position: static` (class
+    // `list-toolbar--relative`), sitting below the last row in normal flow — it
+    // never overlaps content. Once the reader scrolls near the foot, that in-flow
+    // footer enters the viewport, so `innerHeight - top` goes positive (here
+    // 768 - 720 = 48). Treating that as an intrusion shrank the sweep root and
+    // dropped the last visible row out of `inViewIds`, graying out the last feed's
+    // broom and making a group Sweep skip its final item. A relative footer
+    // occludes nothing, so the inset must be 0.
+    setInnerHeight(768);
+    makeStickyEl('list-toolbar list-toolbar--bottom list-toolbar--relative', 768);
+    expect(measureStickyBottomInset()).toBe(0);
+  });
+
   it('clamps the intrusion to the toolbar height when it floats mid-viewport mid-reflow', () => {
     // Regression: a reflow that briefly shrinks the content below the viewport
     // height (toggling group-by-feed, a "More" page, the initial paint, or
