@@ -1673,7 +1673,10 @@ negligible and off every critical path. See the External services table in
       menu item (**Open original**, writing `subscriptions.open_original`) for a
       normal feed; for a **Hacker News feed** it becomes a three-way
       `menuitemradio` group — **Open in readmo / Open original / Open on
-      newshacker** — that writes `open_original` / `open_newshacker` mutually
+      newshacker** — rendered as a visually-grouped radio set (a leading radio
+      dot on each option marks the current pick, with a hairline divider above
+      and below so the exclusive choice reads apart from the plain toggles) that
+      writes `open_original` / `open_newshacker` mutually
       exclusively (per-user, synced). When *open original* is on, the feed's rows
       link straight to the source website; when *open on newshacker* is on, they
       link to the item's Hacker News discussion on `newshacker.app`; both open in
@@ -1685,7 +1688,8 @@ negligible and off every critical path. See the External services table in
       also mark it Done — see *Feeds page → Mark done when opening* above; it hides
       against a backend that predates the column. A **Card style**
       `menuitemradio` group (**Default / Title only / Small thumbnail / Large
-      thumbnail / Excerpt**, writing `subscriptions.list_layout`, 0051) sets this
+      thumbnail / Excerpt**, writing `subscriptions.list_layout`, 0051) — same
+      radio-dot-and-divider grouping as the open-mode choice — sets this
       feed's per-feed article-row layout override — see *Article layout → Per-feed
       override* above; **Default** clears it (fall back to the app-wide setting),
       and it hides against a backend that predates the column. The overflow menu dismisses via

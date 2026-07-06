@@ -562,8 +562,14 @@ export function ReorderableSubscriptions({
                   showOpenNewshacker ? (
                     // Hacker News feeds get the mutually-exclusive three-way
                     // choice: open rows in the in-app reader, the original
-                    // source, or the item's newshacker discussion.
-                    <div role="group" aria-label="Open links in">
+                    // source, or the item's newshacker discussion. Rendered as a
+                    // radio group (leading dot, hairline dividers) so the
+                    // exclusive choice reads differently from the plain toggles.
+                    <div
+                      role="group"
+                      aria-label="Open links in"
+                      className="settings__sub-radiogroup"
+                    >
                       {(
                         [
                           ['reader', 'Open in readmo'],
@@ -578,19 +584,17 @@ export function ReorderableSubscriptions({
                             type="button"
                             role="menuitemradio"
                             aria-checked={current === mode}
-                            className="settings__sub-menuitem settings__sub-menuitem--check"
+                            className="settings__sub-menuitem settings__sub-menuitem--radio"
                             onClick={() => {
                               setMenuFor(null);
                               if (current !== mode) onSetOpenMode(feed.id, mode);
                             }}
                           >
-                            {label}
                             <span
-                              className="settings__sub-check"
+                              className="settings__sub-radio"
                               aria-hidden="true"
-                            >
-                              {current === mode ? '✓' : ''}
-                            </span>
+                            />
+                            {label}
                           </button>
                         );
                       })}
@@ -633,8 +637,13 @@ export function ReorderableSubscriptions({
                     // Per-feed card style: a mutually-exclusive choice of how much
                     // of this feed's articles a row shows. "Default" (null) clears
                     // the override and follows the app-wide Article layout setting;
-                    // the rest override it for this feed only.
-                    <div role="group" aria-label="Card style">
+                    // the rest override it for this feed only. Same radio-group
+                    // treatment as the open-mode choice above.
+                    <div
+                      role="group"
+                      aria-label="Card style"
+                      className="settings__sub-radiogroup"
+                    >
                       {CARD_STYLE_OPTIONS.map(({ value, label }) => {
                         const current = subscription.listLayout ?? null;
                         const selected = current === value;
@@ -644,19 +653,17 @@ export function ReorderableSubscriptions({
                             type="button"
                             role="menuitemradio"
                             aria-checked={selected}
-                            className="settings__sub-menuitem settings__sub-menuitem--check"
+                            className="settings__sub-menuitem settings__sub-menuitem--radio"
                             onClick={() => {
                               setMenuFor(null);
                               if (!selected) onSetListLayout(feed.id, value);
                             }}
                           >
-                            {label}
                             <span
-                              className="settings__sub-check"
+                              className="settings__sub-radio"
                               aria-hidden="true"
-                            >
-                              {selected ? '✓' : ''}
-                            </span>
+                            />
+                            {label}
                           </button>
                         );
                       })}

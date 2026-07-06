@@ -604,6 +604,23 @@ describe('ReorderableSubscriptions', () => {
     expect(newshacker).toHaveAttribute('aria-checked', 'false');
   });
 
+  it('renders the open-mode choices as a grouped radio set with leading dots', () => {
+    renderHn();
+    openMenu('Hacker News');
+    const group = screen.getByRole('group', { name: 'Open links in' });
+    // Wrapped as one visually-separated group (hairline dividers) so the
+    // exclusive choice reads apart from the plain toggles around it.
+    expect(group).toHaveClass('settings__sub-radiogroup');
+    const radios = within(group).getAllByRole('menuitemradio');
+    expect(radios).toHaveLength(3);
+    // Each option carries a leading radio dot rather than a trailing check.
+    radios.forEach((radio) => {
+      expect(radio).toHaveClass('settings__sub-menuitem--radio');
+      expect(radio.querySelector('.settings__sub-radio')).not.toBeNull();
+      expect(radio.querySelector('.settings__sub-check')).toBeNull();
+    });
+  });
+
   it('selecting "Open on newshacker" sets the newshacker open mode', () => {
     const { onSetOpenMode } = renderHn();
     openMenu('Hacker News');

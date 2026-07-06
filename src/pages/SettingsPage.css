@@ -448,9 +448,9 @@
   font-weight: 600;
 }
 
-/* Checkbox-style menu item (Open original): the label sits flush-left like every
-   other menu item, with the check pinned to the trailing edge so it never shifts
-   the label whether or not it's set. */
+/* Checkbox-style menu item (Open original, Mark done when opening): the label
+   sits flush-left like every other menu item, with the check pinned to the
+   trailing edge so it never shifts the label whether or not it's set. */
 .settings__sub-menuitem--check {
   display: flex;
   align-items: center;
@@ -464,6 +464,43 @@
   flex: 0 0 auto;
   text-align: center;
   color: var(--rm-accent);
+}
+
+/* Radio group inside the row menu (the mutually-exclusive open-mode and
+   card-style choices). Hairline dividers above and below set the exclusive
+   choice apart from the plain toggles around it, so it reads as one group. */
+.settings__sub-radiogroup {
+  display: flex;
+  flex-direction: column;
+  margin: 4px 0;
+  padding: 4px 0;
+  border-top: 1px solid var(--rm-border);
+  border-bottom: 1px solid var(--rm-border);
+}
+
+/* Radio-style menu item: a leading dot marks the current pick (mirrors a native
+   radio) instead of the trailing check the two-state toggles use. */
+.settings__sub-menuitem--radio {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings__sub-radio {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--rm-border-strong);
+  box-sizing: border-box;
+}
+
+/* Selected: accent ring filled with an accent dot. The inset bg-colored ring
+   between border and fill leaves the classic centered radio dot. */
+.settings__sub-menuitem--radio[aria-checked='true'] .settings__sub-radio {
+  border-color: var(--rm-accent);
+  background: var(--rm-accent);
+  box-shadow: inset 0 0 0 3px var(--rm-bg);
 }
 
 /* Used by the Account → Sign out button. Matches the prior subscription-row
