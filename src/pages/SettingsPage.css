@@ -466,6 +466,22 @@
   color: var(--rm-accent);
 }
 
+/* Trailing "›" on the "Open on…" drill row (and leading "‹" on the submenu's
+   back row): a quiet affordance that the row leads to another level. */
+.settings__sub-chevron {
+  display: inline-block;
+  flex: 0 0 auto;
+  color: var(--rm-meta);
+}
+
+/* The submenu's back row: the "‹" sits left of the label, so the row lays out
+   left-aligned (not space-between like a checkbox row) with a small gap. */
+.settings__sub-menuitem--back {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* Used by the Account → Sign out button. Matches the prior subscription-row
    unsubscribe styling (a min-tap-target danger button) so the sign-out tap
    target stays within guardrail #2's 44×44 floor. */

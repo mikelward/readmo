@@ -31,6 +31,11 @@ const CARD_STYLE_OPTIONS: { value: ListLayout | null; label: string }[] = [
   { value: 'excerpt', label: 'Excerpt' },
 ];
 
+/** Which two-level submenu is drilled into within the open overflow menu, or
+ * `null` for the top level. Both the open-mode ("Open on…") and "Card style"
+ * controls share the same drill-in machinery. */
+type Submenu = 'openMode' | 'cardStyle' | null;
+
 interface Props {
   subs: SubscriptionEntry[];
   /** Persist a new feed order — every feed id, in the desired order. May return a
@@ -38,22 +43,21 @@ interface Props {
    * order (see `schedulePersist`). */
   onReorder: (orderedFeedIds: FeedId[]) => void | Promise<void>;
   onMute: (feedId: FeedId, muted: boolean) => void;
-  /** Toggle the feed's "open original" preference — when on, its article rows
-   * open the source website directly instead of the in-app reader. Used for
-   * non–Hacker News feeds (the simple two-state checkbox). */
-  onSetOpenOriginal: (feedId: FeedId, openOriginal: boolean) => void;
-  /** Set the feed's open mode — the mutually-exclusive three-way choice (reader
-   * / original / newshacker) shown for Hacker News feeds. The parent persists it
-   * by clearing the other mode and setting the chosen one. */
+  /** Set the feed's open mode — the mutually-exclusive choice (**Open here** /
+   * **Open original** / **Open on newshacker**) shown as the "Open on…" drill
+   * submenu. The parent persists it by clearing the other mode and setting the
+   * chosen one; it degrades safely when the backend lacks the newshacker column.
+   */
   onSetOpenMode: (feedId: FeedId, mode: OpenMode) => void;
-  /** Whether to offer the "Open original" menu item. Hidden when the backend
-   * doesn't support the preference yet (pre-migration), so the control never
-   * triggers a write the old backend would reject. Defaults to true. */
+  /** Whether to offer the open-mode ("Open on…") choice at all. Hidden when the
+   * backend doesn't support the `open_original` column yet (pre-0027), so the
+   * control never triggers a write the old backend would reject. Defaults to
+   * true. */
   showOpenOriginal?: boolean;
-  /** Whether to offer the "Open on newshacker" option (the third state of the
-   * Hacker-News-feed open-mode choice). Hidden when the backend doesn't support
-   * the `open_newshacker` preference yet (pre-0033), so the choice degrades to
-   * the reader/original checkbox. Defaults to true. */
+  /** Whether to offer the "Open on newshacker" option (only ever applicable to
+   * Hacker News feeds). Hidden when the backend doesn't support the
+   * `open_newshacker` column yet (pre-0034), so the choice degrades to just
+   * **Open here** / **Open original**. Defaults to true. */
   showOpenNewshacker?: boolean;
   /** Toggle the feed's "mark done when opening" preference — when on, opening one
    * of its items on the original source or the newshacker discussion also marks
@@ -96,7 +100,6 @@ export function ReorderableSubscriptions({
   subs,
   onReorder,
   onMute,
-  onSetOpenOriginal,
   onSetOpenMode,
   showOpenOriginal = true,
   showOpenNewshacker = true,
@@ -204,6 +207,60 @@ export function ReorderableSubscriptions({
   // Per-row overflow menu (Rename / Mute / Unsubscribe). Only one open at a
   // time; clicks outside or Escape close it.
   const [menuFor, setMenuFor] = useState<FeedId | null>(null);
+  // Two of the open-menu's controls are two-level: the open-mode choice ("Open
+  // on…", Hacker-News feeds only) and the per-feed "Card style" — each a single
+  // top-level row that drills into a submenu holding its radio group. `submenu`
+  // tracks which one, if any, is showing for the currently-open menu; it resets
+  // whenever the open menu changes (including closing) so a stale drill level
+  // can't leak onto the next row's menu.
+  const [submenu, setSubmenu] = useState<Submenu>(null);
+  useEffect(() => {
+    setSubmenu(null);
+  }, [menuFor]);
+  // Drilling in/out unmounts the button the user just activated, which would
+  // otherwise drop focus to <body> and lose their place. Move focus into the
+  // submenu (its Back row) on drill-in and back onto the originating drill row
+  // on return. Only on an actual drill transition while the menu stays open —
+  // never when the menu first opens (that would yank focus off the ⋯ trigger).
+  const openModeDrillRef = useRef<HTMLButtonElement | null>(null);
+  const cardStyleDrillRef = useRef<HTMLButtonElement | null>(null);
+  const submenuBackRef = useRef<HTMLButtonElement | null>(null);
+  const prevSubmenu = useRef<Submenu>(null);
+  const prevMenuFor = useRef<FeedId | null>(null);
+  useLayoutEffect(() => {
+    const wasSub = prevSubmenu.current;
+    const wasMenu = prevMenuFor.current;
+    prevSubmenu.current = submenu;
+    prevMenuFor.current = menuFor;
+    if (menuFor === null) {
+      // The menu just closed. If it closed while focus was inside a submenu
+      // (Escape, an outside press, or picking a radio — all set menuFor null),
+      // that focused control unmounts and focus falls to <body>; return it to
+      // the ⋯ trigger that owns the menu so keyboard/switch users keep their
+      // place. Guard on <body> so we never steal focus the dismissal moved
+      // somewhere meaningful.
+      if (
+        wasSub !== null &&
+        wasMenu !== null &&
+        typeof document !== 'undefined' &&
+        document.activeElement === document.body
+      ) {
+        overflowRefs.current.get(wasMenu)?.focus({ preventScroll: true });
+      }
+      return;
+    }
+    // `preventScroll` because this focus effect runs *before* the placement
+    // effect below: at this point the submenu is still rendered wherever the
+    // (taller) top level was placed, which may be off-screen, and the default
+    // scroll-into-view would jump the page before placement flips it into view.
+    if (submenu !== null && wasSub === null) {
+      submenuBackRef.current?.focus({ preventScroll: true });
+    } else if (submenu === null && wasSub !== null) {
+      const drill =
+        wasSub === 'openMode' ? openModeDrillRef : cardStyleDrillRef;
+      drill.current?.focus({ preventScroll: true });
+    }
+  }, [submenu, menuFor]);
   // The menu drops below its trigger by default, but a row near the bottom of
   // the viewport would push the menu off-screen. After it opens we measure and
   // flip it above the trigger when there isn't room below — see the layout
@@ -242,7 +299,11 @@ export function ReorderableSubscriptions({
     const fitsBelow = spaceBelow >= menuHeight + gap + pad;
     const fitsAbove = spaceAbove >= menuHeight + gap + pad;
     setMenuPlacement(!fitsBelow && fitsAbove ? 'above' : 'below');
-  }, [menuFor]);
+    // Also re-measure when drilling in/out of a submenu: the two levels differ
+    // in height (a tall top level may be kept `below` because it fits neither
+    // way, while the shorter submenu could fit `above`), so the placement
+    // decided at open can go stale on the drill transition.
+  }, [menuFor, submenu]);
   // Inline rename. `editing` tracks which row is in edit mode and the current
   // draft value; the input is autofocused on entry. Enter commits, Esc cancels,
   // blur commits. An empty/whitespace-only draft clears the override (null).
@@ -328,6 +389,9 @@ export function ReorderableSubscriptions({
   // run of ArrowDown presses keeps working.
   const refocus = useRef<FeedId | null>(null);
   const handleRefs = useRef(new Map<FeedId, HTMLButtonElement>());
+  // The per-row overflow (⋯) triggers, so focus can return to the owning trigger
+  // when its open-mode submenu is dismissed (see the drill focus effect below).
+  const overflowRefs = useRef(new Map<FeedId, HTMLButtonElement>());
   useEffect(() => {
     if (refocus.current) {
       handleRefs.current.get(refocus.current)?.focus();
@@ -439,6 +503,24 @@ export function ReorderableSubscriptions({
         if (!entry) return null;
         const { feed, subscription } = entry;
         const title = subscription.titleOverride ?? feed.title;
+        // The open-mode choice (Open here / Open original / Open on newshacker)
+        // is a drill-in submenu offered whenever the backend supports the
+        // open_original column. The newshacker option is only applicable to
+        // Hacker News feeds (and only when its column exists).
+        const showOpenModeChoice = showOpenOriginal;
+        const showNewshackerOption =
+          isHackerNewsFeed(feed) && showOpenNewshacker;
+        // Which drill submenu (if any) is showing for THIS row's open menu.
+        // Guarded on the control actually being offered, so a stale key can
+        // never render an empty submenu panel.
+        const activeSubmenu: Submenu =
+          menuFor !== feed.id
+            ? null
+            : submenu === 'openMode' && showOpenModeChoice
+              ? 'openMode'
+              : submenu === 'cardStyle' && showListLayout
+                ? 'cardStyle'
+                : null;
         return (
           <li
             key={feed.id}
@@ -514,6 +596,10 @@ export function ReorderableSubscriptions({
             <div className="settings__sub-actions">
               <TooltipButton
                 type="button"
+                ref={(el) => {
+                  if (el) overflowRefs.current.set(feed.id, el);
+                  else overflowRefs.current.delete(feed.id);
+                }}
                 className="settings__sub-overflow"
                 tooltip="Actions"
                 aria-label={`Actions for ${title}`}
@@ -537,38 +623,36 @@ export function ReorderableSubscriptions({
                   }
                   data-placement={menuPlacement}
                 >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="settings__sub-menuitem"
-                    onClick={() => startEdit(feed.id, title)}
-                  >
-                    Rename
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitemcheckbox"
-                    aria-checked={subscription.muted}
-                    className="settings__sub-menuitem"
-                    onClick={() => {
-                      setMenuFor(null);
-                      onMute(feed.id, !subscription.muted);
-                    }}
-                  >
-                    {subscription.muted ? 'Unmute' : 'Mute'}
-                  </button>
-                  {showOpenOriginal &&
-                  isHackerNewsFeed(feed) &&
-                  showOpenNewshacker ? (
-                    // Hacker News feeds get the mutually-exclusive three-way
-                    // choice: open rows in the in-app reader, the original
-                    // source, or the item's newshacker discussion.
+                  {activeSubmenu === 'openMode' ? (
+                    // Second level of the open-mode control: a back row plus the
+                    // mutually-exclusive radios — Open here / Open original, with
+                    // Open on newshacker added only when applicable (HN feeds).
+                    // Replaces the whole menu panel so it's never taller than the
+                    // top level it swapped out.
                     <div role="group" aria-label="Open links in">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        ref={submenuBackRef}
+                        className="settings__sub-menuitem settings__sub-menuitem--back"
+                        aria-label="Back"
+                        onClick={() => setSubmenu(null)}
+                      >
+                        <span
+                          className="settings__sub-chevron"
+                          aria-hidden="true"
+                        >
+                          ‹
+                        </span>
+                        Open on
+                      </button>
                       {(
                         [
-                          ['reader', 'Open in readmo'],
+                          ['reader', 'Open here'],
                           ['original', 'Open original'],
-                          ['newshacker', 'Open on newshacker'],
+                          ...(showNewshackerOption
+                            ? [['newshacker', 'Open on newshacker'] as const]
+                            : []),
                         ] as const
                       ).map(([mode, label]) => {
                         const current = openModeOf(subscription);
@@ -595,46 +679,27 @@ export function ReorderableSubscriptions({
                         );
                       })}
                     </div>
-                  ) : showOpenOriginal ? (
-                    <button
-                      type="button"
-                      role="menuitemcheckbox"
-                      aria-checked={subscription.openOriginal}
-                      className="settings__sub-menuitem settings__sub-menuitem--check"
-                      onClick={() => {
-                        setMenuFor(null);
-                        onSetOpenOriginal(feed.id, !subscription.openOriginal);
-                      }}
-                    >
-                      Open original
-                      <span className="settings__sub-check" aria-hidden="true">
-                        {subscription.openOriginal ? '✓' : ''}
-                      </span>
-                    </button>
-                  ) : null}
-                  {showMarkDoneOnOpen ? (
-                    <button
-                      type="button"
-                      role="menuitemcheckbox"
-                      aria-checked={subscription.markDoneOnOpen}
-                      className="settings__sub-menuitem settings__sub-menuitem--check"
-                      onClick={() => {
-                        setMenuFor(null);
-                        onSetMarkDoneOnOpen(feed.id, !subscription.markDoneOnOpen);
-                      }}
-                    >
-                      Mark done when opening
-                      <span className="settings__sub-check" aria-hidden="true">
-                        {subscription.markDoneOnOpen ? '✓' : ''}
-                      </span>
-                    </button>
-                  ) : null}
-                  {showListLayout ? (
-                    // Per-feed card style: a mutually-exclusive choice of how much
-                    // of this feed's articles a row shows. "Default" (null) clears
-                    // the override and follows the app-wide Article layout setting;
-                    // the rest override it for this feed only.
+                  ) : activeSubmenu === 'cardStyle' ? (
+                    // Second level of the Card style control: a back row plus the
+                    // mutually-exclusive layout radios. Same drill machinery as
+                    // the open-mode submenu above.
                     <div role="group" aria-label="Card style">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        ref={submenuBackRef}
+                        className="settings__sub-menuitem settings__sub-menuitem--back"
+                        aria-label="Back"
+                        onClick={() => setSubmenu(null)}
+                      >
+                        <span
+                          className="settings__sub-chevron"
+                          aria-hidden="true"
+                        >
+                          ‹
+                        </span>
+                        Card style
+                      </button>
                       {CARD_STYLE_OPTIONS.map(({ value, label }) => {
                         const current = subscription.listLayout ?? null;
                         const selected = current === value;
@@ -661,18 +726,107 @@ export function ReorderableSubscriptions({
                         );
                       })}
                     </div>
-                  ) : null}
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="settings__sub-menuitem settings__sub-menuitem--danger"
-                    onClick={() => {
-                      setMenuFor(null);
-                      onUnsubscribe(feed.id);
-                    }}
-                  >
-                    Unsubscribe
-                  </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="settings__sub-menuitem"
+                        onClick={() => startEdit(feed.id, title)}
+                      >
+                        Rename
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitemcheckbox"
+                        aria-checked={subscription.muted}
+                        className="settings__sub-menuitem"
+                        onClick={() => {
+                          setMenuFor(null);
+                          onMute(feed.id, !subscription.muted);
+                        }}
+                      >
+                        {subscription.muted ? 'Unmute' : 'Mute'}
+                      </button>
+                      {showOpenModeChoice ? (
+                        // Top level of the open-mode control: a single row that
+                        // drills into the Open here / Open original / (newshacker)
+                        // submenu above.
+                        <button
+                          type="button"
+                          role="menuitem"
+                          ref={openModeDrillRef}
+                          aria-haspopup="menu"
+                          aria-expanded={false}
+                          className="settings__sub-menuitem settings__sub-menuitem--check"
+                          onClick={() => setSubmenu('openMode')}
+                        >
+                          Open on…
+                          <span
+                            className="settings__sub-chevron"
+                            aria-hidden="true"
+                          >
+                            ›
+                          </span>
+                        </button>
+                      ) : null}
+                      {showMarkDoneOnOpen ? (
+                        <button
+                          type="button"
+                          role="menuitemcheckbox"
+                          aria-checked={subscription.markDoneOnOpen}
+                          className="settings__sub-menuitem settings__sub-menuitem--check"
+                          onClick={() => {
+                            setMenuFor(null);
+                            onSetMarkDoneOnOpen(
+                              feed.id,
+                              !subscription.markDoneOnOpen,
+                            );
+                          }}
+                        >
+                          Mark done when opening
+                          <span
+                            className="settings__sub-check"
+                            aria-hidden="true"
+                          >
+                            {subscription.markDoneOnOpen ? '✓' : ''}
+                          </span>
+                        </button>
+                      ) : null}
+                      {showListLayout ? (
+                        // Top level of the Card style control: a single row that
+                        // drills into the layout submenu above.
+                        <button
+                          type="button"
+                          role="menuitem"
+                          ref={cardStyleDrillRef}
+                          aria-haspopup="menu"
+                          aria-expanded={false}
+                          className="settings__sub-menuitem settings__sub-menuitem--check"
+                          onClick={() => setSubmenu('cardStyle')}
+                        >
+                          Card style
+                          <span
+                            className="settings__sub-chevron"
+                            aria-hidden="true"
+                          >
+                            ›
+                          </span>
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="settings__sub-menuitem settings__sub-menuitem--danger"
+                        onClick={() => {
+                          setMenuFor(null);
+                          onUnsubscribe(feed.id);
+                        }}
+                      >
+                        Unsubscribe
+                      </button>
+                    </>
+                  )}
                 </div>
               ) : null}
             </div>
