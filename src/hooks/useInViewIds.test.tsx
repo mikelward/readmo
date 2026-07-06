@@ -92,6 +92,116 @@ describe('useInViewIds', () => {
   });
 });
 
+// resync recomputes inViewIds synchronously from live geometry, bypassing the
+// IntersectionObserver callback. Sweep calls it after removing swept rows: a
+// survivor that reflows into full view can be missed by the observer (its
+// post-mutation delivery lags or is coalesced on real devices), leaving its
+// Sweep broom disabled over a fully-visible row. The recompute must use the same
+// root (viewport minus sticky insets) and the same 0.999 cutoff the observer does.
+describe('useInViewIds resync', () => {
+  beforeEach(() => {
+    // An inert observer that never fires, so inViewIds can only change via resync.
+    class InertIO {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+      takeRecords(): IntersectionObserverEntry[] {
+        return [];
+      }
+    }
+    vi.stubGlobal('IntersectionObserver', InertIO);
+    Object.defineProperty(window, 'innerHeight', {
+      value: 768,
+      configurable: true,
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    document.body.innerHTML = '';
+  });
+
+  let inView: ReadonlySet<ItemId> = new Set();
+  let doResync: () => void = () => {};
+
+  function ResyncRows({ rows }: { rows: string[] }) {
+    const { inViewIds, getRowRef, resync } = useInViewIds();
+    inView = inViewIds;
+    doResync = resync;
+    return (
+      <ul>
+        {rows.map((id) => (
+          <li key={id} data-item-id={id} ref={getRowRef(id)} />
+        ))}
+      </ul>
+    );
+  }
+
+  function setRect(id: string, top: number, height: number): void {
+    const el = document.querySelector(`[data-item-id="${id}"]`) as HTMLElement;
+    Object.defineProperty(el, 'getBoundingClientRect', {
+      configurable: true,
+      value: () =>
+        ({
+          top,
+          bottom: top + height,
+          height,
+          left: 0,
+          right: 0,
+          width: 0,
+          x: 0,
+          y: top,
+          toJSON() {
+            return {};
+          },
+        }) as DOMRect,
+    });
+  }
+
+  it('adds a fully-visible row the observer never reported', () => {
+    // Top chrome bottom = 100, no bottom toolbar → root spans [100, 768].
+    mountSticky('app-header', 52);
+    mountSticky('list-toolbar', 100);
+    render(<ResyncRows rows={['a', 'b']} />);
+    setRect('a', 200, 60); // fully inside the root → ratio 1
+    setRect('b', 740, 60); // clipped at the foot (overlap 28/60) → ratio < 0.999
+
+    // The inert observer never fired, so nothing is in view yet.
+    expect([...inView]).toEqual([]);
+
+    act(() => doResync());
+
+    // Only the fully-visible row is added — no observer callback involved.
+    expect([...inView]).toEqual(['a']);
+  });
+
+  it('drops a row that resync finds no longer fully visible', () => {
+    mountSticky('app-header', 52);
+    mountSticky('list-toolbar', 100);
+    render(<ResyncRows rows={['a']} />);
+    setRect('a', 200, 60);
+    act(() => doResync());
+    expect([...inView]).toEqual(['a']);
+
+    // The row scrolls partly behind the top chrome (top above the root's 100).
+    setRect('a', 70, 60); // overlap 30/60 → ratio 0.5
+    act(() => doResync());
+    expect([...inView]).toEqual([]);
+  });
+
+  it('honors the bottom sticky inset when recomputing', () => {
+    mountSticky('app-header', 52);
+    mountSticky('list-toolbar', 100);
+    mountSticky('list-toolbar list-toolbar--bottom', 768); // pinned, height 48
+    render(<ResyncRows rows={['a']} />);
+    // Would be fully visible against a bare viewport, but its foot sits behind
+    // the pinned bottom toolbar (root foot = 768 − 48 = 720).
+    setRect('a', 690, 50); // bottom 740 > 720 → clipped
+    act(() => doResync());
+    expect([...inView]).toEqual([]);
+  });
+});
+
 // onExitTop fires when a previously-seen row scrolls fully off the *top* — the
 // signal that drives auto-hide-on-scroll. The detection lives in the observer
 // callback, so the harness captures it and replays entries with the geometry a

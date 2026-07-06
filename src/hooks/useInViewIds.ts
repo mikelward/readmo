@@ -39,6 +39,18 @@ export function useInViewIds(opts: Options = {}): {
   inViewIds: ReadonlySet<ItemId>;
   /** Stable per-id callback ref to attach to each row element. */
   getRowRef: (id: ItemId) => (el: HTMLElement | null) => void;
+  /** Force an immediate, synchronous recomputation of `inViewIds` from every
+   * observed row's current geometry. Sweep calls this after it removes the swept
+   * rows and the list reflows: a row that was partially clipped at the viewport
+   * edge can become fully visible without any scroll or resize, and while the
+   * IntersectionObserver does re-evaluate after the DOM mutation in-browser, that
+   * delivery can be delayed or coalesced on real devices — leaving a fully-visible
+   * row absent from `inViewIds` (its section's Sweep broom stays disabled, and a
+   * later scroll doesn't reliably deliver the missed entry). Recomputing directly
+   * from `getBoundingClientRect` against the same root the observer uses closes
+   * that gap immediately, without routing through the async callback (so it can't
+   * perturb the auto-hide-on-scroll `onExitTop`/seen bookkeeping). */
+  resync: () => void;
 } {
   const [inViewIds, setInViewIds] = useState<Set<ItemId>>(() => new Set());
   const rowEls = useRef<Map<ItemId, HTMLElement>>(new Map());
@@ -139,6 +151,40 @@ export function useInViewIds(opts: Options = {}): {
   const rowRefCache = useRef<Map<ItemId, (el: HTMLElement | null) => void>>(
     new Map(),
   );
+  // Synchronous visibility recompute (see the `resync` doc on the return type).
+  // Mirrors the observer's geometry: its root is the viewport shrunk by the
+  // sticky-chrome insets (`rootMargin`), and a row counts as fully visible at the
+  // same FULLY_VISIBLE_RATIO. A full-width row is always fully within the root
+  // horizontally, so its area ratio reduces to the vertical-overlap fraction —
+  // exactly what the observer reports. Reading a rect forces layout, so this sees
+  // the post-reflow positions even when called from a rAF right after the removal.
+  const resync = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    const rootTop = topInset;
+    const rootBottom = window.innerHeight - bottomInset;
+    setInViewIds((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const [id, el] of rowEls.current) {
+        const r = el.getBoundingClientRect();
+        if (r.height <= 0) continue;
+        const overlap = Math.max(
+          0,
+          Math.min(r.bottom, rootBottom) - Math.max(r.top, rootTop),
+        );
+        const full = overlap / r.height >= FULLY_VISIBLE_RATIO;
+        if (full && !next.has(id)) {
+          next.add(id);
+          changed = true;
+        } else if (!full && next.has(id)) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [topInset, bottomInset]);
+
   const getRowRef = useCallback((id: ItemId) => {
     const cached = rowRefCache.current.get(id);
     if (cached) return cached;
@@ -171,5 +217,5 @@ export function useInViewIds(opts: Options = {}): {
     return setRef;
   }, []);
 
-  return { inViewIds, getRowRef };
+  return { inViewIds, getRowRef, resync };
 }
