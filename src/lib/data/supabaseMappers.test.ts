@@ -202,6 +202,7 @@ describe('mapSubscription', () => {
       open_original: true,
       open_newshacker: true,
       mark_done_on_open: true,
+      list_layout: 'excerpt',
       sort: 3,
     };
     expect(mapSubscription(row)).toEqual({
@@ -212,11 +213,12 @@ describe('mapSubscription', () => {
       openOriginal: true,
       openNewshacker: true,
       markDoneOnOpen: true,
+      listLayout: 'excerpt',
       sort: 3,
     });
   });
 
-  it('defaults openOriginal/openNewshacker/markDoneOnOpen to false when the columns are absent (pre-migration backend)', () => {
+  it('defaults openOriginal/openNewshacker/markDoneOnOpen to false and listLayout to null when the columns are absent (pre-migration backend)', () => {
     const row: SubscriptionRow = {
       feed_id: 'feed-1',
       folder: null,
@@ -227,5 +229,18 @@ describe('mapSubscription', () => {
     expect(mapSubscription(row).openOriginal).toBe(false);
     expect(mapSubscription(row).openNewshacker).toBe(false);
     expect(mapSubscription(row).markDoneOnOpen).toBe(false);
+    expect(mapSubscription(row).listLayout).toBe(null);
+  });
+
+  it('coerces an unrecognized list_layout value to null (drops it to the app default)', () => {
+    const row: SubscriptionRow = {
+      feed_id: 'feed-1',
+      folder: null,
+      title_override: null,
+      muted: false,
+      list_layout: 'nonsense',
+      sort: 0,
+    };
+    expect(mapSubscription(row).listLayout).toBe(null);
   });
 });

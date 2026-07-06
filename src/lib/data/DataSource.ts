@@ -5,6 +5,7 @@ import type {
   Folder,
   Item,
   ItemId,
+  ListLayout,
   OpenMode,
   Subscription,
 } from '../types';
@@ -333,6 +334,19 @@ export interface DataSource {
    * predates the migration, so the UI can hide the control rather than offer a
    * write the old backend rejects. Omitted sources are assumed to support it. */
   supportsMarkDoneOnOpen?(): boolean;
+  /** Per-feed "card style" override: how much of this feed's articles a row
+   * shows. Pass a {@link ListLayout} to override the app-wide Article layout
+   * setting for this feed only, or `null` to clear the override (fall back to the
+   * app setting). Per-user, synced. */
+  setSubscriptionListLayout(
+    feedId: FeedId,
+    listLayout: ListLayout | null,
+  ): Promise<void>;
+  /** Whether the backend supports the per-feed card-style preference (the
+   * `list_layout` column, 0051, exists). False against a backend that predates
+   * the migration, so the UI can hide the control rather than offer a write the
+   * old backend rejects. Omitted sources are assumed to support it. */
+  supportsSubscriptionListLayout?(): boolean;
   setTitleOverride(feedId: FeedId, title: string | null): Promise<void>;
   /** Force an immediate server-side refresh of one feed (or all). */
   refresh(feedId?: FeedId): Promise<void>;

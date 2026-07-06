@@ -5,6 +5,7 @@ import type {
   Item,
   ItemId,
   ItemState,
+  ListLayout,
   Subscription,
 } from '../types';
 
@@ -149,7 +150,25 @@ export interface SubscriptionRow {
    * `mark_done_on_open` column (0037) — loadSubscriptions falls back to the
    * pre-0037 column set. Defaults to false in {@link mapSubscription}. */
   mark_done_on_open?: boolean;
+  /** Optional: absent when read from a backend not yet migrated with the
+   * `list_layout` column (0051) — loadSubscriptions falls back to the pre-0051
+   * column set. A per-feed card-style override; null (or an unrecognized value)
+   * maps to null in {@link mapSubscription} = "use the app-wide setting". */
+  list_layout?: string | null;
   sort: number;
+}
+
+/** Coerce a stored `list_layout` text value to the {@link ListLayout} union,
+ * dropping anything unrecognized (or null/absent) to null = "use the app-wide
+ * Article layout setting". Keeps a stray/legacy value from reaching the row
+ * renderer. */
+function mapListLayout(raw: string | null | undefined): ListLayout | null {
+  return raw === 'title' ||
+    raw === 'thumbnail-small' ||
+    raw === 'thumbnail' ||
+    raw === 'excerpt'
+    ? raw
+    : null;
 }
 
 /**
@@ -232,6 +251,7 @@ export function mapSubscription(row: SubscriptionRow): Subscription {
     openOriginal: row.open_original ?? false,
     openNewshacker: row.open_newshacker ?? false,
     markDoneOnOpen: row.mark_done_on_open ?? false,
+    listLayout: mapListLayout(row.list_layout),
     sort: row.sort,
   };
 }

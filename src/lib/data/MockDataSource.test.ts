@@ -103,6 +103,29 @@ describe('MockDataSource feed reads', () => {
     expect(ds.supportsMarkDoneOnOpen()).toBe(true);
   });
 
+  it('persists the per-feed card-style (list layout) override, and clears it', async () => {
+    const before = await ds.getSubscriptions();
+    expect(
+      before.find((s) => s.feed.id === 'feed-verge')!.subscription.listLayout,
+    ).toBe(null);
+    await ds.setSubscriptionListLayout('feed-verge', 'excerpt');
+    let after = await ds.getSubscriptions();
+    expect(
+      after.find((s) => s.feed.id === 'feed-verge')!.subscription.listLayout,
+    ).toBe('excerpt');
+    // Other feeds untouched.
+    expect(
+      after.find((s) => s.feed.id === 'feed-nasa')!.subscription.listLayout,
+    ).toBe(null);
+    // Passing null clears the override (back to the app-wide setting).
+    await ds.setSubscriptionListLayout('feed-verge', null);
+    after = await ds.getSubscriptions();
+    expect(
+      after.find((s) => s.feed.id === 'feed-verge')!.subscription.listLayout,
+    ).toBe(null);
+    expect(ds.supportsSubscriptionListLayout()).toBe(true);
+  });
+
   it('paginates with an explicit cursor', async () => {
     const page1 = await ds.getHomeItems({ limit: 3 });
     expect(page1.items).toHaveLength(3);

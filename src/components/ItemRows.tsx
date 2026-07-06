@@ -5,6 +5,7 @@ import { useShareItem } from '../hooks/useShareItem';
 import { useOpenOriginalFeeds } from '../hooks/useOpenOriginalFeeds';
 import { useOpenNewshackerFeeds } from '../hooks/useOpenNewshackerFeeds';
 import { useMarkDoneOnOpenFeeds } from '../hooks/useMarkDoneOnOpenFeeds';
+import { useListLayoutFeeds } from '../hooks/useListLayoutFeeds';
 import {
   useShowRowFavicon,
   useShowGroupFavicon,
@@ -162,6 +163,11 @@ export function ItemRows({
   // newshacker target also marks the item done. Same shared subscriptions read,
   // deduped via React Query.
   const markDoneOnOpenFeeds = useMarkDoneOnOpenFeeds();
+  // Feeds the user gave a per-feed "card style" override — their rows render at
+  // that layout instead of the app-wide Article layout setting. Same shared
+  // subscriptions read, deduped via React Query. A feed absent from the map
+  // (the common case) falls back to the app-wide setting inside ItemRow.
+  const listLayoutFeeds = useListLayoutFeeds();
   // Off-by-default per-device setting (Settings → Appearance → Feed icons). Only
   // consulted in the non-grouped path below.
   const { showRowFavicon: showRowFaviconPref } = useShowRowFavicon();
@@ -211,6 +217,7 @@ export function ItemRows({
         openOriginal={openOriginalFeeds.has(fi.item.feedId)}
         openNewshacker={openNewshackerFeeds.has(fi.item.feedId)}
         markDoneOnOpen={markDoneOnOpenFeeds.has(fi.item.feedId)}
+        listLayout={listLayoutFeeds.get(fi.item.feedId)}
         showFavicon={showRowFavicon}
         onShare={() =>
           share({

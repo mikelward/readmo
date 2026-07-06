@@ -447,7 +447,8 @@ items         (id, feed_id FK, guid, url, comments_url, title, author,
                sort_at = coalesce(published_at, created_at))          -- shared; UNIQUE(feed_id, guid), UNIQUE(feed_id, url) WHERE url IS NOT NULL
 subscriptions (user_id FK, feed_id FK, folder, title_override,
                muted bool, open_original bool, open_newshacker bool,
-               mark_done_on_open bool, sort, created_at)              -- user ↔ feed
+               mark_done_on_open bool, list_layout, sort, created_at)  -- user ↔ feed
+               -- list_layout: per-feed card-style override; NULL = app-wide setting
 item_state    (user_id FK, item_id FK,
                pinned bool, pinned_at, favorite bool, favorite_at,
                done bool, done_at, hidden bool, hidden_at,
@@ -1657,7 +1658,7 @@ negligible and off every critical path. See the External services table in
       within the **3-tap-zone cap** as drag handle (left), a non-interactive
       row body (title + URL), and a right-side **overflow (⋯) button** that
       opens a per-row menu with **Rename / Mute / open mode (Open original /
-      Open on newshacker) / Mark done when opening / Unsubscribe**. The menu drops below the ⋯ button,
+      Open on newshacker) / Mark done when opening / Card style / Unsubscribe**. The menu drops below the ⋯ button,
       but **flips above it** for a row near the bottom of the viewport so the
       menu is never clipped off-screen. The drag
       handle is both pointer-draggable (mouse + touch) and keyboard-operable
@@ -1682,7 +1683,12 @@ negligible and off every critical path. See the External services table in
       checkbox (writing `subscriptions.mark_done_on_open`, 0037, independent of the
       open mode) makes opening an item on its original source / newshacker target
       also mark it Done — see *Feeds page → Mark done when opening* above; it hides
-      against a backend that predates the column. The overflow menu dismisses via
+      against a backend that predates the column. A **Card style**
+      `menuitemradio` group (**Default / Title only / Small thumbnail / Large
+      thumbnail / Excerpt**, writing `subscriptions.list_layout`, 0051) sets this
+      feed's per-feed article-row layout override — see *Article layout → Per-feed
+      override* above; **Default** clears it (fall back to the app-wide setting),
+      and it hides against a backend that predates the column. The overflow menu dismisses via
       the shared dropdown contract (`usePopoverDismiss`): Escape or an outside
       press closes it, and **the first press outside only dismisses** — its
       trailing click is swallowed, so dismissing the menu doesn't also activate
@@ -1905,12 +1911,32 @@ four steps:
 
 The thumbnail and excerpt both render **inside the row-body link**, so the row
 keeps its **two tap zones** (body link + right-side button) — the image/excerpt
-add no fourth tappable (guardrail #2). This is a **client-only** feature: it
-reads existing item fields and the `/api/img` proxy (a Vercel function that ships
-with the frontend), so it needs no migration or Edge Function deploy and works
-against the currently deployed backend. Sourcing thumbnails from feed content
-means coverage depends on the feed — under either thumbnail option an image-less
-row simply shows its title (the image slot omitted).
+add no fourth tappable (guardrail #2). The **rendering** is client-only — it reads
+existing item fields and the `/api/img` proxy (a Vercel function that ships with
+the frontend), so an image-less row simply shows its title under either thumbnail
+option (the image slot omitted); coverage depends on the feed.
+
+**Per-feed override.** The app-wide Article layout is the default, but any feed
+can override it — a photo-heavy feed can show large thumbnails while a text feed
+stays title-only. The override is set from the **Feeds page → Subscriptions →
+per-row ⋯ menu → "Card style"** (a mutually-exclusive radio group: **Default**,
+Title only, Small thumbnail, Large thumbnail, Excerpt), sitting alongside the
+existing per-feed choices (mute, rename, open mode, mark-done-on-open).
+**"Default"** clears the override and follows the app-wide setting. Unlike the
+app-wide setting (per-device `localStorage`), the per-feed override is **stored
+on `subscriptions.list_layout`** so it **syncs across the user's devices** like
+mute/rename/open-mode (NULL = "use the app-wide setting"; the four non-null
+values mirror the app-wide choices). Every row resolves its layout as
+*per-feed override ?? app-wide setting* — `ItemRows` reads the overrides from the
+shared `['subscriptions']` query (`useListLayoutFeeds`, deduped with the open-mode
+hooks) and passes each row its feed's layout; `ItemRow` falls back to the
+app-wide `useListLayout` when no override is given. Because it adds a synced
+column, this half is **not** client-only: it ships behind the `list_layout`
+column (migration **0051**) and feature-detects a backend without it
+(`supportsSubscriptionListLayout`) — the "Card style" control hides until the
+column is deployed, and a stale-cache write to a pre-0051 backend no-ops rather
+than erroring (guardrail #11). Requires a manual `make migrate`. Cost: one extra
+nullable text column, **negligible** — no new fetch or external call.
 
 Display-only meta (plain text inside the row link): **source** (feed/site
 name, trimmed to the registrable domain the way newshacker trims
