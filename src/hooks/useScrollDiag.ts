@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDataSource } from '../lib/data/context';
 import { useToast } from './useToast';
-import { freezeDiagReport, recordDiag } from '../lib/scrollDiag';
+import { freezeDiagReport, recordDiag, setDiagEnabled } from '../lib/scrollDiag';
 
 /** Scroll-jump diagnostics (the /debug switch, off by default). When enabled,
  * record every window scroll position and every Done flip into an in-memory
@@ -19,6 +19,9 @@ export function useScrollDiag(enabled: boolean): void {
 
   useEffect(() => {
     if (!enabled || typeof window === 'undefined') return;
+    // Let ItemList record its dismiss-settle restore decision into the same
+    // timeline while the switch is on.
+    setDiagEnabled(true);
 
     // Max scrollable offset right now — if a jump's `y` lands here the document
     // became too short and the browser clamped; if it stays above the prior `y`
@@ -167,6 +170,7 @@ export function useScrollDiag(enabled: boolean): void {
     });
 
     return () => {
+      setDiagEnabled(false);
       window.removeEventListener('scroll', onScroll);
       window.clearInterval(heightTimer);
       if (canRaf) {

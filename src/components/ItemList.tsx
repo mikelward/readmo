@@ -25,6 +25,7 @@ import type { FeedId, FeedItem, ItemId } from '../lib/types';
 import { placeStayInBodyPins } from '../lib/feedOrder';
 import { measureStickyBottomInset, measureTopChromeHeight } from '../lib/stickyInset';
 import { adjustUnreadCounts } from '../lib/unreadAdjust';
+import { diagEnabledNow, recordDiag } from '../lib/scrollDiag';
 import { loadFailureCopy, presentableDetail } from '../lib/loadErrorCopy';
 import { LoadError } from './LoadError';
 import { checkForServiceWorkerUpdate } from '../lib/swUpdate';
@@ -2334,6 +2335,9 @@ export function ItemList({
     // (A fresh removal reschedules; a refresh taking over cancels for good.)
     cancelDismissRelease();
     if (isRefreshing || !heightLockedRef.current || !bodyRef.current) return;
+    // Diagnostic only: the tracked offset before any sampling this settle, so a
+    // recorded 'release' can show whether the sampler re-poisoned it.
+    const intendedAtStart = readerScrollYRef.current;
     const curMaxScroll = () =>
       typeof window === 'undefined'
         ? 0
@@ -2389,13 +2393,35 @@ export function ItemList({
       // for the deferred bottom-sweep hold, whose shorter document keeps the
       // pinned ceiling AT the settled max (not below it).
       const intended = readerScrollYRef.current;
+      const yBefore =
+        typeof window !== 'undefined' ? Math.round(window.scrollY) : -1;
+      let restored = false;
+      let settledMax = -1;
+      let target = -1;
       if (intended != null && typeof window !== 'undefined') {
-        const settledMax = curMaxScroll();
+        settledMax = curMaxScroll();
         const clamped = minPinnedMax < settledMax - PIN_EPSILON_PX;
-        const target = Math.min(intended, settledMax);
-        if (clamped && target - Math.round(window.scrollY) > 1) {
+        target = Math.min(intended, settledMax);
+        if (clamped && target - yBefore > 1) {
           window.scrollTo(0, target);
+          restored = true;
         }
+      }
+      // Diagnostic only (off by default): record the restore decision so a stuck
+      // jump shows exactly which branch failed — poisoned offset, clamp not
+      // recognized, or restored-but-re-clamped. No-op unless the switch is on.
+      if (diagEnabledNow() && typeof window !== 'undefined') {
+        recordDiag({
+          kind: 'release',
+          y: yBefore,
+          max: settledMax,
+          intendedStart: intendedAtStart ?? undefined,
+          intended: intended ?? undefined,
+          minPinned:
+            minPinnedMax === Number.POSITIVE_INFINITY ? -1 : minPinnedMax,
+          target,
+          restored,
+        });
       }
       // Sync the tracked offset to where the reader actually ended up (restored,
       // their own settle scroll, or unchanged) so the next dismiss starts fresh.

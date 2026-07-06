@@ -8,7 +8,7 @@ import type { ItemId } from './types';
 // feed to the diagnostics page (the recording component unmounts, the buffer
 // doesn't). Purely diagnostic — never read on any user-facing path.
 
-export type DiagKind = 'scroll' | 'done' | 'resize' | 'probe';
+export type DiagKind = 'scroll' | 'done' | 'resize' | 'probe' | 'release';
 
 export interface DiagEntry {
   /** ms since the first recorded entry — a relative clock so the buffer reads
@@ -53,6 +53,29 @@ export interface DiagEntry {
   /** `window.innerHeight` at record time — catches a viewport (mobile toolbar)
    * change masquerading as a document collapse. */
   vh?: number;
+  /** 'release' only: the dismiss settle's restore decision, recorded by ItemList
+   * so a stuck jump shows exactly which branch failed. `intendedStart` is the
+   * tracked reader offset when the settle began; `intended` is it at release (a
+   * difference means the sampler re-classified a clamp as a reader move and
+   * poisoned it). `minPinned` is the lowest ceiling the scroll sat pinned at
+   * (the clamp signature); `max` is the settled ceiling; `target` is where the
+   * restore aimed; `restored` is whether it actually scrolled. */
+  intended?: number;
+  intendedStart?: number;
+  minPinned?: number;
+  target?: number;
+  restored?: boolean;
+}
+
+/** Whether the diagnostics switch is on, mirrored here so ItemList (which
+ * records the 'release' decision) can no-op cheaply without importing the pref
+ * hook. Set by useScrollDiag while it's mounted+enabled. */
+let diagEnabled = false;
+export function setDiagEnabled(on: boolean): void {
+  diagEnabled = on;
+}
+export function diagEnabledNow(): boolean {
+  return diagEnabled;
 }
 
 /** Ring-buffer cap — a few seconds of scrolling plus the surrounding Done
@@ -176,6 +199,17 @@ export function formatDiagEntry(e: DiagEntry): string {
     // A post-Done animation-frame sample: where the reader sits plus the layout
     // breakdown, so the momentary collapse's shape and composition are visible.
     return `probe y=${e.y}${max}${layoutSuffix}${lock}`;
+  }
+  if (e.kind === 'release') {
+    // The dismiss settle's restore decision. Reads as: where the scroll sat, the
+    // tracked offset at settle-start → at release (a change ⇒ poisoned), the
+    // clamp signature vs. the settled ceiling, and whether it restored.
+    const restored = e.restored ? 'RESTORED' : 'no-restore';
+    return (
+      `release y=${e.y}${max}` +
+      ` intended=${e.intendedStart ?? '?'}→${e.intended ?? '?'}` +
+      ` minPinned=${e.minPinned ?? '?'} target=${e.target ?? '?'} ${restored}`
+    );
   }
   return `scroll y=${e.y} (${sign}${e.delta ?? 0})${max}${lock}`;
 }

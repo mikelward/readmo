@@ -139,6 +139,39 @@ describe('scrollDiag', () => {
       ).toBe('resize y=1227 (-847) max=521');
     });
 
+    it('formats a release row: the restore decision', () => {
+      expect(
+        formatDiagEntry({
+          t: 0,
+          kind: 'release',
+          y: 2245,
+          max: 3024,
+          intendedStart: 3098,
+          intended: 2245,
+          minPinned: 2245,
+          target: 2245,
+          restored: false,
+        }),
+      ).toBe(
+        'release y=2245 max=3024 intended=3098→2245 minPinned=2245 target=2245 no-restore',
+      );
+      expect(
+        formatDiagEntry({
+          t: 0,
+          kind: 'release',
+          y: 2245,
+          max: 3024,
+          intendedStart: 3098,
+          intended: 3098,
+          minPinned: 2245,
+          target: 3024,
+          restored: true,
+        }),
+      ).toBe(
+        'release y=2245 max=3024 intended=3098→3098 minPinned=2245 target=3024 RESTORED',
+      );
+    });
+
     it('appends the layout breakdown on done and probe rows', () => {
       // The whole point of the layout fields: localize a collapse (body vs. doc)
       // and confirm rows didn't actually leave mid-dip.
