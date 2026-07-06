@@ -28,6 +28,25 @@ guardrails — read them before opening a PR.
    any reversed/extended decision or any new user-visible behavior, tap
    target, storage surface, route, or layout reorder.
 
+   **SPEC states product intent and user-visible decisions — not
+   implementation mechanics.** SPEC captures what the product does and why
+   (the contract): behaviors, tap targets, storage surfaces, routes, layouts,
+   and the reasons for decisions. It does *not* capture how the code achieves
+   it — data structures, function names, CSS properties, DOM APIs, event
+   orderings, timing constants, browser-quirk workarounds, measurement
+   formulas. Those live in code comments and tests, next to the code that can
+   drift.
+
+   *Rule of thumb:* if changing the implementation (without changing
+   observable behavior) would force a SPEC edit, that text is in the wrong
+   place — it's an implementation detail and belongs in a code comment. SPEC
+   should only change when the decision or the observable behavior changes.
+
+   When a SPEC section has accumulated mechanism (identifiers, APIs, formulas,
+   frame counts, workaround narration), trim it back to the intent as a *net
+   deletion*; don't keep expanding it per fix. Moving that detail into code
+   comments is the fix, not adding more.
+
 5. **Call out cost and reliability up front** for any new infra or external
    call — free-tier vs. paid, rough $/mo, failure modes, rate limits, latency.
    Say "negligible" explicitly rather than omitting it.
