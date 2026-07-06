@@ -872,5 +872,27 @@ describe('ItemRow', () => {
       expect(screen.queryByTestId('item-excerpt')).toBeNull();
       expect(screen.getByTestId('item-title')).toHaveTextContent('A test headline');
     });
+
+    it('the per-feed listLayout prop overrides the app-wide setting', () => {
+      // App-wide setting is title-only, but this feed's override is 'excerpt'.
+      window.localStorage.setItem(LIST_LAYOUT_KEY, 'title');
+      resetReadingPrefsCacheForTest();
+      renderWithProviders(<ItemRow feedItem={withImage} listLayout="excerpt" />);
+      // The override wins: the excerpt renders even though the app default is
+      // title-only.
+      expect(screen.getByTestId('item-excerpt')).toHaveTextContent(
+        'Body text of the article.',
+      );
+    });
+
+    it('falls back to the app-wide setting when no per-feed override is given', () => {
+      window.localStorage.setItem(LIST_LAYOUT_KEY, 'excerpt');
+      resetReadingPrefsCacheForTest();
+      // No listLayout prop → the app-wide 'excerpt' applies.
+      renderWithProviders(<ItemRow feedItem={withImage} />);
+      expect(screen.getByTestId('item-excerpt')).toHaveTextContent(
+        'Body text of the article.',
+      );
+    });
   });
 });

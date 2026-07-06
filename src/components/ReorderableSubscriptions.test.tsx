@@ -32,6 +32,7 @@ function entry(
       openOriginal,
       openNewshacker: false,
       markDoneOnOpen: false,
+      listLayout: null,
       sort,
     },
   };
@@ -54,6 +55,7 @@ function hnEntry(
       openOriginal: false,
       openNewshacker: false,
       markDoneOnOpen: false,
+      listLayout: null,
       sort,
       ...overrides,
     },
@@ -71,6 +73,7 @@ function setup() {
   const onSetOpenOriginal = vi.fn();
   const onSetOpenMode = vi.fn();
   const onSetMarkDoneOnOpen = vi.fn();
+  const onSetListLayout = vi.fn();
   const onUnsubscribe = vi.fn();
   const onRename = vi.fn<(id: FeedId, title: string | null) => void>();
   render(
@@ -81,6 +84,7 @@ function setup() {
       onSetOpenOriginal={onSetOpenOriginal}
       onSetOpenMode={onSetOpenMode}
       onSetMarkDoneOnOpen={onSetMarkDoneOnOpen}
+      onSetListLayout={onSetListLayout}
       onUnsubscribe={onUnsubscribe}
       onRename={onRename}
     />,
@@ -91,6 +95,7 @@ function setup() {
     onSetOpenOriginal,
     onSetOpenMode,
     onSetMarkDoneOnOpen,
+    onSetListLayout,
     onUnsubscribe,
     onRename,
   };
@@ -287,6 +292,7 @@ describe('ReorderableSubscriptions', () => {
         onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
         onSetMarkDoneOnOpen={vi.fn()}
+        onSetListLayout={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
       />,
@@ -407,6 +413,7 @@ describe('ReorderableSubscriptions', () => {
         onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
         onSetMarkDoneOnOpen={vi.fn()}
+        onSetListLayout={vi.fn()}
         showMarkDoneOnOpen={false}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
@@ -420,6 +427,92 @@ describe('ReorderableSubscriptions', () => {
     expect(screen.getByRole('menuitem', { name: 'Unsubscribe' })).toBeInTheDocument();
   });
 
+  // --- Per-feed card style -------------------------------------------------
+
+  it('offers a Card style radio group defaulting to "Default" (no override)', () => {
+    setup();
+    openMenu('Alpha');
+    const menu = screen.getByRole('menu');
+    const group = within(menu).getByRole('group', { name: 'Card style' });
+    // Default is checked when the feed carries no override (listLayout === null).
+    expect(
+      within(group).getByRole('menuitemradio', { name: /Default/ }),
+    ).toHaveAttribute('aria-checked', 'true');
+    for (const name of ['Title only', 'Small thumbnail', 'Large thumbnail', 'Excerpt']) {
+      expect(
+        within(group).getByRole('menuitemradio', { name }),
+      ).toHaveAttribute('aria-checked', 'false');
+    }
+  });
+
+  it('selecting a Card style calls onSetListLayout with that value', () => {
+    const { onSetListLayout } = setup();
+    openMenu('Beta');
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Excerpt' }));
+    expect(onSetListLayout).toHaveBeenCalledWith('b', 'excerpt');
+    expect(screen.queryByRole('menu')).toBeNull(); // closes after action
+  });
+
+  it('choosing "Default" clears the override (null)', () => {
+    const onSetListLayout = vi.fn();
+    render(
+      <ReorderableSubscriptions
+        subs={[
+          {
+            feed: feed('a', 'Alpha'),
+            subscription: {
+              feedId: 'a',
+              folder: null,
+              titleOverride: null,
+              muted: false,
+              openOriginal: false,
+              openNewshacker: false,
+              markDoneOnOpen: false,
+              listLayout: 'excerpt',
+              sort: 0,
+            },
+          },
+        ]}
+        onReorder={vi.fn()}
+        onMute={vi.fn()}
+        onSetOpenOriginal={vi.fn()}
+        onSetOpenMode={vi.fn()}
+        onSetMarkDoneOnOpen={vi.fn()}
+        onSetListLayout={onSetListLayout}
+        onUnsubscribe={vi.fn()}
+        onRename={vi.fn()}
+      />,
+    );
+    openMenu('Alpha');
+    const menu = screen.getByRole('menu');
+    // The stored override is reflected as the checked radio.
+    expect(
+      within(menu).getByRole('menuitemradio', { name: 'Excerpt' }),
+    ).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(within(menu).getByRole('menuitemradio', { name: /Default/ }));
+    expect(onSetListLayout).toHaveBeenCalledWith('a', null);
+  });
+
+  it('hides the Card style choice when the backend does not support it', () => {
+    render(
+      <ReorderableSubscriptions
+        subs={[entry('a', 'Alpha', 0)]}
+        onReorder={vi.fn()}
+        onMute={vi.fn()}
+        onSetOpenOriginal={vi.fn()}
+        onSetOpenMode={vi.fn()}
+        onSetMarkDoneOnOpen={vi.fn()}
+        onSetListLayout={vi.fn()}
+        showListLayout={false}
+        onUnsubscribe={vi.fn()}
+        onRename={vi.fn()}
+      />,
+    );
+    openMenu('Alpha');
+    expect(screen.queryByRole('group', { name: 'Card style' })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: 'Unsubscribe' })).toBeInTheDocument();
+  });
+
   it('marks "Open original" checked and toggles it back off when already set', () => {
     const onSetOpenOriginal = vi.fn();
     render(
@@ -430,6 +523,7 @@ describe('ReorderableSubscriptions', () => {
         onSetOpenOriginal={onSetOpenOriginal}
         onSetOpenMode={vi.fn()}
         onSetMarkDoneOnOpen={vi.fn()}
+        onSetListLayout={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
       />,
@@ -450,6 +544,7 @@ describe('ReorderableSubscriptions', () => {
         onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
         onSetMarkDoneOnOpen={vi.fn()}
+        onSetListLayout={vi.fn()}
         showOpenOriginal={false}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
@@ -482,6 +577,7 @@ describe('ReorderableSubscriptions', () => {
         onSetOpenOriginal={onSetOpenOriginal}
         onSetOpenMode={onSetOpenMode}
         onSetMarkDoneOnOpen={onSetMarkDoneOnOpen}
+        onSetListLayout={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
         {...props}
@@ -574,6 +670,7 @@ describe('ReorderableSubscriptions', () => {
         onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
         onSetMarkDoneOnOpen={vi.fn()}
+        onSetListLayout={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
       />,
@@ -690,6 +787,7 @@ describe('ReorderableSubscriptions', () => {
         onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
         onSetMarkDoneOnOpen={vi.fn()}
+        onSetListLayout={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={onRename}
       />,
@@ -745,6 +843,7 @@ describe('ReorderableSubscriptions', () => {
         onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
         onSetMarkDoneOnOpen={vi.fn()}
+        onSetListLayout={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={onRename}
       />,
@@ -798,6 +897,7 @@ describe('ReorderableSubscriptions (deep-link scroll/highlight)', () => {
         onSetOpenOriginal={vi.fn()}
         onSetOpenMode={vi.fn()}
         onSetMarkDoneOnOpen={vi.fn()}
+        onSetListLayout={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
       />,

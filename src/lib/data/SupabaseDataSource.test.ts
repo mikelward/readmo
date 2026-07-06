@@ -2144,6 +2144,58 @@ describe('SupabaseDataSource dispatch + writes', () => {
     await expect(env.ds.setMarkDoneOnOpen('feed-a', true)).rejects.toThrow();
   });
 
+  it('setSubscriptionListLayout persists the list_layout column, reads back, and clears with null', async () => {
+    const env = setup();
+    const subB = async () =>
+      (await env.ds.getSubscriptions()).find(
+        (s) => s.subscription.feedId === 'feed-b',
+      )!.subscription;
+    expect((await subB()).listLayout).toBe(null);
+    await env.ds.setSubscriptionListLayout('feed-b', 'excerpt');
+    expect((await subB()).listLayout).toBe('excerpt');
+    // Untouched feeds keep the app-wide default (null).
+    const subs = await env.ds.getSubscriptions();
+    expect(
+      subs.find((s) => s.subscription.feedId === 'feed-a')!.subscription.listLayout,
+    ).toBe(null);
+    // Passing null clears the override.
+    await env.ds.setSubscriptionListLayout('feed-b', null);
+    expect((await subB()).listLayout).toBe(null);
+  });
+
+  it('getSubscriptions falls back to the pre-0051 columns when only list_layout is missing', async () => {
+    const env = setup();
+    expect(env.ds.supportsSubscriptionListLayout()).toBe(true);
+    // Model a backend with 0027/0034/0037 but not 0051: only a projection naming
+    // list_layout errors, so the read drops just that column and keeps the rest.
+    env.fake.failSelectWhenColumns('subscriptions', 'list_layout', { code: '42703' });
+    const subs = await env.ds.getSubscriptions();
+    expect(subs.length).toBeGreaterThan(0);
+    expect(subs.every((s) => s.subscription.listLayout === null)).toBe(true);
+    // Only the card-style control hides; the older preferences stay supported.
+    expect(env.ds.supportsSubscriptionListLayout()).toBe(false);
+    expect(env.ds.supportsMarkDoneOnOpen()).toBe(true);
+    expect(env.ds.supportsOpenOriginal()).toBe(true);
+    expect(env.ds.supportsOpenNewshacker()).toBe(true);
+  });
+
+  it('setSubscriptionListLayout no-ops (no throw) and marks support false when the column is missing', async () => {
+    const env = setup();
+    env.fake.failUpdateOnce('subscriptions', { code: 'PGRST204' });
+    await expect(
+      env.ds.setSubscriptionListLayout('feed-a', 'excerpt'),
+    ).resolves.toBeUndefined();
+    expect(env.ds.supportsSubscriptionListLayout()).toBe(false);
+  });
+
+  it('setSubscriptionListLayout still throws on a genuine (non-missing-column) write error', async () => {
+    const env = setup();
+    env.fake.failUpdateOnce('subscriptions', { code: '500', message: 'boom' });
+    await expect(
+      env.ds.setSubscriptionListLayout('feed-a', 'excerpt'),
+    ).rejects.toThrow();
+  });
+
   it('threads sort + group options into the feed_items RPC', async () => {
     const env = setup();
     await env.ds.getHomeItems({ sort: 'oldest', groupByFeed: true });

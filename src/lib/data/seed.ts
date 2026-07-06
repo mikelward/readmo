@@ -170,11 +170,11 @@ export const SEED_ITEMS: Item[] = SPECS.map((spec, i) => ({
 }));
 
 export const SEED_SUBSCRIPTIONS: Subscription[] = [
-  { feedId: 'feed-verge', folder: 'News', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, sort: 0 },
-  { feedId: 'feed-nasa', folder: 'News', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, sort: 1 },
-  { feedId: 'feed-css', folder: 'Dev', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, sort: 2 },
-  { feedId: 'feed-reddit-prog', folder: 'Dev', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, sort: 3 },
-  { feedId: 'feed-park', folder: null, titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, sort: 4 },
+  { feedId: 'feed-verge', folder: 'News', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, listLayout: null, sort: 0 },
+  { feedId: 'feed-nasa', folder: 'News', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, listLayout: null, sort: 1 },
+  { feedId: 'feed-css', folder: 'Dev', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, listLayout: null, sort: 2 },
+  { feedId: 'feed-reddit-prog', folder: 'Dev', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, listLayout: null, sort: 3 },
+  { feedId: 'feed-park', folder: null, titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, listLayout: null, sort: 4 },
 ];
 
 export const SEED_FOLDERS = [

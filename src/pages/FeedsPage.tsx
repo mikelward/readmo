@@ -686,6 +686,16 @@ export function FeedsPage() {
           // Hide the toggle until the backend has the mark_done_on_open column
           // (0037); a pre-0037 backend simply doesn't offer it.
           showMarkDoneOnOpen={ds.supportsMarkDoneOnOpen?.() ?? true}
+          onSetListLayout={async (feedId, listLayout) => {
+            await ds.setSubscriptionListLayout(feedId, listLayout);
+            // Re-read subscriptions so useListLayoutFeeds (which backs every
+            // article row's card style) picks up the change; the affected rows
+            // re-render at the new layout.
+            invalidate();
+          }}
+          // Hide the Card style choice until the backend has the list_layout
+          // column (0051); a pre-0051 backend simply doesn't offer it.
+          showListLayout={ds.supportsSubscriptionListLayout?.() ?? true}
           onUnsubscribe={async (feedId) => {
             await ds.unsubscribe(feedId);
             invalidate();

@@ -8,6 +8,7 @@ import {
   type Item,
   type ItemId,
   type ItemState,
+  type ListLayout,
   type OpenMode,
   type Subscription,
 } from '../types';
@@ -547,6 +548,7 @@ export class MockDataSource implements DataSource {
           openOriginal: false,
           openNewshacker: false,
           markDoneOnOpen: false,
+          listLayout: null,
           sort: this.subs.size,
         });
       }
@@ -577,6 +579,7 @@ export class MockDataSource implements DataSource {
       openOriginal: false,
       openNewshacker: false,
       markDoneOnOpen: false,
+      listLayout: null,
       sort: this.subs.size,
     });
     return { ...feed };
@@ -624,6 +627,20 @@ export class MockDataSource implements DataSource {
   }
 
   supportsMarkDoneOnOpen(): boolean {
+    // The in-memory store always carries the field, so the control is always
+    // available against the mock.
+    return true;
+  }
+
+  async setSubscriptionListLayout(
+    feedId: FeedId,
+    listLayout: ListLayout | null,
+  ): Promise<void> {
+    const sub = this.subs.get(feedId);
+    if (sub) sub.listLayout = listLayout;
+  }
+
+  supportsSubscriptionListLayout(): boolean {
     // The in-memory store always carries the field, so the control is always
     // available against the mock.
     return true;

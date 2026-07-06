@@ -1,10 +1,16 @@
 import { useCallback } from 'react';
 import type { ItemSort } from '../lib/data/DataSource';
+import type { ListLayout } from '../lib/types';
 import {
   createPersistentStore,
   type PersistentStore,
 } from '../lib/persistentStore';
 import { usePersistentStore } from './usePersistentStore';
+
+// Re-exported so existing callers can keep importing `ListLayout` from here; the
+// canonical definition now lives in lib/types (it's also a Subscription field —
+// the per-feed override).
+export type { ListLayout };
 
 // Per-device reading-behavior preferences, persisted in localStorage and shared
 // across tabs and every mounted component via createPersistentStore.
@@ -58,11 +64,8 @@ const DEFAULT_BOTTOM_BAR: BottomBarPosition = 'list';
 
 const DEFAULT_ITEM_SORT: ItemSort = 'newest';
 
-/** How much of each article a feed row shows. 'title' = compact title-only row;
- * 'thumbnail-small' = the compact row + a small right thumbnail (the default);
- * 'thumbnail' = larger title + a large right thumbnail; 'excerpt' = larger title
- * + a preview excerpt. */
-export type ListLayout = 'title' | 'thumbnail-small' | 'thumbnail' | 'excerpt';
+/** The app-wide default {@link ListLayout} — used for any feed without a per-feed
+ * override (Subscription.listLayout === null). */
 const DEFAULT_LIST_LAYOUT: ListLayout = 'thumbnail-small';
 
 const CHANGE_EVENT = 'readmo:reading-pref-changed';

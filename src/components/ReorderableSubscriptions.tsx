@@ -6,7 +6,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import type { Feed, FeedId, OpenMode, Subscription } from '../lib/types';
+import type { Feed, FeedId, ListLayout, OpenMode, Subscription } from '../lib/types';
 import { openModeOf } from '../lib/types';
 import { isHackerNewsFeed } from '../lib/newshacker';
 import { arrayMove, orderForPointer } from '../lib/arrayMove';
@@ -18,6 +18,18 @@ export interface SubscriptionEntry {
   subscription: Subscription;
   feed: Feed;
 }
+
+/** The per-feed "Card style" menu options. `null` is "Default" — clear the
+ * override and use the app-wide Article layout setting; the rest mirror the
+ * app-wide choices (Settings → Appearance → Article layout) and the
+ * {@link ListLayout} union. */
+const CARD_STYLE_OPTIONS: { value: ListLayout | null; label: string }[] = [
+  { value: null, label: 'Default' },
+  { value: 'title', label: 'Title only' },
+  { value: 'thumbnail-small', label: 'Small thumbnail' },
+  { value: 'thumbnail', label: 'Large thumbnail' },
+  { value: 'excerpt', label: 'Excerpt' },
+];
 
 interface Props {
   subs: SubscriptionEntry[];
@@ -52,6 +64,14 @@ interface Props {
    * the control never triggers a write the old backend would reject. Defaults to
    * true. */
   showMarkDoneOnOpen?: boolean;
+  /** Set the feed's per-feed "card style" override — how much of its articles a
+   * row shows. Pass a {@link ListLayout} to override the app-wide Article layout
+   * setting for this feed, or `null` to clear it (fall back to the app setting). */
+  onSetListLayout: (feedId: FeedId, listLayout: ListLayout | null) => void;
+  /** Whether to offer the "Card style" choice. Hidden when the backend doesn't
+   * support the `list_layout` column yet (pre-0051), so the control never
+   * triggers a write the old backend would reject. Defaults to true. */
+  showListLayout?: boolean;
   onUnsubscribe: (feedId: FeedId) => void;
   /** Set a per-user display name for `feedId`. Pass `null` to clear the
    * override and fall back to the publisher's feed title. */
@@ -82,6 +102,8 @@ export function ReorderableSubscriptions({
   showOpenNewshacker = true,
   onSetMarkDoneOnOpen,
   showMarkDoneOnOpen = true,
+  onSetListLayout,
+  showListLayout = true,
   onUnsubscribe,
   onRename,
   scrollToFeedId,
@@ -606,6 +628,39 @@ export function ReorderableSubscriptions({
                         {subscription.markDoneOnOpen ? '✓' : ''}
                       </span>
                     </button>
+                  ) : null}
+                  {showListLayout ? (
+                    // Per-feed card style: a mutually-exclusive choice of how much
+                    // of this feed's articles a row shows. "Default" (null) clears
+                    // the override and follows the app-wide Article layout setting;
+                    // the rest override it for this feed only.
+                    <div role="group" aria-label="Card style">
+                      {CARD_STYLE_OPTIONS.map(({ value, label }) => {
+                        const current = subscription.listLayout ?? null;
+                        const selected = current === value;
+                        return (
+                          <button
+                            key={value ?? 'default'}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={selected}
+                            className="settings__sub-menuitem settings__sub-menuitem--check"
+                            onClick={() => {
+                              setMenuFor(null);
+                              if (!selected) onSetListLayout(feed.id, value);
+                            }}
+                          >
+                            {label}
+                            <span
+                              className="settings__sub-check"
+                              aria-hidden="true"
+                            >
+                              {selected ? '✓' : ''}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   ) : null}
                   <button
                     type="button"

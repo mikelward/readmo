@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { FeedItem } from '../lib/types';
+import type { FeedItem, ListLayout } from '../lib/types';
 import {
   articleSourceDomain,
   formatDisplayDomain,
@@ -69,6 +69,10 @@ interface Props {
    * group-by-feed view, where the section header carries the icon once instead
    * of repeating it on every row. */
   showFavicon?: boolean;
+  /** Per-feed card-style override (the feed's `Subscription.listLayout`). When
+   * set it wins over the app-wide Article layout setting for this row; when
+   * omitted the row uses the app-wide setting. See ItemRows / useListLayoutFeeds. */
+  listLayout?: ListLayout;
   onShare?: (item: FeedItem) => void;
 }
 
@@ -80,6 +84,7 @@ export function ItemRow({
   openNewshacker = false,
   markDoneOnOpen = false,
   showFavicon = false,
+  listLayout: listLayoutOverride,
   onShare,
 }: Props) {
   const { item, feed } = feedItem;
@@ -132,7 +137,12 @@ export function ItemRow({
   // A thumbnail row with no usable image (or one that fails to load, via
   // `imageFailed`) keeps its card styling and simply shows the title with no
   // image — it does NOT fall back to the excerpt — never an empty box.
-  const { listLayout } = useListLayout();
+  //
+  // The feed's per-feed override (Subscription.listLayout, passed as
+  // `listLayoutOverride`) wins over the app-wide setting when present; a feed
+  // without one uses the app-wide Article layout preference.
+  const { listLayout: appListLayout } = useListLayout();
+  const listLayout = listLayoutOverride ?? appListLayout;
   const wantsThumbnail =
     listLayout === 'thumbnail' || listLayout === 'thumbnail-small';
   const [imageFailed, setImageFailed] = useState(false);

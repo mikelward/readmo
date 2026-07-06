@@ -10,6 +10,7 @@ import {
   type ItemId,
   type ItemState,
   type ItemStateField,
+  type ListLayout,
   type OpenMode,
   type Subscription,
 } from '../types';
@@ -97,12 +98,14 @@ const ITEM_COLS_LEGACY =
 // read can't reach it either is folded into the DB-backed allowlist follow-up.
 const ITEM_STATE_COLS =
   'item_id, pinned, pinned_at, favorite, favorite_at, done, done_at, hidden, hidden_at, opened, opened_at';
-// `open_original` (0027), `open_newshacker` (0034), and `mark_done_on_open`
-// (0037) are selected optionally: a client can reach a backend not yet migrated
-// with any of them, so loadSubscriptions steps down through these column sets on
-// an undefined-column error (guardrail #11): full → pre-0037 → pre-0034 →
-// pre-0027 (legacy).
+// `open_original` (0027), `open_newshacker` (0034), `mark_done_on_open` (0037),
+// and `list_layout` (0051) are selected optionally: a client can reach a backend
+// not yet migrated with any of them, so loadSubscriptions steps down through
+// these column sets on an undefined-column error (guardrail #11): full → pre-0051
+// → pre-0037 → pre-0034 → pre-0027 (legacy).
 const SUBSCRIPTION_COLS =
+  'feed_id, folder, title_override, muted, open_original, open_newshacker, mark_done_on_open, list_layout, sort';
+const SUBSCRIPTION_COLS_NO_LIST_LAYOUT =
   'feed_id, folder, title_override, muted, open_original, open_newshacker, mark_done_on_open, sort';
 const SUBSCRIPTION_COLS_NO_MARK_DONE =
   'feed_id, folder, title_override, muted, open_original, open_newshacker, sort';
@@ -301,6 +304,14 @@ export class SupabaseDataSource implements DataSource {
   // the column ships, so the new client never offers a write the old backend
   // would reject (guardrail #11).
   private markDoneOnOpenColumn = true;
+  // Capability flag for the `subscriptions.list_layout` column (0051), the newest
+  // subscription-preference column. Starts optimistic and flips false the first
+  // time loadSubscriptions has to step down to the pre-0051 column set — i.e. the
+  // backend predates the migration. The Feeds page reads it
+  // (supportsSubscriptionListLayout) to hide the per-feed "Card style" control
+  // until the column ships, so the new client never offers a write the old
+  // backend would reject (guardrail #11).
+  private listLayoutColumn = true;
   // Set by the write path when an LWW write lost (the server returned a row that
   // didn't take our value). Consumed by onDrained — *after* the drain clears the
   // entry — to re-pull server truth, so the re-hydrate's pending overlay no longer
@@ -864,42 +875,57 @@ export class SupabaseDataSource implements DataSource {
     // mute, or to pick up another device's change) must re-hit Supabase here.
     const res = await this.sb.from('subscriptions').select(SUBSCRIPTION_COLS);
     // Step down through the column sets when the backend predates a migration —
-    // 0037 (`mark_done_on_open`), 0034 (`open_newshacker`), then 0027
-    // (`open_original`) — so a new client can still read the subscription list
-    // against an un-migrated backend. mapSubscription defaults a missing field to
-    // false, and we record which columns are absent so the UI hides the
-    // write-triggering controls until they ship (guardrail #11).
+    // 0051 (`list_layout`), 0037 (`mark_done_on_open`), 0034 (`open_newshacker`),
+    // then 0027 (`open_original`) — so a new client can still read the
+    // subscription list against an un-migrated backend. mapSubscription defaults a
+    // missing field to its neutral value, and we record which columns are absent
+    // so the UI hides the write-triggering controls until they ship (guardrail
+    // #11).
     let subRows: SubscriptionRow[];
     if (!isMissingColumnError(res.error)) {
       this.openOriginalColumn = true;
       this.openNewshackerColumn = true;
       this.markDoneOnOpenColumn = true;
+      this.listLayoutColumn = true;
       subRows = this.unwrap<SubscriptionRow[]>(res);
     } else {
-      // The full select failed on an unknown column. `mark_done_on_open` is the
+      // The full select failed on an unknown column. `list_layout` (0051) is the
       // newest, so drop it first and retry; step down further if the backend
-      // predates the earlier migrations too.
-      this.markDoneOnOpenColumn = false;
-      const resU = await this.sb
+      // predates the earlier migrations too. Each level records which column is
+      // absent so the UI hides its write-triggering control (guardrail #11).
+      this.listLayoutColumn = false;
+      const resL = await this.sb
         .from('subscriptions')
-        .select(SUBSCRIPTION_COLS_NO_MARK_DONE);
-      if (!isMissingColumnError(resU.error)) {
+        .select(SUBSCRIPTION_COLS_NO_LIST_LAYOUT);
+      if (!isMissingColumnError(resL.error)) {
         this.openOriginalColumn = true;
         this.openNewshackerColumn = true;
-        subRows = this.unwrap<SubscriptionRow[]>(resU);
+        this.markDoneOnOpenColumn = true;
+        subRows = this.unwrap<SubscriptionRow[]>(resL);
       } else {
-        this.openNewshackerColumn = false;
-        const res2 = await this.sb
+        // Older still: `mark_done_on_open` (0037) is absent too.
+        this.markDoneOnOpenColumn = false;
+        const resU = await this.sb
           .from('subscriptions')
-          .select(SUBSCRIPTION_COLS_NO_NEWSHACKER);
-        if (!isMissingColumnError(res2.error)) {
+          .select(SUBSCRIPTION_COLS_NO_MARK_DONE);
+        if (!isMissingColumnError(resU.error)) {
           this.openOriginalColumn = true;
-          subRows = this.unwrap<SubscriptionRow[]>(res2);
+          this.openNewshackerColumn = true;
+          subRows = this.unwrap<SubscriptionRow[]>(resU);
         } else {
-          this.openOriginalColumn = false;
-          subRows = this.unwrap<SubscriptionRow[]>(
-            await this.sb.from('subscriptions').select(SUBSCRIPTION_COLS_LEGACY),
-          );
+          this.openNewshackerColumn = false;
+          const res2 = await this.sb
+            .from('subscriptions')
+            .select(SUBSCRIPTION_COLS_NO_NEWSHACKER);
+          if (!isMissingColumnError(res2.error)) {
+            this.openOriginalColumn = true;
+            subRows = this.unwrap<SubscriptionRow[]>(res2);
+          } else {
+            this.openOriginalColumn = false;
+            subRows = this.unwrap<SubscriptionRow[]>(
+              await this.sb.from('subscriptions').select(SUBSCRIPTION_COLS_LEGACY),
+            );
+          }
         }
       }
     }
@@ -1522,6 +1548,40 @@ export class SupabaseDataSource implements DataSource {
     // client must never *require* the unshipped migration (guardrail #11).
     if (isMissingColumnError(error)) {
       this.markDoneOnOpenColumn = false;
+      return;
+    }
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+
+  supportsSubscriptionListLayout(): boolean {
+    // False only once a subscriptions read has proven the column absent (a
+    // pre-0051 backend). Optimistic until then; the Feeds page reads this after
+    // the subscriptions query settles, so by the time the rows render the value
+    // is known. Mirrors supportsMarkDoneOnOpen.
+    return this.listLayoutColumn;
+  }
+
+  async setSubscriptionListLayout(
+    feedId: FeedId,
+    listLayout: ListLayout | null,
+  ): Promise<void> {
+    // RLS + the column-scoped UPDATE grant (0051) confine this to the caller's
+    // own row and the single display column. `null` clears the override (the CHECK
+    // constraint permits NULL) so the feed falls back to the app-wide setting.
+    const { error } = await this.sb
+      .from('subscriptions')
+      .update({ list_layout: listLayout })
+      .eq('feed_id', feedId);
+    if (!error) return;
+    // Against a backend that predates 0051 the column doesn't exist. The Feeds
+    // page hides the control via supportsSubscriptionListLayout(), but that flag
+    // is only proven after a live subscriptions read — a render served entirely
+    // from the persisted query cache could still surface the control. So tolerate
+    // the undefined-column write here too: record the column as absent (so the
+    // control hides on the next render) and no-op rather than hard-reject. The
+    // client must never *require* the unshipped migration (guardrail #11).
+    if (isMissingColumnError(error)) {
+      this.listLayoutColumn = false;
       return;
     }
     throw error instanceof Error ? error : new Error(String(error));

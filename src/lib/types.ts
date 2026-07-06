@@ -97,6 +97,14 @@ export interface ItemState {
   openedAt: number | null;
 }
 
+/** How much of each of a feed's articles a row shows — the "card style". 'title'
+ * is the compact title-only row; 'thumbnail-small' adds a small right thumbnail;
+ * 'thumbnail' is a larger card with a large right thumbnail; 'excerpt' shows a
+ * preview of the feed body. Used both app-wide (the per-device `readmo:list-layout`
+ * default, see hooks/useReadingPrefs) and as a per-feed override on
+ * {@link Subscription.listLayout}. */
+export type ListLayout = 'title' | 'thumbnail-small' | 'thumbnail' | 'excerpt';
+
 export interface Subscription {
   feedId: FeedId;
   folder: string | null;
@@ -119,6 +127,11 @@ export interface Subscription {
    * outbound open actions. Independent of the open mode above; per-user, synced
    * (SPEC.md *Mark done when opening*). */
   markDoneOnOpen: boolean;
+  /** Per-feed "card style" override — how much of this feed's articles a row
+   * shows. `null` (the default) means "use the app-wide Article layout setting"
+   * (`readmo:list-layout`, per-device); a non-null value overrides it for this
+   * feed only. Per-user, synced (SPEC.md *Article layout → Per-feed override*). */
+  listLayout: ListLayout | null;
   sort: number;
 }
 
