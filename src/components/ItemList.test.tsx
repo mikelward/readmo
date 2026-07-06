@@ -1827,6 +1827,77 @@ describe('ItemList', () => {
     raf.restore();
   });
 
+  it('restores the reader when the viewport spike reverts AFTER the settle frames (real-device timing)', async () => {
+    // Regression (scroll-jump diagnostics, second capture): the dynamic-toolbar
+    // innerHeight spike fires-and-reverts on the browser's own clock. On a real
+    // device the spike's scroll/resize events routinely arrive before the
+    // passive-effect rAF settle even begins sampling, and the revert lags the
+    // 4-frame release by 50–100 ms — so the rAF sampler alone never sees the
+    // clamp and no restore fires (the reader is left stuck near the top). The
+    // settle now also listens to the real scroll/resize events for a bounded
+    // window, catching the clamp and restoring once the viewport recovers —
+    // even when the whole freeze releases before the revert lands.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`clamp-late-revert-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    const rows = await screen.findAllByTestId('item-row');
+    const firstId = rows[0].closest('li')!.getAttribute('data-item-id')!;
+
+    const body = screen.getByTestId('item-list-body');
+    const scroll = installScrollModel(body, container, {
+      innerHeight: 400,
+      rowHeight: 100,
+    });
+    const raf = installManualRaf();
+
+    const rowCount = container.querySelectorAll('[data-item-id]').length;
+    expect(rowCount).toBeGreaterThan(8);
+    scroll.setScrollY(scroll.maxScroll());
+    act(() => window.dispatchEvent(new Event('scroll')));
+    const before = scroll.getScrollY();
+
+    act(() => {
+      source.stateStore.hide(firstId);
+    });
+    await waitFor(() =>
+      expect(container.querySelector(`[data-item-id="${firstId}"]`)).toBeNull(),
+    );
+
+    // The viewport doubles and the browser clamps — surfaced ONLY via the real
+    // resize/scroll events. Crucially, NO settle frame is flushed during the
+    // spike (unlike the test above), so the old rAF sampler would never observe
+    // the clamp. The spike then reverts, still before any settle frame runs.
+    act(() => {
+      scroll.setViewport(800);
+      scroll.setScrollY(scroll.getScrollY());
+      window.dispatchEvent(new Event('resize'));
+      window.dispatchEvent(new Event('scroll'));
+    });
+    expect(scroll.getScrollY()).toBeLessThan(before);
+    act(() => {
+      scroll.setViewport(400);
+      window.dispatchEvent(new Event('resize'));
+    });
+
+    // The settle frames now run against a viewport that already reverted — the
+    // clamp is long gone. Only because the event listeners recorded the spike
+    // does the release restore the reader (to the row-shorter bottom).
+    raf.flush();
+    expect(scroll.getScrollY()).toBe(before - 100);
+    expect(body.style.minHeight).toBe('');
+    raf.restore();
+  });
+
   it('does NOT override a scroll the reader makes during the dismiss settle window', async () => {
     // Codex P2 on #394: the restore must fire only for a genuine viewport clamp,
     // never for a scroll the reader performs during the settle. A reader scroll
