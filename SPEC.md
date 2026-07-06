@@ -1432,74 +1432,19 @@ negligible and off every critical path. See the External services table in
      sequence has dropped the dismissed rows and a plain fetch would otherwise skip
      the rows that shifted up (the per-section "More" recomputes its cursor the
      same way).
-   - **Scroll position holds across the removal.** A dismiss/Sweep removes rows
-     the instant it commits, so — anchored on the first dismissed card — nothing
-     above it moves and everything below slides up to close the gap. Two browser
-     reflexes would otherwise break that, so the list body guards both for the
-     removal: it **freezes its height** (`min-height` = the pre-removal height,
-     grabbed while the rows are still on screen) so the shorter document can't
-     clamp `scrollY` toward the top, and it **opts out of scroll anchoring**
-     (`overflow-anchor: none`) so the browser doesn't rewind `scrollY` to keep a
-     row *below* the removed ones fixed. Both are scoped to the removal: the
-     anchor opt-out is dropped one frame after the rows leave the DOM (so
-     **auto-hide on scroll**, which removes rows *above* the viewport and relies
-     on anchoring to keep the first still-visible row fixed, keeps it), and the
-     height freeze is released right after — but **the release can't shrink the
-     document under the scroll either.** When the survivors are permanently
-     shorter and the reader was near the bottom (a whole grouped section swept, or
-     a bottom-group dismiss), clearing the freeze would clamp `scrollY` toward the
-     top and slide every still-pinned group header down. So the release keeps just
-     enough `min-height` to hold the current scroll and **defers the final drop to
-     the reader's next scroll** — the held slack shrinks in lockstep as they
-     scroll up and clears the instant the natural document can hold the offset, so
-     the headers never move and no blank tail persists. The needed height is sized
-     from the body's *document-space top* (its `getBoundingClientRect().top +
-     scrollY`), **not** `documentElement.scrollHeight` — the browser floors that
-     at the viewport height, so when the survivors are shorter than one viewport a
-     scrollHeight-based deficit reads as zero, under-provisions the hold, and the
-     page still snaps to the top; the body-top measurement isn't clamped, so a
-     sub-viewport document is held correctly. (The clear-to-measure momentarily
-     clamps `scrollY` and the browser fires a `scroll` event for it; the deferred
-     release ignores a scroll that lands back on the offset it is already holding,
-     so its own reflow echo can't be mistaken for the reader scrolling to the top.)
-   - **A transient viewport spike is restored, not just the height.** The height
-     freeze holds `scrollHeight`, but a dismiss can still clamp the scroll a
-     different way: Chromium's mobile dynamic toolbar occasionally reports a
-     bogus, momentarily-doubled `window.innerHeight` for a frame or two right as
-     the row leaves. Since `maxScroll = scrollHeight − innerHeight`, the doubled
-     viewport slashes the ceiling below where the reader sits and the browser
-     clamps `scrollY` toward the top; the viewport reverts a frame later but the
-     clamped offset sticks. No `min-height` can counter an `innerHeight` change,
-     so after a dismiss the list **restores the reader's last honest offset once
-     the viewport tells the truth again**. The spike is told from a real viewport
-     change by `window.visualViewport.height`, which reports the *actually-visible*
-     height and does **not** follow the bogus `innerHeight` — a large disagreement
-     between the two means `innerHeight` is lying. The reader's tracked offset is
-     recorded only while the viewport is honest (so a clamp's own scroll event,
-     which lands as `innerHeight` reverts, can't be adopted as a real scroll), and
-     the spike is captured **synchronously at the dismiss commit** (`lockBodyHeight`)
-     — on this device the spike runs on its own clock and can fire-and-revert
-     entirely between the commit and the first async settle sample (a **Sweep**,
-     whose viewport was already spiking before the tap, is the case that exposed
-     this), so nothing async is guaranteed to observe it. A short bounded window of
-     real `scroll`/`resize` events then also catches a spike that reverts late, and
-     a genuine reader scroll (viewport honest, offset moved) supersedes any pending
-     restore so it is never overridden. When the removal leaves the pre-spike
-     offset **past the collapsed natural bottom** — a big Sweep near the bottom
-     removes more on-screen content than the reader had below them — the restore
-     does **not** clamp them down to the new bottom. A Sweep only ever removes rows
-     the reader can *see* (never off-screen content above them), so the content
-     above is unchanged and the reader must **stay exactly put**, with a blank tail
-     below, however short the survivors leave the document. It hands the offset to
-     the same deferred `min-height` hold the bottom-sweep case uses, so the tail is
-     held to keep the pre-spike offset valid and shrinks in lockstep as the reader
-     scrolls up.
-   - **A genuine background refresh still freezes the height.** Pull-to-refresh,
-     window-focus, and remount *do* refetch, and React Query refetches the loaded
-     pages *sequentially*, so the rendered list can briefly shrink mid-refetch.
-     The same height freeze covers that window so a shrink can't clamp the scroll —
-     most visible with collapsed feed sections, which leave the document short to
-     begin with. The lock releases once the refresh settles.
+   - **A dismiss or Sweep never moves the content above the removed rows.**
+     Marking a row Done (tap, swipe, or `d`) or Sweeping the visible rows removes
+     them immediately and closes the gap from below; whatever sits above stays
+     exactly where it was on screen — the view never jumps to the top and pinned
+     group headers never slide. Near the bottom, where the removed rows leave less
+     below the reader than they'd scrolled past, the surviving content still holds
+     its position and the space below is simply left blank, clearing as they scroll
+     back up. (Honoring this against two browser reflexes — scroll-anchoring
+     rewinds and a mobile dynamic-toolbar viewport glitch that would otherwise
+     clamp the scroll — is mechanism; it lives in `ItemList.tsx`.)
+   - **A background refresh never jumps the reader's position either** —
+     pull-to-refresh, window-focus, and remount refetch in the background without
+     moving where the reader is looking.
    - **Pin-to-download promo bar** above the first row ("Pin an article to
      download it"), explaining that pinning warms the offline cache (see
      *Prefetch on Pin/Favorite*). Shown only once rows exist; dismissable via a

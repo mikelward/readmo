@@ -130,6 +130,32 @@ const VIEWPORT_CLAMP_RESTORE_MS = 600;
 // that first ramp step and clear of ordinary chrome.
 const VIEWPORT_SPIKE_RATIO = 1.35;
 
+// How tall the spike can peak, as a multiple of the true visible height — used to
+// size the freeze DEFENSIVELY so the spike can never clamp the reader in the first
+// place (rather than only restoring them after it does). The observed glitch peaks
+// at ~2× (816 → 1632), so freezing the document tall enough to hold the reader's
+// offset even under a doubled `innerHeight` (maxScroll = scrollHeight − innerHeight)
+// keeps `scrollY` off the clamp. A device that spikes beyond this still falls back
+// to the reactive restore, so this is a floor on robustness, not the only guard.
+const VIEWPORT_SPIKE_PEAK_RATIO = 2;
+
+// The layout-viewport height the clamp math actually uses
+// (`maxScroll = scrollHeight − window.innerHeight`), and the height the dynamic-
+// toolbar spike DOUBLES — so it's the base to multiply by the peak ratio when
+// sizing a spike-proof freeze. It must be `window.innerHeight`, NOT the
+// URL-bar-occluded `visualViewport.height`: when the URL bar is showing,
+// `innerHeight` (e.g. 400) legitimately exceeds the visible height (e.g. 310) yet
+// stays under the honesty gate, and the spike inflates `innerHeight` from there —
+// so sizing from the smaller visible height under-budgets and lets the clamp fire
+// at the bottom despite the freeze (Codex P2 on #405). When `innerHeight` is itself
+// already spiking, multiplying the inflated value merely over-provisions (a larger
+// off-screen tail that relaxes on release), which is safe; under-provisioning is
+// not.
+function layoutViewportHeight(): number {
+  if (typeof window === 'undefined') return 0;
+  return typeof window.innerHeight === 'number' ? window.innerHeight : 0;
+}
+
 // Is `window.innerHeight` currently telling the truth? The dynamic-toolbar bug
 // momentarily reports a viewport far taller than what's on screen, which slashes
 // maxScroll (= scrollHeight − innerHeight) and clamps the scroll toward the top.
@@ -1702,11 +1728,18 @@ export function ItemList({
   // height BEFORE it removes any rows — see `lockBodyHeight` below.
   const bodyRef = useRef<HTMLDivElement>(null);
   const heightLockedRef = useRef(false);
+  // `isRefreshing` mirrored into a ref so the always-on scroll tracker (mounted
+  // once, empty deps) and lockBodyHeight can tell a background-refresh lock from a
+  // dismiss lock without re-subscribing. A refresh holds `heightLockedRef` too, but
+  // unlike a dismiss it never clamps the reader (the freeze holds the document
+  // tall), so the tracker must keep recording through it — see below.
+  const isRefreshingRef = useRef(false);
+  isRefreshingRef.current = isRefreshing;
   // The reader's last genuine scroll offset, tracked so a dismiss can restore it
-  // if the browser clamped it. Updated on scroll ONLY while the height lock is
-  // off: a clamp fires a scroll event too, but always while the lock is engaged
-  // (during a dismiss's settle window), so gating on the lock keeps the clamped
-  // value from poisoning the ref — it holds the pre-dismiss offset instead.
+  // if the browser clamped it. Recorded on scroll while the viewport is honest and
+  // no DISMISS settle owns the offset (a clamp's scroll event during a dismiss would
+  // poison it) — but NOT suppressed during a plain background refresh, where the
+  // reader scrolls freely and window.scrollY is honest truth.
   const readerScrollYRef = useRef<number | null>(null);
   // Set synchronously by lockBodyHeight when a dismiss/sweep commits while the
   // viewport is ALREADY spiking (innerHeight lying vs. the visual viewport). The
@@ -1834,17 +1867,85 @@ export function ItemList({
     // already-shrunken mid-refresh list too short).
     el.style.overflowAnchor = 'none';
     anchorLockedRef.current = true;
-    if (heightLockedRef.current) return;
-    // Stop a deferred release from later clearing this fresh lock out from under
-    // us, but DON'T clear its held slack first: when a prior bottom-sweep release
-    // is still holding min-height to keep the scroll offset valid, that slack is
-    // the only thing keeping window.scrollY off the natural (shorter) bottom.
-    // Clearing it here would let the browser clamp the scroll back to the bottom
-    // before we re-measure — re-introducing the very header jump this avoids, and
-    // freezing the new lock at the already-shortened height. Measuring with the
-    // slack still applied folds it into the new lock, so the offset holds.
+    // The spike-proof floor: the body min-height that keeps the reader's offset
+    // scrollable even if the dynamic toolbar momentarily doubles `window.innerHeight`.
+    // At the bottom a plain freeze holds `scrollHeight`, but the glitch clamps a
+    // different way — since `maxScroll = scrollHeight − innerHeight`, the doubled
+    // viewport drops the ceiling below where the reader sits and the browser clamps
+    // `scrollY` up (the grow-then-collapse flash we'd otherwise only undo reactively).
+    // Sizing the freeze so even a doubled `innerHeight` keeps `maxScroll` at or above
+    // the reader's offset stops that clamp from ever firing. Measured from the body's
+    // document-space top + trailing footer (NOT `offsetHeight`), so it's valid even
+    // mid-refresh when the list may have momentarily reflowed shorter.
+    //
+    // `target` is the offset the settle will protect. Prefer the pre-spike snapshot
+    // (set at a sweep tap / when a spike is already in progress); otherwise read the
+    // reader's CURRENT position straight from `window.scrollY` when the viewport is
+    // honest.
+    // Reading it live matters for the reused-lock path: while a background refresh
+    // holds the lock the always-on scroll tracker is frozen (it bails on
+    // `heightLockedRef`), so `readerScrollYRef` can be stale if the reader scrolled
+    // during the refresh — but the refresh freeze holds the document tall, so
+    // `window.scrollY` is their true, un-clamped offset (Codex P2 on #405). Fall back
+    // to the tracker only when the viewport is spiking (then `scrollY` may itself be
+    // clamped and the tracker holds the last honest value).
+    const honestNow = typeof window !== 'undefined' && viewportIsHonest();
+    const target =
+      spikeIntendedYRef.current ??
+      (honestNow ? Math.round(window.scrollY) : readerScrollYRef.current) ??
+      (typeof window !== 'undefined' ? Math.round(window.scrollY) : 0);
+    const rect = el.getBoundingClientRect();
+    const bodyTopDoc = rect.top + (typeof window !== 'undefined' ? window.scrollY : 0);
+    const root = el.closest('.item-list');
+    const trailing = root
+      ? Math.max(0, root.getBoundingClientRect().bottom - rect.bottom)
+      : 0;
+    const peakInner = VIEWPORT_SPIKE_PEAK_RATIO * layoutViewportHeight();
+    // Only provision when a peak spike could ACTUALLY clamp the reader — i.e. the
+    // natural (unlocked) document wouldn't keep `target` scrollable under a doubled
+    // innerHeight. Away from the bottom, or at the top (`target` small), the plain
+    // height already holds them, so this is 0 and nothing is over-provisioned.
+    const naturalDocHeight = bodyTopDoc + el.offsetHeight + trailing;
+    const spikedMax = Math.max(0, naturalDocHeight - peakInner);
+    const spikeSafe =
+      target > spikedMax ? target + peakInner - bodyTopDoc - trailing : 0;
+    if (heightLockedRef.current) {
+      // A background refresh (or an earlier dismiss) already holds the lock at the
+      // plain pre-refresh height. Don't re-measure `offsetHeight` (mid-refresh it can
+      // be momentarily shorter) or disturb a deferred release's held slack — but DO
+      // raise the floor to spike-safe so a Sweep/Done landing during that refresh is
+      // still defended. Only ever raises the hold, never lowers it.
+      const current = parseFloat(el.style.minHeight) || 0;
+      if (spikeSafe > current) el.style.minHeight = `${spikeSafe}px`;
+      // When a BACKGROUND REFRESH owns the lock the no-refetch settle bails while
+      // `isRefreshing`, so it can't restore a clamp — and a spike already live at
+      // this commit has already clamped `scrollY`. Restore inline: the raise above
+      // lifted `maxScroll` back to `target`, so `scrollTo` reaches it even mid-spike.
+      // Gated to the refresh case — a reused lock from an earlier DISMISS is handled
+      // by that dismiss's own settle (which re-runs on this removal), so we mustn't
+      // fight it here (Codex P2 on #405).
+      if (
+        isRefreshingRef.current &&
+        spikeSeenAtCommitRef.current &&
+        typeof window !== 'undefined'
+      ) {
+        // Reflow the just-raised min-height so scrollTo clamps against the new, taller
+        // max rather than the pre-raise one (else the restore silently no-ops).
+        void document.documentElement.scrollHeight;
+        if (Math.round(window.scrollY) !== target) window.scrollTo(0, target);
+      }
+      return;
+    }
+    // Fresh lock. Don't clear a deferred bottom-sweep release's slack first — it's
+    // the only thing holding `window.scrollY` off the shorter natural bottom;
+    // measuring `offsetHeight` with it still applied folds it into the new lock so
+    // the offset holds. Freeze at the taller of that and the spike-safe floor; the
+    // extra tail sits off-screen below the reader (empty space below is the intended
+    // resting state after a bottom dismiss/Sweep). A clamp the browser baked before
+    // this ran, or a spike beyond the peak ratio, still falls back to the reactive
+    // restore in the settle effect below.
     detachHeightRelease();
-    el.style.minHeight = `${el.offsetHeight}px`;
+    el.style.minHeight = `${Math.max(el.offsetHeight, spikeSafe)}px`;
     heightLockedRef.current = true;
   }, [detachHeightRelease]);
 
@@ -1989,8 +2090,12 @@ export function ItemList({
 
   // Track the reader's genuine scroll offset so a dismiss can restore it after a
   // clamp (see the release effect). Recorded only when it's trustworthy:
-  //  - not while the height lock is on (a dismiss settle) or a restore watch owns
-  //    the offset — a clamp scroll event during those would poison it;
+  //  - not while a DISMISS holds the height lock, or a restore watch owns the offset
+  //    — a clamp's scroll event during those would poison it. A background REFRESH
+  //    holds the lock too, but there the reader scrolls freely with no clamp (the
+  //    freeze holds the document tall), so we KEEP recording through it; otherwise a
+  //    scroll during the refresh leaves the ref stale and a spike-at-commit that
+  //    lands mid-refresh protects/restores the wrong offset (Codex P2 on #405);
   //  - not while the viewport is spiking — the clamp's own scroll event fires as
   //    the browser reverts innerHeight, landing at a near-honest viewport, so it
   //    would otherwise be adopted as a "genuine" scroll to the clamped offset.
@@ -1998,7 +2103,11 @@ export function ItemList({
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const onScroll = () => {
-      if (heightLockedRef.current || dismissRestoreCleanupRef.current) return;
+      if (
+        (heightLockedRef.current && !isRefreshingRef.current) ||
+        dismissRestoreCleanupRef.current
+      )
+        return;
       if (!viewportIsHonest()) return;
       readerScrollYRef.current = Math.round(window.scrollY);
     };
@@ -2603,6 +2712,14 @@ export function ItemList({
       return cancelDismissRelease;
     }
     let frames = DISMISS_SETTLE_FRAMES;
+    // Extra frames the release will wait through while the viewport is still
+    // spiking, past the normal settle frames. The freeze is sized so a peak spike
+    // can't clamp the reader (see lockBodyHeight) — but only while it's held, so we
+    // must not RELEASE it mid-spike or the ceiling drops and the clamp fires after
+    // all. Hold until the viewport is honest again, bounded to the restore window
+    // so a spike that never reverts can't spin forever (past the bound `watch`'s
+    // reactive restore still covers a live clamp). ~1 frame per 16 ms.
+    let spikeHold = Math.ceil(VIEWPORT_CLAMP_RESTORE_MS / 16);
     const step = () => {
       // A background refresh grabbing the lock, or the body unmounting, aborts —
       // the refresh's own layout effect (or the next mount) then owns the release.
@@ -2611,8 +2728,9 @@ export function ItemList({
         return;
       }
       watch();
-      if (frames > 0) {
-        frames -= 1;
+      if (frames > 0 || (!viewportIsHonest() && spikeHold > 0)) {
+        if (frames > 0) frames -= 1;
+        else spikeHold -= 1;
         dismissReleaseRafRef.current = requestAnimationFrame(step);
         return;
       }
