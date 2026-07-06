@@ -1624,7 +1624,7 @@ describe('ItemList', () => {
   });
 
   it('holds the scroll offset through the momentary document collapse a single Done triggers', async () => {
-    // Regression (scroll-jump diagnostics): a dismiss triggers a self-inflicted
+    // Regression (dismiss jump-to-top): a dismiss triggers a self-inflicted
     // document collapse a beat AFTER the row-removal paints — the list reflows to
     // a fraction of its height for ~2 frames, then recovers. The freeze is taken
     // (correctly, at the tall pre-collapse height) when the row is marked Done,
@@ -1752,9 +1752,9 @@ describe('ItemList', () => {
   });
 
   it('restores the reader after a dismiss at the bottom clamps via a transient viewport jump', async () => {
-    // Regression (scroll-jump diagnostics, Pixel/Brave): dismissing at the very
-    // bottom of the list snapped the page toward the top. The probe timeline
-    // showed the document height (scrollHeight) was stable — what changed was
+    // Regression (dismiss jump-to-top, Pixel/Brave): dismissing at the very
+    // bottom of the list snapped the page toward the top. The document height
+    // (scrollHeight) was stable — what changed was
     // window.innerHeight, which momentarily DOUBLED (Chromium's dynamic toolbar
     // reporting a doubled viewport for a frame). maxScroll = scrollHeight −
     // innerHeight, so the doubled viewport slashed the ceiling and the browser

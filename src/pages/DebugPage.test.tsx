@@ -1,12 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, screen } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { DebugPage } from './DebugPage';
 import { isSupabaseConfigured, supabaseHealthUrl } from '../lib/supabase/client';
-import {
-  DEBUG_SCROLL_JUMPS_KEY,
-  resetReadingPrefsCacheForTest,
-} from '../hooks/useReadingPrefs';
+import { resetReadingPrefsCacheForTest } from '../hooks/useReadingPrefs';
 
 // Mock the config accessors DebugPage/useAuth read so a test can simulate a
 // partial config. Manual (not importOriginal) to avoid re-evaluating client.ts
@@ -127,19 +124,6 @@ describe('DebugPage', () => {
     expect(screen.getByText('Status')).toBeInTheDocument();
     expect(screen.queryByText('Theme')).not.toBeInTheDocument();
     expect(screen.queryByText('Palette')).not.toBeInTheDocument();
-  });
-
-  it('toggles the scroll-jump diagnostics switch and persists it', () => {
-    renderWithProviders(<DebugPage />, { route: '/debug' });
-    const check = screen.getByRole('checkbox', {
-      name: /Scroll-jump diagnostics/,
-    });
-    expect(check).not.toBeChecked();
-    act(() => {
-      check.click();
-    });
-    expect(check).toBeChecked();
-    expect(window.localStorage.getItem(DEBUG_SCROLL_JUMPS_KEY)).toBe('1');
   });
 
   it('lists the environment and commit from the build info', () => {
