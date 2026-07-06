@@ -111,13 +111,48 @@ const DISMISS_SETTLE_FRAMES = 4;
 // genuine later scroll/resize is never second-guessed as a clamp.
 const VIEWPORT_CLAMP_RESTORE_MS = 600;
 
-// How much larger than the reader's baseline viewport `window.innerHeight` must
-// read before we treat it as the bogus dynamic-toolbar SPIKE (which slashes
-// maxScroll and clamps the scroll). The observed glitch reports a ~doubled
-// viewport (e.g. 852 → 1705); a legitimate toolbar hide/show only nudges it by
-// tens of px. A generous 25% gate cleanly separates the bogus spike from real
-// viewport changes, so the restore never fights a normal toolbar transition.
-const VIEWPORT_SPIKE_RATIO = 1.25;
+// How many times taller than the real visible height `window.innerHeight` must
+// read before we treat it as the bogus dynamic-toolbar SPIKE. The observed glitch
+// reports a ~DOUBLED innerHeight (e.g. 816 → 1632, ~2×) while
+// `visualViewport.height` — the actually-visible area — stays put. A *ratio* gate
+// (not an absolute px one) is essential: on mobile `innerHeight` is often the
+// large, toolbar-retracted layout viewport while `visualViewport.height` reflects
+// the URL-bar-occluded visible area, a legitimate gap that can be 60–100 px at
+// scale 1 — so an absolute px threshold would flag ordinary browser chrome as a
+// spike (Codex P2 on #402).
+//
+// The threshold has to thread two things that sit surprisingly close: ordinary
+// browser chrome (~10–20% of the viewport → ≤ ~1.25×) must read as honest, while
+// the bogus spike — which RAMPS through intermediate steps before its peak
+// (816 → 1125 → 1218 → 1632 = 1.38× → 1.49× → 2×) — must be caught from its FIRST
+// step, or the tracker records a progressively-clamped offset and the restore
+// target is already wrong by the peak (Codex P2 on #402). 1.35× sits just under
+// that first ramp step and clear of ordinary chrome.
+const VIEWPORT_SPIKE_RATIO = 1.35;
+
+// Is `window.innerHeight` currently telling the truth? The dynamic-toolbar bug
+// momentarily reports a viewport far taller than what's on screen, which slashes
+// maxScroll (= scrollHeight − innerHeight) and clamps the scroll toward the top.
+// `visualViewport.height` is the real visible height and does NOT lie during the
+// glitch, so `innerHeight` reading a large MULTIPLE of it means innerHeight is
+// spiking. When the visualViewport API is absent (jsdom/SSR/old browsers) we
+// can't tell, so treat the viewport as honest — the restore then simply never
+// arms, same as before.
+//
+// Pinch-zoom is the important exception: while the reader is zoomed
+// (`scale !== 1`) the visual viewport is LEGITIMATELY much shorter than the layout
+// `innerHeight`, and that mismatch is not a toolbar spike. Reading it as one would
+// stop the position tracker and could seed a restore that snaps to a stale
+// pre-zoom offset when the reader zooms back out (Codex P2 on #402). The bug only
+// occurs at scale 1, so only compare heights there; any zoomed state is treated as
+// honest (spike detection is simply disabled — inert, like the no-API fallback).
+function viewportIsHonest(): boolean {
+  if (typeof window === 'undefined') return true;
+  const vv = window.visualViewport;
+  if (!vv || vv.height <= 0) return true;
+  if (Math.abs(vv.scale - 1) > 0.01) return true;
+  return window.innerHeight <= vv.height * VIEWPORT_SPIKE_RATIO;
+}
 
 /** How many list elements a page set renders: in the group-by-feed view, one
  * header per feed section plus each non-collapsed row (a collapsed feed shows
@@ -1673,13 +1708,25 @@ export function ItemList({
   // (during a dismiss's settle window), so gating on the lock keeps the clamped
   // value from poisoning the ref — it holds the pre-dismiss offset instead.
   const readerScrollYRef = useRef<number | null>(null);
-  // `window.innerHeight` paired with `readerScrollYRef` — the viewport height at
-  // the reader's last genuine scroll. The transient-clamp restore keys off this:
-  // a clamp coincides with an innerHeight SPIKE (the dynamic-toolbar bug), while
-  // a genuine reader scroll leaves innerHeight unchanged — so comparing the live
-  // viewport against this baseline tells a bogus clamp apart from a real move and
-  // stops the restore from fighting the reader.
-  const readerScrollVhRef = useRef<number | null>(null);
+  // Set synchronously by lockBodyHeight when a dismiss/sweep commits while the
+  // viewport is ALREADY spiking (innerHeight lying vs. the visual viewport). The
+  // spike often fires-and-reverts entirely between the commit and the settle
+  // effect's first async sample — the diagnostics only ever caught it on the
+  // *synchronous* Done marker — so the settle can't rely on observing it live.
+  // This hands that synchronous observation to the settle, which then knows to
+  // restore the reader once the viewport is honest again. Consumed (cleared) by
+  // the settle effect.
+  const spikeSeenAtCommitRef = useRef(false);
+  // The reader's offset SNAPSHOT taken the moment a spike is first observed at a
+  // dismiss/sweep, frozen so the settle's restore target can't be corrupted by the
+  // window between capture and settle. It matters for the animated sweep: the tap
+  // sets `spikeSeenAtCommitRef` but the height lock / restore watcher don't engage
+  // until commitSweep ~200ms later, and if the spike reverts mid-animation a normal
+  // scroll event can land at the CLAMPED offset while `viewportIsHonest()` is true
+  // and overwrite `readerScrollYRef`. Snapshotting the pre-spike offset here (the
+  // tracker skipped the spike, so the ref still holds it) keeps the restore aimed
+  // at where the reader really was. First-write-wins; consumed by the settle.
+  const spikeIntendedYRef = useRef<number | null>(null);
   // The sweep's scroll-anchoring opt-out (overflow-anchor: none) has a SHORTER
   // life than the height lock: it's needed only for the single layout where the
   // swept in-viewport rows leave the DOM, whereas the min-height freeze must
@@ -1746,6 +1793,16 @@ export function ItemList({
   // Measuring here, while the swept rows are still in layout, captures the real
   // pre-sweep height.
   const lockBodyHeight = useCallback(() => {
+    // Sample the viewport SYNCHRONOUSLY at the commit — this runs inside the
+    // dismiss's hide()/hideMany(), the one moment the diagnostics prove the
+    // innerHeight spike is observable (the Done marker) before it reverts. If it's
+    // already lying, flag it AND snapshot the reader's pre-spike offset so the
+    // settle restores the right place even if no async event samples the spike.
+    if (!viewportIsHonest()) {
+      spikeSeenAtCommitRef.current = true;
+      if (spikeIntendedYRef.current === null)
+        spikeIntendedYRef.current = readerScrollYRef.current;
+    }
     const el = bodyRef.current;
     if (!el) return;
     // Sweep-only: opt the body out of the browser's scroll anchoring for the
@@ -1919,19 +1976,19 @@ export function ItemList({
   useEffect(() => detachHeightRelease, [detachHeightRelease]);
 
   // Track the reader's genuine scroll offset so a dismiss can restore it after a
-  // clamp (see the release effect). Only recorded while the height lock is off —
-  // a clamp fires a scroll event while the lock is engaged, and letting that
-  // through would overwrite the pre-dismiss offset with the clamped one.
+  // clamp (see the release effect). Recorded only when it's trustworthy:
+  //  - not while the height lock is on (a dismiss settle) or a restore watch owns
+  //    the offset — a clamp scroll event during those would poison it;
+  //  - not while the viewport is spiking — the clamp's own scroll event fires as
+  //    the browser reverts innerHeight, landing at a near-honest viewport, so it
+  //    would otherwise be adopted as a "genuine" scroll to the clamped offset.
+  //    Gating on viewportIsHonest() keeps the ref on the reader's real position.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const onScroll = () => {
-      // Skip while the height lock is on (a dismiss settle — a clamp scroll
-      // event would poison the offset) OR while a transient-clamp restore watch
-      // owns the offset (it manages `readerScrollYRef` itself across the release,
-      // and a clamp scroll event fires AFTER the lock has been dropped).
       if (heightLockedRef.current || dismissRestoreCleanupRef.current) return;
+      if (!viewportIsHonest()) return;
       readerScrollYRef.current = Math.round(window.scrollY);
-      readerScrollVhRef.current = window.innerHeight;
     };
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
@@ -2027,6 +2084,19 @@ export function ItemList({
       )
         return;
       const batch = ids.slice();
+      // Sample the viewport at the TAP, not just at the commit. The animated
+      // sweep defers lockBodyHeight (its synchronous spike sample) to commitSweep
+      // ~200 ms later — long after a ~40 ms dynamic-toolbar spike has reverted —
+      // so if the viewport is already lying when the broom is tapped, only this
+      // catches it (Codex P2 on #402). Snapshot the pre-spike offset now too: the
+      // tracker stays live until the deferred commit, so a scroll landing at the
+      // clamped offset during the gap could otherwise overwrite readerScrollYRef.
+      // Both persist until the settle pass (which the commit kicks off) consumes them.
+      if (!viewportIsHonest()) {
+        spikeSeenAtCommitRef.current = true;
+        if (spikeIntendedYRef.current === null)
+          spikeIntendedYRef.current = readerScrollYRef.current;
+      }
       const reducedMotion =
         typeof window !== 'undefined' &&
         typeof window.matchMedia === 'function' &&
@@ -2365,60 +2435,75 @@ export function ItemList({
     // Any re-run supersedes a pending settle: cancel it, then re-decide below.
     // (A fresh removal reschedules; a refresh taking over cancels for good.)
     cancelDismissRelease();
+    // Consume the synchronous spike flag + offset snapshot UP FRONT — before the
+    // guard — so a settle that early-returns (a background refresh took over) can't
+    // leave them stale to mislead the next dismiss.
+    const spikeSeen = spikeSeenAtCommitRef.current;
+    const spikeIntended = spikeIntendedYRef.current;
+    spikeSeenAtCommitRef.current = false;
+    spikeIntendedYRef.current = null;
     if (isRefreshing || !heightLockedRef.current || !bodyRef.current) return;
     const curMaxScroll = () =>
       typeof window === 'undefined'
         ? 0
         : Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-    // The offset this settle protects: the reader's pre-dismiss position, plus
-    // the viewport height it was recorded at. Captured ONCE, up front, and kept
-    // in a local (not read back off `readerScrollYRef`) so the release syncing
-    // the ref, or a clamp scroll event landing after the lock drops, can't move
-    // the target out from under a still-pending restore. `sawSpike` records that
-    // the bogus dynamic-toolbar innerHeight spike actually occurred, so a restore
-    // only fires against a real clamp — never against the reader legitimately
-    // scrolling to a shorter new bottom (which never spikes the viewport).
-    let intended = readerScrollYRef.current;
-    let intendedVh = readerScrollVhRef.current ?? window.innerHeight;
-    let sawSpike = false;
+    // The offset this settle protects. When a spike was observed synchronously at
+    // the commit, prefer the SNAPSHOT taken then (immune to the tracker being
+    // polluted by a clamped-offset scroll during the tap→commit gap); otherwise
+    // the reader's last honest position. Kept in a local so nothing can move the
+    // target out from under a still-pending restore. `sawSpike` records that the
+    // bogus innerHeight spike actually occurred — from that synchronous
+    // observation, since the spike often reverts before any async sample — so a
+    // restore only fires against a real clamp, never against the reader
+    // legitimately scrolling to a shorter new bottom.
+    let intended = spikeSeen
+      ? spikeIntended ?? readerScrollYRef.current
+      : readerScrollYRef.current;
+    let sawSpike = spikeSeen;
     // The scrollY the watch last saw, so a change made while the viewport is
-    // NORMAL is recognized as the reader scrolling (superseding a pending clamp),
-    // while the clamp's own jump — which happens while the viewport is SPIKED —
-    // is absorbed, not mistaken for the reader.
-    let lastWatchY = intended;
+    // HONEST is recognized as the reader scrolling (superseding a pending clamp),
+    // while the clamp's own jump — which happens while the viewport is spiking —
+    // is absorbed, not mistaken for the reader. Seed it with the ACTUAL current
+    // scrollY, NOT `intended`: when `spikeSeen` came from the synchronous capture
+    // and the spike has already reverted by the time this runs (the animated-sweep
+    // case — commit is ~200 ms behind a ~40 ms spike), scrollY is already the
+    // clamped value. Seeding `lastWatchY = intended` (the PRE-clamp offset) would
+    // make the very first watch() read that clamp as an honest reader move and
+    // clear `sawSpike`, killing the restore (Codex P2 on #402). Seeding from the
+    // real scrollY means the clamp reads as "no change" and the restore survives.
+    let lastWatchY =
+      typeof window !== 'undefined' ? Math.round(window.scrollY) : intended;
     const EPS = 2;
-    // Restore the reader's protected offset once the viewport has un-spiked. A
-    // spike (innerHeight ≫ baseline) slashes maxScroll and the browser clamps
-    // scrollY down; when innerHeight returns to baseline maxScroll re-grows, but
-    // the clamped offset stays put. So: note the spike while it's live, and the
-    // moment the viewport is back to normal AND the ceiling again reaches the
-    // protected offset, put the reader back. `min(intended, max)` keeps it a
-    // no-op for the deferred bottom-sweep hold (whose ceiling sits at the offset,
-    // not below it) and never scrolls past the real bottom.
+    // Restore the reader's protected offset once the viewport is honest again. A
+    // spike (innerHeight lying tall vs. the visual viewport) slashes maxScroll and
+    // the browser clamps scrollY down; when innerHeight tells the truth again
+    // maxScroll re-grows, but the clamped offset stays put. So: note the spike
+    // while it's live, and the moment the viewport is honest AND the ceiling again
+    // reaches the protected offset, put the reader back. `min(intended, max)`
+    // keeps it a no-op for the deferred bottom-sweep hold (whose ceiling sits at
+    // the offset, not below it) and never scrolls past the real bottom.
     const watch = () => {
       if (intended == null || typeof window === 'undefined') return;
-      const vh = window.innerHeight;
       const y = Math.round(window.scrollY);
-      if (vh > intendedVh * VIEWPORT_SPIKE_RATIO) {
-        // Spiked: the ceiling is bogusly low and the browser may clamp scrollY.
+      if (!viewportIsHonest()) {
+        // Spiking: the ceiling is bogusly low and the browser may clamp scrollY.
         // Absorb whatever it does (record y) so the clamp jump isn't later read
-        // as a reader move once the viewport is normal again.
+        // as a reader move once the viewport is honest again.
         sawSpike = true;
         lastWatchY = y;
         return;
       }
       const max = curMaxScroll();
-      // A scrollY change while the viewport is NORMAL and landing in headroom is
+      // A scrollY change while the viewport is HONEST and landing in headroom is
       // the reader scrolling — adopt it as the new intent and drop the pending
       // clamp (their move supersedes the restore). The clamp's own jump never
-      // reaches here: it happened while spiked and was absorbed above.
+      // reaches here: it happened while spiking and was absorbed above.
       if (
         lastWatchY != null &&
         Math.abs(y - lastWatchY) > EPS &&
         y < max - EPS
       ) {
         intended = y;
-        intendedVh = vh;
         sawSpike = false;
         lastWatchY = y;
         return;
@@ -2466,10 +2551,11 @@ export function ItemList({
       restoreTimer = null;
       // Hand the offset back to the always-on tracker at where the reader really
       // ended up, so the next dismiss starts fresh (and a genuine scroll during
-      // the window, which the tracker deferred to us, is picked up).
-      if (typeof window !== 'undefined') {
+      // the window, which the tracker deferred to us, is picked up) — but only
+      // when the viewport is honest, so a teardown that fires mid-spike doesn't
+      // bake in a clamped offset.
+      if (typeof window !== 'undefined' && viewportIsHonest()) {
         readerScrollYRef.current = Math.round(window.scrollY);
-        readerScrollVhRef.current = window.innerHeight;
       }
       if (dismissRestoreCleanupRef.current === teardown) {
         dismissRestoreCleanupRef.current = null;
