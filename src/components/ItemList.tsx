@@ -2946,7 +2946,7 @@ export function ItemList({
           screen (SPEC.md *Feed views → Background refresh status strip*). */}
       {items.length > 0 && isRefreshing ? (
         <div className="item-list__refresh" role="status">
-          Checking for new items…
+          Refreshing
         </div>
       ) : null}
       {items.length > 0 && refreshFailed ? (

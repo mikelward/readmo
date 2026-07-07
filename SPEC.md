@@ -1403,9 +1403,10 @@ negligible and off every critical path. See the External services table in
      loading rather than an empty or half-painted feed. Reduced-motion readers
      get the label without the spin. The library and offline views use the same
      indicator.
-   - **Background refresh status strip** at the foot ("Checking for new
-     items…" / "Couldn't refresh." + Retry), appearing only when rows are
-     already on screen. Verbatim mirror.
+   - **Background refresh status strip** at the foot ("Refreshing" /
+     "Couldn't refresh." + Retry), appearing only when rows are already on
+     screen. Kept short (vs newshacker's "Checking for new items…") so the same
+     label reads cleanly if the refresh is ever surfaced more prominently.
    - **A stable set of articles.** The published set a feed view shows — which
      articles, in which order — is held **frozen** between reads. New items the
      poller adds, and cross-device changes the overlay can't express, do **not**

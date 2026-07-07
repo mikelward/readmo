@@ -16,6 +16,9 @@ import type { QueryClient } from '@tanstack/react-query';
  * the set's membership and order are frozen. See SPEC.md *Feed views → A stable
  * set of articles*.
  */
+// TODO(configurable): make this a user setting ("Auto-refresh every n hours")
+// wired through configureFeedFreshness, rather than a hard-coded default. See
+// TODO.md → Feed freshness.
 export const FEED_STALE_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 /**

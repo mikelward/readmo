@@ -113,6 +113,16 @@ constraint is documented in more detail.
   selector feeds as the always-available fallback. Revisit when a user
   asks for a no-feed site we care about.
 
+## Feed freshness
+
+- **Configurable auto-refresh interval.** The feed's published set is frozen
+  for a fixed freshness window before an automatic refresh path (load/return
+  past the TTL, focus, warm-on-open) re-materializes it — currently a hard-coded
+  6h (`FEED_STALE_MS` in `src/lib/feedFreshness.ts`). Make it a user setting,
+  e.g. "Auto-refresh every _n_ hours," wired through `configureFeedFreshness`
+  (and persisted like the other reading prefs). Until then the 6h default
+  stands. See SPEC.md *Feed views → A stable set of articles*.
+
 ## Fetching / robots.txt
 
 - **Consider honoring robots.txt on the poller and/or discovery fetches.**

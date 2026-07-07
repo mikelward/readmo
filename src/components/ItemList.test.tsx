@@ -7390,4 +7390,45 @@ describe('ItemList', () => {
       expect(fetchPage).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('background refresh status strip', () => {
+    it('shows "Refreshing" while a background refresh is in flight over existing rows', async () => {
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      });
+      let releaseRefresh: (() => void) | null = null;
+      let calls = 0;
+      const fetchPage = vi.fn((cursor: string | null) => {
+        calls += 1;
+        // 1 = initial load (settles, rows on screen); 2 = the background refresh,
+        // held open so isRefreshing stays true while we read the strip.
+        if (calls <= 1) return source.getHomeItems({ cursor });
+        return new Promise<Awaited<ReturnType<typeof source.getHomeItems>>>(
+          (resolve) => {
+            releaseRefresh = () => resolve(source.getHomeItems({ cursor }));
+          },
+        );
+      });
+      const viewKey = `refresh-strip-${viewKeySeq++}`;
+      renderWithProviders(
+        <ItemList viewKey={viewKey} fetchPage={fetchPage} emptyLabel="x" />,
+        { source, queryClient },
+      );
+      await screen.findAllByTestId('item-row');
+
+      // Drive a background refresh (the pull-to-refresh / focus path) via an
+      // explicit invalidation, held open so isRefreshing stays true.
+      await act(async () => {
+        void queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
+      });
+      expect(await screen.findByText('Refreshing')).toBeInTheDocument();
+      expect(screen.queryByText(/checking for new items/i)).toBeNull();
+
+      await act(async () => {
+        releaseRefresh?.();
+        await Promise.resolve();
+      });
+    });
+  });
 });
