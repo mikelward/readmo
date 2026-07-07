@@ -1429,22 +1429,28 @@ negligible and off every critical path. See the External services table in
      PTR), the reader sees the **Refreshing** state over the list, not a stale set
      silently reordering under a tap (above). Cross-device pin/done still
      propagate promptly — but *in place* (below), not by re-materializing the set.
-   - **Dismissed in place — a cross-device dismiss grays, it doesn't collapse.**
-     A dismiss (Done/Hidden) that arrives *from another device* for a row that's
-     on screen leaves the row where it is, **dimmed with its title struck
-     through**, rather than removing it and shifting everything below — the list
-     never moves under the reader for something the reader didn't do. The grayed
-     row stays tappable, and its right-side button becomes **Undo** (restore),
-     since the reader may not want another device's dismissal. It's distinguished
-     from the reader's *own* dismiss purely by channel: a local swipe/Sweep/
-     auto-hide removes and collapses immediately (below); only a dismiss that
-     arrives via resync — which never fires the local mutation channel — grays. A
-     row that arrives **already** dismissed (an initial load, or a More page) is
-     simply **filtered out**, never shown and never grayed — only a row that was
-     actually on screen when the dismiss landed grays. Grayed rows **compact**
-     (drop out) on the next re-materialization that isn't under the reader: a
-     pull-to-refresh, or a navigation that remounts the list (returning from an
-     article). More deliberately does *not* compact — pulling rows out mid-page
+   - **Dismissed in place — a cross-device dismiss grays only while on screen.**
+     A dismiss (Done/Hidden) that arrives *from another device* for a row the
+     reader is currently looking at leaves the row where it is, **dimmed with its
+     title struck through**, rather than removing it and shifting everything below
+     — the list never moves under the reader for something the reader didn't do.
+     The grayed row stays tappable, and its right-side button becomes **Undo**
+     (restore), since the reader may not want another device's dismissal. It's
+     distinguished from the reader's *own* dismiss purely by channel: a local
+     swipe/Sweep/auto-hide removes and collapses immediately (below); only a
+     dismiss that arrives via resync — which never fires the local mutation
+     channel — can gray. **Graying is only to avoid a visible jump, so it applies
+     only to a row that is actually on screen.** A cross-device dismiss that lands
+     on a row that is **off screen** — below the fold, scrolled above the top, or
+     inside a collapsed section — **removes it immediately**, since nothing the
+     reader can see shifts. Likewise a row that arrives **already** dismissed (an
+     initial load, or a More page below the fold) is simply **filtered out**,
+     never shown and never grayed. And a grayed row **commits (drops out) the
+     moment it scrolls off screen** — you scroll past it and it's gone, no
+     re-materialization needed. Any grayed rows still on screen **compact** on the
+     next re-materialization that isn't under the reader: a pull-to-refresh, or a
+     navigation that remounts the list (returning from an article). More
+     deliberately does *not* compact on-screen rows — pulling rows out mid-page
      would shift what's below as the reader pages down.
    - **A dismiss never refetches — it settles locally.** Marking an item
      Done/Hidden, pinning, and Sweep update the rendered list **from the local

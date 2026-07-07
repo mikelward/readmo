@@ -7484,6 +7484,13 @@ describe('ItemList', () => {
 });
 
 describe('ItemList — cross-device dismiss (frozen list)', () => {
+  // The gray-in-place rule keys off viewport intersection (a grayed row is held
+  // only while on screen), so these cases drive the IntersectionObserver mock:
+  // observing a row defaults it to fully visible; `setVisibilityForTest(li, 0)`
+  // scrolls it off screen.
+  beforeEach(() => installIntersectionObserverMock());
+  afterEach(() => uninstallIntersectionObserverMock());
+
   const renderGray = (source: MockDataSource, fetchPage: FetchPage) =>
     renderWithProviders(
       <ItemList
@@ -7517,6 +7524,92 @@ describe('ItemList — cross-device dismiss (frozen list)', () => {
       expect(row()?.classList.contains('item-list__row--dismissed')).toBe(true),
     );
     expect(within(row()!).getByTestId('row-undo-dismiss')).toBeTruthy();
+  });
+
+  it('removes (does not gray) a cross-device dismiss that lands on an off-screen row', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const page = await source.getHomeItems();
+    const target = page.items[0].item.id;
+    const { container } = renderGray(source, (c) => source.getHomeItems({ cursor: c }));
+    await screen.findAllByTestId('item-row');
+    const row = () =>
+      container.querySelector(`[data-item-id="${target}"]`) as HTMLElement | null;
+    expect(row()).not.toBeNull();
+
+    // The target scrolls off screen (below the fold, or above the top), then a
+    // cross-device dismiss arrives. Removing it is invisible, so it's dropped
+    // immediately rather than held grayed.
+    act(() => setVisibilityForTest(row()!.closest('li')!, 0));
+    act(() => {
+      source.stateStore.hydrate([
+        [target, { ...DEFAULT_ITEM_STATE, done: true, doneAt: Date.now() }],
+      ]);
+    });
+    await waitFor(() => expect(row()).toBeNull());
+  });
+
+  it('commits a grayed row (drops it) once it scrolls off screen', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const page = await source.getHomeItems();
+    const target = page.items[0].item.id;
+    const { container } = renderGray(source, (c) => source.getHomeItems({ cursor: c }));
+    await screen.findAllByTestId('item-row');
+    const row = () =>
+      container.querySelector(`[data-item-id="${target}"]`) as HTMLElement | null;
+
+    // On-screen dismiss grays it in place.
+    act(() => {
+      source.stateStore.hydrate([
+        [target, { ...DEFAULT_ITEM_STATE, done: true, doneAt: Date.now() }],
+      ]);
+    });
+    await waitFor(() =>
+      expect(row()?.classList.contains('item-list__row--dismissed')).toBe(true),
+    );
+
+    // The reader scrolls it off the top — now the held dismissal commits and the
+    // row leaves the list.
+    act(() => setVisibilityForTest(row()!.closest('li')!, 0));
+    await waitFor(() => expect(row()).toBeNull());
+  });
+
+  it('grays an on-screen row via the DOM-position fallback when a dismiss lands before the observer reports', async () => {
+    // Simulate the first-paint gap: no IntersectionObserver delivery yet, so the
+    // live on-screen set is empty and the gray-vs-remove decision must fall back
+    // to measuring the row's actual DOM position.
+    uninstallIntersectionObserverMock();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const page = await source.getHomeItems();
+    const target = page.items[0].item.id;
+    const { container } = renderGray(source, (c) => source.getHomeItems({ cursor: c }));
+    await screen.findAllByTestId('item-row');
+    const row = () =>
+      container.querySelector(`[data-item-id="${target}"]`) as HTMLElement | null;
+
+    // jsdom reports zero-size rects by default; pin an on-screen rect so the
+    // measurement fallback sees the row inside the viewport band.
+    vi.spyOn(row()!, 'getBoundingClientRect').mockReturnValue({
+      top: 100,
+      bottom: 150,
+      left: 0,
+      right: 0,
+      width: 0,
+      height: 50,
+      x: 0,
+      y: 100,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    act(() => {
+      source.stateStore.hydrate([
+        [target, { ...DEFAULT_ITEM_STATE, done: true, doneAt: Date.now() }],
+      ]);
+    });
+
+    // Grayed in place — not removed — even though the observer never reported it.
+    await waitFor(() =>
+      expect(row()?.classList.contains('item-list__row--dismissed')).toBe(true),
+    );
   });
 
   it('removes a row you dismissed yourself, rather than graying it', async () => {

@@ -180,6 +180,25 @@ function viewportIsHonest(): boolean {
   return window.innerHeight <= vv.height * VIEWPORT_SPIKE_RATIO;
 }
 
+/** Is the row with this id currently intersecting the visible band (viewport
+ * minus the sticky chrome)? Read straight from the DOM as a fallback for the
+ * cross-device "dismiss in place" decision during the brief window after first
+ * paint before the IntersectionObserver delivers its initial entries — a resync
+ * landing in that gap must still gray a row the reader can already see, not
+ * remove it and jump the list (Codex P2 on #416). An absent element (a row that
+ * entered already-dismissed and was never rendered live) reads as off screen, so
+ * it stays filtered out. Only consulted for a dismissed row the observer's live
+ * set doesn't already cover, so the layout read is off the common path. */
+function rowIntersectsViewport(id: ItemId): boolean {
+  if (typeof document === 'undefined' || typeof window === 'undefined') return false;
+  const el = document.querySelector(`li[data-item-id="${id}"]`);
+  if (!(el instanceof HTMLElement)) return false;
+  const rect = el.getBoundingClientRect();
+  const top = measureTopChromeHeight();
+  const bottom = window.innerHeight - measureStickyBottomInset();
+  return rect.bottom > top && rect.top < bottom;
+}
+
 /** How many list elements a page set renders: in the group-by-feed view, one
  * header per feed section plus each non-collapsed row (a collapsed feed shows
  * only its header); otherwise just the row count. The list is contiguous by
@@ -610,9 +629,46 @@ export function ItemList({
     };
   }, [hideOnScroll, commitExitTop]);
 
+  // Cross-device "dismiss in place" (SPEC.md *Feed views → Dismissed in place*):
+  // a server dismiss grays a row IN PLACE only while it's actually on screen —
+  // removing an on-screen row would shift the content the reader is looking at.
+  // A dismiss that lands on an OFF-screen row (below the fold, or already
+  // scrolled above the top) is removed immediately, and a grayed row is dropped
+  // the moment it scrolls off screen: both removals are invisible, so there's no
+  // jump to avoid. "On screen" = intersecting the visible band (viewport minus
+  // the sticky chrome), tracked by the same IntersectionObserver Sweep uses.
+  const onScreenIdsRef = useRef<Set<ItemId>>(new Set());
+  // Mirror of the latest grayed set so a viewport-exit can tell whether a row
+  // leaving the screen is one we're holding grayed (and must now drop) without
+  // re-subscribing. Written *synchronously* inside the visibleItems memo (during
+  // render) rather than from a passive effect: a row can leave the viewport
+  // between graying and a post-render effect, and the exit handler must see the
+  // fresh set or it would skip the commit and strand the row grayed (Codex P2 on
+  // #416).
+  const grayedIdsRef = useRef<Set<ItemId>>(new Set());
+  // Bumped only when a currently-grayed row leaves the viewport, so `visibleItems`
+  // re-runs and drops it. Separate from `storeVersion` so ordinary scrolling —
+  // rows entering/leaving that aren't grayed — never re-runs the memo.
+  const [viewportVersion, bumpViewportVersion] = useReducer((x: number) => x + 1, 0);
+  const handleViewportEnter = useCallback((ids: ItemId[]) => {
+    for (const id of ids) onScreenIdsRef.current.add(id);
+    // Entering never resurrects a dropped dismiss (an off-screen dismiss already
+    // removed the row from the list), so no recompute is needed here.
+  }, []);
+  const handleViewportExit = useCallback((ids: ItemId[]) => {
+    let droppedGray = false;
+    for (const id of ids) {
+      onScreenIdsRef.current.delete(id);
+      if (grayedIdsRef.current.has(id)) droppedGray = true;
+    }
+    if (droppedGray) bumpViewportVersion();
+  }, []);
+
   const { inViewIds, getRowRef } = useInViewIds({
     onExitTop: hideOnScroll ? handleExitTop : undefined,
     onReenter: hideOnScroll ? handleReenter : undefined,
+    onViewportEnter: handleViewportEnter,
+    onViewportExit: handleViewportExit,
   });
 
   // Ids restored by the most recent Undo, awaiting a scroll-into-view once they
@@ -831,22 +887,15 @@ export function ItemList({
 
   // Frozen-list dismiss handling (SPEC.md "A stable set of articles"): a dismiss
   // the reader made *this session* removes its row (collapsing up); a dismiss
-  // that arrives from another device (resync/hydrate) for a row that's on screen
-  // grays in place instead, until a compaction (a pull-to-refresh, or a nav that
-  // remounts the list). More does NOT compact — removing rows mid-page would
-  // shift everything below as the reader pages down — but a row that arrives on a
-  // More page already dismissed is still filtered out (it was never on screen).
+  // that arrives from another device (resync/hydrate) grays in place only while
+  // the row is on screen (see `onScreenIdsRef` above), otherwise it's removed
+  // right away since the removal is invisible. A row that arrives on a More page
+  // already dismissed is likewise filtered out (it was never on screen).
   //
   // `localDismissedIdsRef` records ids dismissed via the *mutation* channel (your
   // own swipe / Sweep / auto-hide) so `visibleItems` can tell them apart from a
   // server dismiss — the latter never fires this channel.
   const localDismissedIdsRef = useRef<Set<ItemId>>(new Set());
-  // Ids actually shown in the *previous* render (normal rows + already-grayed
-  // rows). A server dismiss grays only for a row that was on screen when it
-  // landed; a row that was already dismissed when it entered the list (initial
-  // load, or a More page) is filtered out, never grayed. Updated after each
-  // render, and cleared on compaction so the grayed rows drop.
-  const renderedShownRef = useRef<Set<ItemId>>(new Set());
 
   // Load-time pin baseline for the grouped-view promotion (Codex P2 on #411): the
   // ids that were pinned when they FIRST entered the loaded set. A row pinned at
@@ -987,9 +1036,10 @@ export function ItemList({
       setStayInBodyIds(new Set());
       setPendingFeedMore(new Set());
       feedMoreFetchingRef.current = new Set();
-      // A new view starts clean: no carried-over grayed rows, local-dismiss
-      // bookkeeping, or pin baseline from the previous view.
-      renderedShownRef.current = new Set();
+      // A new view starts clean: no carried-over on-screen/grayed tracking,
+      // local-dismiss bookkeeping, or pin baseline from the previous view.
+      onScreenIdsRef.current = new Set();
+      grayedIdsRef.current = new Set();
       localDismissedIdsRef.current = new Set();
       basePinnedRef.current = new Set();
       seenForBaseRef.current = new Set();
@@ -1539,11 +1589,13 @@ export function ItemList({
 
   // Three-way overlay (SPEC.md "A stable set of articles"): a normal row shows;
   // a row you dismissed this session is removed (collapsing up); a row dismissed
-  // on ANOTHER device grays IN PLACE if it was on screen when the dismiss
-  // arrived, otherwise it's filtered out — it entered already-dismissed (initial
-  // load, or a More page), so it's never shown rather than grayed. Memoized on
-  // `storeVersion` (bumps on any store change, local or hydrate) + `mergedRaw`;
-  // the two refs it reads are updated alongside those, so they aren't deps.
+  // on ANOTHER device grays IN PLACE only while it's on screen, and is removed
+  // otherwise (off-screen removals are invisible, so there's no jump to avoid).
+  // A row that enters already-dismissed (initial load, or a More page, below the
+  // fold) is never on screen either, so it's likewise filtered out — never shown,
+  // never grayed. Memoized on `storeVersion` (any store change, local or hydrate)
+  // + `mergedRaw` + `viewportVersion` (a grayed row left the screen); the refs it
+  // reads are updated alongside those, so they aren't deps.
   const { visibleItems, grayedIds } = useMemo(() => {
     const grayed = new Set<ItemId>();
     const visible: FeedItem[] = [];
@@ -1555,35 +1607,30 @@ export function ItemList({
         continue;
       }
       if (localDismissedIdsRef.current.has(id)) continue; // your dismiss → remove
-      if (renderedShownRef.current.has(id)) {
-        grayed.add(id); // a server dismiss for a row you were looking at → gray
+      // Hold (gray) a cross-device dismiss only while the row is on screen. Fast
+      // path: the observer's live on-screen set. Fallback: before the observer
+      // has reported this row (the window between first paint and its initial
+      // delivery), measure the row's DOM position so a resync landing in that gap
+      // still grays a visible row rather than removing it and jumping the list
+      // (Codex P2 on #416).
+      if (onScreenIdsRef.current.has(id) || rowIntersectsViewport(id)) {
+        grayed.add(id); // a server dismiss for a row on screen → gray in place
         visible.push(fi);
       }
-      // else: entered already-dismissed → filtered out, never shown.
+      // else: off screen (below the fold, or scrolled above the top) → removed
+      // immediately; there's no visible shift to avoid.
     }
+    // Mirror the grayed set into its ref here (during render) so a viewport-exit
+    // that fires before any post-render effect still sees the current set and
+    // commits the row (Codex P2 on #416). Idempotent — a re-run with unchanged
+    // deps recomputes the same set.
+    grayedIdsRef.current = grayed;
     return { visibleItems: visible, grayedIds: grayed };
-    // storeVersion drives store-read reactivity; the refs are intentionally
-    // excluded (they're updated in lockstep with storeVersion/mergedRaw).
+    // storeVersion drives store-read reactivity; viewportVersion re-runs the memo
+    // when a grayed row leaves the screen. The refs are intentionally excluded
+    // (they're updated in lockstep with these deps).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mergedRaw, storeVersion, ds]);
-
-  // Remember what actually rendered (normal rows + grayed rows) so the NEXT
-  // server dismiss can tell "was on screen" (gray) from "entered already
-  // dismissed" (filter). Compaction (a pull-to-refresh, or a nav that remounts
-  // the list) clears this ref so the grayed rows drop.
-  //
-  // A collapsed feed's rows are still in `visibleItems` but ItemRows renders them
-  // as null, so they were NOT on screen — exclude them (Codex P2 on #413). Else a
-  // cross-device dismiss on a collapsed row would gray it, and expanding the feed
-  // later would reveal an already-dismissed row instead of filtering it out.
-  useEffect(() => {
-    const shown = new Set<ItemId>();
-    for (const fi of visibleItems) {
-      if (groupByFeed && collapsed.has(fi.item.feedId)) continue;
-      shown.add(fi.item.id);
-    }
-    renderedShownRef.current = shown;
-  }, [visibleItems, groupByFeed, collapsed]);
+  }, [mergedRaw, storeVersion, viewportVersion, ds]);
 
   // Undo a grayed (cross-device-dismissed) row via its right-side button: clear
   // done/hidden with a fresh clock so it wins last-write-wins and un-dismisses
@@ -3037,8 +3084,10 @@ export function ItemList({
           // A pull-to-refresh consolidates: in-session pins re-group at the top.
           setStayInBodyIds(new Set());
           // …and compacts grayed cross-device dismisses (the refetch also drops
-          // them server-side, so this just clears the in-session bookkeeping).
-          renderedShownRef.current = new Set();
+          // them server-side, so this just clears the in-session bookkeeping;
+          // `onScreenIdsRef` is re-derived by the observer as the fresh rows
+          // mount).
+          grayedIdsRef.current = new Set();
           await checkForServiceWorkerUpdate();
         }}
       >
