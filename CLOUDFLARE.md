@@ -140,6 +140,44 @@ Vercel-preview problem we already hit:
   previous deploy serving; the only sharp edge is the one-time DNS cutover, which
   the staged plan de-risks.
 
+## Relationship to the Workers Cache API
+
+Not to be confused with Cloudflare's [Workers Cache API](https://developers.cloudflare.com/workers/runtime-apis/cache/)
+(`caches.default` / `cache.put` / `cache.match`). This proposal does **not**
+depend on it, and adopting it is **not** a prerequisite for anything here.
+
+- **The image cache above is Cache-Rule-driven (config), not code-driven.** It
+  is *not* automatic just from the response header. `/api/img?url=…` is a path
+  **with a query string**, which Cloudflare treats as **dynamic and does not
+  cache by default** — a static `cache-control` header only sets the edge *TTL*
+  once a response is *eligible*, it doesn't make it eligible. Eligibility comes
+  from a **Cache Rule** ("Cache Everything" on `/api/img*`, cache key = full
+  query string, cache `200` only, ignore cookies) — the exact rule the SETUP.md
+  *Shared image cache* note already specifies. What "falls out naturally" in the
+  proposal means is narrower: with the origin already on Cloudflare (Pages), that
+  Cache Rule applies cleanly, without the awkward orange-clouding of an external
+  Vercel origin — **not** that caching is zero-config. The Workers Cache API is
+  the *code* alternative to that config rule, for control a Cache Rule can't
+  express (custom cache keys, caching an upstream that's hostile to caching,
+  explicit stale-serving).
+- **We already run a Worker where it'd live.** The gateway Worker
+  (`infra/cf-gateway/`) is a place `caches.default` is reachable **today**,
+  independent of the Pages move — so programmatic image caching is technically
+  possible before this migration. The catch: images deliberately **bypass the
+  gateway** right now (a server-side img fetch can't carry `x-readmo-build`, so
+  routing it through the gateway would 426 it — see the gateway README), so
+  using it there needs a routing change first. The natural home is the "fold img
+  into the gateway Worker" tidy noted under *What does not move*.
+- **Two hard caveats if anyone reaches for it.** `caches.default` is
+  **per–data-center, not global** (cold in each colo, so it's a hit-rate
+  optimization, not a global store); and it must **never** wrap the gateway's
+  `/rest/` or `/functions/` paths — those are per-user and authenticated
+  (guardrail #7), so CDN-caching them would leak one user's data to another.
+
+**Bottom line:** a Cache Rule (config, per the SETUP.md *Shared image cache*
+note) covers the image path; keep the Workers Cache API in your back pocket for
+when that proves insufficient, not as part of this migration.
+
 ## Migration plan (staged, reversible)
 
 Each phase is independently verifiable; rollback at any point is "DNS back to
