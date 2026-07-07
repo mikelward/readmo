@@ -33,6 +33,14 @@ interface Options {
    * IntersectionObserver callback, so it's synchronous with the re-entry (no
    * dependency on a React render landing first). */
   onReenter?: (ids: ItemId[]) => void;
+  /** Called with the ids of rows that just started intersecting the viewport
+   * (fully *or* partially), and {@link onViewportExit} with those that just
+   * stopped. Unlike {@link onReenter} (auto-hide only), these track raw
+   * on-screen membership for the cross-device "dismiss in place" rule — a grayed
+   * row is held only while on screen, and dropped the moment it leaves. Both fire
+   * synchronously from the observer callback. */
+  onViewportEnter?: (ids: ItemId[]) => void;
+  onViewportExit?: (ids: ItemId[]) => void;
 }
 
 export function useInViewIds(opts: Options = {}): {
@@ -51,6 +59,10 @@ export function useInViewIds(opts: Options = {}): {
   onExitTopRef.current = opts.onExitTop;
   const onReenterRef = useRef(opts.onReenter);
   onReenterRef.current = opts.onReenter;
+  const onViewportEnterRef = useRef(opts.onViewportEnter);
+  onViewportEnterRef.current = opts.onViewportEnter;
+  const onViewportExitRef = useRef(opts.onViewportExit);
+  onViewportExitRef.current = opts.onViewportExit;
   // Latest inViewIds mirrored into a ref so the enable effect can seed from it
   // without subscribing (depending on inViewIds would re-seed on every scroll).
   const inViewIdsRef = useRef(inViewIds);
@@ -80,12 +92,15 @@ export function useInViewIds(opts: Options = {}): {
         const nowVisible: ItemId[] = [];
         const nowHidden: ItemId[] = [];
         const reentered: ItemId[] = [];
+        const leftViewport: ItemId[] = [];
         for (const entry of entries) {
           const el = entry.target as HTMLElement;
           const id = el.dataset.itemId;
           if (!id) continue;
-          // Intersecting at all (fully or partially) = back in the viewport.
+          // Intersecting at all (fully or partially) = in the viewport; the
+          // complement (ratio 0, either edge) = fully off screen.
           if (entry.isIntersecting) reentered.push(id);
+          else leftViewport.push(id);
           if (entry.intersectionRatio >= FULLY_VISIBLE_RATIO) {
             nowVisible.push(id);
             // Only track "seen" while the feature is on (paired with the
@@ -117,7 +132,11 @@ export function useInViewIds(opts: Options = {}): {
           });
         }
         if (exitedTop.length) onExitTopRef.current?.(exitedTop);
-        if (reentered.length) onReenterRef.current?.(reentered);
+        if (reentered.length) {
+          onReenterRef.current?.(reentered);
+          onViewportEnterRef.current?.(reentered);
+        }
+        if (leftViewport.length) onViewportExitRef.current?.(leftViewport);
       },
       {
         threshold: [0, FULLY_VISIBLE_RATIO, 1],
@@ -161,6 +180,11 @@ export function useInViewIds(opts: Options = {}): {
           next.delete(id);
           return next;
         });
+        // A row leaving the DOM (dismissed, collapsed, paged out) has also left
+        // the viewport — the observer never fires a non-intersecting entry for an
+        // unobserved element, so report the exit here to keep on-screen tracking
+        // (the cross-device gray-in-place rule) from holding a stale id.
+        onViewportExitRef.current?.([id]);
       }
       if (el) {
         rowEls.current.set(id, el);
