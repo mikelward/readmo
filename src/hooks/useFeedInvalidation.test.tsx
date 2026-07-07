@@ -4,7 +4,7 @@ import { vi } from 'vitest';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { ItemList } from '../components/ItemList';
 import { MockDataSource } from '../lib/data/MockDataSource';
-import type { FeedItem } from '../lib/types';
+import { DEFAULT_ITEM_STATE, type FeedItem } from '../lib/types';
 import type { FetchPage } from './useFeedItems';
 
 /**
@@ -94,13 +94,18 @@ describe('boot-time feed invalidation after persist restore', () => {
 });
 
 describe('useFeedInvalidation query scoping', () => {
-  it('refetches the unread-count query on a mutation but only marks feed-items stale', async () => {
+  it('refetches the unread-count query on a mutation but leaves feed-items fresh', async () => {
     // Codex P2 on #375: the unread-count query key (['feed','unread-counts',…])
-    // shares the ['feed'] prefix, so a blanket refetchType:'none' would suppress
-    // it too — and after an outbox write syncs and clears the local pending
-    // adjustment, the badge would read a stale server count and jump back up.
-    // The count is a cheap number that never reflows the list, so it must keep
-    // refetching; only the feed-ITEMS query is left stale-without-refetch.
+    // shares the ['feed'] prefix, so it must be invalidated explicitly — after an
+    // outbox write syncs and clears the local pending adjustment, the badge would
+    // otherwise read a stale server count and jump back up. The count is a cheap
+    // number that never reflows the list, so it must keep refetching.
+    //
+    // The feed-ITEMS query, by contrast, is left ENTIRELY alone: not refetched
+    // (no reflow under the reader) and — the TTL fix — not even force-marked
+    // stale. Force-staling it made refetchOnMount fire a full refetch every time
+    // the reader navigated back to the feed, defeating the staleTime TTL. Leaving
+    // it fresh means the back/remount refetch is gated by staleTime instead.
     const source = new MockDataSource(`test-${Math.random()}`);
     const itemsFetch = vi.fn().mockResolvedValue({ items: [], nextCursor: null });
     const countsFetch = vi.fn().mockResolvedValue({ 'feed-a': 3 });
@@ -125,7 +130,73 @@ describe('useFeedInvalidation query scoping', () => {
 
     // The count query refetches (a number, no list reflow)…
     await waitFor(() => expect(countsFetch).toHaveBeenCalledTimes(2));
-    // …but the feed-items query is only marked stale — no refetch under the reader.
+    // …but the feed-items query is untouched: no refetch under the reader…
+    expect(itemsFetch).toHaveBeenCalledTimes(1);
+    // …and left FRESH, not force-staled — so a remount within staleTime (the
+    // back-navigation path) stays TTL-gated and won't refetch.
+    const feedItemsQuery = queryClient
+      .getQueryCache()
+      .find({ queryKey: ['feed', 'home-all'] });
+    expect(feedItemsQuery?.isStale()).toBe(false);
+  });
+
+  it('refetches feed-items on a cross-device hydration (not just a local mutation)', async () => {
+    // The other half of the split: a hydrate that changes the store — a
+    // cross-device resync (useStateSync → resyncState → hydrate) or a boot
+    // restore — CAN add/reorder rows the local overlay can't express (e.g.
+    // another device pinning an article not in the loaded window). That path
+    // must refetch the feed-items query so the new row shows up without a manual
+    // pull-to-refresh, and promptly — not after staleTime (Codex P2 on #408).
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const itemsFetch = vi.fn().mockResolvedValue({ items: [], nextCursor: null });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: 60_000 } },
+    });
+
+    function Probe() {
+      useQuery({ queryKey: ['feed', 'home-all'], queryFn: itemsFetch });
+      return null;
+    }
+    renderWithProviders(<Probe />, { source, queryClient });
+    await waitFor(() => expect(itemsFetch).toHaveBeenCalledTimes(1));
+
+    // A hydration that actually changes the map (a pin arriving from the server).
+    act(() => {
+      source.stateStore.hydrate([
+        ['cross-device-item', { ...DEFAULT_ITEM_STATE, pinned: true, pinnedAt: 1 }],
+      ]);
+    });
+
+    // The active feed-items query refetches immediately — default refetchType,
+    // gated by nothing (invalidate marks it stale first), so the cross-device
+    // pin reconciles now rather than at the next TTL boundary.
+    await waitFor(() => expect(itemsFetch).toHaveBeenCalledTimes(2));
+  });
+
+  it('does not fire the feed-items refetch on a no-op hydration', async () => {
+    // subscribeHydrated only fires when the map actually changed, so a resync
+    // that returns identical state (the common case on a routine focus) must not
+    // churn a feed read.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const itemsFetch = vi.fn().mockResolvedValue({ items: [], nextCursor: null });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: 60_000 } },
+    });
+
+    function Probe() {
+      useQuery({ queryKey: ['feed', 'home-all'], queryFn: itemsFetch });
+      return null;
+    }
+    renderWithProviders(<Probe />, { source, queryClient });
+    await waitFor(() => expect(itemsFetch).toHaveBeenCalledTimes(1));
+
+    // Hydrating the empty store with no rows is a no-op — no map change.
+    act(() => {
+      source.stateStore.hydrate([]);
+    });
+
+    // Give any (unwanted) refetch a chance to fire before asserting it didn't.
+    await Promise.resolve();
     expect(itemsFetch).toHaveBeenCalledTimes(1);
   });
 });

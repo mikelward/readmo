@@ -1406,14 +1406,21 @@ negligible and off every critical path. See the External services table in
      Done/Hidden, pinning, and Sweep update the rendered list **from the local
      store overlay alone**: `visibleItems` drops Done/Hidden rows and pins
      reorder, both synchronously, so the change shows on the next commit with no
-     server round-trip. The feed query is marked *stale* (so the next mount,
-     window-focus, or pull-to-refresh reconciles it) but is **not** auto-refetched
-     under the reader — deliberately, because that refetch re-renders the whole
-     list a beat later and can reflow it (a section's "More"/refresh footer
-     toggling above the fold, rows shifting) out from under the reader's scroll.
-     A mutation staying local is what makes "dismiss keeps your place" reliable.
-     (This is `refetchType: 'none'` on the feed invalidation; the caches still go
-     stale, they just don't refetch the active view.) Three deliberate exceptions:
+     server round-trip. A *local* mutation does **not** refetch the active view,
+     and it does **not** force the feed stale either — the feed reconciles with
+     the server on its normal freshness TTL (a mount or window-focus *past* the
+     staleTime), on an explicit pull-to-refresh (which always refetches), or when
+     a **cross-device change syncs in** (a resync that actually changes local
+     state *does* refetch the feed, so a pin/done made on another device shows up
+     without a manual pull — that path can add or reorder rows the local overlay
+     can't express). So returning to the feed right after acting on an article
+     yourself does not refetch it; a full refetch under (or on the way back from)
+     the reader would re-render the whole list a beat later and can reflow it (a
+     section's "More"/refresh footer toggling above the fold, rows shifting) out
+     from under the reader's scroll — and a back-navigation that refetched on
+     every mount, regardless of how recently the feed loaded, spent a DB read for
+     no visible change. A local mutation staying local is what makes "dismiss
+     keeps your place" reliable. Three deliberate exceptions:
      (1) the **unread-count** query (`['feed','unread-counts',…]`) keeps
      refetching — it's a cheap number that never reflows the list, and suppressing
      it would let a grouped badge read a stale server count and jump back up after

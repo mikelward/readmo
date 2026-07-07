@@ -189,6 +189,7 @@ export class ItemStateStore {
   private listeners = new Set<StateListener>();
   private mutationListeners = new Set<MutationListener>();
   private syncedListeners = new Set<() => void>();
+  private hydratedListeners = new Set<() => void>();
   // Per-id cache of the retention-applied snapshot so `get()` returns a
   // referentially-stable object between store changes. Without this, an item
   // whose Hidden/Opened flag has aged past the TTL would yield a fresh object
@@ -438,6 +439,14 @@ export class ItemStateStore {
     this.map = next;
     this.persistence.save(this.map);
     this.emit();
+    // Distinct from `emit()`: fires only when a hydrate/cross-device sync
+    // actually changed the map (never on a local mutation, and never on a no-op
+    // hydrate). Feed-items queries subscribe to THIS — a local triage mutation
+    // reflects through the store overlay with no refetch, but a cross-device
+    // change can add/reorder rows the overlay can't express (e.g. a pin of an
+    // article not in the loaded window), so the feed must reconcile with the
+    // server. See useFeedInvalidation.
+    for (const l of this.hydratedListeners) l();
   }
 
   set(
@@ -595,6 +604,18 @@ export class ItemStateStore {
     this.syncedListeners.add(listener);
     return () => {
       this.syncedListeners.delete(listener);
+    };
+  }
+
+  /** Subscribe to hydrations that changed the map — a boot restore or a
+   * cross-device resync ({@link hydrate}), never a local set/hide/sweep/undo,
+   * a no-op hydrate, or an outbox drain. Lets the feed-items queries refetch to
+   * pull in server-side row changes the local overlay can't express, while a
+   * local triage mutation is left to settle from the overlay alone. */
+  subscribeHydrated(listener: () => void): () => void {
+    this.hydratedListeners.add(listener);
+    return () => {
+      this.hydratedListeners.delete(listener);
     };
   }
 
