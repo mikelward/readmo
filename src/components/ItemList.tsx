@@ -3068,6 +3068,62 @@ export function ItemList({
   const showRefreshing =
     isRefreshing && undoRefetchDepth.current === 0 && items.length > 0;
 
+  // TEMP diagnostic (branch preview only): dump the per-feed pipeline so we can
+  // see WHERE a pinned row drops out (read → window → mergedRaw → visibleItems)
+  // for the "grouped section collapses to a phantom More after PTR" bug. Gated on
+  // the branch preview hostname so it never renders in production. Remove before
+  // any merge.
+  const showFeedDebug =
+    typeof location !== 'undefined' &&
+    location.hostname.includes('grouped-pin-followup');
+  let feedDebug: string | null = null;
+  if (showFeedDebug && groupByFeed) {
+    const flags = (id: ItemId) => {
+      const s = ds.stateStore.get(id);
+      return (
+        (s.pinned ? 'P' : '') +
+        (s.done ? 'D' : '') +
+        (s.hidden ? 'H' : '') +
+        (s.opened ? 'o' : '') +
+        (basePinnedRef.current.has(id) ? 'b' : '') +
+        (stayInBodyIds.has(id) ? 's' : '')
+      );
+    };
+    const tail = (id: ItemId) => id.slice(-4);
+    type Row = { title: string; raw: string[]; win: string; merged: number; vis: number };
+    const byFeed = new Map<FeedId, Row>();
+    for (const fi of items) {
+      const e =
+        byFeed.get(fi.item.feedId) ??
+        ({ title: fi.feed.title, raw: [], win: '', merged: 0, vis: 0 } as Row);
+      e.raw.push(`${tail(fi.item.id)}·${flags(fi.item.id)}`);
+      byFeed.set(fi.item.feedId, e);
+    }
+    for (const [fid, set] of displayedByFeed) {
+      const e = byFeed.get(fid);
+      if (e) e.win = [...set].map(tail).join(',');
+    }
+    for (const fi of mergedRaw) {
+      const e = byFeed.get(fi.item.feedId);
+      if (e) e.merged += 1;
+    }
+    for (const fi of visibleItems) {
+      const e = byFeed.get(fi.item.feedId);
+      if (e) e.vis += 1;
+    }
+    const fwm = feedsWithMore ? new Set(feedsWithMore) : new Set<FeedId>();
+    let out =
+      `perFeedLimit=${perFeedLimit} items=${items.length}` +
+      ` flags: P=pin D=done H=hidden o=opened b=baseline s=stayInBody\n`;
+    for (const [fid, e] of byFeed) {
+      out +=
+        `\n▸ ${e.title}${fwm.has(fid) ? ' [More]' : ''} vis=${e.vis} merged=${e.merged}\n` +
+        `  win: ${e.win || 'UNDEF'}\n` +
+        `  raw: ${e.raw.join('  ')}\n`;
+    }
+    feedDebug = out;
+  }
+
   return (
     <div
       className="item-list"
@@ -3080,6 +3136,32 @@ export function ItemList({
           : undefined
       }
     >
+      {feedDebug ? (
+        <pre
+          data-testid="feed-debug"
+          style={{
+            position: 'fixed',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            maxHeight: '42vh',
+            margin: 0,
+            padding: '8px 10px',
+            overflow: 'auto',
+            zIndex: 99999,
+            background: 'rgba(0,0,0,0.9)',
+            color: '#7CFC7C',
+            fontSize: '10px',
+            lineHeight: 1.35,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            borderTop: '2px solid #7CFC7C',
+            userSelect: 'text',
+          }}
+        >
+          {feedDebug}
+        </pre>
+      ) : null}
       <ListToolbar
         collapse={collapseControls}
         group={groupControl}
