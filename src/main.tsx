@@ -11,6 +11,7 @@ import { MockDataSource } from './lib/data/MockDataSource';
 import { SupabaseDataSource } from './lib/data/SupabaseDataSource';
 import { isSupabaseConfigured } from './lib/supabase/client';
 import { retryDelayMs, shouldRetryQuery } from './lib/queryRetry';
+import { configureFeedFreshness } from './lib/feedFreshness';
 import {
   applyFont,
   applyFontSize,
@@ -100,6 +101,13 @@ const queryClient = new QueryClient({
   },
 });
 
+// Freeze the feed's article set to a 6h refresh cadence (feed queries only).
+// The 5-min global staleTime above still governs every other read; feed views
+// hold their published set stable between reads so it never re-materializes
+// under the reader — see feedFreshness.ts and SPEC.md *Feed views → A stable
+// set of articles*.
+configureFeedFreshness(queryClient);
+
 // Per-user cache scoping (AGENTS guardrail #8). The persisted query cache and
 // item-state store are keyed by the signed-in user so a second user on a shared
 // device can't hydrate the previous user's content. The boot uid is read
@@ -147,13 +155,15 @@ void reconcileUserCachesOnBoot(bootUid).finally(() => {
           maxAge: PERSIST_MAX_AGE,
           buster: CACHE_BUSTER,
         }}
-        onSuccess={() => {
-          // After the persisted cache is hydrated, invalidate feed queries so
-          // any Done/Hidden item state that preexisted the React tree (hydrated
-          // synchronously from localStorage before first render) takes effect
-          // immediately rather than waiting for the 5-minute staleTime to expire.
-          void queryClient.invalidateQueries({ queryKey: ['feed'] });
-        }}
+        // No onSuccess feed invalidation: forcing a refetch after the persisted
+        // cache hydrates would re-materialize the frozen set on EVERY boot,
+        // regardless of the 6h TTL, letting poller items / server pins jump in
+        // (Codex P2 on #411). Preexisting Done/Hidden state already takes effect
+        // immediately via ItemList's `visibleItems` overlay (a render-time
+        // filter); the cached pages themselves re-materialize on the normal
+        // schedule — a load/return once the persisted query is older than the 6h
+        // TTL, a pull-to-refresh, or More. See SPEC.md *Feed views → A stable set
+        // of articles*.
       >
         <DataSourceProvider source={dataSource}>
           <ToastProvider>
