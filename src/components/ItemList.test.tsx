@@ -5362,6 +5362,97 @@ describe('ItemList', () => {
       expect(order()).toEqual(['A-0', 'A-1', 'A-2']);
     });
 
+    it('keeps a cross-device pin in place in a windowed feed section', async () => {
+      // Codex P2 #2 on #411: a pin arriving from another device (hydrate, never
+      // the local mutation channel) for a row on screen must show its badge in
+      // place, not jump to the section top. `basePinnedRef` (load-time baseline)
+      // is what catches this — the row was in the set unpinned, so it was never
+      // baselined; the old stayInBodyIds-only gate let it promote.
+      const { source, mk } = await makeRows();
+      const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2)];
+      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
+      const fetchFeedPage = vi.fn(() =>
+        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
+      );
+      renderWithProviders(
+        <ItemList
+          viewKey={`psm-xpin-${viewKeySeq++}`}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+          groupByFeed
+          fetchFeedPage={fetchFeedPage}
+          perFeedLimit={3}
+        />,
+        { source },
+      );
+      await screen.findAllByTestId('item-row');
+      const order = () =>
+        [...document.querySelectorAll('[data-item-id]')].map((el) =>
+          el.getAttribute('data-item-id'),
+        );
+      expect(order()).toEqual(['A-0', 'A-1', 'A-2']);
+
+      // A-1 pinned on another device.
+      act(() => {
+        source.stateStore.hydrate([
+          ['A-1', { ...DEFAULT_ITEM_STATE, pinned: true, pinnedAt: Date.now() }],
+        ]);
+      });
+      await waitFor(() => {
+        const row = document.querySelector('[data-item-id="A-1"]') as HTMLElement;
+        expect(within(row).getByTestId('pin-btn')).toHaveAttribute(
+          'aria-pressed',
+          'true',
+        );
+      });
+      // Order unchanged — the badge shows in place (before the fix it promoted to
+      // ['A-1', 'A-0', 'A-2']).
+      expect(order()).toEqual(['A-0', 'A-1', 'A-2']);
+    });
+
+    it('filters (not grays) a cross-device dismiss that lands while its feed is collapsed', async () => {
+      // Codex P2 on #413: a collapsed feed's rows are in visibleItems but render
+      // as null, so they were never on screen. A dismiss landing then must be
+      // filtered when the feed is expanded, not revealed grayed.
+      const user = userEvent.setup();
+      const { source, mk } = await makeRows();
+      const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2)];
+      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
+      const fetchFeedPage = vi.fn(() =>
+        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
+      );
+      const { container } = renderWithProviders(
+        <ItemList
+          viewKey={`psm-collapse-gray-${viewKeySeq++}`}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+          groupByFeed
+          fetchFeedPage={fetchFeedPage}
+          perFeedLimit={3}
+        />,
+        { source },
+      );
+      await screen.findByText('Feed A 1');
+
+      // Collapse feed A, then a cross-device dismiss lands on A-1 (now off screen).
+      await user.click(screen.getByTestId('group-toggle'));
+      await waitFor(() =>
+        expect(container.querySelector('[data-item-id="A-1"]')).toBeNull(),
+      );
+      act(() => {
+        source.stateStore.hydrate([
+          ['A-1', { ...DEFAULT_ITEM_STATE, done: true, doneAt: Date.now() }],
+        ]);
+      });
+
+      // Expand: A-1 was dismissed off screen → filtered out, not revealed grayed.
+      await user.click(screen.getByTestId('group-toggle'));
+      await screen.findByText('Feed A 0');
+      expect(container.querySelector('[data-item-id="A-1"]')).toBeNull();
+      expect(container.querySelector('[data-item-id="A-0"]')).not.toBeNull();
+      expect(container.querySelector('[data-item-id="A-2"]')).not.toBeNull();
+    });
+
     it('grows one feed section inline, leaving the others untouched, until exhausted', async () => {
       const user = userEvent.setup();
       const { source, mk } = await makeRows();
@@ -7389,5 +7480,142 @@ describe('ItemList', () => {
       });
       expect(fetchPage).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe('ItemList — cross-device dismiss (frozen list)', () => {
+  const renderGray = (source: MockDataSource, fetchPage: FetchPage) =>
+    renderWithProviders(
+      <ItemList
+        viewKey={`home-graytest-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+
+  it('grays a visible row in place when a dismiss arrives from another device', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const page = await source.getHomeItems();
+    const target = page.items[0].item.id;
+    const { container } = renderGray(source, (c) => source.getHomeItems({ cursor: c }));
+    await screen.findAllByTestId('item-row');
+    const row = () =>
+      container.querySelector(`[data-item-id="${target}"]`) as HTMLElement | null;
+    expect(row()).not.toBeNull();
+
+    // A cross-device dismiss arrives via hydrate (server resync) — NOT the local
+    // mutation channel — for a row that's on screen.
+    act(() => {
+      source.stateStore.hydrate([
+        [target, { ...DEFAULT_ITEM_STATE, done: true, doneAt: Date.now() }],
+      ]);
+    });
+
+    // The row stays put, grayed, with an Undo button — it does not collapse out.
+    await waitFor(() =>
+      expect(row()?.classList.contains('item-list__row--dismissed')).toBe(true),
+    );
+    expect(within(row()!).getByTestId('row-undo-dismiss')).toBeTruthy();
+  });
+
+  it('removes a row you dismissed yourself, rather than graying it', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const page = await source.getHomeItems();
+    const target = page.items[0].item.id;
+    const { container } = renderGray(source, (c) => source.getHomeItems({ cursor: c }));
+    await screen.findAllByTestId('item-row');
+    const row = () => container.querySelector(`[data-item-id="${target}"]`);
+    expect(row()).not.toBeNull();
+
+    // Your own dismiss goes through the mutation channel (set) → the row drops.
+    act(() => {
+      source.stateStore.set(target, 'done', true);
+    });
+    await waitFor(() => expect(row()).toBeNull());
+  });
+
+  it('restores a grayed row via its Undo button', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const page = await source.getHomeItems();
+    const target = page.items[0].item.id;
+    const { container } = renderGray(source, (c) => source.getHomeItems({ cursor: c }));
+    await screen.findAllByTestId('item-row');
+    const row = () =>
+      container.querySelector(`[data-item-id="${target}"]`) as HTMLElement | null;
+    act(() => {
+      source.stateStore.hydrate([
+        [target, { ...DEFAULT_ITEM_STATE, done: true, doneAt: Date.now() }],
+      ]);
+    });
+    await waitFor(() =>
+      expect(row()?.classList.contains('item-list__row--dismissed')).toBe(true),
+    );
+
+    await user.click(within(row()!).getByTestId('row-undo-dismiss'));
+
+    // Back to a normal row, un-dismissed in the store (restore wins LWW).
+    await waitFor(() =>
+      expect(row()?.classList.contains('item-list__row--dismissed')).toBe(false),
+    );
+    expect(source.stateStore.get(target).done).toBe(false);
+  });
+
+  it('filters a row that entered already-dismissed (never shows or grays it)', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const page = await source.getHomeItems();
+    const target = page.items[0].item.id;
+    // Dismissed on another device BEFORE the list first renders. The fetched page
+    // still carries it (a stale pre-dismiss snapshot), so this exercises the
+    // overlay's filter, not the server-side one.
+    source.stateStore.hydrate([
+      [target, { ...DEFAULT_ITEM_STATE, done: true, doneAt: Date.now() }],
+    ]);
+    const { container } = renderGray(source, () =>
+      Promise.resolve({ items: page.items, nextCursor: null }),
+    );
+    await screen.findAllByTestId('item-row');
+    // It never appears — filtered on entry, not grayed.
+    expect(container.querySelector(`[data-item-id="${target}"]`)).toBeNull();
+  });
+});
+
+describe('ItemList — Sweep clears grayed rows', () => {
+  beforeEach(() => installIntersectionObserverMock());
+  afterEach(() => uninstallIntersectionObserverMock());
+
+  it('sweeps grayed cross-device dismisses too, not just fresh ones', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const page = await source.getHomeItems();
+    const target = page.items[0].item.id;
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`home-sweepgray-${viewKeySeq++}`}
+        fetchPage={(c) => source.getHomeItems({ cursor: c })}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+
+    // A cross-device dismiss grays the target in place.
+    act(() => {
+      source.stateStore.hydrate([
+        [target, { ...DEFAULT_ITEM_STATE, done: true, doneAt: Date.now() }],
+      ]);
+    });
+    const row = () => container.querySelector(`[data-item-id="${target}"]`);
+    await waitFor(() =>
+      expect(
+        (row() as HTMLElement | null)?.classList.contains('item-list__row--dismissed'),
+      ).toBe(true),
+    );
+
+    // Sweep clears the visible set — the grayed row included (its hideMany is a
+    // no-op, but Sweep records it as locally dismissed so the overlay drops it).
+    await user.click(screen.getByTestId('sweep-btn'));
+    await waitFor(() => expect(row()).toBeNull());
   });
 });

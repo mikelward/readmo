@@ -24,6 +24,19 @@
   position: relative;
 }
 
+/* A cross-device dismiss caught in place (SPEC.md "A stable set of articles"):
+   the row dims and its title strikes through — it was read/dismissed on another
+   device — until a compaction (a pull-to-refresh, or a nav that remounts the
+   list). Only the row body dims; the right-side Undo button stays crisp so the
+   restore reads as actionable. */
+.item-list__row--dismissed .item-row__body {
+  opacity: 0.55;
+}
+
+.item-list__row--dismissed .item-row__title-text {
+  text-decoration: line-through;
+}
+
 /* Sweep animation: every unpinned, fully-visible row slides + fades out
    together when the broom fires (matches the single-gesture verb — sweep is
    one motion, not a staggered cascade). Duration and direction match

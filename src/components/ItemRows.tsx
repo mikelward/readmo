@@ -107,6 +107,13 @@ interface Props {
   /** Forwarded to each row: fired when a row opens the in-app reader, so the
    * feed view can warm its own query cache while the reader is up. */
   onOpenReader?: () => void;
+  /** Ids to render grayed-in-place: a cross-device dismiss that landed on a row
+   * the reader was looking at (SPEC.md *Feed views → A stable set of articles*).
+   * The row dims + strikes its title and its right-side button becomes Undo,
+   * until a compaction (a pull-to-refresh, or a nav that remounts the list). */
+  grayedIds?: Set<ItemId>;
+  /** Restore a grayed row — wired to its Undo button. */
+  onUndoDismiss?: (id: ItemId) => void;
 }
 
 /** A run of contiguous rows under one section header: the (optional) header,
@@ -149,6 +156,8 @@ export function ItemRows({
   sweepingIds,
   onAnimationEnd,
   onOpenReader,
+  grayedIds,
+  onUndoDismiss,
 }: Props) {
   const share = useShareItem();
   // Share the DISPLAYED headline, not the raw title, so a spoiler-hidden row
@@ -205,38 +214,55 @@ export function ItemRows({
   // off-by-default `show-row-favicon` setting.
   const showRowFavicon = showRowFaviconPref && !groupHeaders;
 
-  const renderRow = (fi: FeedItem) => (
-    <li
-      key={fi.item.id}
-      className={
-        'item-list__row' +
-        (sweepingIds?.has(fi.item.id) ? ' item-list__row--sweeping' : '')
-      }
-      data-item-id={fi.item.id}
-      ref={getRowRef?.(fi.item.id)}
-    >
-      <ItemRow
-        feedItem={fi}
-        enableSwipe={enableSwipe}
-        openOriginal={openOriginalFeeds.has(fi.item.feedId)}
-        openNewshacker={openNewshackerFeeds.has(fi.item.feedId)}
-        markDoneOnOpen={markDoneOnOpenFeeds.has(fi.item.feedId)}
-        listLayout={listLayoutFeeds.get(fi.item.feedId)}
-        showFavicon={showRowFavicon}
-        onShare={() =>
-          share({
-            title: displayTitle(fi.item, {
-              hideSpoilers: hideSportsSpoilers,
-              allowed: spoilerAllowed,
-            }).text,
-            url: fi.item.url,
-          })
+  const renderRow = (fi: FeedItem) => {
+    // A grayed row is a cross-device dismiss caught in place: dim + strikethrough
+    // (CSS on the row class), its right-side button swapped to Undo, and swipe
+    // disabled (it's already done — the only action left is restore).
+    const grayed = grayedIds?.has(fi.item.id) ?? false;
+    const undoAction: RightAction | undefined =
+      grayed && onUndoDismiss
+        ? {
+            label: 'Undo',
+            icon: <Undo width={20} height={20} />,
+            onToggle: () => onUndoDismiss(fi.item.id),
+            testId: 'row-undo-dismiss',
+            active: false,
+          }
+        : undefined;
+    return (
+      <li
+        key={fi.item.id}
+        className={
+          'item-list__row' +
+          (sweepingIds?.has(fi.item.id) ? ' item-list__row--sweeping' : '') +
+          (grayed ? ' item-list__row--dismissed' : '')
         }
-        rightAction={rightAction?.(fi)}
-        onOpenReader={onOpenReader}
-      />
-    </li>
-  );
+        data-item-id={fi.item.id}
+        ref={getRowRef?.(fi.item.id)}
+      >
+        <ItemRow
+          feedItem={fi}
+          enableSwipe={enableSwipe && !grayed}
+          openOriginal={openOriginalFeeds.has(fi.item.feedId)}
+          openNewshacker={openNewshackerFeeds.has(fi.item.feedId)}
+          markDoneOnOpen={markDoneOnOpenFeeds.has(fi.item.feedId)}
+          listLayout={listLayoutFeeds.get(fi.item.feedId)}
+          showFavicon={showRowFavicon}
+          onShare={() =>
+            share({
+              title: displayTitle(fi.item, {
+                hideSpoilers: hideSportsSpoilers,
+                allowed: spoilerAllowed,
+              }).text,
+              url: fi.item.url,
+            })
+          }
+          rightAction={undoAction ?? rightAction?.(fi)}
+          onOpenReader={onOpenReader}
+        />
+      </li>
+    );
+  };
 
   // Non-grouped views (flat river, single feed, library/search/offline) have no
   // section headers, so they stay a plain flat list of rows — unchanged.

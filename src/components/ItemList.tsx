@@ -809,6 +809,35 @@ export function ItemList({
     () => new Set(),
   );
 
+  // Frozen-list dismiss handling (SPEC.md "A stable set of articles"): a dismiss
+  // the reader made *this session* removes its row (collapsing up); a dismiss
+  // that arrives from another device (resync/hydrate) for a row that's on screen
+  // grays in place instead, until a compaction (a pull-to-refresh, or a nav that
+  // remounts the list). More does NOT compact — removing rows mid-page would
+  // shift everything below as the reader pages down — but a row that arrives on a
+  // More page already dismissed is still filtered out (it was never on screen).
+  //
+  // `localDismissedIdsRef` records ids dismissed via the *mutation* channel (your
+  // own swipe / Sweep / auto-hide) so `visibleItems` can tell them apart from a
+  // server dismiss — the latter never fires this channel.
+  const localDismissedIdsRef = useRef<Set<ItemId>>(new Set());
+  // Ids actually shown in the *previous* render (normal rows + already-grayed
+  // rows). A server dismiss grays only for a row that was on screen when it
+  // landed; a row that was already dismissed when it entered the list (initial
+  // load, or a More page) is filtered out, never grayed. Updated after each
+  // render, and cleared on compaction so the grayed rows drop.
+  const renderedShownRef = useRef<Set<ItemId>>(new Set());
+
+  // Load-time pin baseline for the grouped-view promotion (Codex P2 on #411): the
+  // ids that were pinned when they FIRST entered the loaded set. A row pinned at
+  // that point is in the server's pinned block and promotes to the section top; a
+  // row pinned AFTER it appeared — locally OR from another device — stays at its
+  // body position (badge only) until the next re-materialize consolidates it.
+  // `seenForBaseRef` records which ids have been baselined so the capture is
+  // once-per-id; both reset on a view change / PTR (a re-materialize).
+  const basePinnedRef = useRef<Set<ItemId>>(new Set());
+  const seenForBaseRef = useRef<Set<ItemId>>(new Set());
+
   // Per-section "More" (group-by-feed): each feed's extra pages, fetched on
   // demand from that feed alone and appended after its base run. The base read
   // is a single page capped to `perFeedLimit` rows per feed; tapping a section's
@@ -889,6 +918,21 @@ export function ItemList({
       setStayInBodyIds((cur) => (cur.has(id) ? cur : new Set(cur).add(id)));
     });
   }, [ds]);
+  // Record local dismiss/restore so visibleItems can distinguish YOUR dismiss
+  // (remove) from a server one (gray in place). The mutation channel fires only
+  // for local set/hide/sweep/undo — never a cross-device hydrate — so an id here
+  // is one the reader dismissed themselves. Un-dismissing (pin clears done, an
+  // Undo, the per-row restore) drops it again.
+  useEffect(() => {
+    return ds.stateStore.subscribeMutations((id, changed) => {
+      if (changed.done === undefined && changed.hidden === undefined) return;
+      if (changed.done === true || changed.hidden === true) {
+        localDismissedIdsRef.current.add(id);
+      } else if (changed.done === false || changed.hidden === false) {
+        localDismissedIdsRef.current.delete(id);
+      }
+    });
+  }, [ds]);
   // As the loaded window changes (pagination, refetch), drop stay ids that left
   // it — a held pin that's no longer displayed has nothing to anchor.
   useEffect(() => {
@@ -923,6 +967,12 @@ export function ItemList({
       setStayInBodyIds(new Set());
       setPendingFeedMore(new Set());
       feedMoreFetchingRef.current = new Set();
+      // A new view starts clean: no carried-over grayed rows, local-dismiss
+      // bookkeeping, or pin baseline from the previous view.
+      renderedShownRef.current = new Set();
+      localDismissedIdsRef.current = new Set();
+      basePinnedRef.current = new Set();
+      seenForBaseRef.current = new Set();
     }
   }, [viewKey]);
 
@@ -1299,6 +1349,20 @@ export function ItemList({
   // view, so the flat river and single-feed views are untouched — except while
   // an in-session pin is held in body position, where it returns a reordered
   // copy (see placeStayInBodyPins).
+
+  // Baseline each row's pin state the first time it enters the loaded set, so the
+  // grouped promotion below can tell a load-time pin (promote) from a post-load
+  // one (stay in body). Runs during render — idempotent, once per id — so
+  // mergedRaw sees it the same render `items` grows. A cross-device pin flips an
+  // already-seen row, so it's never added here → correctly stays in body.
+  for (const fi of items) {
+    const id = fi.item.id;
+    if (!seenForBaseRef.current.has(id)) {
+      seenForBaseRef.current.add(id);
+      if (ds.stateStore.get(id).pinned) basePinnedRef.current.add(id);
+    }
+  }
+
   const mergedRaw = useMemo(() => {
     if (!perGroupMore || perFeedLimit == null) {
       // Flat river, single-feed, and grouped-without-windowing all read the
@@ -1360,10 +1424,21 @@ export function ItemList({
         // non-pinned new rows do.
         for (const fi of baseRun) {
           if (!allowed.has(fi.item.id)) continue;
-          // An in-session pin stays at its natural position (handled by the
-          // sticky-order pass below), so it's skipped here rather than lifted.
+          // Promote only rows that were pinned when they entered the loaded set
+          // (`basePinnedRef`) AND that the reader hasn't held in body this session
+          // (`stayInBodyIds`). A pin added AFTER the row appeared stays at its
+          // natural position (handled by the sticky-order pass below), badge in
+          // place, until the next re-materialize consolidates it:
+          //   - the reader's own in-session pin is caught by stayInBodyIds — which
+          //     also covers a pin on an *extra* (revealed by More) that basePinned
+          //     can't see until it later enters the base window;
+          //   - a pin arriving from ANOTHER device is caught by basePinnedRef (the
+          //     row was already in the set unpinned, so it was never baselined) —
+          //     the gap the old stayInBodyIds-only gate left open (Codex P2 on
+          //     #411), which jumped a cross-device pin to the top.
           if (
             ds.stateStore.get(fi.item.id).pinned &&
+            basePinnedRef.current.has(fi.item.id) &&
             !stayInBodyIds.has(fi.item.id)
           ) {
             push(fi);
@@ -1442,10 +1517,65 @@ export function ItemList({
     itemSort,
   ]);
 
-  const visibleItems = mergedRaw.filter((fi) => {
-    const st = ds.stateStore.get(fi.item.id);
-    return !st.done && !st.hidden;
-  });
+  // Three-way overlay (SPEC.md "A stable set of articles"): a normal row shows;
+  // a row you dismissed this session is removed (collapsing up); a row dismissed
+  // on ANOTHER device grays IN PLACE if it was on screen when the dismiss
+  // arrived, otherwise it's filtered out — it entered already-dismissed (initial
+  // load, or a More page), so it's never shown rather than grayed. Memoized on
+  // `storeVersion` (bumps on any store change, local or hydrate) + `mergedRaw`;
+  // the two refs it reads are updated alongside those, so they aren't deps.
+  const { visibleItems, grayedIds } = useMemo(() => {
+    const grayed = new Set<ItemId>();
+    const visible: FeedItem[] = [];
+    for (const fi of mergedRaw) {
+      const id = fi.item.id;
+      const st = ds.stateStore.get(id);
+      if (!st.done && !st.hidden) {
+        visible.push(fi);
+        continue;
+      }
+      if (localDismissedIdsRef.current.has(id)) continue; // your dismiss → remove
+      if (renderedShownRef.current.has(id)) {
+        grayed.add(id); // a server dismiss for a row you were looking at → gray
+        visible.push(fi);
+      }
+      // else: entered already-dismissed → filtered out, never shown.
+    }
+    return { visibleItems: visible, grayedIds: grayed };
+    // storeVersion drives store-read reactivity; the refs are intentionally
+    // excluded (they're updated in lockstep with storeVersion/mergedRaw).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mergedRaw, storeVersion, ds]);
+
+  // Remember what actually rendered (normal rows + grayed rows) so the NEXT
+  // server dismiss can tell "was on screen" (gray) from "entered already
+  // dismissed" (filter). Compaction (a pull-to-refresh, or a nav that remounts
+  // the list) clears this ref so the grayed rows drop.
+  //
+  // A collapsed feed's rows are still in `visibleItems` but ItemRows renders them
+  // as null, so they were NOT on screen — exclude them (Codex P2 on #413). Else a
+  // cross-device dismiss on a collapsed row would gray it, and expanding the feed
+  // later would reveal an already-dismissed row instead of filtering it out.
+  useEffect(() => {
+    const shown = new Set<ItemId>();
+    for (const fi of visibleItems) {
+      if (groupByFeed && collapsed.has(fi.item.feedId)) continue;
+      shown.add(fi.item.id);
+    }
+    renderedShownRef.current = shown;
+  }, [visibleItems, groupByFeed, collapsed]);
+
+  // Undo a grayed (cross-device-dismissed) row via its right-side button: clear
+  // done/hidden with a fresh clock so it wins last-write-wins and un-dismisses
+  // everywhere. The row re-renders normal on the next commit.
+  const handleUndoDismiss = useCallback(
+    (id: ItemId) => {
+      const st = ds.stateStore.get(id);
+      if (st.done) ds.stateStore.set(id, 'done', false);
+      if (st.hidden) ds.stateStore.set(id, 'hidden', false);
+    },
+    [ds],
+  );
 
   // Hold the reader's scroll position across a touch-release top-exit flush.
   // A layout effect (after React commits a render, before paint): reading
@@ -2211,6 +2341,11 @@ export function ItemList({
     }
     // Capture the height while the swept rows are still on screen, then hide.
     lockBodyHeight();
+    // Sweep clears the visible set, grayed cross-device dismisses included. A
+    // grayed row is already done, so hideMany is a no-op for it and the mutation
+    // channel never fires — record every swept id as locally dismissed so the
+    // overlay drops the grayed rows too, not just the freshly-dismissed ones.
+    for (const id of ids) localDismissedIdsRef.current.add(id);
     ds.stateStore.hideMany(ids);
     // Sweep consolidates: in-body pins snap into the top block (SPEC.md).
     setStayInBodyIds(new Set());
@@ -2281,6 +2416,9 @@ export function ItemList({
         // No animation to wait on, so the rows leave immediately — grab the
         // height first, same as the animated commitSweep path does.
         lockBodyHeight();
+        // Grayed cross-device dismisses are already done → record them as locally
+        // dismissed so the overlay drops them (see commitSweep).
+        for (const id of batch) localDismissedIdsRef.current.add(id);
         ds.stateStore.hideMany(batch);
         // Sweep consolidates: in-body pins snap into the top block (SPEC.md).
         setStayInBodyIds(new Set());
@@ -2866,6 +3004,9 @@ export function ItemList({
           setFeedExtras(new Map());
           // A pull-to-refresh consolidates: in-session pins re-group at the top.
           setStayInBodyIds(new Set());
+          // …and compacts grayed cross-device dismisses (the refetch also drops
+          // them server-side, so this just clears the in-session bookkeeping).
+          renderedShownRef.current = new Set();
           await checkForServiceWorkerUpdate();
         }}
       >
@@ -2936,6 +3077,8 @@ export function ItemList({
               emptyMoreSections={perGroupMore ? emptyMoreSections : undefined}
               feedRank={perGroupMore ? feedRank : undefined}
               onOpenReader={handleOpenReader}
+              grayedIds={grayedIds}
+              onUndoDismiss={handleUndoDismiss}
               emptyLabel={emptyLabel ?? 'Nothing here yet.'}
             />
           </div>
