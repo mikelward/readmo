@@ -11,7 +11,7 @@ import {
   type CSSProperties,
 } from 'react';
 import { flushSync } from 'react-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { useFeedItems, dedupeFeedPages, type FetchPage } from '../hooks/useFeedItems';
@@ -331,6 +331,23 @@ export function ItemList({
     refreshFailed,
     error,
   } = useFeedItems(viewKey, fetchPage, adjustNextCursor);
+
+  const queryClient = useQueryClient();
+  // Warm this feed's cache when the reader opens on top of it. The feed route
+  // unmounts under the reader and remounts on Back, at which point
+  // refetchOnMount (true-when-stale) would fire the refetch *then* — landing a
+  // reflow a beat later, right as the reader taps a new card. Moving that fetch
+  // to article-open runs it while the reader is up (feed not on screen), so the
+  // reflow lands off-screen and the Back-remount paints the already-settled
+  // list from fresh cache. `stale: true` honors the same staleTime TTL: a feed
+  // fetched within the window is left alone (no refetch on open OR Back); only a
+  // genuinely stale one refetches, and it does so early. A local mutation no
+  // longer marks the feed stale (see useFeedInvalidation), so opening a card
+  // right after triaging one doesn't refetch here either. Fire-and-forget: the
+  // refetch lands in the cache whether or not this view is still mounted.
+  const handleOpenReader = useCallback(() => {
+    void queryClient.refetchQueries({ queryKey: ['feed', viewKey], stale: true });
+  }, [queryClient, viewKey]);
 
   // Surface the FULL read failure in the browser console (desktop debugging) —
   // the on-screen panel shows a friendly headline + a curated one-line detail,
@@ -2918,6 +2935,7 @@ export function ItemList({
               onFeedMore={perGroupMore ? handleFeedMore : undefined}
               emptyMoreSections={perGroupMore ? emptyMoreSections : undefined}
               feedRank={perGroupMore ? feedRank : undefined}
+              onOpenReader={handleOpenReader}
               emptyLabel={emptyLabel ?? 'Nothing here yet.'}
             />
           </div>

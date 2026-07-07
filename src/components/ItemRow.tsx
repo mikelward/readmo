@@ -74,6 +74,11 @@ interface Props {
    * omitted the row uses the app-wide setting. See ItemRows / useListLayoutFeeds. */
   listLayout?: ListLayout;
   onShare?: (item: FeedItem) => void;
+  /** Fired when this row opens the *in-app reader* (body tap in reader mode, or
+   * the reader button on an external-open row) — never on an external open. The
+   * feed view uses it to warm its own query cache while the reader is up, so the
+   * back-remount paints an already-settled list. See ItemList. */
+  onOpenReader?: () => void;
 }
 
 export function ItemRow({
@@ -86,6 +91,7 @@ export function ItemRow({
   showFavicon = false,
   listLayout: listLayoutOverride,
   onShare,
+  onOpenReader,
 }: Props) {
   const { item, feed } = feedItem;
   const { state, set, toggle, hide } = useItemState(item.id);
@@ -223,8 +229,34 @@ export function ItemRow({
   // row-body tap), giving the row both destinations.
   const handleOpenReader = useCallback(() => {
     markOpened();
+    onOpenReader?.();
     navigate(`/item/${item.id}`);
-  }, [markOpened, navigate, item.id]);
+  }, [markOpened, onOpenReader, navigate, item.id]);
+  // The reader-mode row body is a <Link> (it owns the navigation); this handler
+  // runs the same open side effects — mark Opened, and warm the feed cache.
+  const handleOpenReaderBody = useCallback(
+    (e: MouseEvent) => {
+      markOpened();
+      // Only warm the cache when the click will navigate THIS tab (unmount →
+      // Back-remount). A modified or non-primary click (Ctrl/Cmd/Shift/Alt, or a
+      // middle/secondary button) opens the reader in a NEW tab and leaves this
+      // feed mounted — warming its cache would refetch and reflow the list the
+      // user is still browsing here. React Router runs our onClick before it
+      // decides to ignore the modified click, so we mirror its own rule. Opened
+      // still gets marked either way (a new-tab open is still an open).
+      if (
+        onOpenReader &&
+        e.button === 0 &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.shiftKey &&
+        !e.altKey
+      ) {
+        onOpenReader();
+      }
+    },
+    [markOpened, onOpenReader],
+  );
 
   const openMenu = useCallback(() => {
     setMenuAnchor(articleRef.current);
@@ -553,7 +585,7 @@ export function ItemRow({
             to={`/item/${item.id}`}
             className="item-row__body"
             data-testid="item-title"
-            onClick={markOpened}
+            onClick={handleOpenReaderBody}
             onKeyDown={handleRowKeyDown}
           >
             {bodyContent}

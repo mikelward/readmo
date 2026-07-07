@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useLocation } from 'react-router-dom';
 import { renderWithProviders } from '../test/renderWithProviders';
@@ -170,6 +170,29 @@ describe('ItemRow', () => {
     expect(body).not.toHaveAttribute('target');
   });
 
+  it('fires onOpenReader when the reader-mode row body is tapped', async () => {
+    const user = userEvent.setup();
+    const onOpenReader = vi.fn();
+    renderWithProviders(
+      <ItemRow feedItem={FEED_ITEM} onOpenReader={onOpenReader} />,
+    );
+    await user.click(screen.getByTestId('item-title'));
+    expect(onOpenReader).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fire onOpenReader on a modified click (new-tab open keeps this feed mounted)', () => {
+    const onOpenReader = vi.fn();
+    const { source } = renderWithProviders(
+      <ItemRow feedItem={FEED_ITEM} onOpenReader={onOpenReader} />,
+    );
+    // A Ctrl/Cmd-click opens the reader in a new tab and leaves this feed
+    // mounted, so warming its cache would reflow the list the user is still on.
+    fireEvent.click(screen.getByTestId('item-title'), { ctrlKey: true });
+    expect(onOpenReader).not.toHaveBeenCalled();
+    // Opened is still marked — a new-tab open is still an open.
+    expect(source.stateStore.get('item-1').opened).toBe(true);
+  });
+
   describe('open original', () => {
     it('links the row body straight to the source website in a new tab', () => {
       renderWithProviders(<ItemRow feedItem={FEED_ITEM} openOriginal />);
@@ -187,6 +210,29 @@ describe('ItemRow', () => {
       await user.click(screen.getByTestId('item-title'));
       expect(source.stateStore.get('item-1').opened).toBe(true);
       expect(source.stateStore.get('item-1').done).toBe(false);
+    });
+
+    it('does not fire onOpenReader when the row body opens the external source', async () => {
+      // The prefetch is for the in-app reader (the feed remounts on Back). An
+      // external open leaves the feed mounted (new tab) or unloads the page, so
+      // there's nothing to warm.
+      const user = userEvent.setup();
+      const onOpenReader = vi.fn();
+      renderWithProviders(
+        <ItemRow feedItem={FEED_ITEM} openOriginal onOpenReader={onOpenReader} />,
+      );
+      await user.click(screen.getByTestId('item-title'));
+      expect(onOpenReader).not.toHaveBeenCalled();
+    });
+
+    it('fires onOpenReader when the reader button opens the in-app reader', async () => {
+      const user = userEvent.setup();
+      const onOpenReader = vi.fn();
+      renderWithProviders(
+        <ItemRow feedItem={FEED_ITEM} openOriginal onOpenReader={onOpenReader} />,
+      );
+      await user.click(screen.getByTestId('open-reader-btn'));
+      expect(onOpenReader).toHaveBeenCalledTimes(1);
     });
 
     it('adds an Open in reader button to the left of the Pin button', () => {

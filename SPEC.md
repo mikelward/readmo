@@ -1452,6 +1452,14 @@ negligible and off every critical path. See the External services table in
    - **A background refresh never jumps the reader's position either** —
      pull-to-refresh, window-focus, and remount refetch in the background without
      moving where the reader is looking.
+   - **Opening an article warms its feed's refresh.** When a stale feed's row
+     opens the reader, that feed reconciles with the server *while the reader is
+     up* (feed not on screen), so returning lands on an already-settled list
+     instead of one that reflows a beat after Back — right as a tap is aimed at a
+     new card. A feed still fresh within its TTL isn't re-read (opening it, or
+     returning to it, costs nothing); only a genuinely stale one refreshes, and
+     it does so early. This is the same freshness TTL as every other refresh path
+     — just clocked from *open* rather than from *Back*.
    - **Pin-to-download promo bar** above the first row ("Pin an article to
      download it"), explaining that pinning warms the offline cache (see
      *Prefetch on Pin/Favorite*). Shown only once rows exist; dismissable via a
