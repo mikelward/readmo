@@ -7319,4 +7319,75 @@ describe('ItemList', () => {
       expect(screen.queryByText('Feed A 9')).toBeNull();
     });
   });
+
+  describe('prefetch on reader open', () => {
+    // Opening an article warms the feed cache while the reader is up, so the
+    // Back-remount paints a settled list instead of reflowing under a tap. The
+    // prefetch honors the same staleTime TTL: stale feeds refetch early, fresh
+    // ones are left alone.
+    it('refetches a stale feed when a row opens the reader', async () => {
+      const user = userEvent.setup();
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const fetchPage = vi.fn<FetchPage>((cursor) =>
+        source.getHomeItems({ cursor }),
+      );
+      // staleTime 0 → the query is stale as soon as the first read settles, so
+      // the open-time prefetch (stale: true) fires.
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 60_000, staleTime: 0 } },
+      });
+      renderWithProviders(
+        <ItemList
+          viewKey={`home-prefetch-${viewKeySeq++}`}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+        />,
+        { source, queryClient },
+      );
+
+      const rows = await screen.findAllByTestId('item-row');
+      await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(1));
+
+      // Tap the row body (the in-app reader Link).
+      await user.click(within(rows[0]).getByTestId('item-title'));
+
+      // The open warmed the cache: a second read fired while the reader is up,
+      // rather than waiting for the Back-remount to trigger it.
+      await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+    });
+
+    it('does not refetch a fresh feed when a row opens the reader', async () => {
+      const user = userEvent.setup();
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const fetchPage = vi.fn<FetchPage>((cursor) =>
+        source.getHomeItems({ cursor }),
+      );
+      // A high staleTime keeps the feed fresh, so the TTL-gated prefetch is a
+      // no-op — opening (and later Back) costs no read.
+      const queryClient = new QueryClient({
+        defaultOptions: {
+          queries: { retry: false, gcTime: 60_000, staleTime: 60_000 },
+        },
+      });
+      renderWithProviders(
+        <ItemList
+          viewKey={`home-prefetch-${viewKeySeq++}`}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+        />,
+        { source, queryClient },
+      );
+
+      const rows = await screen.findAllByTestId('item-row');
+      await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(1));
+
+      await user.click(within(rows[0]).getByTestId('item-title'));
+
+      // Give a would-be refetch a chance to fire before asserting it didn't.
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(fetchPage).toHaveBeenCalledTimes(1);
+    });
+  });
 });

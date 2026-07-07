@@ -104,6 +104,9 @@ interface Props {
   /** Fired on the list `<ul>`; the parent watches for the
    * `item-list__sweep-out` keyframe name to commit the deferred Sweep. */
   onAnimationEnd?: AnimationEventHandler<HTMLUListElement>;
+  /** Forwarded to each row: fired when a row opens the in-app reader, so the
+   * feed view can warm its own query cache while the reader is up. */
+  onOpenReader?: () => void;
 }
 
 /** A run of contiguous rows under one section header: the (optional) header,
@@ -145,6 +148,7 @@ export function ItemRows({
   feedRank,
   sweepingIds,
   onAnimationEnd,
+  onOpenReader,
 }: Props) {
   const share = useShareItem();
   // Share the DISPLAYED headline, not the raw title, so a spoiler-hidden row
@@ -229,6 +233,7 @@ export function ItemRows({
           })
         }
         rightAction={rightAction?.(fi)}
+        onOpenReader={onOpenReader}
       />
     </li>
   );
