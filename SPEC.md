@@ -1422,6 +1422,23 @@ negligible and off every critical path. See the External services table in
      nothing you didn't ask for moves the rows you're looking at. Cross-device
      pin/done still propagate promptly — but *in place* (below), not by
      re-materializing the set.
+   - **Dismissed in place — a cross-device dismiss grays, it doesn't collapse.**
+     A dismiss (Done/Hidden) that arrives *from another device* for a row that's
+     on screen leaves the row where it is, **dimmed with its title struck
+     through**, rather than removing it and shifting everything below — the list
+     never moves under the reader for something the reader didn't do. The grayed
+     row stays tappable, and its right-side button becomes **Undo** (restore),
+     since the reader may not want another device's dismissal. It's distinguished
+     from the reader's *own* dismiss purely by channel: a local swipe/Sweep/
+     auto-hide removes and collapses immediately (below); only a dismiss that
+     arrives via resync — which never fires the local mutation channel — grays. A
+     row that arrives **already** dismissed (an initial load, or a More page) is
+     simply **filtered out**, never shown and never grayed — only a row that was
+     actually on screen when the dismiss landed grays. Grayed rows **compact**
+     (drop out) on the next re-materialization that isn't under the reader: a
+     pull-to-refresh, or a navigation that remounts the list (returning from an
+     article). More deliberately does *not* compact — pulling rows out mid-page
+     would shift what's below as the reader pages down.
    - **A dismiss never refetches — it settles locally.** Marking an item
      Done/Hidden, pinning, and Sweep update the rendered list **from the local
      store overlay alone**: `visibleItems` drops Done/Hidden rows and pins
@@ -1432,10 +1449,10 @@ negligible and off every critical path. See the External services table in
      freshness TTL, or an explicit pull-to-refresh (which always refetches).
      A **cross-device change** (a resync that changes local state) is reflected
      **in place** through the same overlay — a pin renders its badge where the row
-     sits, a dismissal is dropped by the overlay — and does **not** refetch or
-     re-materialize the set; a change the overlay can't express (a pin of an
-     article outside the loaded window) waits for the next re-materialization
-     rather than repainting the list now. So returning to the feed right after acting on an article
+     sits, a dismissal of an on-screen row grays it where it is (see *Dismissed in
+     place* above) — and does **not** refetch or re-materialize the set; a change
+     the overlay can't express (a pin of an article outside the loaded window)
+     waits for the next re-materialization rather than repainting the list now. So returning to the feed right after acting on an article
      yourself does not refetch it; a full refetch under (or on the way back from)
      the reader would re-render the whole list a beat later and can reflow it (a
      section's "More"/refresh footer toggling above the fold, rows shifting) out
