@@ -215,6 +215,32 @@ constraint is documented in more detail.
   every pin button / control keyed off it. Lean toward (a). Update `SPEC.md`'s
   story-row layout section in the same commit.
 
+- **Promote a locally-pinned row the refreshed grouped read dropped
+  entirely.** In the group-by-feed windowed view, PR #418 makes `mergedRaw`
+  fill each section pinned-first over the whole *base run* (`items[]`), so a
+  pin sitting outside the sticky window still renders. That covers the common
+  case (the pin is in the read but past the window). It does **not** cover the
+  live-path edge Codex flagged (#418 review, `discussion_r3539240069`): a row
+  pinned **this session, before the outbox syncs the pin**, in a **busy** feed
+  (≥ `PER_FEED_WINDOW+1` newer non-dismissed rows). There, the server
+  `feed_items` read caps each feed to its newest N by date and — because the
+  pin isn't server-side yet, so the "pinned, any age" branch (`0031` branch c)
+  doesn't rescue it — the pinned older row is absent from `items[]` altogether;
+  `SupabaseDataSource` overlays local *state* onto returned rows but can't
+  re-insert an absent one. The pinned-first pass scans only `baseRun`, never
+  `rowCacheRef`, so the row (still pinned in the local store, and cached from
+  before the refresh) is dropped and its section can collapse to a phantom
+  "More" until the next focus/resync re-pulls with the pin synced. Not the
+  reported bug (that feed was sparse, so the pin was in the read). Fix options
+  weighed: (a) **flush the outbox and await pending pins before PTR refetches**
+  so the server returns the pin via branch c — cleanest, but adds PTR latency
+  and changes the refresh contract (risk when offline); (b) **promote
+  locally-pinned rows from `rowCacheRef` that the server dropped** — client-
+  only, no latency, but carries a resurrection tradeoff (a pin genuinely
+  removed on another device could linger until sync) and is more invasive to
+  the windowing. Lean toward (a). See the code comment on the pinned-first pass
+  in `ItemList.tsx`.
+
 - **Consider scrolling the feed in an inner container to retire the
   dynamic-toolbar scroll-jump machinery.** The feed currently scrolls the
   *window*, so the reader's max scroll depends on `window.innerHeight` — the
