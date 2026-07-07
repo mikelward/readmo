@@ -60,12 +60,19 @@ export function useFeedItems(
       adjustNextCursor
         ? adjustNextCursor(lastPage.nextCursor, allPages)
         : lastPage.nextCursor,
-    // refetchOnWindowFocus: true so a tab that regains focus after >5 min
-    // picks up new items (SPEC.md "refetch-on-focus + PTR"). The global
-    // staleTime (5 min, main.tsx) gates this — no request fires if the data
-    // is still fresh, so switching tabs rapidly is cheap.
-    // refetchOnMount uses the RQ default (true-when-stale), not 'always',
-    // so navigating between feed views doesn't hammer the DB either.
+    // refetchOnWindowFocus: true so a tab regaining focus past the freshness
+    // TTL re-materializes the set. That TTL is 6h for feed queries
+    // (configureFeedFreshness, main.tsx), NOT the 5-min global default: the
+    // published article set is held STABLE between reads and its top
+    // re-materializes only on a load/return past 6h or a pull-to-refresh — never
+    // silently under the reader. (More appends older rows at the bottom; it
+    // doesn't pull newer top rows in.) Within the TTL, focus/mount/back cost no
+    // read.
+    // Cross-device pin/done still reflect immediately via the item-state overlay
+    // (in place, no reorder — see useFeedInvalidation); only the SET is frozen.
+    // refetchOnMount uses the RQ default (true-when-stale), not 'always', so
+    // navigating between feed views doesn't hammer the DB either.
+    // See SPEC.md *Feed views → A stable set of articles*.
     refetchOnWindowFocus: true,
   });
 

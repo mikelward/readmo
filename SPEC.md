@@ -53,7 +53,9 @@ copy it:
   *Item state model* below.
 - **Pinned prepended to the top of every feed**, rendered once, oldest-pinned
   first; pinning a body row keeps its position; consolidation to the top block
-  lands on the next refetch (PTR / focus / fresh load), not on the local action.
+  lands on the next re-materialization of the set (a load/return past the 6h
+  freshness TTL, or a pull-to-refresh), not on the local action or a
+  cross-device sync.
 - **Swipe gestures** — swipe-right = Done (dismiss), swipe-left = Pin,
   rubber-band shields with outcome labels.
 - **Library views** — `/pinned`, `/favorites`, `/done`, `/opened`,
@@ -1031,9 +1033,11 @@ negligible and off every critical path. See the External services table in
   wins the same LWW. A local row the read omits is kept only while it still has a
   **pending** write (a brand-new row that hasn't reached the server, or raced the
   read), else
-  dropped as gone. The store emits on change → the feed-invalidation hook marks
-  the feed **stale** (reconciled on the next mount/focus/pull-to-refresh, not
-  refetched under the reader) and the library pages re-read.
+  dropped as gone. The store emits on change → the feed-invalidation hook
+  refetches the **unread-count** badges (a number, never a reflow) while the
+  published feed set stays **frozen** and reflects the change in place through
+  the store overlay (see *Feed views → A stable set of articles*); the library
+  pages re-read.
   - **`item_state` reads are `NetworkOnly`** — a dedicated Workbox route
     (`supabaseItemStatePattern`, registered ahead of the NetworkFirst REST route
     — `vite.config.ts`) serves them with no cache fallback, so item-state
@@ -1402,18 +1406,36 @@ negligible and off every critical path. See the External services table in
    - **Background refresh status strip** at the foot ("Checking for new
      items…" / "Couldn't refresh." + Retry), appearing only when rows are
      already on screen. Verbatim mirror.
+   - **A stable set of articles.** The published set a feed view shows — which
+     articles, in which order — is held **frozen** between reads. New items the
+     poller adds, and cross-device changes the overlay can't express, do **not**
+     slide into the list under the reader. The set re-materializes — pulling new
+     items in, consolidating a dismissal out, floating a server pin to the top
+     block — only when the reader asks or enough time passes: a **load or return
+     past the 6h freshness TTL** (`FEED_STALE_MS`; the same TTL gates mount,
+     window-focus, and the warm-on-open prefetch) or an explicit
+     **pull-to-refresh**. **More** extends the set *downward* with older articles
+     (an explicit, non-jumping addition at the bottom) but does **not** pull newer
+     top rows in — it pages the existing cursor, so only PTR or the TTL bring the
+     top current. This is the "quiet" contract: you can read the news a couple of
+     times a day without the list churning every time the server changes, and
+     nothing you didn't ask for moves the rows you're looking at. Cross-device
+     pin/done still propagate promptly — but *in place* (below), not by
+     re-materializing the set.
    - **A dismiss never refetches — it settles locally.** Marking an item
      Done/Hidden, pinning, and Sweep update the rendered list **from the local
      store overlay alone**: `visibleItems` drops Done/Hidden rows and pins
      reorder, both synchronously, so the change shows on the next commit with no
      server round-trip. A *local* mutation does **not** refetch the active view,
-     and it does **not** force the feed stale either — the feed reconciles with
-     the server on its normal freshness TTL (a mount or window-focus *past* the
-     staleTime), on an explicit pull-to-refresh (which always refetches), or when
-     a **cross-device change syncs in** (a resync that actually changes local
-     state *does* refetch the feed, so a pin/done made on another device shows up
-     without a manual pull — that path can add or reorder rows the local overlay
-     can't express). So returning to the feed right after acting on an article
+     and it does **not** force the feed stale either — the set reconciles with the
+     server only when it re-materializes: a mount or window-focus *past* the 6h
+     freshness TTL, or an explicit pull-to-refresh (which always refetches).
+     A **cross-device change** (a resync that changes local state) is reflected
+     **in place** through the same overlay — a pin renders its badge where the row
+     sits, a dismissal is dropped by the overlay — and does **not** refetch or
+     re-materialize the set; a change the overlay can't express (a pin of an
+     article outside the loaded window) waits for the next re-materialization
+     rather than repainting the list now. So returning to the feed right after acting on an article
      yourself does not refetch it; a full refetch under (or on the way back from)
      the reader would re-render the whole list a beat later and can reflow it (a
      section's "More"/refresh footer toggling above the fold, rows shifting) out

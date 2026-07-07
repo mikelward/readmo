@@ -24,8 +24,8 @@ import type { FetchPage } from './useFeedItems';
  * up too (layer 1) — without it, the cached snapshot would still carry the
  * Done row for the next session.
  */
-describe('boot-time feed invalidation after persist restore', () => {
-  it('refetches the feed (and the rendered list never shows the Done item)', async () => {
+describe('boot with a persisted feed keeps the frozen set', () => {
+  it('hides preexisting Done via the overlay without forcing a boot refetch', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     const firstPage = await source.getHomeItems();
     const allItems: FeedItem[] = firstPage.items;
@@ -37,25 +37,18 @@ describe('boot-time feed invalidation after persist restore', () => {
     // hydration that happens before the React tree mounts.
     source.stateStore.set(doneItem.item.id, 'done', true);
 
-    // fetchPage: first call returns ALL items (including Done) — simulating a
-    // persisted snapshot whose cached page hasn't been re-filtered yet.
-    // Subsequent calls are held behind a gate so the test can verify the
-    // post-invalidation refetch actually fires before resolving it.
-    let releaseRefetch: (() => void) | null = null;
-    let callCount = 0;
+    // fetchPage returns ALL items (including Done) — a persisted snapshot whose
+    // cached page hasn't been re-filtered. The frozen-set contract means boot
+    // must NOT force a refetch to clean it (that would re-materialize the set on
+    // every reload, regardless of the TTL — Codex P2 on #411); the overlay hides
+    // the Done row from render, and the cache re-materializes only on the normal
+    // 6h/PTR/More path.
+    const fetchPage = vi.fn((cursor: string | null) =>
+      source.getHomeItems({ cursor }),
+    );
 
-    const fetchPage = vi.fn((cursor: string | null) => {
-      callCount++;
-      if (callCount === 1) {
-        return Promise.resolve({ items: allItems, nextCursor: null });
-      }
-      return new Promise((resolve) => {
-        releaseRefetch = () => source.getHomeItems({ cursor }).then(resolve);
-      });
-    });
-
-    // High staleTime mirrors production (5 min) so no automatic refetch fires;
-    // the only refetch is the one we trigger via invalidateQueries.
+    // A high staleTime keeps the persisted feed fresh (a within-TTL reload), so
+    // no automatic refetch fires.
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 60_000, staleTime: 60_000 } },
     });
@@ -70,26 +63,22 @@ describe('boot-time feed invalidation after persist restore', () => {
     const hasDoneTitle = () =>
       screen.getAllByTestId('item-title').some((n) => n.textContent?.startsWith(doneItem.item.title));
 
-    // Wait for the first fetch to complete and rows to render. Layer 2:
-    // the Done row was in the cached page but the client-side filter
-    // never lets it through to the DOM.
+    // The Done row was in the cached page but the overlay never lets it reach the
+    // DOM — no refetch required to hide it.
     await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.queryAllByTestId('item-title').length).toBeGreaterThan(0));
     expect(hasDoneTitle()).toBe(false);
 
-    // Simulate PersistQueryClientProvider.onSuccess: invalidate feed caches
-    // after the persisted snapshot is fully hydrated. Layer 1: this must
-    // actually fire a refetch so the cache itself is freshened.
-    act(() => {
-      void queryClient.invalidateQueries({ queryKey: ['feed'] });
+    // The frozen set is not re-materialized on boot: the persisted page stays put
+    // (gated by staleTime), so nothing shifts under the reader.
+    await act(async () => {
+      await Promise.resolve();
     });
-
-    // The refetch is now in flight. Release it and confirm the rendered
-    // list stays clean (the source's own filter drops the Done id too).
-    await waitFor(() => expect(releaseRefetch).not.toBeNull());
-    act(() => { releaseRefetch!(); });
-    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
-    expect(hasDoneTitle()).toBe(false);
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+    const feedQuery = queryClient
+      .getQueryCache()
+      .find({ queryKey: ['feed', 'home-all'] });
+    expect(feedQuery?.isStale()).toBe(false);
   });
 });
 
@@ -140,25 +129,30 @@ describe('useFeedInvalidation query scoping', () => {
     expect(feedItemsQuery?.isStale()).toBe(false);
   });
 
-  it('refetches feed-items on a cross-device hydration (not just a local mutation)', async () => {
-    // The other half of the split: a hydrate that changes the store — a
-    // cross-device resync (useStateSync → resyncState → hydrate) or a boot
-    // restore — CAN add/reorder rows the local overlay can't express (e.g.
-    // another device pinning an article not in the loaded window). That path
-    // must refetch the feed-items query so the new row shows up without a manual
-    // pull-to-refresh, and promptly — not after staleTime (Codex P2 on #408).
+  it('leaves the frozen feed set alone on a cross-device hydration (but refreshes the unread count)', async () => {
+    // The frozen-set contract (reversing #408): a hydrate that changes the store
+    // — a cross-device resync (useStateSync → resyncState → hydrate) — must NOT
+    // re-materialize the published set. The overlay ItemList subscribes to
+    // reflects the change in place (a pin badge, a dropped row); a change the
+    // overlay can't express (a pin of an article outside the loaded window) waits
+    // for the next re-materialization (load/return past the 6h TTL, PTR, or More)
+    // rather than repainting the list now. The unread-count number, being a cheap
+    // badge that never reflows the list, still refreshes.
     const source = new MockDataSource(`test-${Math.random()}`);
     const itemsFetch = vi.fn().mockResolvedValue({ items: [], nextCursor: null });
+    const countsFetch = vi.fn().mockResolvedValue({ 'feed-a': 3 });
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: 60_000 } },
     });
 
     function Probe() {
       useQuery({ queryKey: ['feed', 'home-all'], queryFn: itemsFetch });
+      useQuery({ queryKey: ['feed', 'unread-counts', 'feed-a'], queryFn: countsFetch });
       return null;
     }
     renderWithProviders(<Probe />, { source, queryClient });
     await waitFor(() => expect(itemsFetch).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(countsFetch).toHaveBeenCalledTimes(1));
 
     // A hydration that actually changes the map (a pin arriving from the server).
     act(() => {
@@ -167,28 +161,36 @@ describe('useFeedInvalidation query scoping', () => {
       ]);
     });
 
-    // The active feed-items query refetches immediately — default refetchType,
-    // gated by nothing (invalidate marks it stale first), so the cross-device
-    // pin reconciles now rather than at the next TTL boundary.
-    await waitFor(() => expect(itemsFetch).toHaveBeenCalledTimes(2));
+    // The unread count refreshes…
+    await waitFor(() => expect(countsFetch).toHaveBeenCalledTimes(2));
+    // …but the frozen set is left untouched: no refetch under the reader, and the
+    // query stays fresh so a later remount within the TTL won't refetch either.
+    expect(itemsFetch).toHaveBeenCalledTimes(1);
+    const feedItemsQuery = queryClient
+      .getQueryCache()
+      .find({ queryKey: ['feed', 'home-all'] });
+    expect(feedItemsQuery?.isStale()).toBe(false);
   });
 
-  it('does not fire the feed-items refetch on a no-op hydration', async () => {
-    // subscribeHydrated only fires when the map actually changed, so a resync
-    // that returns identical state (the common case on a routine focus) must not
-    // churn a feed read.
+  it('does not churn a feed read on a no-op hydration', async () => {
+    // A resync that returns identical state (the common case on a routine focus)
+    // must not churn any feed read — a no-op hydrate returns before it emits, so
+    // neither the frozen set nor the unread count refetches.
     const source = new MockDataSource(`test-${Math.random()}`);
     const itemsFetch = vi.fn().mockResolvedValue({ items: [], nextCursor: null });
+    const countsFetch = vi.fn().mockResolvedValue({ 'feed-a': 3 });
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: 60_000 } },
     });
 
     function Probe() {
       useQuery({ queryKey: ['feed', 'home-all'], queryFn: itemsFetch });
+      useQuery({ queryKey: ['feed', 'unread-counts', 'feed-a'], queryFn: countsFetch });
       return null;
     }
     renderWithProviders(<Probe />, { source, queryClient });
     await waitFor(() => expect(itemsFetch).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(countsFetch).toHaveBeenCalledTimes(1));
 
     // Hydrating the empty store with no rows is a no-op — no map change.
     act(() => {
@@ -198,5 +200,6 @@ describe('useFeedInvalidation query scoping', () => {
     // Give any (unwanted) refetch a chance to fire before asserting it didn't.
     await Promise.resolve();
     expect(itemsFetch).toHaveBeenCalledTimes(1);
+    expect(countsFetch).toHaveBeenCalledTimes(1);
   });
 });
