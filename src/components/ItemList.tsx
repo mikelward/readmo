@@ -328,7 +328,11 @@ export function ItemList({
       for (const page of pages) {
         for (const fi of page.items) {
           const st = ds.stateStore.get(fi.item.id);
-          if (st.done || st.hidden) dismissed += 1;
+          // A pinned row is live even if it's also Done/Hidden — the server keeps
+          // it in its offset sequence (pinned exempt), and the display shows it
+          // (see `visibleItems`), so it must count toward the offset, not be
+          // subtracted as dismissed.
+          if (!st.pinned && (st.done || st.hidden)) dismissed += 1;
           else live.add(fi.item.id);
         }
       }
@@ -1200,7 +1204,9 @@ export function ItemList({
           // the extras pass below already does. (Before, the post-mutation
           // refetch dropped it and items[] was effectively server-filtered.)
           const st = ds.stateStore.get(fi.item.id);
-          if (st.done || st.hidden) continue;
+          // Pinned rows stay in the server's sequence (exempt from Done/Hidden),
+          // so a pinned+Done row still occupies an offset slot — count it.
+          if (!st.pinned && (st.done || st.hidden)) continue;
           if (!allowed.has(fi.item.id)) {
             firstUnseen = pos;
             break;
@@ -1216,7 +1222,7 @@ export function ItemList({
             // Same as above: a locally-dismissed base row no longer counts toward
             // the server offset (it's gone from the server's filtered sequence).
             const st = ds.stateStore.get(fi.item.id);
-            if (st.done || st.hidden) continue;
+            if (!st.pinned && (st.done || st.hidden)) continue; // pinned stays in the server sequence
             inView.add(fi.item.id);
           }
           if (existing) {
@@ -1233,7 +1239,7 @@ export function ItemList({
               // the offset, making the worst case a harmless deduped re-fetch
               // overlap rather than a skip.
               const st = ds.stateStore.get(fi.item.id);
-              if (st.done || st.hidden) continue;
+              if (!st.pinned && (st.done || st.hidden)) continue; // pinned stays in the server sequence
               inView.add(fi.item.id);
             }
           }
