@@ -3,46 +3,61 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 
 /**
- * Marks all ['feed', *] queries stale whenever item state changes — WITHOUT
- * refetching the active view. A mutation (Done, pin, hide, sweep) takes effect
- * locally and immediately: the feed view filters Done/Hidden out of its render
- * from the store overlay, and pins reorder from the same overlay, so nothing
- * waits on the server. What we deliberately DON'T do is yank a refetch under the
- * reader — that re-render lands a beat later and reflows the list (a section's
- * "More"/refresh footer toggling, rows shifting), which could move the reader's
- * scroll position out from under them. `refetchType: 'none'` just marks the
- * cache stale; the next natural trigger — remounting the view, window focus, or
- * pull-to-refresh (all still enabled) — reconciles it with the server.
+ * Reconciles the feed queries with server truth on item-state changes — but
+ * distinguishes a *local triage mutation* from a *cross-device hydration*,
+ * because they want opposite things from the feed-ITEMS cache.
  *
- * Must be mounted at the App level (not inside a feed view) so mutations made on
- * the reader page mark feed caches stale even while the feed list is unmounted;
- * when the user navigates back, refetchOnMount sees the stale data and fetches.
+ * - **Unread-count badges** (`['feed','unread-counts',…]`) refetch on *every*
+ *   store change (the general `subscribe` channel): they're a cheap number that
+ *   never reflows the list, and after an outbox write syncs and clears the local
+ *   pending adjustment the badge would otherwise read a stale server count and
+ *   jump back up until the next focus/PTR (Codex P2 on #375).
  *
- * Boot-time reconciliation (for state that preexisted the React tree) is handled
- * in PersistQueryClientProvider's onSuccess callback in main.tsx, which fires
- * after the persisted cache is fully hydrated — ensuring the invalidation isn't
- * overwritten by the restore.
+ * - **Feed-items** (`['feed', viewKey]`) refetch ONLY on a hydration that
+ *   changed the store (`subscribeHydrated` — a boot restore or a cross-device
+ *   resync), never on a local Done/pin/hide/sweep/undo. A local mutation already
+ *   takes effect from the store overlay alone (`visibleItems` drops Done/Hidden,
+ *   pins reorder), so refetching it would (1) reflow the list a beat later —
+ *   moving a tap target or the reader's scroll — for no visible change, and (2)
+ *   force the query stale and thereby fire a full DB read on *every* return to
+ *   the feed (refetchOnMount on the remount), defeating the `staleTime` TTL. Left
+ *   alone, the feed-items cache stays TTL-gated: returning to the feed within the
+ *   TTL doesn't refetch; past it (or on pull-to-refresh, which always refetches)
+ *   it reconciles. A cross-device change, by contrast, can add or reorder rows
+ *   the overlay can't express (e.g. another device pinning an article not in the
+ *   loaded window), so that path *must* refetch — promptly, not after the TTL —
+ *   which is why it invalidates with the default `refetchType` (refetch the
+ *   active view now; a view unmounted under the reader is marked stale and
+ *   reconciles on the back-remount).
+ *
+ * Undo and the synced-outbox path force their own `refetch()` directly in
+ * ItemList when they genuinely need server truth. Boot-time reconciliation for
+ * state that preexisted the React tree is handled in PersistQueryClientProvider's
+ * onSuccess callback in main.tsx, after the persisted cache is hydrated.
  */
 export function useFeedInvalidation() {
   const ds = useDataSource();
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    return ds.stateStore.subscribe(() => {
-      // Feed-items queries: mark stale, but don't refetch under the reader.
-      void queryClient.invalidateQueries({
-        queryKey: ['feed'],
-        refetchType: 'none',
-        predicate: (query) => query.queryKey[1] !== 'unread-counts',
-      });
-      // Unread-count badges (`['feed','unread-counts',…]`): a cheap number that
-      // never reflows the list, so refetch it normally — otherwise, once an
-      // outbox write syncs and clears the local pending-adjustment, the badge
-      // reads a stale server count and jumps back up until the next focus/PTR
-      // (Codex P2 on #375).
+    const unsubscribe = ds.stateStore.subscribe(() => {
+      // Every store change (local mutation, hydration, or outbox drain) can move
+      // an unread count — refetch it. Never reflows the list.
       void queryClient.invalidateQueries({
         queryKey: ['feed', 'unread-counts'],
       });
     });
+    const unsubscribeHydrated = ds.stateStore.subscribeHydrated(() => {
+      // A cross-device/boot hydration changed the store — reconcile the feed rows
+      // with the server (excluding unread-counts, already handled above).
+      void queryClient.invalidateQueries({
+        queryKey: ['feed'],
+        predicate: (query) => query.queryKey[1] !== 'unread-counts',
+      });
+    });
+    return () => {
+      unsubscribe();
+      unsubscribeHydrated();
+    };
   }, [ds, queryClient]);
 }

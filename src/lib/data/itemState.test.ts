@@ -180,6 +180,43 @@ describe('ItemStateStore', () => {
     expect(general).toBe(3);
   });
 
+  it('subscribeHydrated fires only on a map-changing hydration, not mutation/synced/no-op', () => {
+    const store = new ItemStateStore(memoryPersistence());
+    let hydrated = 0;
+    let general = 0;
+    const off = store.subscribeHydrated(() => hydrated++);
+    store.subscribe(() => general++);
+
+    // A local mutation wakes the general listeners but NOT subscribeHydrated —
+    // this is what keeps a local triage action from refetching the feed.
+    store.set('a', 'done', true, NOW);
+    expect(general).toBe(1);
+    expect(hydrated).toBe(0);
+
+    // An outbox drain wakes the general listeners but NOT subscribeHydrated.
+    store.notifySynced();
+    expect(general).toBe(2);
+    expect(hydrated).toBe(0);
+
+    // A hydration that changes the map wakes both: the cross-device row that
+    // needs a feed reconcile fires the hydrated channel.
+    store.hydrate([['b', state({ pinned: true, pinnedAt: NOW })]], new Map(), NOW);
+    expect(hydrated).toBe(1);
+    expect(general).toBe(3);
+
+    // A no-op hydration (identical state) changes nothing and must stay silent
+    // on BOTH channels — no needless feed read on a routine focus resync.
+    store.hydrate([['b', state({ pinned: true, pinnedAt: NOW })]], new Map(), NOW);
+    expect(hydrated).toBe(1);
+    expect(general).toBe(3);
+
+    // Unsubscribing stops the hydrated callbacks.
+    off();
+    store.hydrate([['c', state({ done: true, doneAt: NOW })]], new Map(), NOW);
+    expect(hydrated).toBe(1);
+    expect(general).toBe(4);
+  });
+
   it('hidden→Done migration (constructor) surfaces a legacy hidden row in /done', () => {
     // A legacy hidden row: the constructor migrates it to Done so it surfaces in
     // /done instead of being invisible with no recovery path.
