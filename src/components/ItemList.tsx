@@ -1482,52 +1482,67 @@ export function ItemList({
         feedSection.push(fi);
       };
 
-      if (allowed) {
-        // Pinned rows lead the section in items[] order — the server sorts
-        // pinned-first within each feed run (see MockDataSource), so walking
-        // baseRun naturally yields that ordering. Gating on `allowed` here
-        // matters: the base read overfetches one row per feed as a has-more
-        // probe, and a feed with more than perFeedLimit pinned rows would
-        // otherwise leak its probe (the (perFeedLimit+1)th pinned row) into
-        // the displayed section before any More tap. New cross-device /
-        // polled-in pins still wait for More/PTR to surface, the same as
-        // non-pinned new rows do.
-        for (const fi of baseRun) {
-          if (!allowed.has(fi.item.id)) continue;
-          // Promote only rows that were pinned when they entered the loaded set
-          // (`basePinnedRef`) AND that the reader hasn't held in body this session
-          // (`stayInBodyIds`). A pin added AFTER the row appeared stays at its
-          // natural position (handled by the sticky-order pass below), badge in
-          // place, until the next re-materialize consolidates it:
-          //   - the reader's own in-session pin is caught by stayInBodyIds — which
-          //     also covers a pin on an *extra* (revealed by More) that basePinned
-          //     can't see until it later enters the base window;
-          //   - a pin arriving from ANOTHER device is caught by basePinnedRef (the
-          //     row was already in the set unpinned, so it was never baselined) —
-          //     the gap the old stayInBodyIds-only gate left open (Codex P2 on
-          //     #411), which jumped a cross-device pin to the top.
-          if (
-            ds.stateStore.get(fi.item.id).pinned &&
-            basePinnedRef.current.has(fi.item.id) &&
-            !stayInBodyIds.has(fi.item.id)
-          ) {
-            push(fi);
-          }
+      // Fill the section pinned-first. Pinned rows are EXEMPT from the position
+      // window (mirroring the server RPC: "Pinned is NOT window/floor-filtered",
+      // 0031) — they lead the section, then the reader's opted-in window rows
+      // follow. Promote only a row pinned when it ENTERED the loaded set
+      // (`basePinnedRef`) that the reader hasn't held in body this session
+      // (`stayInBodyIds`):
+      //   - the reader's own in-session pin is caught by stayInBodyIds — which
+      //     also covers a pin on an *extra* (revealed by More) that basePinned
+      //     can't see until it later enters the base window;
+      //   - a pin arriving from ANOTHER device is caught by basePinnedRef (the row
+      //     was in the set unpinned, so it was never baselined) — the gap the old
+      //     stayInBodyIds-only gate left open (Codex P2 on #411), which jumped a
+      //     cross-device pin to the top.
+      const promotablePin = (fi: FeedItem): boolean =>
+        ds.stateStore.get(fi.item.id).pinned &&
+        basePinnedRef.current.has(fi.item.id) &&
+        !stayInBodyIds.has(fi.item.id);
+      // Pinned-first pass over the WHOLE base run — not just `allowed` — so a pin
+      // sitting outside the position window still leads its section. Without this,
+      // a pin the window doesn't cover (an older pin, a local pin the server still
+      // orders by date, or one displaced by rows the reader has since dismissed)
+      // is dropped and the section collapses to a phantom "More" that hides the
+      // pin, its real favicon, and its unread badge until a tap/refresh (the
+      // "pull-to-refresh hides my pinned row" bug). KNOWN GAP (TODO.md "UI /
+      // layout"): this scans only `baseRun`, so a locally-pinned row the
+      // refreshed *server* read dropped entirely — an old pin in a busy feed,
+      // pinned this session before the outbox synced, so `feed_items`' per-feed
+      // date window excludes it and branch (c) can't yet rescue it — is NOT
+      // promoted here even though it's still in `rowCacheRef`; it reappears on the
+      // next focus/resync once the pin syncs (Codex on #418). The cap belongs HERE
+      // and only here: it bounds the *pinned* rows to perFeedLimit so the overfetched
+      // has-more probe pin (the (perFeedLimit+1)th) can't leak. It must NOT cap
+      // the sticky fill below — an out-of-window pin is shown IN ADDITION to the
+      // window rows, never by displacing one (a displaced sticky row would be
+      // hidden yet still counted seen by handleFeedMore's cursor, skipping it
+      // until PTR — Codex P2 on #418).
+      let pinnedShown = 0;
+      for (const fi of baseRun) {
+        if (pinnedShown >= perFeedLimit) break;
+        if (promotablePin(fi)) {
+          push(fi);
+          pinnedShown += 1;
         }
-        // Non-pinned rows render in sticky iteration order — the order the
-        // reader actually opted into. Without this, a heavy refetch that
-        // brings fresh top rows into items[] would render them above the
-        // reader's existing anchored rows (which fell back to the row
-        // cache), visibly shoving the anchor down. Look up each sticky id
-        // from items[] → extras → row cache; if all three miss, drop it
-        // (the row truly is gone for now).
+      }
+      if (allowed) {
+        // Fill with the sticky (opted-in) rows in iteration order — the order the
+        // reader actually opted into (and the full expanded set after a section
+        // "More" grew `allowed`). Without this, a heavy refetch that brings fresh
+        // top rows into items[] would render them above the reader's existing
+        // anchored rows (which fell back to the row cache), visibly shoving the
+        // anchor down. Look up each sticky id from items[] → extras → row cache;
+        // if all three miss, drop it (the row truly is gone for now). Not capped:
+        // `allowed` is already the reader's chosen window, and a promoted pin
+        // shows on top of it rather than evicting one of these rows.
         //
-        // The cost: a row the server filtered out (cross-device Done/Hide,
-        // item retracted) stays visible until the local state store learns
-        // about the change. That's expected to come through the realtime
-        // state-sync path; once `stateStore.get(id).done` flips, the
-        // `visibleItems` filter drops the row. The (acceptable) window of
-        // staleness here is bounded by sync latency, not "until PTR".
+        // The cost: a row the server filtered out (cross-device Done/Hide, item
+        // retracted) stays visible until the local state store learns about the
+        // change. That's expected to come through the realtime state-sync path;
+        // once `stateStore.get(id).done` flips, the `visibleItems` filter drops
+        // the row. The (acceptable) window of staleness here is bounded by sync
+        // latency, not "until PTR".
         for (const id of allowed) {
           if (feedSeen.has(id)) continue;
           const fi =
@@ -1535,16 +1550,15 @@ export function ItemList({
           if (fi) push(fi);
         }
       } else {
-        // No sticky entry yet (init effect hasn't run on the first paint) —
-        // fall back to the "first perFeedLimit base rows" rule so the
-        // section isn't blank. The server already sorts pinned rows to the
-        // top of each feed run, so this naturally yields pin-first ordering
-        // without a separate pinned pass. The init effect lands shortly
-        // after and `allowed` takes over.
+        // No sticky entry yet (init effect hasn't run on the first paint) — fall
+        // back to the "first perFeedLimit base rows" rule so the section isn't
+        // blank. The pinned-first pass above already seated any out-of-window pin;
+        // this fills the window with the first perFeedLimit not-yet-shown base
+        // rows. The init effect lands shortly after and `allowed` takes over.
         let shown = 0;
         for (const fi of baseRun) {
-          if (feedSeen.has(fi.item.id)) continue;
           if (shown >= perFeedLimit) break;
+          if (feedSeen.has(fi.item.id)) continue;
           push(fi);
           shown += 1;
         }
@@ -3083,6 +3097,18 @@ export function ItemList({
           setFeedExtras(new Map());
           // A pull-to-refresh consolidates: in-session pins re-group at the top.
           setStayInBodyIds(new Set());
+          // Re-baseline the load-time pin capture on this same consolidation.
+          // Clearing stayInBodyIds alone re-groups rows that were pinned AT LOAD
+          // (already in basePinnedRef), but a row pinned THIS SESSION entered
+          // unpinned, so it was never baselined — the promotion gate would still
+          // reject it, leaving it in body and, if the fresh window doesn't cover
+          // it (the server hasn't reordered it pinned-first yet), hidden behind a
+          // phantom "More" (Codex P2 on #418). Resetting these refs lets the
+          // inline baseline capture re-run against the fresh page, treating every
+          // currently-pinned row as a load-time pin so it consolidates to — and
+          // stays at — its section top. Mirrors the view-change reset.
+          seenForBaseRef.current = new Set();
+          basePinnedRef.current = new Set();
           // …and compacts grayed cross-device dismisses (the refetch also drops
           // them server-side, so this just clears the in-session bookkeeping;
           // `onScreenIdsRef` is re-derived by the observer as the fresh rows

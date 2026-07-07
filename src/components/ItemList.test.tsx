@@ -5410,6 +5410,186 @@ describe('ItemList', () => {
       expect(order()).toEqual(['A-0', 'A-1', 'A-2']);
     });
 
+    it('keeps a pinned row visible when it falls outside the per-feed window (never strands it behind a phantom More)', async () => {
+      // Repro of the "pull-to-refresh hides my pinned article" bug: a pin can sit
+      // OUTSIDE the per-feed sticky window — a local/older pin the server still
+      // orders by date (so it isn't pinned-first), or a window whose only slot is
+      // taken by a since-dismissed row. Gating the pinned promotion on the window
+      // dropped the pin, collapsing the section to a phantom "More" (placeholder
+      // favicon + no unread badge + hidden pin) until a tap or refresh.
+      const { source, mk } = await makeRows();
+      // A-1 is pinned at load, but the base read orders it at position 1 (as the
+      // live server does for a pin it doesn't yet know about). With perFeedLimit
+      // 1, the window is A-0 — so A-1 sits outside it.
+      source.stateStore.set('A-1', 'pinned', true);
+      const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1)];
+      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
+      const fetchFeedPage = vi.fn(() =>
+        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
+      );
+      renderWithProviders(
+        <ItemList
+          viewKey={`psm-pin-window-${viewKeySeq++}`}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+          groupByFeed
+          fetchFeedPage={fetchFeedPage}
+          perFeedLimit={1}
+        />,
+        { source },
+      );
+      await screen.findAllByTestId('item-row');
+
+      // The pinned row renders despite sitting outside the window.
+      const pinned = () => document.querySelector('[data-item-id="A-1"]');
+      await waitFor(() => expect(pinned()).not.toBeNull());
+      expect(
+        within(pinned() as HTMLElement).getByTestId('pin-btn'),
+      ).toHaveAttribute('aria-pressed', 'true');
+
+      // Dismissing the windowed row spends the window, but the pin must stay —
+      // not collapse the section to a phantom that hides it (the PTR symptom).
+      act(() => {
+        source.stateStore.set('A-0', 'done', true);
+      });
+      await waitFor(() =>
+        expect(document.querySelector('[data-item-id="A-0"]')).toBeNull(),
+      );
+      expect(pinned()).not.toBeNull();
+      expect(
+        within(pinned() as HTMLElement).getByTestId('pin-btn'),
+      ).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    it('shows a promoted out-of-window pin IN ADDITION to the window rows, never displacing one', async () => {
+      // Codex P2 on #418: a pin promoted from outside the window must not evict a
+      // sticky window row — a displaced row would be hidden yet still counted as
+      // seen by handleFeedMore's cursor, skipping it until PTR. The pin shows on
+      // top of the full window instead.
+      const { source, mk } = await makeRows();
+      // A-3 is the overfetched (perFeedLimit+1)th row and is pinned; the window is
+      // A-0..A-2.
+      source.stateStore.set('A-3', 'pinned', true);
+      const base = [
+        mk('A', 'Feed A', 0),
+        mk('A', 'Feed A', 1),
+        mk('A', 'Feed A', 2),
+        mk('A', 'Feed A', 3),
+      ];
+      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
+      const fetchFeedPage = vi.fn(() =>
+        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
+      );
+      renderWithProviders(
+        <ItemList
+          viewKey={`psm-pin-additive-${viewKeySeq++}`}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+          groupByFeed
+          fetchFeedPage={fetchFeedPage}
+          perFeedLimit={3}
+        />,
+        { source },
+      );
+      await screen.findAllByTestId('item-row');
+      const ids = () =>
+        [...document.querySelectorAll('[data-item-id]')].map((el) =>
+          el.getAttribute('data-item-id'),
+        );
+      // All three window rows AND the promoted pin render — none is skipped.
+      await waitFor(() => expect(ids()).toContain('A-3'));
+      for (const id of ['A-0', 'A-1', 'A-2', 'A-3']) {
+        expect(ids()).toContain(id);
+      }
+    });
+
+    it('re-baselines an in-session pin on pull-to-refresh so it survives a fresh window that excludes it', async () => {
+      // Codex P2 on #418 (the reported scenario): a row loaded UNPINNED, pinned
+      // this session, then pull-to-refreshed before the backend reorders it
+      // pinned-first. PTR clears stayInBodyIds but must also re-baseline the pin
+      // capture (basePinnedRef/seenForBaseRef) — otherwise the pin, never
+      // baselined and now outside the fresh window, is dropped and the section
+      // collapses to a phantom More.
+      const user = userEvent.setup();
+      const { source, mk } = await makeRows();
+      let pageItems: FeedItem[] = [mk('A', 'Feed A', 1)];
+      const fetchPage = vi.fn(() =>
+        Promise.resolve({ items: pageItems, nextCursor: null }),
+      );
+      const fetchFeedPage = vi.fn(() =>
+        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
+      );
+      renderWithProviders(
+        <ItemList
+          viewKey={`psm-pin-ptr-${viewKeySeq++}`}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+          groupByFeed
+          fetchFeedPage={fetchFeedPage}
+          perFeedLimit={1}
+        />,
+        { source },
+      );
+      await screen.findAllByTestId('item-row');
+      const a1 = () =>
+        document.querySelector('[data-item-id="A-1"]') as HTMLElement | null;
+
+      // A-1 loads UNPINNED and inside the window; the reader pins it this session.
+      await user.click(within(a1() as HTMLElement).getByTestId('pin-btn'));
+      await waitFor(() =>
+        expect(within(a1() as HTMLElement).getByTestId('pin-btn')).toHaveAttribute(
+          'aria-pressed',
+          'true',
+        ),
+      );
+
+      // The refresh brings a newer row into the window and orders the (locally,
+      // not-yet-synced) pinned A-1 by date at position 1 — outside the window.
+      pageItems = [mk('A', 'Feed A', 9), mk('A', 'Feed A', 1)];
+      // jsdom has no PointerEvent, so fireEvent can't carry pointer coords —
+      // polyfill it with a MouseEvent subclass (which does) to drive a real pull.
+      if (typeof (globalThis as unknown as { PointerEvent?: unknown }).PointerEvent === 'undefined') {
+        class PE extends MouseEvent {
+          pointerId: number;
+          pointerType: string;
+          constructor(type: string, params: PointerEventInit = {}) {
+            super(type, params);
+            this.pointerId = params.pointerId ?? 0;
+            this.pointerType = params.pointerType ?? '';
+          }
+        }
+        (globalThis as unknown as { PointerEvent: unknown }).PointerEvent = PE;
+      }
+      if (!(Element.prototype as unknown as { setPointerCapture?: unknown }).setPointerCapture) {
+        (Element.prototype as unknown as { setPointerCapture: () => void }).setPointerCapture =
+          () => {};
+      }
+      const ptr = document.querySelector(
+        '[data-testid="pull-to-refresh"]',
+      ) as HTMLElement;
+      await act(async () => {
+        fireEvent.pointerDown(ptr, {
+          pointerId: 1,
+          clientX: 100,
+          clientY: 0,
+          pointerType: 'touch',
+          button: 0,
+        });
+        fireEvent.pointerMove(ptr, { pointerId: 1, clientX: 100, clientY: 24 });
+        fireEvent.pointerMove(ptr, { pointerId: 1, clientX: 100, clientY: 170 });
+        fireEvent.pointerUp(ptr, { pointerId: 1, clientX: 100, clientY: 170 });
+      });
+
+      // The pinned row survives the refresh (re-baselined → promoted to the top),
+      // not hidden behind a phantom More.
+      await waitFor(() => expect(fetchPage.mock.calls.length).toBeGreaterThan(1));
+      await waitFor(() => expect(a1()).not.toBeNull());
+      expect(within(a1() as HTMLElement).getByTestId('pin-btn')).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    });
+
     it('filters (not grays) a cross-device dismiss that lands while its feed is collapsed', async () => {
       // Codex P2 on #413: a collapsed feed's rows are in visibleItems but render
       // as null, so they were never on screen. A dismiss landing then must be
