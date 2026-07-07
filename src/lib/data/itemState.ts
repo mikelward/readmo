@@ -227,6 +227,7 @@ export class ItemStateStore {
         id: ItemId,
         changed: Partial<Record<ItemStateField, boolean>>,
         at: number,
+        opts?: { defer?: boolean },
       ) => void)
     | null = null;
 
@@ -271,6 +272,7 @@ export class ItemStateStore {
       id: ItemId,
       changed: Partial<Record<ItemStateField, boolean>>,
       at: number,
+      opts?: { defer?: boolean },
     ) => void,
   ): void {
     this.sink = sink;
@@ -279,7 +281,17 @@ export class ItemStateStore {
   /** Fields whose boolean value differs between two states, with their `to`
    * values — the minimal write that moves `from` to `to`. `at` is the action
    * time (the last-write-wins clock the sink forwards to the server). */
-  private emitDiff(id: ItemId, from: ItemState, to: ItemState, at: number): void {
+  private emitDiff(
+    id: ItemId,
+    from: ItemState,
+    to: ItemState,
+    at: number,
+    // Defer the *server* write by a bounded window (see ItemStateOutbox.enqueue):
+    // set for dismiss/un-dismiss toggles so a quick Undo cancels it in-queue and a
+    // dismiss burst commits as one batch. Only the sink honors it; the local
+    // mutation listeners always fire now (the UI reflects the change immediately).
+    defer = false,
+  ): void {
     if (!this.sink && this.mutationListeners.size === 0) return;
     const fields: ItemStateField[] = ['pinned', 'favorite', 'done', 'hidden', 'opened'];
     const changed: Partial<Record<ItemStateField, boolean>> = {};
@@ -302,7 +314,7 @@ export class ItemStateStore {
       }
       if (to.done && !from.done) closed.pinned = false;
       if (to.hidden && !from.hidden) closed.pinned = false;
-      this.sink(id, closed, at);
+      this.sink(id, closed, at, { defer });
     }
     for (const l of this.mutationListeners) l(id, changed);
   }
@@ -466,7 +478,13 @@ export class ItemStateStore {
     const next = applyMutation(prev, field, value, now);
     this.map = { ...this.map, [id]: next };
     this.persistence.save(this.map);
-    this.emitDiff(id, prev, next, now);
+    // Un-dismissing (done/hidden → false — a per-row Undo of a grayed row, or
+    // "Unmark done") is deferred so it coalesces with / cancels a still-queued
+    // dismiss. Marking done/hidden TRUE from here is the reader's explicit
+    // mark-done (ItemPage), which commits ASAP — only the undoable swipe/Sweep
+    // path (hideMany) defers a dismiss.
+    const defer = (field === 'done' || field === 'hidden') && value === false;
+    this.emitDiff(id, prev, next, now, defer);
     this.emit();
     return next;
   }
@@ -512,7 +530,10 @@ export class ItemStateStore {
       }
       const next = applyMutation(prev, 'done', true, now);
       this.map = { ...this.map, [id]: next };
-      this.emitDiff(id, prev, next, now);
+      // Defer the server write: this dismiss is undoable, so hold it for a bounded
+      // window (see ItemStateOutbox) — a quick Undo cancels it in-queue and a
+      // Sweep/scroll burst commits as one batch instead of a write per row.
+      this.emitDiff(id, prev, next, now, true);
     }
     this.lastUndo = batch;
     this.lastUndoKey = batchKey ?? null;
@@ -541,7 +562,10 @@ export class ItemStateStore {
     for (const [id, prior] of batch) {
       const current = this.map[id] ?? DEFAULT_ITEM_STATE;
       const restored = prior ?? DEFAULT_ITEM_STATE;
-      this.emitDiff(id, current, restored, now);
+      // Deferred: the reverse coalesces onto the still-queued dismiss (cancelling
+      // it before it ever sends) when Undo lands inside the flush window; if the
+      // dismiss already flushed, this is a normal bounded-deferred un-dismiss.
+      this.emitDiff(id, current, restored, now, true);
       // Restamp the reverted fields' `<f>At` to `now` so the local restore carries
       // the SAME last-write-wins clock the server write does. Writing the prior
       // snapshot back with its pre-hide clocks would let a hydrate landing before

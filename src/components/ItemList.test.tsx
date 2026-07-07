@@ -3376,12 +3376,13 @@ describe('ItemList', () => {
     await waitFor(() => expect(bodyB.style.minHeight).toBe(''));
   });
 
-  it('forces a refetch on Undo so a row already reconciled out of items[] comes back (Codex P2 #375)', async () => {
-    // A normal dismiss marks the feed stale WITHOUT refetching (so the reader's
-    // scroll isn't reflowed) and relies on the local overlay to drop the row.
-    // But Undo must RESTORE a row, and if a focus/PTR refresh already reconciled
-    // a dismissed row out of items[], restoring its state alone can't bring it
-    // back. Undo therefore forces the refetch that re-includes it.
+  it('restores an Undone row WITHOUT a refetch — the deferred dismiss kept it on the server (Hybrid A)', async () => {
+    // A dismiss defers its server write (SPEC.md *Sync → Deferred dismiss
+    // flush*), so within the flush window the item is never sent as Done and is
+    // therefore never reconciled out of the cached `items[]`. Undo just flips the
+    // state back through the store overlay and the row re-appears — no refetch, no
+    // server round-trip. (This replaces the old "Undo forces a refetch" behavior:
+    // there's nothing to re-fetch because nothing was ever removed server-side.)
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
     const seed = await source.getHomeItems();
@@ -3390,7 +3391,7 @@ describe('ItemList', () => {
     );
     renderWithProviders(
       <ItemList
-        viewKey={`undo-refetch-${viewKeySeq++}`}
+        viewKey={`undo-norefetch-${viewKeySeq++}`}
         fetchPage={fetchPage}
         emptyLabel="All caught up."
       />,
@@ -3398,85 +3399,21 @@ describe('ItemList', () => {
     );
     const rows = await screen.findAllByTestId('item-row');
     const id = rows[0].closest('li')!.getAttribute('data-item-id')!;
+    const rowInDom = () =>
+      document.querySelector(`[data-item-id="${id}"]`) != null;
 
-    // Dismiss one row → the dismiss itself does NOT refetch (the whole point).
+    // Dismiss one row → drops from the list via the local overlay, no refetch.
     act(() => {
       source.stateStore.hide(id);
     });
+    await waitFor(() => expect(rowInDom()).toBe(false));
     const undo = await screen.findByTestId('undo-btn');
     expect(fetchPage).toHaveBeenCalledTimes(1);
 
-    // Undo forces a refetch.
+    // Undo restores it — still just one fetch (no refetch), and the row is back.
     await user.click(undo);
-    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
-  });
-
-  it('refetches again when the outbox drains so an Undo restore survives the async write (Codex P2 #376)', async () => {
-    // On the live Supabase source the restoring write is delivered through the
-    // async outbox, so the immediate post-Undo refetch races ahead of it and
-    // reads server truth that still marks the row dismissed — a reconciled-out
-    // row would stay gone until the next focus/PTR. The store's subscribeSynced
-    // fires on the outbox drain; ItemList refetches then, and holds the
-    // pending-scroll request open (rather than giving up after the racing
-    // refetch) while `pendingItemIds()` still lists a restored id.
-    const user = userEvent.setup();
-    const source = new MockDataSource(`test-${Math.random()}`);
-    const seed = await source.getHomeItems();
-    const rowId = seed.items[0].item.id;
-    const withoutRow = seed.items.slice(1);
-    const rowInDom = () =>
-      document.querySelector(`[data-item-id="${rowId}"]`) != null;
-
-    // The server omits the row until its restoring write drains; then it returns.
-    let serverHasRow = false;
-    const fetchPage = vi.fn(() =>
-      Promise.resolve({
-        items: serverHasRow ? seed.items : withoutRow,
-        nextCursor: null,
-      }),
-    );
-    // Model the async outbox: the restoring write is pending until we drain it.
-    let pending = new Set<string>();
-    source.pendingItemIds = () => pending;
-
-    renderWithProviders(
-      <ItemList
-        viewKey={`undo-drain-${viewKeySeq++}`}
-        fetchPage={fetchPage}
-        emptyLabel="All caught up."
-      />,
-      { source },
-    );
-    await screen.findAllByTestId('item-row');
-    expect(fetchPage).toHaveBeenCalledTimes(1);
-    expect(rowInDom()).toBe(false); // reconciled out of the server's pages
-
-    // The row was dismissed earlier (recorded as the undoable batch); its
-    // restoring write will sit in the outbox once we Undo.
-    act(() => {
-      source.stateStore.hide(rowId);
-    });
-    pending = new Set([rowId]);
-    const undo = await screen.findByTestId('undo-btn');
-
-    // Undo fires the immediate (racing) refetch — server still omits the row.
-    await user.click(undo);
-    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
-    expect(rowInDom()).toBe(false);
-    // The racing refetch settled without the row, but the request is NOT dropped
-    // because the write is still pending — no third refetch has fired yet.
-    await Promise.resolve();
-    expect(fetchPage).toHaveBeenCalledTimes(2);
-
-    // The outbox drains: server truth now reflects the restore. subscribeSynced
-    // refetches, and the row comes back on screen.
-    serverHasRow = true;
-    pending = new Set();
-    act(() => {
-      source.stateStore.notifySynced();
-    });
-    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(3));
     await waitFor(() => expect(rowInDom()).toBe(true));
+    expect(fetchPage).toHaveBeenCalledTimes(1);
   });
 
   it('releases the sweep height lock when no refresh starts (offline partial sweep), so there is no stuck blank tail', async () => {
@@ -7739,25 +7676,13 @@ describe('ItemList — Refreshing state', () => {
     });
   });
 
-  it('keeps Undo silent — no Refreshing state while its reconcile refetch runs', async () => {
+  it('keeps Undo silent — no Refreshing state and no refetch', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
     const seed = await source.getHomeItems();
-    let release: (() => void) | null = null;
-    let callCount = 0;
-    const fetchPage = vi.fn(() => {
-      callCount++;
-      if (callCount === 1) {
-        return Promise.resolve({ items: seed.items, nextCursor: null });
-      }
-      // Hold the Undo-forced refetch open so isRefreshing would be true if the
-      // overlay didn't exclude Undo.
-      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>(
-        (resolve) => {
-          release = () => resolve({ items: seed.items, nextCursor: null });
-        },
-      );
-    });
+    const fetchPage = vi.fn(() =>
+      Promise.resolve({ items: seed.items, nextCursor: null }),
+    );
     renderWithProviders(
       <ItemList
         viewKey={`undo-silent-${viewKeySeq++}`}
@@ -7769,18 +7694,19 @@ describe('ItemList — Refreshing state', () => {
     const rows = await screen.findAllByTestId('item-row');
     const id = rows[0].closest('li')!.getAttribute('data-item-id')!;
 
-    // Dismiss then Undo. Undo forces a (held-open) reconcile refetch…
+    // Dismiss then Undo — Undo restores from the local overlay with no refetch
+    // (the deferred dismiss kept the row present), so it never raises Refreshing.
     act(() => {
       source.stateStore.hide(id);
     });
     const undo = await screen.findByTestId('undo-btn');
     await user.click(undo);
-    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
-    // …but it stays silent — Undo is predictable and instant.
+    await waitFor(() =>
+      expect(
+        document.querySelector(`[data-item-id="${id}"]`) != null,
+      ).toBe(true),
+    );
     expect(screen.queryByTestId('refreshing-overlay')).toBeNull();
-
-    await act(async () => {
-      release?.();
-    });
+    expect(fetchPage).toHaveBeenCalledTimes(1);
   });
 });

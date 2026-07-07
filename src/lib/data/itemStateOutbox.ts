@@ -66,6 +66,15 @@ export interface SendResult {
 const RETRY_BASE_MS = 2_000;
 const RETRY_MAX_MS = 60_000;
 
+// How long a *deferred* write (a dismiss / un-dismiss toggle) is held before it's
+// sent, so a quick Undo cancels it in-queue (the reverse coalesces onto it) and a
+// burst of dismisses commits as one batch instead of a server write per swipe —
+// SPEC.md *Sync → Deferred dismiss flush*. Bounds both the cross-device lag and
+// the crash-loss window for a held dismiss. Any non-deferred enqueue (pin/
+// favorite/open/reader-mark-done), an 'online' event, an explicit flush()
+// (app-background), or this timer drains it.
+const DISMISS_FLUSH_MS = 5_000;
+
 /** Merge `next` over `base` per field — `next` wins because its action time is
  * the same or newer (enqueues arrive in wall-clock order). */
 function mergeStamped(base: StampedFields, next: StampedFields): StampedFields {
@@ -126,6 +135,8 @@ export class ItemStateOutbox {
   private dirtyDuringDrain = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private retryAttempt = 0;
+  // Pending bounded flush for deferred (dismiss/undo) writes — see enqueue.
+  private deferTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     /** Persist one item's changed fields (each carrying its action time for the
@@ -185,8 +196,22 @@ export class ItemStateOutbox {
 
   /** Queue a mutation (merging into any pending entry for the item) and kick a
    * flush. `at` is the action's wall-clock time — the per-field last-write-wins
-   * clock. The local store has already applied it optimistically. */
-  enqueue(id: ItemId, changed: ChangedFields, at: number): void {
+   * clock. The local store has already applied it optimistically.
+   *
+   * `defer` holds the send for a bounded window (see {@link DISMISS_FLUSH_MS})
+   * instead of flushing now — used for dismiss/un-dismiss toggles so a quick Undo
+   * cancels the write in-queue (the reverse coalesces onto the still-queued
+   * dismiss) and a burst of dismisses commits as one batch. The write stays in the
+   * queue the whole time, so `pendingIds()`/hydrate protection, persistence, and
+   * the unread-count adjustment all keep working unchanged. Any *non*-deferred
+   * enqueue, an 'online' event, an explicit {@link flush} (app-background), or the
+   * timer drains it. */
+  enqueue(
+    id: ItemId,
+    changed: ChangedFields,
+    at: number,
+    opts?: { defer?: boolean },
+  ): void {
     const cur = this.queue.get(id) ?? {};
     for (const [f, v] of Object.entries(changed) as [ItemStateField, boolean][]) {
       cur[f] = { value: v, at };
@@ -194,13 +219,44 @@ export class ItemStateOutbox {
     this.queue.set(id, cur);
     if (this.draining) this.dirtyDuringDrain = true;
     this.persist();
-    void this.flush();
+    if (opts?.defer) {
+      // Hold the send; (re)arm the idle timer so the batch flushes once dismisses
+      // stop for DISMISS_FLUSH_MS. A later non-deferred write drains it early.
+      this.scheduleDeferredFlush();
+    } else {
+      // An immediate write (pin/favorite/open/reader-mark-done) commits now, and
+      // drains any deferred dismisses riding along with it.
+      this.clearDeferredFlush();
+      void this.flush();
+    }
+  }
+
+  /** (Re)arm the bounded deferred-flush timer, resetting the idle window so a
+   * stream of dismisses coalesces into one batch that sends once they stop. */
+  private scheduleDeferredFlush(): void {
+    if (this.deferTimer != null) clearTimeout(this.deferTimer);
+    this.deferTimer = setTimeout(() => {
+      this.deferTimer = null;
+      void this.flush();
+    }, DISMISS_FLUSH_MS);
+    // Don't keep the process/tab alive purely for a deferred flush.
+    this.deferTimer.unref?.();
+  }
+
+  private clearDeferredFlush(): void {
+    if (this.deferTimer != null) {
+      clearTimeout(this.deferTimer);
+      this.deferTimer = null;
+    }
   }
 
   /** Attempt to deliver everything queued. Safe to call repeatedly (e.g. on the
    * `online` event and at boot); a single drain runs at a time. */
   async flush(): Promise<void> {
     if (this.draining || !this.isOnline()) return;
+    // A real drain supersedes any pending deferred flush — everything queued
+    // (deferred dismisses included) goes out now.
+    this.clearDeferredFlush();
     this.draining = true;
     this.dirtyDuringDrain = false;
     const rejected: ItemId[] = [];

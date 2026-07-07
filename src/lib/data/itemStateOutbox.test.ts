@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ItemStateOutbox,
   type OutboxPersistence,
@@ -231,6 +231,56 @@ describe('ItemStateOutbox', () => {
     await h2.outbox.flush();
     expect(h2.sent).toEqual([['a', { hidden: { value: true, at: 1000 } }]]);
     expect(h2.persistence.rows()).toEqual([]);
+  });
+
+  it('holds a deferred (dismiss) write instead of sending it immediately, then sends it after the idle window', async () => {
+    vi.useFakeTimers();
+    try {
+      const h2 = makeHarness();
+      h2.outbox.enqueue('a', { done: true }, 1000, { defer: true });
+      // Deferred: the write is queued (pending) but NOT sent yet — a quick Undo
+      // could still cancel it in-queue.
+      expect(h2.sent).toEqual([]);
+      expect(h2.outbox.pendingIds()).toEqual(['a']);
+      // After the bounded idle window (DISMISS_FLUSH_MS = 5s) it flushes.
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(h2.sent).toEqual([['a', { done: { value: true, at: 1000 } }]]);
+      expect(h2.outbox.pendingIds()).toEqual([]);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('coalesces a deferred dismiss and its Undo into a single un-dismiss write', async () => {
+    // The whole point of deferring: a dismiss then an Undo (both deferred) merge
+    // in-queue, so the server gets ONE write carrying the final value — the
+    // correct cross-device un-dismiss — instead of a done:true then a done:false.
+    h.outbox.enqueue('a', { done: true }, 1000, { defer: true });
+    h.outbox.enqueue('a', { done: false }, 2000, { defer: true }); // Undo
+    await tick();
+    expect(h.sent).toEqual([]); // still held — neither has gone out
+    await h.outbox.flush();
+    expect(h.sent).toEqual([['a', { done: { value: false, at: 2000 } }]]);
+  });
+
+  it('drains a held deferred write when a later non-deferred write commits', async () => {
+    h.outbox.enqueue('a', { done: true }, 1000, { defer: true });
+    await tick();
+    expect(h.sent).toEqual([]); // held
+    // A pin/favorite/reader-mark-done is immediate — it flushes now and takes the
+    // held dismiss along with it.
+    h.outbox.enqueue('b', { pinned: true }, 2000);
+    await tick();
+    expect(h.sent.map(([id]) => id).sort()).toEqual(['a', 'b']);
+  });
+
+  it('sends a held deferred write on an explicit flush (app-background)', async () => {
+    h.outbox.enqueue('a', { done: true }, 1000, { defer: true });
+    await tick();
+    expect(h.sent).toEqual([]); // held
+    await h.outbox.flush(); // e.g. visibilitychange→hidden / pagehide
+    expect(h.sent).toEqual([['a', { done: { value: true, at: 1000 } }]]);
   });
 
   it('drops malformed persisted entries instead of replaying them forever', async () => {

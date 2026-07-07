@@ -301,6 +301,35 @@ describe('ItemStateStore', () => {
     ]);
   });
 
+  it('marks dismiss/un-dismiss writes deferred, and everything else immediate', () => {
+    // The sink's `defer` flag drives the outbox's bounded-delay flush (Hybrid A):
+    // an undoable dismiss and any un-dismiss are held so a quick Undo cancels them
+    // in-queue; the reader's explicit mark-done and pins/favorites commit ASAP.
+    const store = new ItemStateStore(memoryPersistence());
+    const calls: Array<[string, boolean]> = [];
+    store.setMutationSink((id, _changed, _at, opts) =>
+      calls.push([id, opts?.defer ?? false]),
+    );
+
+    store.hide('swipe'); // swipe/Sweep dismiss → deferred
+    store.undoLast(); // Undo of that dismiss → deferred
+    store.set('reader', 'done', true); // reader "mark done" → ASAP
+    store.set('reader', 'done', false); // un-dismiss (per-row Undo) → deferred
+    store.set('p', 'pinned', true); // pin → ASAP
+    store.set('f', 'favorite', true); // favorite → ASAP
+    store.set('o', 'opened', true); // opened → ASAP
+
+    expect(calls).toEqual([
+      ['swipe', true], // hide (dismiss) → deferred
+      ['swipe', true], // undoLast (un-dismiss) → deferred
+      ['reader', false], // reader "mark done" → ASAP
+      ['reader', true], // un-dismiss → deferred
+      ['p', false], // pin → ASAP
+      ['f', false], // favorite → ASAP
+      ['o', false], // opened → ASAP
+    ]);
+  });
+
   it('undo write-through restores (only) a pin that dismissing cleared', () => {
     const store = new ItemStateStore(memoryPersistence());
     store.set('x', 'pinned', true); // pinned

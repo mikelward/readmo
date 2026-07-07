@@ -332,24 +332,6 @@ export function ItemList({
     error,
   } = useFeedItems(viewKey, fetchPage, adjustNextCursor);
 
-  // A fresh-list fetch (initial load, a stale mount/focus re-materialization, or
-  // pull-to-refresh) can reorder the list under the reader, so the render below
-  // covers it with a "Refreshing" state that blocks taps (SPEC.md *Feed views →
-  // Refreshing*). Undo is the one exception: it restores instantly from the local
-  // store overlay and its refetch is only a silent background reconcile (see
-  // handleUndoScroll), so it must NOT raise the Refreshing state. Track the depth
-  // of Undo-triggered refetches so `showRefreshing` can exclude them while PTR /
-  // stale-focus refetches still show it.
-  const undoRefetchDepth = useRef(0);
-  const undoRefetch = useCallback(() => {
-    undoRefetchDepth.current += 1;
-    const p = refetch();
-    void p.finally(() => {
-      undoRefetchDepth.current = Math.max(0, undoRefetchDepth.current - 1);
-    });
-    return p;
-  }, [refetch]);
-
   const queryClient = useQueryClient();
   // Warm this feed's cache when the reader opens on top of it. The feed route
   // unmounts under the reader and remounts on Back, at which point
@@ -622,53 +604,19 @@ export function ItemList({
   // effect below consumes this once the rows are actually back in the list — the
   // refetch that re-includes them is async, so we can't scroll on the click.
   const pendingUndoScrollIds = useRef<Set<ItemId> | null>(null);
-  // Whether the undo's feed-query refetch has been observed in flight since the
-  // request was armed. The undo batch is global across feed views, so a restored
-  // burst may belong to a view the reader navigated away from; once that refetch
-  // settles without surfacing the rows here, we drop the request (see the effect
-  // below) so a later unrelated refetch can't scroll this view by surprise.
-  const undoScrollSawFetchRef = useRef(false);
-  const handleUndoScroll = useCallback(
-    (restoredIds: ItemId[]) => {
-      pendingUndoScrollIds.current =
-        restoredIds.length > 0 ? new Set(restoredIds) : null;
-      undoScrollSawFetchRef.current = false;
-      // Undo is the one action where we DO want a refetch. A normal mutation
-      // only marks the feed stale (no refetch, so the reader's scroll isn't
-      // reflowed) and relies on the local overlay to drop the row — but Undo
-      // must RESTORE a row, and if a focus/PTR refresh already reconciled it out
-      // of `items[]`, restoring its state alone can't bring it back (it's gone
-      // from the cached page). A refetch re-includes it, and the pending-scroll
-      // effect below rides that same refetch to bring the topmost restored row
-      // on screen. Harmless when the row is still cached — `visibleItems` already
-      // re-includes it and the refetch just reconciles. (Codex P2 on #375.)
-      //
-      // On the live Supabase source the restoring write is delivered through the
-      // async outbox, so THIS refetch can race ahead of it and read server truth
-      // that still marks the row dismissed — leaving a reconciled-out row absent
-      // until the next focus/PTR. The subscribeSynced effect below re-fetches once
-      // the outbox drains, and the pending-scroll effect holds the request open
-      // while `ds.pendingItemIds()` still lists a restored id (Codex P2 on #376).
-      // Routed through undoRefetch so this reconcile stays silent (no Refreshing
-      // state) — Undo is a predictable, instant action.
-      if (restoredIds.length > 0) void undoRefetch();
-    },
-    [undoRefetch],
-  );
-
-  // When an Undo restore is still pending and the outbox drains its writes
-  // server-side, refetch so a reconciled-out row that the immediate post-Undo
-  // refetch couldn't resurface (it raced the async write) comes back now that
-  // server truth reflects the restore. Reset the saw-fetch latch so the
-  // pending-scroll effect waits for THIS refetch to settle before giving up.
-  // No-op on the mock (its store is authoritative, so notifySynced never fires).
-  useEffect(() => {
-    return ds.stateStore.subscribeSynced(() => {
-      if (!pendingUndoScrollIds.current) return;
-      undoScrollSawFetchRef.current = false;
-      void undoRefetch();
-    });
-  }, [ds, undoRefetch]);
+  const handleUndoScroll = useCallback((restoredIds: ItemId[]) => {
+    // Undo restores the rows' state through the store overlay and does NOT
+    // refetch: a dismiss defers its server write (SPEC.md *Sync → Deferred
+    // dismiss flush*), so the row is never sent as Done during the flush window
+    // and therefore never reconciled out of the cached `items[]` — flipping
+    // `done`/`hidden` back to false re-includes it in `visibleItems` on the next
+    // commit, no server round-trip. We just remember which rows were restored so
+    // the effect below can scroll the topmost one back on screen once it renders.
+    // (A restore *after* the flush window, when a PTR happened to reconcile the
+    // row out in that sliver, simply won't scroll — accepted edge, SPEC.)
+    pendingUndoScrollIds.current =
+      restoredIds.length > 0 ? new Set(restoredIds) : null;
+  }, []);
 
   // When the bottom toolbar is pinned to the viewport foot it's always on
   // screen, so `hasMore` alone (another *page* is fetchable) can't drive "More"
@@ -1642,34 +1590,16 @@ export function ItemList({
     if (!pending) return;
     const restoredInList = visibleItems.filter((fi) => pending.has(fi.item.id));
     if (restoredInList.length === 0) {
-      // Does a restored id still have a write queued in the async outbox? Empty
-      // on the mock (authoritative store); on Supabase, true until the restoring
-      // write drains. Read imperatively — the effect re-runs when isFetching
-      // flips (the drain refetch settling), so this is re-evaluated each pass.
-      const pend = ds.pendingItemIds?.();
-      const restoredHavePendingWrites =
-        pend != null && pend.size > 0 && [...pending].some((id) => pend.has(id));
-      // Rows aren't in this view (yet). Undo invalidates the feed query, so a
-      // refetch re-includes a same-view burst — wait for it. But once that
-      // refetch has run and settled without surfacing the rows, the batch
-      // belongs to another view the reader navigated from; drop the request so a
-      // later unrelated refetch can't scroll this view (Codex P2 on PR #229).
-      //
-      // Exception: on the live Supabase source the restoring write drains
-      // asynchronously, so the immediate post-Undo refetch settles against
-      // still-dismissed server truth. While any restored id still has an
-      // un-synced write, hold the request open — the subscribeSynced effect
-      // refetches on drain, and only then (write landed, row still absent → truly
-      // another view) do we give up (Codex P2 on PR #376).
-      if (isFetching) undoScrollSawFetchRef.current = true;
-      else if (undoScrollSawFetchRef.current && !restoredHavePendingWrites) {
-        pendingUndoScrollIds.current = null;
-        undoScrollSawFetchRef.current = false;
-      }
+      // The restored rows aren't in this view's cached page. Undo no longer
+      // refetches (the deferred dismiss kept them on the server, so a same-view
+      // burst re-includes them via the overlay above and is found on this pass),
+      // so there's nothing to wait for: the batch either belongs to another view
+      // the reader navigated from, or fell out of the page after the flush window
+      // — either way we can't scroll to an unloaded row, so drop the request.
+      pendingUndoScrollIds.current = null;
       return;
     }
     pendingUndoScrollIds.current = null;
-    undoScrollSawFetchRef.current = false;
     let target: HTMLElement | null = null;
     for (const fi of restoredInList) {
       const el = document.querySelector(`[data-item-id="${fi.item.id}"]`);
@@ -1697,7 +1627,7 @@ export function ItemList({
       top: Math.max(0, top + window.scrollY - chrome),
       behavior: 'smooth',
     });
-  }, [visibleItems, isFetching, groupByFeed, ds]);
+  }, [visibleItems, groupByFeed]);
 
   // Which feed sections should show a "More" at their foot, and which are
   // mid-fetch. A feed has more when it already holds extras that aren't
@@ -2980,13 +2910,12 @@ export function ItemList({
   // is in flight, so the reader can't tap a row that's about to re-materialize
   // (SPEC.md *Feed views → Refreshing*). `isRefreshing` is a whole-list refetch
   // with rows already present (PTR, or a stale mount/focus past the 6h TTL) — but
-  // NOT a "More" next-page append (that's predictable, at the bottom) and NOT an
-  // Undo reconcile (excluded via undoRefetchDepth — Undo restores instantly and
-  // must stay silent). The empty-cache first load has no rows to cover, so
+  // NOT a "More" next-page append (that's predictable, at the bottom). Undo no
+  // longer refetches at all (the deferred dismiss keeps the row present), so it
+  // never reaches here. The empty-cache first load has no rows to cover, so
   // ItemRows renders the same state inline (its `isLoading` path, relabeled
   // "Refreshing") instead.
-  const showRefreshing =
-    isRefreshing && undoRefetchDepth.current === 0 && items.length > 0;
+  const showRefreshing = isRefreshing && items.length > 0;
 
   return (
     <div

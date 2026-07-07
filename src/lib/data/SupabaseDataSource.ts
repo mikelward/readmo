@@ -450,16 +450,18 @@ export class SupabaseDataSource implements DataSource {
         }
       },
     );
-    this.stateStore.setMutationSink((id, changed, at) => {
+    this.stateStore.setMutationSink((id, changed, at, opts) => {
       // The store already applied this write optimistically with its action time
       // on every touched field, so the hydrate's per-field LWW preserves it. While
       // a read is in flight, note the write's changed fields (unioned) so a write
       // that also drains before the read returns can still overlay them onto a
       // tied server row, and so a brand-new row that raced the read isn't dropped
-      // as "absent" (see applyHydration).
+      // as "absent" (see applyHydration). `opts.defer` (a dismiss/undo toggle)
+      // holds the send for a bounded window — the write still sits in the outbox
+      // (so pending/hydrate protection is unchanged), it just isn't drained yet.
       const note = this.hydrationWrittenChanges;
       if (note) note.set(id, { ...note.get(id), ...changed });
-      this.outbox.enqueue(id, changed, at);
+      this.outbox.enqueue(id, changed, at, opts);
     });
     // Kick off item_state hydration at boot so the library routes (/pinned,
     // /favorites, …), which derive their ids from the store, populate even when
@@ -474,6 +476,18 @@ export class SupabaseDataSource implements DataSource {
     void this.outbox.flush();
     if (typeof window !== 'undefined') {
       window.addEventListener('online', () => void this.outbox.flush());
+    }
+    // Flush any deferred (held) dismiss the moment the app is backgrounded or
+    // being torn down, so a held write isn't lost if this is the last thing the
+    // user does before leaving — bounding the crash-loss window to that event
+    // rather than the full DISMISS_FLUSH_MS timer.
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') void this.outbox.flush();
+      });
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pagehide', () => void this.outbox.flush());
     }
   }
 

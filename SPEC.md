@@ -975,6 +975,29 @@ negligible and off every critical path. See the External services table in
   timestamp; on reconnect it flushes to Postgres, coalesced and serialized per
   item. The UI reflects it immediately, rolling back only on a non-transient
   server rejection (lost item visibility — never a sync conflict).
+- **Deferred dismiss flush — a dismissal's *server write* is held briefly so
+  Undo is free.** A dismiss (swipe / Sweep / scroll-past auto-hide) and its Undo
+  apply to the local mirror **immediately** — the row leaves the list at once, as
+  always — but the *server* write is held in the outbox for a short bounded window
+  (a few seconds), rather than sent at once. Within that window an **Undo cancels
+  the dismissal in the queue** (the reverse coalesces onto the still-unsent
+  dismiss), so a dismiss-then-undo is a **zero-round-trip, local-only** operation
+  and a burst of dismissals commits to the server as **one batch** instead of a
+  write per row. The hold is bounded by whichever comes first: the idle timer, a
+  later **non-deferred** write (a pin/favorite/open/reader-mark-done, which commit
+  ASAP and drain any held dismiss with them), or the app being **backgrounded**
+  (`visibilitychange`/`pagehide` flush) — so a lone dismissal still reaches the
+  server promptly and a still-held write is never lost on a normal app exit. The
+  trade this buys back the free Undo for: a dismissal propagates to the user's
+  **other devices** only after it flushes (a few seconds), not instantly — a
+  deliberate, bounded relaxation of the otherwise-ASAP sync. The deferred write
+  lives in the outbox the whole time, so pending-write hydrate protection,
+  persistence across reload, offline retry, and the unread-count adjustment are
+  all unchanged. The **reader's explicit "mark done"** is *not* deferred (it has
+  no Undo affordance) — only the undoable swipe/Sweep path holds. (Because the
+  dismiss isn't on the server during the window, the feed never reconciles the row
+  out, so **Undo restores it with no refetch** — see *Feed views → A dismiss never
+  refetches*.)
 - **Conflict resolution is per-field last-write-wins on the action timestamp.**
   Each field carries the wall-clock time of the action that set it (`<f>_at`,
   which doubles as the field's ordering/TTL key, read only while the flag is
@@ -1466,19 +1489,17 @@ negligible and off every critical path. See the External services table in
      from under the reader's scroll — and a back-navigation that refetched on
      every mount, regardless of how recently the feed loaded, spent a DB read for
      no visible change. A local mutation staying local is what makes "dismiss
-     keeps your place" reliable. Three deliberate exceptions:
+     keeps your place" reliable. **Undo does not refetch:** a dismiss defers its server write (*Sync →
+     Deferred dismiss flush*), so the row is never sent as Done during the flush
+     window and never reconciled out of `items[]` — flipping its state back
+     re-includes it from the overlay on the next commit, no round-trip (a restore
+     *after* the flush window, if a PTR reconciled the row out in that sliver, just
+     won't reappear until the next refresh — accepted edge). Two deliberate
+     exceptions do refetch:
      (1) the **unread-count** query (`['feed','unread-counts',…]`) keeps
      refetching — it's a cheap number that never reflows the list, and suppressing
      it would let a grouped badge read a stale server count and jump back up after
-     a sync; (2) **Undo forces a refetch** — it must *restore* rows, and if a
-     focus/PTR refresh already reconciled a dismissed row out of `items[]`,
-     restoring its state alone can't bring it back. On the live Supabase source
-     the restoring write is delivered through the async outbox, so that immediate
-     refetch can race ahead of it and read server truth that still marks the row
-     dismissed; the store's `subscribeSynced` channel re-fetches once the outbox
-     **drains**, and the pending-scroll request is held open (rather than dropped
-     after the racing refetch) while `pendingItemIds()` still lists a restored id;
-     (3) the **global "More" pager**, when any loaded row is locally dismissed,
+     a sync; (2) the **global "More" pager**, when any loaded row is locally dismissed,
      maps its next-page offset to the count of *distinct live (non-dismissed)
      rows* it has loaded — an absolute count, not a decrement of the server
      cursor, so it stays stable across successive taps — since the server's offset
