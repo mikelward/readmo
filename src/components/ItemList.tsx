@@ -1616,6 +1616,19 @@ export function ItemList({
     for (const fi of mergedRaw) {
       const id = fi.item.id;
       const st = ds.stateStore.get(id);
+      // A PIN is exempt from the Done/Hidden overlay — a pin means "keep this
+      // visible", so it always shows normally (never dismissed, never grayed),
+      // matching the server feed read, which returns a pinned row regardless of
+      // Done/Hidden (0031, the pinned candidate branch). Without this, a row
+      // that is both pinned AND Done/Hidden — you pinned it, then opened it on a
+      // "mark done on open" feed, or marked it Done — is dropped here, and the
+      // remove-when-off-screen rule below makes it VANISH on scroll/PTR (the
+      // grouped section then collapses to a phantom "More"), even though it's
+      // still in the read and still in `/pinned`.
+      if (st.pinned) {
+        visible.push(fi);
+        continue;
+      }
       if (!st.done && !st.hidden) {
         visible.push(fi);
         continue;

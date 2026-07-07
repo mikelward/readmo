@@ -5410,6 +5410,52 @@ describe('ItemList', () => {
       expect(order()).toEqual(['A-0', 'A-1', 'A-2']);
     });
 
+    it('keeps a pinned row visible in a grouped section even when it is also Done (pin wins, no phantom)', async () => {
+      // The reported live bug: a pinned article also marked Done locally (pinned,
+      // then opened on a mark-done-on-open feed) was dropped by the feed's
+      // Done/Hidden display filter, so after PTR the grouped section collapsed to
+      // a phantom "More" — even though the server returns the pinned row and it's
+      // still in /pinned. The pin must win: the row shows normally, not grayed,
+      // not removed.
+      const { source, mk } = await makeRows();
+      source.stateStore.hydrate([
+        [
+          'A-0',
+          {
+            ...DEFAULT_ITEM_STATE,
+            pinned: true,
+            pinnedAt: Date.now(),
+            done: true,
+            doneAt: Date.now(),
+          },
+        ],
+      ]);
+      const base = [mk('A', 'Feed A', 0)];
+      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
+      const fetchFeedPage = vi.fn(() =>
+        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
+      );
+      renderWithProviders(
+        <ItemList
+          viewKey={`psm-pin-done-${viewKeySeq++}`}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+          groupByFeed
+          fetchFeedPage={fetchFeedPage}
+          perFeedLimit={3}
+        />,
+        { source },
+      );
+      await screen.findAllByTestId('item-row');
+      const row = document.querySelector('[data-item-id="A-0"]') as HTMLElement | null;
+      expect(row).not.toBeNull();
+      // Shown normally — not dismissed/grayed, not filtered out.
+      expect(row?.classList.contains('item-list__row--dismissed')).toBe(false);
+      expect(
+        within(row as HTMLElement).getByTestId('pin-btn'),
+      ).toHaveAttribute('aria-pressed', 'true');
+    });
+
     it('keeps a pinned row visible when it falls outside the per-feed window (never strands it behind a phantom More)', async () => {
       // Repro of the "pull-to-refresh hides my pinned article" bug: a pin can sit
       // OUTSIDE the per-feed sticky window — a local/older pin the server still
