@@ -332,6 +332,24 @@ export function ItemList({
     error,
   } = useFeedItems(viewKey, fetchPage, adjustNextCursor);
 
+  // A fresh-list fetch (initial load, a stale mount/focus re-materialization, or
+  // pull-to-refresh) can reorder the list under the reader, so the render below
+  // covers it with a "Refreshing" state that blocks taps (SPEC.md *Feed views →
+  // Refreshing*). Undo is the one exception: it restores instantly from the local
+  // store overlay and its refetch is only a silent background reconcile (see
+  // handleUndoScroll), so it must NOT raise the Refreshing state. Track the depth
+  // of Undo-triggered refetches so `showRefreshing` can exclude them while PTR /
+  // stale-focus refetches still show it.
+  const undoRefetchDepth = useRef(0);
+  const undoRefetch = useCallback(() => {
+    undoRefetchDepth.current += 1;
+    const p = refetch();
+    void p.finally(() => {
+      undoRefetchDepth.current = Math.max(0, undoRefetchDepth.current - 1);
+    });
+    return p;
+  }, [refetch]);
+
   const queryClient = useQueryClient();
   // Warm this feed's cache when the reader opens on top of it. The feed route
   // unmounts under the reader and remounts on Back, at which point
@@ -631,9 +649,11 @@ export function ItemList({
       // until the next focus/PTR. The subscribeSynced effect below re-fetches once
       // the outbox drains, and the pending-scroll effect holds the request open
       // while `ds.pendingItemIds()` still lists a restored id (Codex P2 on #376).
-      if (restoredIds.length > 0) void refetch();
+      // Routed through undoRefetch so this reconcile stays silent (no Refreshing
+      // state) — Undo is a predictable, instant action.
+      if (restoredIds.length > 0) void undoRefetch();
     },
-    [refetch],
+    [undoRefetch],
   );
 
   // When an Undo restore is still pending and the outbox drains its writes
@@ -646,9 +666,9 @@ export function ItemList({
     return ds.stateStore.subscribeSynced(() => {
       if (!pendingUndoScrollIds.current) return;
       undoScrollSawFetchRef.current = false;
-      void refetch();
+      void undoRefetch();
     });
-  }, [ds, refetch]);
+  }, [ds, undoRefetch]);
 
   // When the bottom toolbar is pinned to the viewport foot it's always on
   // screen, so `hasMore` alone (another *page* is fetchable) can't drive "More"
@@ -2956,6 +2976,18 @@ export function ItemList({
     if (bodyRef.current) bodyRef.current.style.overflowAnchor = '';
   }, [visibleItems.length]);
 
+  // Cover the on-screen list with a "Refreshing" state while a fresh-list fetch
+  // is in flight, so the reader can't tap a row that's about to re-materialize
+  // (SPEC.md *Feed views → Refreshing*). `isRefreshing` is a whole-list refetch
+  // with rows already present (PTR, or a stale mount/focus past the 6h TTL) — but
+  // NOT a "More" next-page append (that's predictable, at the bottom) and NOT an
+  // Undo reconcile (excluded via undoRefetchDepth — Undo restores instantly and
+  // must stay silent). The empty-cache first load has no rows to cover, so
+  // ItemRows renders the same state inline (its `isLoading` path, relabeled
+  // "Refreshing") instead.
+  const showRefreshing =
+    isRefreshing && undoRefetchDepth.current === 0 && items.length > 0;
+
   return (
     <div
       className="item-list"
@@ -3080,16 +3112,27 @@ export function ItemList({
               grayedIds={grayedIds}
               onUndoDismiss={handleUndoDismiss}
               emptyLabel={emptyLabel ?? 'Nothing here yet.'}
+              loadingLabel="Refreshing"
             />
           </div>
         )}
       </PullToRefresh>
 
-      {/* Background-refresh status strip — only when rows are already on
-          screen (SPEC.md *Feed views → Background refresh status strip*). */}
-      {items.length > 0 && isRefreshing ? (
-        <div className="item-list__refresh" role="status">
-          Checking for new items…
+      {/* Refreshing state — covers the on-screen list and blocks taps while a
+          fresh-list fetch could reorder it (SPEC.md *Feed views → Refreshing*).
+          Anchored below the top chrome so the header/toolbar stay usable. */}
+      {showRefreshing ? (
+        <div
+          className="item-list__refreshing"
+          role="status"
+          aria-live="polite"
+          data-testid="refreshing-overlay"
+          style={
+            topChromeHeight > 0 ? { top: `${topChromeHeight}px` } : undefined
+          }
+        >
+          <span className="state__spinner" aria-hidden="true" />
+          <span className="state__loading-label">Refreshing</span>
         </div>
       ) : null}
       {items.length > 0 && refreshFailed ? (
