@@ -7619,3 +7619,168 @@ describe('ItemList — Sweep clears grayed rows', () => {
     await waitFor(() => expect(row()).toBeNull());
   });
 });
+
+describe('ItemList — Refreshing state', () => {
+  // A fresh-list fetch can reorder the list under the reader, so it's covered by
+  // a "Refreshing" state that blocks taps until it settles (SPEC.md *Feed views →
+  // Refreshing*). Exceptions: a "More" next-page append (predictable, at the
+  // bottom) and an Undo reconcile (instant, must stay silent).
+  it('covers the on-screen list with a Refreshing overlay while a fresh-list refetch is in flight', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    let release: (() => void) | null = null;
+    let callCount = 0;
+    const fetchPage = vi.fn(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({ items: seed.items, nextCursor: null });
+      }
+      // Hold the refetch open so isRefreshing stays true while we probe the DOM.
+      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>(
+        (resolve) => {
+          release = () => resolve({ items: seed.items, nextCursor: null });
+        },
+      );
+    });
+    const viewKey = `refreshing-${viewKeySeq++}`;
+    renderWithProviders(
+      <ItemList viewKey={viewKey} fetchPage={fetchPage} emptyLabel="All caught up." />,
+      { source, queryClient },
+    );
+    await screen.findAllByTestId('item-row');
+    // Settled list: no Refreshing state.
+    expect(screen.queryByTestId('refreshing-overlay')).toBeNull();
+
+    // A stale mount/focus re-materialization or PTR — modeled by invalidating the
+    // feed query (the same path those take) — holds the refetch open.
+    act(() => {
+      void queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
+    });
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+    const overlay = screen.getByTestId('refreshing-overlay');
+    expect(overlay).toHaveTextContent('Refreshing');
+
+    // Once the fetch settles the overlay clears and the list is tappable again.
+    await act(async () => {
+      release?.();
+    });
+    await waitFor(() =>
+      expect(screen.queryByTestId('refreshing-overlay')).toBeNull(),
+    );
+  });
+
+  it('labels the empty-cache first load "Refreshing" rather than "Loading…"', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    let release: (() => void) | null = null;
+    const fetchPage = vi.fn(
+      () =>
+        new Promise<{ items: FeedItem[]; nextCursor: string | null }>((resolve) => {
+          release = () => resolve({ items: [], nextCursor: null });
+        }),
+    );
+    renderWithProviders(
+      <ItemList
+        viewKey={`empty-load-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    // No rows yet, so the state renders inline (not the overlay) and reads
+    // "Refreshing".
+    const loading = await screen.findByTestId('loading-state');
+    expect(loading).toHaveTextContent('Refreshing');
+    expect(screen.queryByTestId('refreshing-overlay')).toBeNull();
+    await act(async () => {
+      release?.();
+    });
+  });
+
+  it('does NOT show the Refreshing state while "More" fetches the next page', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems({ limit: 100 });
+    const firstItems = seed.items.slice(0, 5);
+    const restItems = seed.items.slice(5, 10);
+    let release: (() => void) | null = null;
+    let callCount = 0;
+    const fetchPage = vi.fn(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({ items: firstItems, nextCursor: '5' });
+      }
+      // Hold the next-page fetch open so isFetchingNextPage stays true.
+      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>(
+        (resolve) => {
+          release = () => resolve({ items: restItems, nextCursor: null });
+        },
+      );
+    });
+    renderWithProviders(
+      <ItemList
+        viewKey={`more-no-refresh-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+
+    await user.click(screen.getByTestId('more-btn'));
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+    // A next-page append is predictable (older rows at the bottom) — no overlay.
+    expect(screen.queryByTestId('refreshing-overlay')).toBeNull();
+
+    await act(async () => {
+      release?.();
+    });
+  });
+
+  it('keeps Undo silent — no Refreshing state while its reconcile refetch runs', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const seed = await source.getHomeItems();
+    let release: (() => void) | null = null;
+    let callCount = 0;
+    const fetchPage = vi.fn(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({ items: seed.items, nextCursor: null });
+      }
+      // Hold the Undo-forced refetch open so isRefreshing would be true if the
+      // overlay didn't exclude Undo.
+      return new Promise<{ items: FeedItem[]; nextCursor: string | null }>(
+        (resolve) => {
+          release = () => resolve({ items: seed.items, nextCursor: null });
+        },
+      );
+    });
+    renderWithProviders(
+      <ItemList
+        viewKey={`undo-silent-${viewKeySeq++}`}
+        fetchPage={fetchPage}
+        emptyLabel="All caught up."
+      />,
+      { source },
+    );
+    const rows = await screen.findAllByTestId('item-row');
+    const id = rows[0].closest('li')!.getAttribute('data-item-id')!;
+
+    // Dismiss then Undo. Undo forces a (held-open) reconcile refetch…
+    act(() => {
+      source.stateStore.hide(id);
+    });
+    const undo = await screen.findByTestId('undo-btn');
+    await user.click(undo);
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
+    // …but it stays silent — Undo is predictable and instant.
+    expect(screen.queryByTestId('refreshing-overlay')).toBeNull();
+
+    await act(async () => {
+      release?.();
+    });
+  });
+});

@@ -388,3 +388,24 @@
   cursor: pointer;
   text-decoration: underline;
 }
+
+/* Refreshing overlay: covers the on-screen list while a fresh-list fetch could
+   reorder it, so the reader can't tap an about-to-move row. Anchored below the
+   top chrome (the `top` inset is set inline from the measured chrome height) so
+   the header + toolbar stay usable; the opaque paper background hides the stale
+   rows underneath, which stay mounted so the scroll/height machinery is
+   undisturbed. */
+.item-list__refreshing {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--rm-bg);
+}

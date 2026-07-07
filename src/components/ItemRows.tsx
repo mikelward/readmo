@@ -35,6 +35,10 @@ interface Props {
   emptyLabel: string;
   /** Render a loading indicator instead of rows or the empty state. */
   isLoading?: boolean;
+  /** Label under the loading spinner. Feed views pass "Refreshing" (a fresh
+   * article-list fetch could reorder the list); library/search/offline keep the
+   * default "Loading…". */
+  loadingLabel?: string;
   /** Feed views enable swipe (right=Hide, left=Pin); library/search/offline
    * disable it — every row there already holds the state the view represents. */
   enableSwipe?: boolean;
@@ -136,6 +140,7 @@ export function ItemRows({
   items,
   emptyLabel,
   isLoading = false,
+  loadingLabel = 'Loading…',
   enableSwipe = false,
   listRef,
   rightAction,
@@ -192,7 +197,7 @@ export function ItemRows({
   // blank shimmer rows — the wait reads as loading, not as an empty feed still
   // painting in.
   if (isLoading) {
-    return <LoadingState label="Loading…" showLabel />;
+    return <LoadingState label={loadingLabel} showLabel />;
   }
 
   // Empty state only when there are *also* no phantom More-sections to show.

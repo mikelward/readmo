@@ -1396,16 +1396,21 @@ negligible and off every critical path. See the External services table in
      instead loads each feed's first **`PER_FEED_WINDOW` (10)** in one windowed
      read and grows per section. Further flat pages only via an explicit **More**
      button (no infinite scroll). Same pagination discipline.
-   - **Loading indicator.** While the first page is fetching — or an empty feed
-     is being re-validated (a reconnect/PTR/boot refetch) — the body shows a
-     centered spinner with a visible **"Loading…"** label (`LoadingState`, a
-     `role="status"` region), not blank placeholder rows. The wait reads as
-     loading rather than an empty or half-painted feed. Reduced-motion readers
-     get the label without the spin. The library and offline views use the same
-     indicator.
-   - **Background refresh status strip** at the foot ("Checking for new
-     items…" / "Couldn't refresh." + Retry), appearing only when rows are
-     already on screen. Verbatim mirror.
+   - **Refreshing state.** Any time a feed view is fetching a **fresh article
+     list** — the first page from an empty cache, a re-materialization on
+     mount/window-focus past the 6h freshness TTL, or a pull-to-refresh — the
+     list is covered by a centered spinner with a visible **"Refreshing"** label
+     (`role="status"`). Because a fresh fetch can reorder the list, this **blocks
+     taps** so the reader can't act on a row that's about to move as the set
+     re-materializes. With rows already on screen it's an overlay over the list
+     (the top chrome stays usable); from an empty cache it's the inline state.
+     It is **not** raised by **More** (a predictable append of older rows at the
+     bottom, which keeps its own button spinner) or by **Undo** (an instant,
+     local restore — below). Reduced-motion readers get the label without the
+     spin. The library, search, and offline views keep the plain **"Loading…"**
+     indicator (their lists don't re-materialize under the reader the same way).
+   - **Refresh-failure strip** at the foot (**"Couldn't refresh." + Retry**),
+     shown when a background refresh fails while rows are already on screen.
    - **A stable set of articles.** The published set a feed view shows — which
      articles, in which order — is held **frozen** between reads. New items the
      poller adds, and cross-device changes the overlay can't express, do **not**
@@ -1419,9 +1424,11 @@ negligible and off every critical path. See the External services table in
      top rows in — it pages the existing cursor, so only PTR or the TTL bring the
      top current. This is the "quiet" contract: you can read the news a couple of
      times a day without the list churning every time the server changes, and
-     nothing you didn't ask for moves the rows you're looking at. Cross-device
-     pin/done still propagate promptly — but *in place* (below), not by
-     re-materializing the set.
+     nothing you didn't ask for moves the rows you're looking at. When the set
+     *does* re-materialize from a fresh fetch (a load/return past the TTL, or a
+     PTR), the reader sees the **Refreshing** state over the list, not a stale set
+     silently reordering under a tap (above). Cross-device pin/done still
+     propagate promptly — but *in place* (below), not by re-materializing the set.
    - **Dismissed in place — a cross-device dismiss grays, it doesn't collapse.**
      A dismiss (Done/Hidden) that arrives *from another device* for a row that's
      on screen leaves the row where it is, **dimmed with its title struck
