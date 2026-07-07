@@ -171,7 +171,10 @@ export class MockDataSource implements DataSource {
       if (arr) arr.push(item);
       else byFeed.set(item.feedId, [item]);
       const st = this.stateStore.get(item.id, now);
-      if (st.done || st.hidden) continue; // dismissed: never served in the body
+      // Dismissed rows are never served in the body — EXCEPT a pin, which stays
+      // regardless of Done/Hidden (mirrors feed_items' pinned branch and the
+      // SupabaseDataSource overlay; the pin wins, matching the display).
+      if (!st.pinned && (st.done || st.hidden)) continue;
       candidates.push({ item, st });
     }
     const feedRank = new Map<ItemId, number>();
@@ -348,7 +351,7 @@ export class MockDataSource implements DataSource {
         // Among listable items, count the unread/to-do ones: not Done or active
         // Hidden, and either pinned OR not Opened — a pinned item always counts
         // (a pin is a to-do, read or not); others drop out once Opened.
-        if (st.done || st.hidden) return;
+        if (!st.pinned && (st.done || st.hidden)) return; // a pin always counts
         if (st.pinned || !st.opened) n += 1;
       });
       counts[feedId] = n;
