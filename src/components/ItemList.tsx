@@ -11,8 +11,13 @@ import {
   type CSSProperties,
 } from 'react';
 import { flushSync } from 'react-dom';
+import { useNavigationType } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
+import {
+  markFeedReaderOpen,
+  consumeFeedReaderReturn,
+} from '../lib/feedReaderReturn';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { useFeedItems, dedupeFeedPages, type FetchPage } from '../hooks/useFeedItems';
 import type { ItemSort, Page } from '../lib/data/DataSource';
@@ -317,6 +322,36 @@ export function ItemList({
     },
     [ds],
   );
+  const queryClient = useQueryClient();
+  // Don't refetch the feed when the user navigates Back into it from the reader.
+  // Returning should paint the cached list, not fire a fetch that reflows it a
+  // beat later — right as a tap is aimed at a new card. Fresh data still arrives
+  // on the forward path (opening an article warms the cache — see
+  // handleOpenReader below), on focus, on pull-to-refresh, and on cross-device
+  // sync. Gated on BOTH a came-from-reader flag (set on open, consumed once
+  // here) AND a POP navigation, so boot — which is also a POP but never opened a
+  // reader — still validates its persisted cache, and a first dataless mount
+  // still fetches regardless (refetchOnMount only gates refetching cached data).
+  // The flag survives the feed route unmounting under the reader (see
+  // feedReaderReturn); the ref-guard consumes it once per mount, StrictMode-safe.
+  //
+  // Exception: if a cross-device hydration invalidated this feed while the
+  // reader was open (useFeedInvalidation's subscribeHydrated → invalidateQueries
+  // marks it, but an unmounted query can't refetch), we must NOT suppress the
+  // Back-remount — that refetch is what surfaces rows the local overlay can't
+  // express (e.g. another device pinning an item outside the loaded window).
+  // `isInvalidated` distinguishes that from plain time-based staleness (which
+  // never sets it), so only the reflow-only Back refetch is suppressed. (Codex
+  // P2 on #410.)
+  const navigationType = useNavigationType();
+  const cameFromReaderRef = useRef<boolean | null>(null);
+  if (cameFromReaderRef.current === null) {
+    const invalidated =
+      queryClient.getQueryState(['feed', viewKey])?.isInvalidated ?? false;
+    cameFromReaderRef.current = consumeFeedReaderReturn(viewKey) && !invalidated;
+  }
+  const refetchOnMount =
+    cameFromReaderRef.current && navigationType === 'POP' ? false : undefined;
   const {
     items,
     isLoading,
@@ -330,9 +365,8 @@ export function ItemList({
     isRefreshing,
     refreshFailed,
     error,
-  } = useFeedItems(viewKey, fetchPage, adjustNextCursor);
+  } = useFeedItems(viewKey, fetchPage, adjustNextCursor, refetchOnMount);
 
-  const queryClient = useQueryClient();
   // Warm this feed's cache when the reader opens on top of it. The feed route
   // unmounts under the reader and remounts on Back, at which point
   // refetchOnMount (true-when-stale) would fire the refetch *then* — landing a
@@ -347,6 +381,9 @@ export function ItemList({
   // refetch lands in the cache whether or not this view is still mounted.
   const handleOpenReader = useCallback(() => {
     void queryClient.refetchQueries({ queryKey: ['feed', viewKey], stale: true });
+    // Record the round-trip so the Back-remount of this view skips its own
+    // refetch (the warming above already covers freshness).
+    markFeedReaderOpen(viewKey);
   }, [queryClient, viewKey]);
 
   // Surface the FULL read failure in the browser console (desktop debugging) —

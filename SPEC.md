@@ -1460,6 +1460,18 @@ negligible and off every critical path. See the External services table in
      returning to it, costs nothing); only a genuinely stale one refreshes, and
      it does so early. This is the same freshness TTL as every other refresh path
      — just clocked from *open* rather than from *Back*.
+   - **Returning from the reader doesn't refetch the feed for freshness's sake.**
+     Pressing Back paints the cached list as-is; it does not fire a read that
+     could reflow rows under the next tap merely because time passed while the
+     article was open. Fresh data still arrives on the forward path (opening an
+     article warms the feed, above) and via focus and pull-to-refresh. The one
+     exception is a **cross-device change that arrived while the article was
+     open**: that reconciles on Back so the new rows (e.g. a pin made on another
+     device, outside the loaded window) show up on return rather than waiting for
+     a later focus/refresh — a change the local list genuinely needs, not a
+     reflow of the same data. The suppression is also scoped to the reader
+     round-trip: a normal load of a stale feed (boot / persist-restore) still
+     validates, so the reader is never stranded on stale data.
    - **Pin-to-download promo bar** above the first row ("Pin an article to
      download it"), explaining that pinning warms the offline cache (see
      *Prefetch on Pin/Favorite*). Shown only once rows exist; dismissable via a

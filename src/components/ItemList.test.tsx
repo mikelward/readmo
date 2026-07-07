@@ -8,6 +8,10 @@ import { ItemList } from './ItemList';
 import type { FetchPage } from '../hooks/useFeedItems';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import { _resetNetworkStatusForTests } from '../lib/networkStatus';
+import {
+  markFeedReaderOpen,
+  resetFeedReaderReturnForTest,
+} from '../lib/feedReaderReturn';
 import { DEFAULT_ITEM_STATE, type FeedItem } from '../lib/types';
 import { resetPromoDismissedCacheForTest } from '../hooks/usePromoDismissed';
 import {
@@ -265,6 +269,9 @@ describe('ItemList', () => {
     resetPromoDismissedCacheForTest();
     resetReadingPrefsCacheForTest();
     resetCollapsedFeedsCacheForTest();
+    // Clear any pending "came from the reader" flag so a case that opens a row
+    // can't suppress the next case's mount refetch.
+    resetFeedReaderReturnForTest();
   });
 
   afterEach(() => {
@@ -7388,6 +7395,106 @@ describe('ItemList', () => {
         await Promise.resolve();
       });
       expect(fetchPage).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not refetch a stale feed on the Back-remount from the reader', async () => {
+      // Returning from the reader must paint the cached list, not fetch under
+      // the next tap. markFeedReaderOpen simulates the open that just happened;
+      // the mount is a POP (MemoryRouter's initial navigation type), so the
+      // came-from-reader + POP gate suppresses the mount refetch even though the
+      // cached page is stale.
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const viewKey = `home-back-${viewKeySeq++}`;
+      const fetchPage = vi.fn<FetchPage>((cursor) =>
+        source.getHomeItems({ cursor }),
+      );
+      const seed = await source.getHomeItems();
+      const queryClient = new QueryClient({
+        // staleTime 0 → the seeded page is stale, so only the suppression keeps
+        // the mount from refetching.
+        defaultOptions: { queries: { retry: false, gcTime: 60_000, staleTime: 0 } },
+      });
+      queryClient.setQueryData(['feed', viewKey], {
+        pages: [{ items: seed.items, nextCursor: seed.nextCursor }],
+        pageParams: [null],
+      });
+
+      markFeedReaderOpen(viewKey);
+      renderWithProviders(
+        <ItemList viewKey={viewKey} fetchPage={fetchPage} emptyLabel="x" />,
+        { source, queryClient },
+      );
+
+      // Rows render from cache…
+      await screen.findAllByTestId('item-row');
+      // …and no fetch fired on this Back-remount.
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(fetchPage).not.toHaveBeenCalled();
+    });
+
+    it('still refetches on Back when a cross-device hydration invalidated the feed while reading', async () => {
+      // The suppression is reflow-only: if a hydration invalidated the feed while
+      // the reader was open (it can't refetch while unmounted), the Back-remount
+      // must reconcile so a cross-device change outside the loaded window shows
+      // up — not wait for a later focus/PTR. isInvalidated distinguishes this
+      // from plain time-based staleness. (Codex P2 on #410.)
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const viewKey = `home-syncback-${viewKeySeq++}`;
+      const fetchPage = vi.fn<FetchPage>((cursor) =>
+        source.getHomeItems({ cursor }),
+      );
+      const seed = await source.getHomeItems();
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 60_000, staleTime: 0 } },
+      });
+      queryClient.setQueryData(['feed', viewKey], {
+        pages: [{ items: seed.items, nextCursor: seed.nextCursor }],
+        pageParams: [null],
+      });
+      // Simulate the hydration-while-away: the feed is marked invalidated but,
+      // being unmounted, never refetched (refetchType: 'none').
+      await queryClient.invalidateQueries({
+        queryKey: ['feed', viewKey],
+        refetchType: 'none',
+      });
+
+      markFeedReaderOpen(viewKey);
+      renderWithProviders(
+        <ItemList viewKey={viewKey} fetchPage={fetchPage} emptyLabel="x" />,
+        { source, queryClient },
+      );
+
+      // The Back-remount reconciles the invalidated feed rather than suppressing.
+      await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(1));
+    });
+
+    it('still validates a stale cached feed on a normal mount (no reader round-trip)', async () => {
+      // The suppression is scoped to the reader round-trip: a plain mount over a
+      // stale cache (e.g. boot / persist-restore) must still refetch, so it
+      // doesn't strand the user on stale data.
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const viewKey = `home-novisit-${viewKeySeq++}`;
+      const fetchPage = vi.fn<FetchPage>((cursor) =>
+        source.getHomeItems({ cursor }),
+      );
+      const seed = await source.getHomeItems();
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 60_000, staleTime: 0 } },
+      });
+      queryClient.setQueryData(['feed', viewKey], {
+        pages: [{ items: seed.items, nextCursor: seed.nextCursor }],
+        pageParams: [null],
+      });
+
+      // No markFeedReaderOpen → not a reader return.
+      renderWithProviders(
+        <ItemList viewKey={viewKey} fetchPage={fetchPage} emptyLabel="x" />,
+        { source, queryClient },
+      );
+
+      await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(1));
     });
   });
 });

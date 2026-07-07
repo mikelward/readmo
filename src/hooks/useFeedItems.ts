@@ -51,6 +51,16 @@ export function useFeedItems(
     rawCursor: string | null,
     pages: Array<Page<FeedItem>>,
   ) => string | null,
+  /**
+   * `refetchOnMount` for the underlying query. Omit for the React Query default
+   * (true-when-stale). The caller (ItemList) passes `false` when the user
+   * navigates Back into a feed from the reader, so returning never fires a fetch
+   * under the reader's next tap — fresh data still arrives via prefetch-on-open,
+   * focus, pull-to-refresh, and cross-device sync. A mount with no cached data
+   * still does its initial fetch regardless (refetchOnMount only governs
+   * *re*fetching data already in cache).
+   */
+  refetchOnMount?: boolean | 'always',
 ) {
   const query = useInfiniteQuery({
     queryKey: ['feed', viewKey],
@@ -64,9 +74,11 @@ export function useFeedItems(
     // picks up new items (SPEC.md "refetch-on-focus + PTR"). The global
     // staleTime (5 min, main.tsx) gates this — no request fires if the data
     // is still fresh, so switching tabs rapidly is cheap.
-    // refetchOnMount uses the RQ default (true-when-stale), not 'always',
-    // so navigating between feed views doesn't hammer the DB either.
     refetchOnWindowFocus: true,
+    // Whether a remount refetches stale cached data. Undefined → RQ default
+    // (true-when-stale); ItemList passes false on a POP (Back) so returning to
+    // a feed doesn't refetch. Never 'always' — that would hammer the DB.
+    refetchOnMount,
   });
 
   const items: FeedItem[] = dedupeFeedPages(query.data?.pages ?? []);
