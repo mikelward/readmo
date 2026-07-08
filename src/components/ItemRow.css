@@ -120,7 +120,7 @@
   gap: 6px;
 }
 .item-row--excerpt .item-row__title-text {
-  font-size: 1.2rem;
+  font-size: 1.125rem;
   font-weight: 600;
   line-height: 1.25;
   -webkit-line-clamp: 3;
@@ -132,7 +132,7 @@
 /* The preview line. Only rendered in the excerpt layout, so it needs no
  * per-variant visibility gate — just its own clamp. */
 .item-row__excerpt {
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
   line-height: 1.4;
   /* Halfway between full body text and the read tone: readable, but a step
    * below the headline so the title stays the row's anchor. */
@@ -167,7 +167,7 @@
   display: block;
 }
 .item-row--thumbnail .item-row__title-text {
-  font-size: 1.14rem;
+  font-size: 1.125rem;
   font-weight: 600;
   line-height: 1.26;
   margin-bottom: 4px;
