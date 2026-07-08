@@ -93,20 +93,40 @@ export function useInViewIds(opts: Options = {}): {
         const nowHidden: ItemId[] = [];
         const reentered: ItemId[] = [];
         const leftViewport: ItemId[] = [];
+        // One batch can carry SEVERAL records for the same row — the observer
+        // queues one per observation frame, oldest first, and delivery lags a
+        // frame whenever the main thread is busy (a phone mid-scroll while
+        // React renders). Only the newest record reflects where the row is
+        // NOW; partitioning every record into the add/remove arrays below and
+        // applying adds-then-deletes would let an older "partially visible"
+        // record override a newer "fully visible" one, dropping a row the
+        // reader can plainly see from the Sweep set with no follow-up callback
+        // to correct it. Keep just the last record per target — but record the
+        // "seen" history from EVERY record, in order: a row can become fully
+        // visible AND exit the top inside one lagged batch, and dropping the
+        // intermediate fully-visible record would skip its auto-hide.
+        const latest = new Map<ItemId, IntersectionObserverEntry>();
         for (const entry of entries) {
-          const el = entry.target as HTMLElement;
-          const id = el.dataset.itemId;
+          const id = (entry.target as HTMLElement).dataset.itemId;
           if (!id) continue;
+          latest.set(id, entry);
+          // Only track "seen" while the feature is on (paired with the
+          // clear-on-enable above), so a row fully viewed with auto-hide off
+          // never becomes a scroll-past candidate after a later enable.
+          if (
+            entry.intersectionRatio >= FULLY_VISIBLE_RATIO &&
+            onExitTopRef.current
+          ) {
+            seenRef.current.add(id);
+          }
+        }
+        for (const [id, entry] of latest) {
           // Intersecting at all (fully or partially) = in the viewport; the
           // complement (ratio 0, either edge) = fully off screen.
           if (entry.isIntersecting) reentered.push(id);
           else leftViewport.push(id);
           if (entry.intersectionRatio >= FULLY_VISIBLE_RATIO) {
             nowVisible.push(id);
-            // Only track "seen" while the feature is on (paired with the
-            // clear-on-enable above), so a row fully viewed with auto-hide off
-            // never becomes a scroll-past candidate after a later enable.
-            if (onExitTopRef.current) seenRef.current.add(id);
           } else {
             nowHidden.push(id);
             // A previously-seen row that's now fully out of view: report it only
