@@ -180,6 +180,21 @@ describe('useInViewIds onExitTop', () => {
     expect(seen).toEqual([['a']]);
   });
 
+  it('preserves a fully-visible transition that is batched with the final top exit', () => {
+    const seen: ItemId[][] = [];
+    render(<Rows onExitTop={(ids) => seen.push(ids)} />);
+
+    // Busy scrolling can deliver both threshold crossings together. The final
+    // entry says the row is now hidden above the viewport, but the earlier full
+    // visibility still makes it eligible for auto-hide.
+    fire(
+      entryFor('a', 1),
+      entryFor('a', 0, { rectBottom: 50, rootTop: 100 }),
+    );
+
+    expect(seen).toEqual([['a']]);
+  });
+
   it('does not report a row that was never fully visible (below the fold)', () => {
     const seen: ItemId[][] = [];
     render(<Rows onExitTop={(ids) => seen.push(ids)} />);

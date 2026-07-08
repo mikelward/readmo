@@ -109,10 +109,26 @@ export function useInViewIds(opts: Options = {}): {
         const nowHidden: ItemId[] = [];
         const reentered: ItemId[] = [];
         const leftViewport: ItemId[] = [];
+        const lastEntryById = new Map<ItemId, IntersectionObserverEntry>();
+        const fullyVisibleInBatch = new Set<ItemId>();
         for (const entry of entries) {
           const el = entry.target as HTMLElement;
           const id = el.dataset.itemId;
           if (!id) continue;
+          if (entry.intersectionRatio >= FULLY_VISIBLE_RATIO) {
+            fullyVisibleInBatch.add(id);
+          }
+          lastEntryById.set(id, entry);
+        }
+        // A browser may batch multiple threshold crossings for the same row
+        // (e.g. fully visible, then 0 above the top) into one callback. The last
+        // entry is the row's current visibility, but earlier fully-visible
+        // entries still count for auto-hide's seen history and must be applied
+        // before evaluating the final top-exit entry.
+        if (onExitTopRef.current) {
+          for (const id of fullyVisibleInBatch) seenRef.current.add(id);
+        }
+        for (const [id, entry] of lastEntryById) {
           // Intersecting at all (fully or partially) = in the viewport; the
           // complement (ratio 0, either edge) = fully off screen.
           if (entry.isIntersecting) reentered.push(id);
@@ -164,7 +180,10 @@ export function useInViewIds(opts: Options = {}): {
     for (const el of rowEls.current.values()) {
       io.observe(el);
       const id = el.dataset.itemId;
-      if (id && elementIsFullyVisible(el, topInset, bottomInset)) seededVisible.push(id);
+      if (id && elementIsFullyVisible(el, topInset, bottomInset)) {
+        seededVisible.push(id);
+        if (onExitTopRef.current) seenRef.current.add(id);
+      }
     }
     if (seededVisible.length) {
       setInViewIds((prev) => {
@@ -222,6 +241,7 @@ export function useInViewIds(opts: Options = {}): {
         // async delivery (or when the observer is unavailable/throttled). The
         // observer remains authoritative for later scroll changes.
         if (elementIsFullyVisible(el, topInsetRef.current, bottomInsetRef.current)) {
+          if (onExitTopRef.current) seenRef.current.add(id);
           setInViewIds((s) => {
             if (s.has(id)) return s;
             const next = new Set(s);
