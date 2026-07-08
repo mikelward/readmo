@@ -2345,6 +2345,73 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(grouped?.params).toMatchObject({ p_per_feed_limit: 5 });
   });
 
+  it('debugFeedProbe reports raw vs resolved grouped rows, the per-feed split, and the flat page', async () => {
+    const env = setup();
+    const probe = await env.ds.debugFeedProbe();
+    expect(probe.error).toBeUndefined();
+    // Grouped windowed read: feed-a = i2 (pinned, exempt) + i6; feed-b = i3.
+    expect(probe.groupedRawRows).toBe(3);
+    expect(probe.groupedResolvedRows).toBe(3);
+    expect(probe.perFeed).toEqual([
+      { title: 'Alpha Blog', rows: 2 },
+      { title: 'Beta News', rows: 1 },
+    ]);
+    // Flat first page over the same data.
+    expect(probe.flatResolvedRows).toBe(3);
+  });
+
+  it('debugFeedProbe runs under the caller\'s active sort (same RPC path as the view)', async () => {
+    const env = setup();
+    await env.ds.debugFeedProbe('oldest');
+    const grouped = env.fake.rpcCalls.find(
+      (c) => c.name === 'feed_items' && c.params.p_group_by_feed,
+    );
+    expect(grouped?.params).toMatchObject({ p_sort: 'oldest' });
+    const flat = env.fake.rpcCalls.find(
+      (c) => c.name === 'feed_items' && !c.params.p_group_by_feed,
+    );
+    expect(flat?.params).toMatchObject({ p_sort: 'oldest' });
+  });
+
+  it('debugFeedProbe probes the folder scope when Home is scoped to a folder', async () => {
+    const env = setup();
+    await env.ds.debugFeedProbe('newest', 'Tech');
+    const grouped = env.fake.rpcCalls.find(
+      (c) => c.name === 'feed_items' && c.params.p_group_by_feed,
+    );
+    expect(grouped?.params).toMatchObject({ p_scope: 'folder', p_folder: 'Tech' });
+    const flat = env.fake.rpcCalls.find(
+      (c) => c.name === 'feed_items' && !c.params.p_group_by_feed,
+    );
+    expect(flat?.params).toMatchObject({ p_scope: 'folder', p_folder: 'Tech' });
+  });
+
+  it('debugFeedProbe surfaces a malformed row shape as its Error instead of miscounting it', async () => {
+    const env = setup();
+    const rpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) =>
+      name === 'feed_items' && params?.p_group_by_feed
+        ? Promise.resolve({ data: [{ item: { id: 'i2' } }], error: null })
+        : rpc(name, params)) as typeof env.fake.client.rpc;
+    const probe = await env.ds.debugFeedProbe();
+    expect(probe.error).toContain('missing expected item fields');
+    // The raw count still reports what came back; nothing is counted resolved.
+    expect(probe.groupedRawRows).toBe(1);
+    expect(probe.groupedResolvedRows).toBe(0);
+  });
+
+  it('debugFeedProbe captures a failing read as an error instead of throwing', async () => {
+    const env = setup();
+    const rpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) =>
+      name === 'feed_items' && params?.p_group_by_feed
+        ? Promise.resolve({ data: null, error: { code: '57014', message: 'statement timeout' } })
+        : rpc(name, params)) as typeof env.fake.client.rpc;
+    const probe = await env.ds.debugFeedProbe();
+    expect(probe.error).toContain('statement timeout');
+    expect(probe.groupedRawRows).toBeNull();
+  });
+
   it('getFeedUnreadCounts: per-feed unread, excluding done/hidden, keeping pinned-unopened', async () => {
     const env = setup();
     // feed-a items: i1 (Hidden), i2 (Pinned), i6. feed-b: i3, i4 (Done).

@@ -13,6 +13,7 @@ import {
   type ListLayout,
   type OpenMode,
   type Subscription,
+  PER_FEED_WINDOW,
 } from '../types';
 import type { FullTextResult, FullTextStatus } from '../fullText';
 import type { SummaryResult, SummaryStatus } from '../summary';
@@ -39,6 +40,8 @@ import {
   type DataSource,
   type DiscoveredFeed,
   type FeedListOptions,
+  type FeedProbeResult,
+  type ItemSort,
   type Page,
   type RegisteredUser,
   AddFeedError,
@@ -676,6 +679,64 @@ export class SupabaseDataSource implements DataSource {
 
   /** Epoch ms of the last successful server item_state pull, or null until the
    * first one lands (see {@link DataSource.getLastSyncedAt}). */
+  /** `/debug` feed-read probe (see DataSource.debugFeedProbe): runs the exact
+   * grouped windowed home read outside the query cache and reports raw vs
+   * resolved row counts plus the per-feed split, then a flat first page for
+   * comparison — so a phone with no devtools can show where an empty grouped
+   * view lost its rows (transit vs feed-metadata resolution vs rendering). */
+  async debugFeedProbe(
+    sort: ItemSort = 'newest',
+    folder: string | null = null,
+  ): Promise<FeedProbeResult> {
+    const t0 = Date.now();
+    const out: FeedProbeResult = {
+      groupedMs: 0,
+      groupedRawRows: null,
+      groupedResolvedRows: 0,
+      perFeed: [],
+      flatResolvedRows: 0,
+    };
+    try {
+      await this.ensureHydratedForRead();
+      const rows = this.unwrap<Array<ItemRow>>(
+        await this.sb.rpc('feed_items', {
+          p_scope: folder != null ? 'folder' : 'home',
+          p_folder: folder,
+          p_feed_id: null,
+          p_limit: GROUPED_WINDOW_ROW_CAP,
+          p_offset: 0,
+          p_sort: sort,
+          p_group_by_feed: true,
+          p_per_feed_limit: PER_FEED_WINDOW + 1,
+        }),
+      );
+      out.groupedRawRows = rows.length;
+      // Same row-shape guard as feedView: a stale/mismatched backend returning
+      // an unexpected shape must surface as the probe's Error row, not be
+      // miscounted as resolved rows or feed-metadata drops.
+      const malformed = rows.find((r) => r == null || typeof r.id !== 'string');
+      if (malformed !== undefined) {
+        throw new Error('feed_items returned rows missing expected item fields.');
+      }
+      const items = await this.resolveFeedItems(rows);
+      out.groupedResolvedRows = items.length;
+      const per = new Map<string, number>();
+      for (const fi of items) {
+        per.set(fi.feed.title, (per.get(fi.feed.title) ?? 0) + 1);
+      }
+      out.perFeed = [...per].map(([title, n]) => ({ title, rows: n }));
+      const flat =
+        folder != null
+          ? await this.getFolderItems(folder, { sort })
+          : await this.getHomeItems({ sort });
+      out.flatResolvedRows = flat.items.length;
+    } catch (err) {
+      out.error = err instanceof Error ? err.message : String(err);
+    }
+    out.groupedMs = Date.now() - t0;
+    return out;
+  }
+
   getLastSyncedAt(): number | null {
     return this.lastSyncedAt;
   }

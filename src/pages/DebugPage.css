@@ -153,3 +153,23 @@
 .scroll-diag__button:disabled {
   opacity: 0.5;
 }
+
+/* Feed-read probe: the button matches the scroll-diag buttons (44px floor,
+   guardrail #2); the result list reuses the standard debug rows grid. */
+.debug__probe {
+  margin-top: 12px;
+}
+
+.debug__probe-btn {
+  min-height: 44px;
+  padding: 8px 16px;
+  font-size: 0.9rem;
+}
+
+.debug__probe-btn:disabled {
+  opacity: 0.5;
+}
+
+.debug__probe .debug__rows {
+  margin-top: 12px;
+}
