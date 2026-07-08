@@ -1078,7 +1078,12 @@ export class SupabaseDataSource implements DataSource {
     const body: ItemRow[] = [];
     for (const row of items) {
       const st = this.stateStore.get(row.id);
-      if (st.done || st.hidden) continue;
+      // A pin is EXEMPT from the Done/Hidden drop — it stays in the feed (and
+      // lifts to the top block), matching the server read's pinned branch, which
+      // returns a pinned row regardless of Done/Hidden. Without the `!st.pinned`
+      // guard a pinned-then-Done row (e.g. one opened on a mark-done-on-open
+      // feed) is dropped from the flat river even though the server returned it.
+      if (!st.pinned && (st.done || st.hidden)) continue;
       if (st.pinned) pinned.push({ row, at: st.pinnedAt ?? 0 });
       else body.push(row);
     }

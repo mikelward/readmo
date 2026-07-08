@@ -211,7 +211,12 @@ the only difference is they're DB columns instead of localStorage keys.
   from the row menu, swipe-right, or the reader view action bar; on `/done` the
   row carries a filled check that unmarks done. Marking Done also **unpins**
   (Pin is the queue, Done is where items go when they leave it; mutually
-  exclusive). Done items are filtered out of every feed, and the `/done`
+  exclusive). Done items are filtered out of every feed — **except a pinned
+  row**: Pin and Done are mutually exclusive by construction, but if a
+  cross-device / offline last-write-wins race ever leaves a row *both* pinned
+  and Done, the **pin wins** and the row stays visible in the feed (never
+  dismissed, never grayed), matching the server, whose feed read returns a
+  pinned row regardless of Done/Hidden. The `/done`
   completion log is a **30-day** history (see *Retention*). `done` is the **one
   dismiss concept**: the `hidden` DB column is retained for backward compat but
   the UI routes all dismissals through `done`, and legacy `hidden=true` rows are
