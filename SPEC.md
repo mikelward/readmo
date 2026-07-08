@@ -1286,11 +1286,12 @@ negligible and off every critical path. See the External services table in
        collapse control; next to it the **site favicon + feed name + unread/to-do
        count badge** link to that feed's own view (`/feed/:feedId`) — the count
        tracks the feed name's baseline, lifted a hair so it optically centers
-       against the name's caps. When any header in the list carries a favicon, a
-       header that lacks one (feed not yet resolved, or a phantom swept section)
-       reserves a matching 16px placeholder in the icon slot, so every feed name
-       in the list starts at the same left edge instead of snapping flush to the
-       chevron. A favicon that *fails to load* (a 404'd `/favicon.ico` guess, or a
+       against the name's caps. A phantom swept section's header keeps its
+       feed's favicon — emptying a section never changes its icon. When any
+       header in the list carries a favicon, a header that lacks one (feed not
+       yet resolved) reserves a matching 16px placeholder in the icon slot, so
+       every feed name in the list starts at the same left edge instead of
+       snapping flush to the chevron. A favicon that *fails to load* (a 404'd `/favicon.ico` guess, or a
        bot-blocked host like ft.com whose icon won't render in the browser) keeps
        its blank 16px box (hidden via `visibility`, not removed via `display`) so
        the name stays aligned rather than snapping left — the broken-image glyph

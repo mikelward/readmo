@@ -259,6 +259,44 @@ describe('ItemRows', () => {
     expect(Array.from(badges).map((b) => b.textContent)).toEqual(['FF', 'SF']);
   });
 
+  it('keeps the feed favicon on a phantom (empty) More section header', async () => {
+    const items = await sampleItems(1);
+    const headers = new Map([
+      [
+        items[0].item.id,
+        {
+          feedId: items[0].item.feedId,
+          title: 'Live Feed',
+          faviconUrl: 'https://example.com/favicon.ico',
+        },
+      ],
+    ]);
+    const { container } = renderWithProviders(
+      <ItemRows
+        items={items}
+        emptyLabel="Nothing here."
+        groupHeaders={headers}
+        onFeedMore={() => {}}
+        emptyMoreSections={[
+          {
+            feedId: 'swept',
+            title: 'Swept Feed',
+            faviconUrl: 'https://swept.example/favicon.ico',
+          },
+        ]}
+      />,
+    );
+    // The phantom header shows its feed's real favicon, same as when it had
+    // rows — not the initials-badge fallback.
+    const img = container.querySelector(
+      'img.item-list__group-favicon[src="https://swept.example/favicon.ico"]',
+    );
+    expect(img).not.toBeNull();
+    expect(
+      container.querySelector('.item-list__group-favicon.favicon--initials'),
+    ).toBeNull();
+  });
+
   it('tags a dark-monochrome group favicon (vox.com) for dark-mode inversion', async () => {
     const items = await sampleItems(2);
     const headers = new Map([

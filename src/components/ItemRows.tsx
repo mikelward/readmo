@@ -92,10 +92,15 @@ interface Props {
    * section the reader just swept where nothing pinned remained. Each entry
    * here renders a phantom header + "More" so the reader can still pull the
    * next page (without it the swept section vanishes and More becomes
-   * unreachable until pull-to-refresh). Each row carries the feed title at the
-   * call site to avoid a separate feed-metadata lookup. Title-only headers
-   * have no Sweep/Undo (no rows to act on). */
-  emptyMoreSections?: Array<{ feedId: FeedId; title: string }>;
+   * unreachable until pull-to-refresh). Each entry carries the feed title and
+   * favicon URL at the call site to avoid a separate feed-metadata lookup —
+   * the favicon so an emptied section's header keeps the same icon it showed
+   * with rows. Phantom headers have no Sweep/Undo (no rows to act on). */
+  emptyMoreSections?: Array<{
+    feedId: FeedId;
+    title: string;
+    faviconUrl?: string | null;
+  }>;
   /** Canonical feed order (from the full base read, not just visible items),
    * used to interleave phantom sections at the right ordinal position so a
    * swept middle feed's header doesn't shift to the end of the list. Lower
@@ -477,12 +482,15 @@ export function ItemRows({
   }
 
   // Once any header in this list shows a favicon, reserve the icon slot in the
-  // headers that lack one (feeds the poller hasn't resolved yet, or phantom
-  // swept sections) so every feed name lines up at the same left edge instead
-  // of some snapping flush to the chevron. Skipped when the group-favicon
-  // setting is off — no header shows an icon, so there's nothing to align to.
+  // headers that lack one (feeds the poller hasn't resolved yet) so every feed
+  // name lines up at the same left edge instead of some snapping flush to the
+  // chevron. Phantom (swept-empty) sections keep their feed's favicon, so they
+  // count too. Skipped when the group-favicon setting is off — no header shows
+  // an icon, so there's nothing to align to.
   const anyFavicon =
-    showGroupFavicon && sections.some((s) => !!s.header?.faviconUrl);
+    showGroupFavicon &&
+    (sections.some((s) => !!s.header?.faviconUrl) ||
+      phantoms.some((p) => !!p.faviconUrl));
 
   const renderFeedSection = (section: Section): ReactNode => {
     const { feedId } = section;
@@ -511,11 +519,22 @@ export function ItemRows({
     );
   };
 
-  const renderPhantomSection = (p: { feedId: FeedId; title: string }): ReactNode => {
+  const renderPhantomSection = (p: {
+    feedId: FeedId;
+    title: string;
+    faviconUrl?: string | null;
+  }): ReactNode => {
     const collapsed = collapsedFeeds?.has(p.feedId) ?? false;
     return (
       <li className="item-list__section" key={`empty-more:${p.feedId}`}>
-        {renderHeader(p.feedId, p.title, `empty-more:${p.feedId}`, true, null, anyFavicon)}
+        {renderHeader(
+          p.feedId,
+          p.title,
+          `empty-more:${p.feedId}`,
+          true,
+          p.faviconUrl ?? null,
+          anyFavicon,
+        )}
         {collapsed || !onFeedMore ? null : renderMore(p.feedId, p.title)}
       </li>
     );
