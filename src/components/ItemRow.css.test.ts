@@ -35,6 +35,13 @@ describe('excerpt preview contract', () => {
   it('clamps the excerpt preview to two lines (SPEC "Article layout")', () => {
     expect(declarationsFor('.item-row__excerpt')['-webkit-line-clamp']).toBe('2');
   });
+
+  it('renders the preview in full body-text contrast, fading only when opened', () => {
+    expect(declarationsFor('.item-row__excerpt').color).toBe('var(--rm-text)');
+    expect(declarationsFor('.item-row--opened .item-row__excerpt').color).toBe(
+      'var(--rm-read)',
+    );
+  });
 });
 
 describe('thumbnail placement contract', () => {
