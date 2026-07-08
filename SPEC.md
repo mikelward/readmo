@@ -1961,7 +1961,10 @@ four steps:
   reveal it.
 - **Excerpt** (`excerpt`) — a larger title with a **two-line preview**
   of the feed body (`contentHtml` stripped to plain text, entities decoded; *not*
-  the AI `summary`), no image. When the headline itself is a **hidden sports
+  the AI `summary`), no image. The preview sits a half-step below the headline
+  in contrast — dark enough to read comfortably, muted enough that the title
+  anchors the row — and fades to the read tone along with the title once the
+  item is opened. When the headline itself is a **hidden sports
   spoiler** (the row shows the spoiler-free rewrite — see *Spoiler-free sports
   headlines*), the preview is replaced by a muted placeholder — **"Spoilers
   hidden. Tap to see article."** — since the feed body almost always repeats the

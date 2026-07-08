@@ -36,8 +36,10 @@ describe('excerpt preview contract', () => {
     expect(declarationsFor('.item-row__excerpt')['-webkit-line-clamp']).toBe('2');
   });
 
-  it('renders the preview in full body-text contrast, fading only when opened', () => {
-    expect(declarationsFor('.item-row__excerpt').color).toBe('var(--rm-text)');
+  it('renders the preview a half-step below headline contrast, fading when opened', () => {
+    expect(declarationsFor('.item-row__excerpt').color).toBe(
+      'color-mix(in srgb, var(--rm-text) 50%, var(--rm-read))',
+    );
     expect(declarationsFor('.item-row--opened .item-row__excerpt').color).toBe(
       'var(--rm-read)',
     );

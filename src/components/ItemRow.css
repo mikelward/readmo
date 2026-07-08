@@ -134,7 +134,9 @@
 .item-row__excerpt {
   font-size: 0.9375rem;
   line-height: 1.4;
-  color: var(--rm-text);
+  /* Halfway between full body text and the read tone: readable, but a step
+   * below the headline so the title stays the row's anchor. */
+  color: color-mix(in srgb, var(--rm-text) 50%, var(--rm-read));
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
