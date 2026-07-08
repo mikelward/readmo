@@ -366,6 +366,93 @@ describe('ItemStateStore', () => {
     expect(store.get('z', later).done).toBe(true); // no longer expired
   });
 
+  it('re-opening an opened article refreshes its clock AND syncs the refresh', () => {
+    // /opened is the 30-day RECENTLY-opened history, so a re-open restamps
+    // openedAt (retention re-anchors to the latest read) — but the restamp
+    // must also reach the server: a silently restamped local clock with no
+    // matching write would win hydrate's LWW against legitimate cross-device
+    // writes forever (the split-brain this suite guards against).
+    const store = new ItemStateStore(memoryPersistence());
+    store.set('a', 'opened', true, NOW);
+    const calls: Array<[string, Partial<Record<string, boolean>>]> = [];
+    store.setMutationSink((id, changed) => calls.push([id, changed]));
+
+    store.set('a', 'opened', true, NOW + 5_000); // re-open
+
+    // The refresh writes through, so server and local clocks stay in step.
+    expect(calls).toEqual([['a', { opened: true }]]);
+    // The re-open is a real (synced) write, so it legitimately wins LWW over
+    // an OLDER cross-device "mark unread"…
+    store.hydrate(
+      [['a', state({ opened: false, openedAt: NOW + 1_000 })]],
+      new Map(),
+      NOW + 10_000,
+    );
+    expect(store.get('a', NOW + 10_000).opened).toBe(true);
+    // …and loses to a NEWER one, exactly like any other write.
+    store.hydrate(
+      [['a', state({ opened: false, openedAt: NOW + 6_000 })]],
+      new Map(),
+      NOW + 10_000,
+    );
+    expect(store.get('a', NOW + 10_000).opened).toBe(false);
+  });
+
+  it('re-opening re-anchors the 30-day retention window to the latest open', () => {
+    const store = new ItemStateStore(memoryPersistence());
+    store.set('a', 'opened', true, NOW);
+    store.set('a', 'opened', true, NOW + 5_000); // re-open
+    // Still in /opened past the FIRST open's TTL boundary, gone after the
+    // re-open's. (Reads are monotonic — get()'s retained-snapshot cache, like
+    // production time, never runs backwards.)
+    expect(store.get('a', NOW + TTL_MS + 1).opened).toBe(true);
+    expect(store.get('a', NOW + 5_000 + TTL_MS + 1).opened).toBe(false);
+  });
+
+  it('re-asserting a non-TTL flag or an already-false value is a full no-op', () => {
+    // No recency to refresh (Pinned/Favorite never expire; false carries no
+    // window), so nothing may restamp, write through, or notify — a silent
+    // local restamp with no server write would poison LWW (see above).
+    const store = new ItemStateStore(memoryPersistence());
+    store.set('a', 'pinned', true, NOW);
+    const calls: Array<[string, Partial<Record<string, boolean>>]> = [];
+    store.setMutationSink((id, changed) => calls.push([id, changed]));
+    let notified = 0;
+    store.subscribe(() => notified++);
+
+    store.set('a', 'pinned', true, NOW + 5_000); // still pinned
+    store.set('a', 'hidden', false, NOW + 5_000); // already false
+
+    expect(calls).toEqual([]);
+    expect(notified).toBe(0);
+    // Clocks untouched → a newer cross-device unpin still wins.
+    store.hydrate(
+      [['a', state({ pinned: false, pinnedAt: NOW + 1_000 })]],
+      new Map(),
+      NOW + 10_000,
+    );
+    expect(store.get('a', NOW + 10_000).pinned).toBe(false);
+  });
+
+  it('hideMany skips already-Done ids without restamping their clocks', () => {
+    const store = new ItemStateStore(memoryPersistence());
+    store.set('d', 'done', true, NOW);
+    const calls: Array<[string, Partial<Record<string, boolean>>]> = [];
+    store.setMutationSink((id, changed) => calls.push([id, changed]));
+
+    store.hideMany(['d', 'e'], NOW + 5_000); // d already done, e fresh
+
+    // Only the fresh dismissal writes through.
+    expect(calls).toEqual([['e', { done: true, pinned: false }]]);
+    // d's clock is untouched, so a newer cross-device un-dismiss still wins.
+    store.hydrate(
+      [['d', state({ done: false, doneAt: NOW + 1_000 })]],
+      new Map(),
+      NOW + 10_000,
+    );
+    expect(store.get('d', NOW + 10_000).done).toBe(false);
+  });
+
   it('undo after re-dismissing an expired Done reverts the sink write too', () => {
     const store = new ItemStateStore(memoryPersistence());
     store.set('z', 'done', true, NOW); // stale Done

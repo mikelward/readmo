@@ -123,6 +123,11 @@ function mergeByLww(srv: ItemState, local: ItemState): ItemState {
   return next;
 }
 
+/** Whether two states carry the same boolean flags (clocks ignored). */
+function sameFlags(a: ItemState, b: ItemState): boolean {
+  return ITEM_STATE_FIELDS.every((f) => a[f] === b[f]);
+}
+
 /** Structural equality of two item states (all flags + timestamps + version). */
 function sameState(a: ItemState, b: ItemState): boolean {
   return (
@@ -464,6 +469,40 @@ export class ItemStateStore {
     // leave the server's expired done_at un-refreshed.
     const prev = withRetention(this.map[id] ?? DEFAULT_ITEM_STATE, now);
     const next = applyMutation(prev, field, value, now);
+    // Value-unchanged actions need care: applyMutation restamps `<f>At = now`,
+    // but emitDiff sends no server write when no boolean changed, and storing
+    // a restamped clock with no matching server write leaves the local clock
+    // permanently ahead with nothing pending — hydrate's LWW would forever
+    // prefer the stale local value over a legitimate cross-device write (e.g.
+    // another device's "mark unread"). So a value-unchanged write either goes
+    // ALL the way through (restamp + server write) or not at all:
+    //  - Re-asserting a still-true TTL'd flag — the everyday case is
+    //    re-opening an already-opened article — is a real recency refresh:
+    //    /opened is the 30-day recently-opened history, so the clock restamps
+    //    AND the write reaches the server, keeping both clocks in step and
+    //    the retention window anchored to the LATEST open, not the first.
+    //  - Everything else (re-asserting Pinned/Favorite, setting an
+    //    already-false flag false) is a full no-op.
+    if (sameFlags(prev, next)) {
+      const refreshesTtl =
+        value && (field === 'done' || field === 'hidden' || field === 'opened');
+      if (!refreshesTtl) return prev;
+      this.map = { ...this.map, [id]: next };
+      this.persistence.save(this.map);
+      // Mirror emitDiff's exclusivity closure for the server write (a Done/
+      // Hide re-assert still carries pinned:false so a stale cross-device pin
+      // can't leave an invalid pinned+done row). The local mutation listeners
+      // stay silent — nothing changed for this user on this device.
+      if (this.sink) {
+        const closed: Partial<Record<ItemStateField, boolean>> = {
+          [field]: true,
+        };
+        if (field === 'done' || field === 'hidden') closed.pinned = false;
+        this.sink(id, closed, now);
+      }
+      this.emit();
+      return next;
+    }
     this.map = { ...this.map, [id]: next };
     this.persistence.save(this.map);
     this.emitDiff(id, prev, next, now);
@@ -511,6 +550,12 @@ export class ItemStateStore {
         seen.add(id);
       }
       const next = applyMutation(prev, 'done', true, now);
+      // Same value-unchanged guard as `set`: an already-Done id (e.g. one
+      // re-delivered across bursts) must not restamp its local clocks with no
+      // matching server write, or the restamped clock wins hydrate's LWW over
+      // later cross-device writes. The undo snapshot above is still recorded —
+      // restoring an unchanged state is itself a no-op.
+      if (sameFlags(prev, next)) continue;
       this.map = { ...this.map, [id]: next };
       this.emitDiff(id, prev, next, now);
     }
