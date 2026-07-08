@@ -190,23 +190,6 @@ function viewportIsHonest(): boolean {
  * it stays filtered out. Only consulted for a dismissed row the observer's live
  * set doesn't already cover, so the layout read is off the common path. */
 
-/** Is the row with this id fully inside the current sweep band? This is a
- * synchronous fallback for the small window where IntersectionObserver state is
- * stale (initial delivery, sticky-inset churn, or mobile browser throttling).
- * Sweep must not depend exclusively on an async observer: if a card is visibly
- * fully on screen, the broom should be enabled even before the observer catches
- * up. */
-function rowFullyVisible(id: ItemId): boolean {
-  if (typeof document === 'undefined' || typeof window === 'undefined') return false;
-  const el = document.querySelector(`li[data-item-id="${id}"]`);
-  if (!(el instanceof HTMLElement)) return false;
-  const rect = el.getBoundingClientRect();
-  if (rect.height <= 0 || rect.width <= 0) return false;
-  const top = measureTopChromeHeight();
-  const bottom = window.innerHeight - measureStickyBottomInset();
-  return rect.top >= top && rect.bottom <= bottom;
-}
-
 function rowIntersectsViewport(id: ItemId): boolean {
   if (typeof document === 'undefined' || typeof window === 'undefined') return false;
   const el = document.querySelector(`li[data-item-id="${id}"]`);
@@ -1926,33 +1909,20 @@ export function ItemList({
     // items.length, and a local Done/Hidden flip shrinks it without a refetch.
   }, [renderedCount]);
 
-  const visibleItemIdsKey = visibleItems.map((fi) => fi.item.id).join('\0');
-  const [rowMetricVersion, bumpRowMetricVersion] = useReducer((x: number) => x + 1, 0);
-  useLayoutEffect(() => {
-    // The DOM-position fallback for Sweep can only measure rows after they have
-    // committed. Trigger one post-layout recompute whenever the rendered row set
-    // changes so a visible card is sweepable even before IntersectionObserver
-    // delivers its first entry (or when the observer is throttled).
-    bumpRowMetricVersion();
-  }, [visibleItemIdsKey]);
-
   // Sweepable rows = unpinned rows the reader can *currently see* (Done/Hidden
   // are already filtered out by the DataSource). Sweep hides only the
   // fully-visible rows as one undoable batch — not the whole loaded list — so
   // scrolling past content and tapping the broom can't dismiss rows off-screen
   // (SPEC.md *List toolbar → Sweep*). Matches newshacker.
   const sweepIds = useMemo(
-    () => {
-      void rowMetricVersion;
-      return visibleItems
+    () =>
+      visibleItems
         .filter(
           (fi) =>
-            (inViewIds.has(fi.item.id) || rowFullyVisible(fi.item.id)) &&
-            !ds.stateStore.get(fi.item.id).pinned,
+            inViewIds.has(fi.item.id) && !ds.stateStore.get(fi.item.id).pinned,
         )
-        .map((fi) => fi.item.id);
-    },
-    [visibleItems, inViewIds, ds, rowMetricVersion],
+        .map((fi) => fi.item.id),
+    [visibleItems, inViewIds, ds],
   );
 
   // Visual "whoosh" when Sweep fires: every fully-visible, unpinned row plays
@@ -2569,17 +2539,16 @@ export function ItemList({
   // controls*). Rows in a collapsed section aren't in the DOM, so they're absent
   // from `inViewIds` and excluded for free.
   const sweepableByFeed = useMemo(() => {
-    void rowMetricVersion;
     const m = new Map<FeedId, ItemId[]>();
     for (const fi of visibleItems) {
-      if (!inViewIds.has(fi.item.id) && !rowFullyVisible(fi.item.id)) continue;
+      if (!inViewIds.has(fi.item.id)) continue;
       if (ds.stateStore.get(fi.item.id).pinned) continue;
       const arr = m.get(fi.item.feedId);
       if (arr) arr.push(fi.item.id);
       else m.set(fi.item.feedId, [fi.item.id]);
     }
     return m;
-  }, [visibleItems, inViewIds, ds, rowMetricVersion]);
+  }, [visibleItems, inViewIds, ds]);
 
   const handleSweepFeed = useCallback(
     (feedId: FeedId) => sweepThese(sweepableByFeed.get(feedId) ?? []),

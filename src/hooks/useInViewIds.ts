@@ -11,6 +11,18 @@ import { useStickyInset } from './useStickyInset';
 // behind the sticky chrome the whole way down (Codex P2 on PR #44).
 const FULLY_VISIBLE_RATIO = 0.999;
 
+function elementIsFullyVisible(
+  el: HTMLElement,
+  topInset: number,
+  bottomInset: number,
+): boolean {
+  if (typeof window === 'undefined') return false;
+  const rect = el.getBoundingClientRect();
+  if (rect.height <= 0 || rect.width <= 0) return false;
+  const bottom = window.innerHeight - bottomInset;
+  return rect.top >= topInset && rect.bottom <= bottom;
+}
+
 // Tracks which list rows are *fully* visible right now, so Sweep can hide only
 // the rows the reader can actually see — not the whole loaded list (SPEC.md
 // *List toolbar → Sweep*). A row counts as in view iff its bounding box sits
@@ -52,6 +64,10 @@ export function useInViewIds(opts: Options = {}): {
   const rowEls = useRef<Map<ItemId, HTMLElement>>(new Map());
   const observerRef = useRef<IntersectionObserver | null>(null);
   const { top: topInset, bottom: bottomInset } = useStickyInset();
+  const topInsetRef = useRef(topInset);
+  const bottomInsetRef = useRef(bottomInset);
+  topInsetRef.current = topInset;
+  bottomInsetRef.current = bottomInset;
 
   // Keep the latest callback in a ref so toggling the feature on/off never
   // recreates the observer (its effect only depends on the insets).
@@ -144,7 +160,19 @@ export function useInViewIds(opts: Options = {}): {
       },
     );
     observerRef.current = io;
-    for (const el of rowEls.current.values()) io.observe(el);
+    const seededVisible: ItemId[] = [];
+    for (const el of rowEls.current.values()) {
+      io.observe(el);
+      const id = el.dataset.itemId;
+      if (id && elementIsFullyVisible(el, topInset, bottomInset)) seededVisible.push(id);
+    }
+    if (seededVisible.length) {
+      setInViewIds((prev) => {
+        const next = new Set(prev);
+        for (const id of seededVisible) next.add(id);
+        return next;
+      });
+    }
     return () => {
       io.disconnect();
       observerRef.current = null;
@@ -189,6 +217,18 @@ export function useInViewIds(opts: Options = {}): {
       if (el) {
         rowEls.current.set(id, el);
         io?.observe(el);
+        // Seed fully-visible membership synchronously from layout so Sweep is
+        // available on the first paint, before IntersectionObserver's initial
+        // async delivery (or when the observer is unavailable/throttled). The
+        // observer remains authoritative for later scroll changes.
+        if (elementIsFullyVisible(el, topInsetRef.current, bottomInsetRef.current)) {
+          setInViewIds((s) => {
+            if (s.has(id)) return s;
+            const next = new Set(s);
+            next.add(id);
+            return next;
+          });
+        }
       }
     };
     rowRefCache.current.set(id, setRef);
