@@ -2148,11 +2148,11 @@ page's discipline is unchanged.
   full uncropped image is only linked as the post's "[link]"; the sanitizer
   swaps the thumbnail's `src` for that full image at poll/refresh time (see
   *Feed fetching & parsing* → `_shared/redditImages.ts`) so the reader shows the
-  whole picture rather than Reddit's crop. **Body copy is 1rem (16px at the default
-  text size) / line-height 1.4** — a deliberate step up from newshacker's 15px
-  reading text (long-form articles warrant a slightly larger, denser measure
-  than HN comment threads). It is sized in `rem`, so it scales with the
-  Settings "Text size" choice along with the rest of the UI type.
+  whole picture rather than Reddit's crop. **Body copy matches the AI summary
+  card's text size** (0.95rem, ~15px at the default text size; line-height 1.4)
+  so the summary and the article read as one continuous piece. It is sized in
+  `rem`, so it scales with the Settings "Text size" choice along with the rest
+  of the UI type.
 - **Full-text reading mode (default):** many feeds publish only a truncated
   stub as `content_html`. When the feed body looks truncated (no body, or under
   ~600 chars of visible text — see `src/lib/fullText.ts:looksTruncated`) the
