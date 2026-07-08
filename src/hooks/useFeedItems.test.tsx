@@ -100,7 +100,7 @@ describe('useFeedItems', () => {
 
     // The next page was fetched at offset '2' (3 loaded − 1 dismissed), NOT the
     // stale '3' that would skip the row that slid into offset 2.
-    expect(fetchPage).toHaveBeenLastCalledWith('2');
+    expect(fetchPage.mock.lastCall?.[0]).toBe('2');
   });
 
   it('advances past a fully-dismissed page instead of re-fetching it forever (Codex P2 #376)', async () => {
@@ -139,13 +139,13 @@ describe('useFeedItems', () => {
     // First More: 0 live loaded → offset '0' (the server's new first live row).
     result.current.fetchMore();
     await waitFor(() => expect(result.current.isFetchingMore).toBe(false));
-    expect(fetchPage).toHaveBeenLastCalledWith('0');
+    expect(fetchPage.mock.lastCall?.[0]).toBe('0');
 
     // Second More: 3 live loaded (page 2) → offset '3', NOT '0' again. The buggy
     // decrement formula would recompute '3' − 3 = '0' here and loop.
     result.current.fetchMore();
     await waitFor(() => expect(result.current.isFetchingMore).toBe(false));
-    expect(fetchPage).toHaveBeenLastCalledWith('3');
+    expect(fetchPage.mock.lastCall?.[0]).toBe('3');
 
     // All three real pages are reachable — the tail was not stranded.
     const ids = new Set(result.current.items.map((fi) => fi.item.id));

@@ -1376,14 +1376,9 @@ negligible and off every critical path. See the External services table in
        - **Sticky displayed window per section.** Each section's displayed set
          is anchored from its first read (the opening pinned block +
          `PER_FEED_WINDOW` body rows)
-         and extended only by tapping "More". Refetches that bring fresh
-         server-newer rows into the top of `items` — a pull-to-refresh, window
-         focus, or the global pager, plus cross-device drift and RSS items
-         polled in — leave those rows in the cache but **do not paint them**: the
-         section stays anchored on what the reader is already viewing. (A dismiss
-         or Sweep no longer refetches at all — see *A dismiss never refetches* —
-         so it can't refill; the guarantee below holds trivially for them and via
-         the sticky gate for the genuine refetches.) Concretely this means
+         and extended only by tapping "More" — *within* a frozen set. (A dismiss
+         or Sweep never refetches — see *A dismiss never refetches* — so nothing
+         refills a section behind the reader's back.) Concretely this means
          **Sweep does not auto-refill** (sweeping unpinned rows clears the section
          to its pinned rows; tap "More" to pull the next full page); and **pinning
          an "extra" row does not shrink the section** (the pinned id is in
@@ -1391,15 +1386,27 @@ negligible and off every critical path. See the External services table in
          the displayed list). When a swept section has no pins to anchor it,
          the section header + "More" still render as a **phantom row** so the
          reader can pull the next page without remounting; the empty state
-         only appears once every section is genuinely exhausted. Pull-to-
-         refresh resets the sticky set, so the reader can always opt in to
-         the newest top items. A section's "More" **stays a stable, tappable
+         only appears once every section is genuinely exhausted. When the set
+         **re-materializes** — a load/return or window focus past the 6h
+         freshness TTL, a reconnect, or a pull-to-refresh (*A stable set of
+         articles*) — the sticky set **resets with it**: each section repaints
+         as its pinned block plus the fresh window (an expansion collapses back
+         to the opening window, an in-session pin consolidates to the top,
+         exactly as pull-to-refresh always did). It must never stay anchored to
+         the previous read's ids across a re-materialization — a long-lived
+         grouped view whose displayed rows had all been read would otherwise
+         strand on those dead ids, hide every fresh article behind the gate,
+         and (on quiet feeds with no probe row) collapse to a false "all caught
+         up". Undo's reconcile refetch is the exception that stays anchored: it
+         restores rows into the view the reader is looking at. A section's
+         "More" **stays a stable, tappable
          "More" through a background refetch** — it is never flickered to a
-         disabled "Loading…" by a refresh the reader didn't trigger. Because
-         the next-page offset is computed off `items`, which is briefly stale
-         mid-refetch, a tap that lands during one is **deferred** and fires
-         once the refetch settles (against fresh `items`), so the tap is
-         honored rather than dropped or run against a stale offset. Only the
+         disabled "Loading…" by a refresh the reader didn't trigger — and a
+         tap that lands mid-refresh is never run against the stale list: if
+         the refresh preserved the window (Undo) the tap fires once it
+         settles; if it re-materialized the section, the repaint supersedes
+         the tap — the fresh window, with its own "More", is what the tap
+         was after. Only the
          section the reader actually tapped shows "Loading…", and a rapid
          double tap issues a single page fetch.
    - **Done and Hidden filtered out**; **Opened** items render with the faded
@@ -3187,6 +3194,10 @@ keys differ; the strategies map one-to-one:
   force-checks for a newer bundle. Gesture shape identical (arm at
   `scrollTop===0` on a downward-dominant drag, 0.5× rubber-band, cap 96px, fire
   past 64px, spinner ≥400ms; `overscroll-behavior-y: contain`).
+- The feed view's PTR also asks the server to re-poll the subscribed feeds
+  first, but that poll is **best-effort**: if it fails (rate-limited, offline,
+  function error), the pull still re-runs the view's fetch and repaints — a
+  pull is never a silent no-op just because the on-demand poll was refused.
 
 ---
 
