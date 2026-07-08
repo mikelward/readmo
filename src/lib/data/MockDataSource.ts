@@ -232,15 +232,22 @@ export class MockDataSource implements DataSource {
     });
 
     // Group-by-feed only: cap each feed's section to its newest `perFeedLimit`
-    // rows (the sort above made each feed run contiguous, pinned-first). The
-    // per-section "More" pages deeper into one feed via getFeedItems. Mirrors
-    // the `feed_items` RPC's p_per_feed_limit window. A single-feed read (no
-    // groupByFeed) is never capped — that's the path "More" pages through.
+    // BODY rows (the sort above made each feed run contiguous, pinned-first).
+    // Pinned rows are exempt from the cap — a section is its full pinned block
+    // plus the body window — so pins never crowd articles out of the opening
+    // view. The per-section "More" pages deeper into one feed via getFeedItems.
+    // Mirrors the `feed_items` RPC's p_per_feed_limit window (0052). A
+    // single-feed read (no groupByFeed) is never capped — that's the path
+    // "More" pages through.
     const perFeedLimit = opts?.perFeedLimit;
     if (groupByFeed && perFeedLimit != null && perFeedLimit >= 0) {
       const seen = new Map<FeedId, number>();
       const capped: typeof rows = [];
       for (const r of rows) {
+        if (r.pinned) {
+          capped.push(r);
+          continue;
+        }
         const fid = r.fi.item.feedId;
         const n = seen.get(fid) ?? 0;
         if (n >= perFeedLimit) continue;

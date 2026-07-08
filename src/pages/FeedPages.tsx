@@ -61,11 +61,12 @@ export function HomePage() {
   }
   // Fold the sort/group prefs into both the query key (so a change refetches
   // from page 1 with the new ordering) and the fetch options. Grouping windows
-  // each feed section to PER_FEED_WINDOW rows up front; the per-section "More"
-  // pages deeper into one feed via getFeedItems. The read overfetches ONE extra
-  // row per feed (PER_FEED_WINDOW + 1) as a has-more probe — the client renders
-  // only the window and uses the surviving extra to decide whether to show a
-  // section "More", so an exactly-full feed shows none instead of a dead button.
+  // each feed section to PER_FEED_WINDOW body rows up front (pinned rows are
+  // exempt and all show); the per-section "More" pages deeper into one feed via
+  // getFeedItems. The read overfetches ONE extra body row per feed
+  // (PER_FEED_WINDOW + 1) as a has-more probe — the client renders only the
+  // window and uses the surviving extra to decide whether to show a section
+  // "More", so an exactly-full feed shows none instead of a dead button.
   const opts = {
     sort: itemSort,
     groupByFeed,

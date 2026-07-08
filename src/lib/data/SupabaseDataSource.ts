@@ -136,8 +136,9 @@ const ID_LOOKUP_CHUNK = 200;
 
 /** Row ceiling the group-by-feed windowed read asks for, so every feed
  * section's opening window lands in a single response. PostgREST caps a
- * response at 1000 rows anyway; with each section capped to PER_FEED_WINDOW the
- * caller-bounded feed count keeps feeds × window well under this. */
+ * response at 1000 rows anyway; with each section's body capped to
+ * PER_FEED_WINDOW (pins ride on top uncapped, but are few) the caller-bounded
+ * feed count keeps feeds × window well under this. */
 const GROUPED_WINDOW_ROW_CAP = 1000;
 
 /** Page size for the full item_state hydrate read. PostgREST caps a single
@@ -955,8 +956,9 @@ export class SupabaseDataSource implements DataSource {
     args: { p_scope: 'home' | 'folder' | 'feed'; p_folder: string | null; p_feed_id: FeedId | null },
     opts?: FeedListOptions,
   ): Promise<Page<FeedItem>> {
-    // Group-by-feed windowed read: each feed section is capped to `perFeedLimit`
-    // rows server-side, so a single read holds every section's opening window and
+    // Group-by-feed windowed read: each feed section's BODY is capped to
+    // `perFeedLimit` rows server-side (pinned rows are exempt and all ride
+    // along, 0052), so a single read holds every section's opening window and
     // depth comes from the per-section "More" — not a global page. We ask for up
     // to the PostgREST row cap; with a bounded feed count (feeds × perFeedLimit)
     // that's one page. If an account still overflows the cap (more than
@@ -988,8 +990,9 @@ export class SupabaseDataSource implements DataSource {
         // pages (0016_feed_items_sort_group.sql). Pinned stay oldest-first on top.
         p_sort: opts?.sort ?? 'newest',
         p_group_by_feed: opts?.groupByFeed ?? false,
-        // Cap each feed's section to its newest this-many rows (0021), grouping
-        // only. Sent ONLY for the windowed grouped read so flat/folder/single-feed
+        // Cap each feed's section to its newest this-many BODY rows — pins are
+        // exempt (0021, pinned-exempt since 0052) — grouping only. Sent ONLY
+        // for the windowed grouped read so flat/folder/single-feed
         // reads keep the 7-arg payload — that way a client that rolls out before
         // migration 0021 still resolves those against the old 7-arg function
         // (PostgREST matches a function by the arg-name set, so an unknown
