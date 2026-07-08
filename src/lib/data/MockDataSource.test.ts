@@ -170,6 +170,22 @@ describe('MockDataSource feed reads', () => {
       expect(next.nextCursor).toBeNull();
     });
 
+    it('exempts pinned items from the per-feed window (all pins + the body window)', async () => {
+      // Pin two of the three Verge items, then cap each section's body to 1:
+      // the section is BOTH pins plus 1 body row — pins never crowd articles
+      // out of the opening view (SPEC *Per-section More + per-feed window*).
+      const verge = await ds.getFeedItems('feed-verge', { limit: 100 });
+      const [v1, v2, v3] = verge.items.map((fi) => fi.item.id);
+      ds.stateStore.set(v2, 'pinned', true, 1000);
+      ds.stateStore.set(v3, 'pinned', true, 2000); // pinned later
+      const page = await ds.getHomeItems({ groupByFeed: true, perFeedLimit: 1 });
+      const vergeShown = page.items
+        .filter((fi) => fi.item.feedId === 'feed-verge')
+        .map((fi) => fi.item.id);
+      // Pinned block (oldest pin first) + the single newest body row.
+      expect(vergeShown).toEqual([v2, v3, v1]);
+    });
+
     it('does not cap when grouping without perFeedLimit (unchanged behavior)', async () => {
       const page = await ds.getHomeItems({ groupByFeed: true, limit: 100 });
       const verge = page.items.filter((fi) => fi.item.feedId === 'feed-verge');

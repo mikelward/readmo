@@ -2249,21 +2249,26 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(ids(page.items)).toEqual(['i2', 'i6', 'i3']);
   });
 
-  it('windows each feed section to perFeedLimit and returns one page (group by feed)', async () => {
+  it('windows each feed section to perFeedLimit body rows, pins exempt (group by feed)', async () => {
     const env = setup();
-    // Cap each section to 1 row. feed-a (i2 pinned, then i6) → just i2;
-    // feed-b (i3) → i3. The clipped i6 is reachable via the per-section More.
+    // An extra, older feed-a body item so the 1-row body cap has something to
+    // clip: feed-a body is i6 (day 6) then i9 (day 1).
+    env.fake.store.items.push(mkItem('i9', 'feed-a', 1, 'Old A'));
+    // Cap each section's BODY to 1 row. feed-a → i2 (pinned, EXEMPT from the
+    // cap — 0052) plus its newest body row i6; feed-b → i3. The clipped i9 is
+    // reachable via the per-section More.
     const page = await env.ds.getHomeItems({ groupByFeed: true, perFeedLimit: 1 });
-    expect(ids(page.items)).toEqual(['i2', 'i3']);
+    expect(ids(page.items)).toEqual(['i2', 'i6', 'i3']);
     // The windowed grouped read is a single page (no global next cursor).
     expect(page.nextCursor).toBeNull();
     // The cap was threaded to the RPC.
     const call = env.fake.rpcCalls.find((c) => c.name === 'feed_items');
     expect(call?.params).toMatchObject({ p_group_by_feed: true, p_per_feed_limit: 1 });
 
-    // The per-section More re-reads that one feed past the window (offset 1).
-    const more = await env.ds.getFeedItems('feed-a', { cursor: '1', limit: 1 });
-    expect(ids(more.items)).toEqual(['i6']);
+    // The per-section More re-reads that one feed past the window — offset 2 =
+    // the pinned row + the 1-row body window.
+    const more = await env.ds.getFeedItems('feed-a', { cursor: '2', limit: 1 });
+    expect(ids(more.items)).toEqual(['i9']);
   });
 
   it('windows each feed independently even when two subscriptions share a sort ordinal', async () => {

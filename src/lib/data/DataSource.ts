@@ -188,11 +188,13 @@ export interface FeedListOptions {
    * No effect on a single-feed view. Defaults to `false`. */
   groupByFeed?: boolean;
   /** Group-by-feed only: cap each feed's section to its newest this-many
-   * listable items so a busy feed doesn't dump its whole window into the river.
-   * The view's per-section "More" then pages deeper into that one feed (via a
-   * single-feed read), independent of the other sections. Ignored when not
-   * grouping (the flat river pages globally instead) and on a single-feed view.
-   * Threaded to the `feed_items` RPC as `p_per_feed_limit`. */
+   * listable BODY items so a busy feed doesn't dump its whole window into the
+   * river. Pinned items are exempt from the cap — a section is its full pinned
+   * block plus this window, so pins never crowd articles out of the opening
+   * view. The view's per-section "More" then pages deeper into that one feed
+   * (via a single-feed read), independent of the other sections. Ignored when
+   * not grouping (the flat river pages globally instead) and on a single-feed
+   * view. Threaded to the `feed_items` RPC as `p_per_feed_limit`. */
   perFeedLimit?: number;
 }
 

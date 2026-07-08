@@ -472,14 +472,19 @@ function runRpc(
         return (sortAsc ? d : -d) || idDesc(a, b);
       });
     // Per-feed window: combined is already sectioned by feed (contiguous), so
-    // keep each feed run's first `perFeedLimit` rows. Mirrors 0021's row_number
-    // partition-by-feed cap.
+    // keep each feed run's first `perFeedLimit` BODY rows. Pinned rows are
+    // exempt from the window — a section is its full pinned block plus the
+    // body window. Mirrors 0052's row_number partition-by-(feed, pin_rank) cap.
     const windowed =
       perFeedLimit != null
         ? (() => {
             const seen = new Map<string, number>();
             const out: Row[] = [];
             for (const it of combined) {
+              if (isPinned(it)) {
+                out.push(it);
+                continue;
+              }
               const fid = it.feed_id as string;
               const n = seen.get(fid) ?? 0;
               if (n >= perFeedLimit) continue;

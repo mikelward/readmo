@@ -1342,23 +1342,28 @@ negligible and off every critical path. See the External services table in
        (all already collapsed / nothing collapsed). A collapsed feed's hidden
        rows aren't navigable or swept.
      - **Per-section More + per-feed window** (group-by-feed only). Each section
-       opens showing only its newest **`PER_FEED_WINDOW` (10)** listable rows, so
-       a busy feed doesn't dump its whole freshness window into the river. A
+       opens showing **all of its pinned rows** plus its newest
+       **`PER_FEED_WINDOW` (10)** listable body rows, so a busy feed doesn't
+       dump its whole freshness window into the river — and pins never crowd
+       articles out: after any refresh a section is its full pinned block *and*
+       the first 10 articles, however many pins there are. A
        **"More"** at the **foot of each section** appends that feed's next page
        **inline** (another 10), independent of the other sections, until the feed
        is exhausted — its window ∪ floor ∪ pinned set, the same ceiling the
        single-feed page shows. The opening view is a **single read**: `feed_items`
-       caps each section to `PER_FEED_WINDOW` rows (`p_per_feed_limit`) and returns
+       caps each section's body to `PER_FEED_WINDOW` rows (`p_per_feed_limit`;
+       pinned rows are exempt) and returns
        every section in one page, so there's **no global bottom "More"** in this
        view (only Back-to-top remains). The per-section More re-reads that one
        feed via the **single-feed read** (`getFeedItems` with an offset), never
-       refetching the others. A feed at or under its window (≤ `PER_FEED_WINDOW`)
-       shows **no More**: the opening read **overfetches one row per feed**
-       (`PER_FEED_WINDOW + 1`) purely as a has-more probe — the client renders
-       only the window and shows a section "More" only when that extra row
-       survived, so an exactly-full feed gets no dead button (and no wasted
+       refetching the others. A feed at or under its window (≤ `PER_FEED_WINDOW`
+       body rows) shows **no More**: the opening read **overfetches one body row
+       per feed** (`PER_FEED_WINDOW + 1`) purely as a has-more probe — the client
+       renders only the window and shows a section "More" only when that extra
+       row survived, so an exactly-full feed gets no dead button (and no wasted
        empty fetch). Because
-       the read is bounded by `feeds × PER_FEED_WINDOW`, a **planned per-account
+       the read is bounded by `feeds × PER_FEED_WINDOW` (plus pins), a **planned
+       per-account
        feed cap** (`TODO(feed-cap)`) keeps it under PostgREST's 1000-row response
        cap; until that cap lands, a very large account could clip sections past
        the row cap. (Drilling into a single feed's own page is the flat pager.)
@@ -1369,7 +1374,8 @@ negligible and off every critical path. See the External services table in
        base rows self-heal on the next refetch, but a cached extra row can
        linger until that feed's window changes or the view remounts.
        - **Sticky displayed window per section.** Each section's displayed set
-         is anchored from its first read (the opening `PER_FEED_WINDOW` rows)
+         is anchored from its first read (the opening pinned block +
+         `PER_FEED_WINDOW` body rows)
          and extended only by tapping "More". Refetches that bring fresh
          server-newer rows into the top of `items` — a pull-to-refresh, window
          focus, or the global pager, plus cross-device drift and RSS items
@@ -1399,7 +1405,8 @@ negligible and off every critical path. See the External services table in
    - **Done and Hidden filtered out**; **Opened** items render with the faded
      title.
    - **Initial paint one page (30 items)** in the flat river; the grouped view
-     instead loads each feed's first **`PER_FEED_WINDOW` (10)** in one windowed
+     instead loads each feed's pinned rows plus its first **`PER_FEED_WINDOW`
+     (10)** articles in one windowed
      read and grows per section. Further flat pages only via an explicit **More**
      button (no infinite scroll). Same pagination discipline.
    - **Refreshing state.** Any time a feed view is fetching a **fresh article

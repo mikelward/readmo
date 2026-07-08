@@ -6911,31 +6911,31 @@ describe('ItemList', () => {
       expect(ids).toEqual(['A-0', 'A-1', 'A-2', 'A-3', 'A-4', 'A-90', 'A-91', 'A-92']);
     });
 
-    it('does not leak the overfetched probe row when every pinned row in the base read exceeds the section window', async () => {
-      // Regression for Codex r3482278147 follow-up: the pinned-first pass
-      // in mergedRaw walked every pinned row in baseRun unconditionally.
-      // A feed with more pinned rows than perFeedLimit would then paint the
-      // (perFeedLimit+1)th pinned row — the server's has-more probe — into
-      // the displayed section without a More tap. Gating the pinned pass on
-      // `allowed` (the sticky set) blocks the probe just like every other
-      // not-yet-opted-into row.
+    it('renders every pinned row plus the body window — pins are exempt from the section cap', async () => {
+      // SPEC *Per-section More + per-feed window*: after a refresh a section
+      // shows ALL of its pinned rows plus the first perFeedLimit body rows —
+      // pins never crowd articles out and are never clipped by the window.
+      // (The server mirrors this since 0052: p_per_feed_limit caps only body
+      // rows, and the overfetched has-more probe is always a body row, so a
+      // returned pin is always genuine.)
       const { source, mk } = await makeRows();
       const K = 3;
-      // Four pinned rows (P0..P3) in feed A — one above the section cap.
-      // The fourth row (P3) is the overfetched probe; it must not paint.
+      // Four pinned rows — more than the K-row body window — plus a full body
+      // window with its probe (A-7, the (K+1)th body row, must not paint).
       source.stateStore.set('A-0', 'pinned', true);
       source.stateStore.set('A-1', 'pinned', true);
       source.stateStore.set('A-2', 'pinned', true);
       source.stateStore.set('A-3', 'pinned', true);
       const basePage: FeedItem[] = [
         mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+        mk('A', 'Feed A', 4), mk('A', 'Feed A', 5), mk('A', 'Feed A', 6), mk('A', 'Feed A', 7),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
       const fetchFeedPage = vi.fn(() => Promise.resolve({ items: [], nextCursor: null }));
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
-      const viewKey = `psm-pin-probe-${viewKeySeq++}`;
+      const viewKey = `psm-pin-exempt-${viewKeySeq++}`;
       const { container } = renderWithProviders(
         <ItemList
           viewKey={viewKey}
@@ -6951,8 +6951,9 @@ describe('ItemList', () => {
       const ids = [...container.querySelectorAll('[data-item-id]')].map((el) =>
         el.getAttribute('data-item-id'),
       );
-      // Only the first K pinned rows render; the probe (A-3) stays hidden.
-      expect(ids).toEqual(['A-0', 'A-1', 'A-2']);
+      // All four pins render, then the K-row body window; the body probe (A-7)
+      // stays hidden behind the section More.
+      expect(ids).toEqual(['A-0', 'A-1', 'A-2', 'A-3', 'A-4', 'A-5', 'A-6']);
     });
 
     it('keeps the section anchored on cached rows when a heavy refetch flushes every sticky id out of `items[]`', async () => {
@@ -7114,11 +7115,12 @@ describe('ItemList', () => {
           }),
       );
       // Keyed on cursor so we can assert the deferred tap fetched the correct
-      // fresh-window offset ('1' here — A-0 pinned at pos 0, then the first
-      // unseen row). The stale-`items[]` bug would have sent '3' and skipped.
+      // fresh-window offset ('2' here — A-0 pinned at pos 0, the still-sticky
+      // A-3 at pos 1, then the first unseen row). The stale-`items[]` bug
+      // would have sent a stale window-sized offset and skipped.
       const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) =>
         Promise.resolve(
-          cursor === '1'
+          cursor === '2'
             ? { items: [mk('A', 'Feed A', 6)], nextCursor: null }
             : { items: [], nextCursor: null },
         ),
@@ -7139,8 +7141,11 @@ describe('ItemList', () => {
         { source, queryClient },
       );
       await act(async () => {
+        // A-0 pinned (window-exempt) + a full K-row body window (A-1..A-3) +
+        // the body probe A-4, so the section carries a live "More".
         releaseFetchPage!([
           mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+          mk('A', 'Feed A', 4),
         ]);
         await Promise.resolve();
       });
@@ -7172,8 +7177,9 @@ describe('ItemList', () => {
       await user.click(aMore());
       expect(fetchFeedPage).not.toHaveBeenCalled();
 
-      // Release the refetch with the fresh top page. The deferred tap drains and
-      // fetches against fresh items[] — cursor '1', not the stale-skip '3'.
+      // Release the refetch with the fresh top page. The deferred tap drains
+      // and fetches against fresh items[] — cursor '2' (the pin + the
+      // still-displayed A-3), not a stale-skip offset.
       await act(async () => {
         releaseFetchPage!([
           mk('A', 'Feed A', 0), mk('A', 'Feed A', 3), mk('A', 'Feed A', 4), mk('A', 'Feed A', 5),
@@ -7181,7 +7187,7 @@ describe('ItemList', () => {
         await Promise.resolve();
       });
       await waitFor(() => expect(fetchFeedPage).toHaveBeenCalledTimes(1));
-      expect(fetchFeedPage).toHaveBeenCalledWith('A', '1');
+      expect(fetchFeedPage).toHaveBeenCalledWith('A', '2');
       // The fresh page the deferred tap pulled in renders (no skip).
       expect(await screen.findByText('Feed A 6')).toBeInTheDocument();
     });
@@ -7585,10 +7591,12 @@ describe('ItemList', () => {
       // pin at the top — the section-header anchor that survives a full Sweep
       // (the pinned row stays put; the rest get marked Done).
       source.stateStore.set('A-0', 'pinned', true);
-      // A-0 (pinned) at top of A's section + A-1, A-2 (the rest of the window)
-      // + A-3 probe. After Sweep of A-1/A-2, the gated A-3/A-4 must NOT slide up.
+      // A-0 (pinned, window-exempt) at top of A's section + A-1..A-3 (the
+      // K-row body window) + A-4 probe. After Sweep of A-1..A-3, the gated
+      // A-4 must NOT slide up.
       const base = [
         mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+        mk('A', 'Feed A', 4),
         mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
@@ -7597,7 +7605,7 @@ describe('ItemList', () => {
       const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) =>
         Promise.resolve(
           cursor === '1'
-            ? { items: [mk('A', 'Feed A', 3), mk('A', 'Feed A', 4), mk('A', 'Feed A', 5)], nextCursor: null }
+            ? { items: [mk('A', 'Feed A', 4), mk('A', 'Feed A', 5), mk('A', 'Feed A', 6)], nextCursor: null }
             : { items: [], nextCursor: null },
         ),
       );
@@ -7620,13 +7628,13 @@ describe('ItemList', () => {
       const beforeIds = [...container.querySelectorAll('[data-item-id]')].map(
         (el) => el.getAttribute('data-item-id'),
       );
-      expect(beforeIds).toEqual(['A-0', 'A-1', 'A-2', 'B-0', 'B-1']);
+      expect(beforeIds).toEqual(['A-0', 'A-1', 'A-2', 'A-3', 'B-0', 'B-1']);
 
-      // Sweep A-1 and A-2 by marking them Done — a local overlay change, no
+      // Sweep A-1..A-3 by marking them Done — a local overlay change, no
       // refetch. Section retains only the pinned row — no auto-refill of the
-      // swept slots from A-3/A-4. B is untouched.
+      // swept slots from A-4. B is untouched.
       await act(async () => {
-        source.stateStore.hideMany(['A-1', 'A-2'], Date.now());
+        source.stateStore.hideMany(['A-1', 'A-2', 'A-3'], Date.now());
       });
       await waitFor(() =>
         expect(
@@ -7646,12 +7654,47 @@ describe('ItemList', () => {
       // Tap More — fetches from cursor='1' (A-0 is the only sticky overlap
       // with the new base window) and brings the fresh page in below the pin.
       await user.click(aMore!);
-      await screen.findByText('Feed A 5');
+      await screen.findByText('Feed A 6');
       expect(fetchFeedPage).toHaveBeenCalledWith('A', '1');
       const afterMoreIds = [...container.querySelectorAll('[data-item-id]')].map(
         (el) => el.getAttribute('data-item-id'),
       );
-      expect(afterMoreIds).toEqual(['A-0', 'A-3', 'A-4', 'A-5', 'B-0', 'B-1']);
+      expect(afterMoreIds).toEqual(['A-0', 'A-4', 'A-5', 'A-6', 'B-0', 'B-1']);
+    });
+
+    it('keeps a pinned section’s More against a pre-0052 backend (whole-section cap, pins included)', async () => {
+      // Rollout guardrail (Codex P1 on #431): before migration 0052 deploys,
+      // feed_items caps the WHOLE section — pins included — at the overfetched
+      // perFeedLimit + 1, so a pinned section's BODY probe can never survive
+      // and the body count alone would hide More while older articles sit
+      // clipped behind the cap. A section returned exactly at the old cap is
+      // the old server's has-more signal and must keep its More button.
+      const { source, mk } = await makeRows();
+      const K = 3;
+      source.stateStore.set('A-0', 'pinned', true);
+      // Old-server response shape: 1 pin + 3 body = exactly K + 1 rows total
+      // (the pin consumed the probe slot; body count is only K).
+      const base = [
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+      ];
+      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
+      const fetchFeedPage = vi.fn(() => Promise.resolve({ items: [], nextCursor: null }));
+      renderWithProviders(
+        <ItemList
+          viewKey={`psm-pre0052-${viewKeySeq++}`}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+          groupByFeed
+          fetchFeedPage={fetchFeedPage}
+          perFeedLimit={K}
+        />,
+        { source },
+      );
+      await screen.findAllByTestId('item-row');
+      const aMore = screen
+        .getAllByTestId('group-more')
+        .find((b) => b.getAttribute('data-feed-more') === 'A');
+      expect(aMore).toBeDefined();
     });
 
     it('shows no per-section More for an exactly-full feed (no overfetch probe)', async () => {

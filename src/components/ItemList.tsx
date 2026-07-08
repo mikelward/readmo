@@ -256,14 +256,15 @@ interface Props {
    * sectioned by feed for the headers to land in the right places. */
   groupByFeed?: boolean;
   /** Group-by-feed only: page deeper into a single feed's section. When this and
-   * {@link Props.perFeedLimit} are both set, each section opens windowed to
-   * `perFeedLimit` rows and grows a per-section "More" button at its foot that
-   * appends that feed's next page inline — independent of the other sections and
-   * of the (now single-page) base read. Omitted ⇒ no per-section More. */
+   * {@link Props.perFeedLimit} are both set, each section opens windowed to all
+   * of its pinned rows plus `perFeedLimit` body rows and grows a per-section
+   * "More" button at its foot that appends that feed's next page inline —
+   * independent of the other sections and of the (now single-page) base read.
+   * Omitted ⇒ no per-section More. */
   fetchFeedPage?: FetchFeedPage;
-  /** The per-feed window size the grouped base read was capped to — how many
-   * rows each section opens with, and the offset the first per-section "More"
-   * fetches from. Only meaningful alongside {@link Props.fetchFeedPage}. */
+  /** The per-feed BODY window size the grouped base read was capped to — how
+   * many un-pinned rows each section opens with (pinned rows are exempt and all
+   * show). Only meaningful alongside {@link Props.fetchFeedPage}. */
   perFeedLimit?: number;
   /** Multi-feed views (Home, folders) pass this to surface a group-by-feed
    * toggle in the top toolbar. Omitted on single-feed views, where grouping is
@@ -1051,9 +1052,14 @@ export function ItemList({
   }, [viewKey]);
 
   // Initialize the sticky display window for any feed seen in `items` that
-  // doesn't have one yet. Takes the first `perFeedLimit` ids of that feed's
-  // run — exactly the rows mergedRaw would have shown on first load — so the
-  // user's initial view matches the server's top window.
+  // doesn't have one yet. Takes every load-time-pinned id in that feed's run
+  // (pins are exempt from the window — SPEC: a section opens with ALL pinned
+  // rows) plus its first `perFeedLimit` body ids — exactly the rows mergedRaw
+  // would have shown on first load — so the user's initial view matches the
+  // server's top window. Pin membership keys off `basePinnedRef` (pinned when
+  // the row entered the loaded set), mirroring the server's pinned block at
+  // fetch time, so an in-session pin doesn't grow the window mid-view and the
+  // overfetched has-more probe (the (perFeedLimit+1)th BODY row) stays out.
   //
   // Also EXTENDS an existing sticky window when its ids are still the
   // contiguous prefix of items[]'s run for that feed AND items[] now carries
@@ -1075,15 +1081,18 @@ export function ItemList({
       while (i < items.length) {
         const feedId = items[i].item.feedId;
         const existing = cur.get(feedId);
+        // Walk the WHOLE run (a pin can sit anywhere in it): load-time pins go
+        // in uncounted, body ids fill the window up to `perFeedLimit`.
         const firstIds: ItemId[] = [];
-        let j = i;
-        while (
-          j < items.length &&
-          items[j].item.feedId === feedId &&
-          firstIds.length < perFeedLimit
-        ) {
-          firstIds.push(items[j].item.id);
-          j++;
+        let bodyCount = 0;
+        for (let j = i; j < items.length && items[j].item.feedId === feedId; j++) {
+          const id = items[j].item.id;
+          if (basePinnedRef.current.has(id)) {
+            firstIds.push(id);
+          } else if (bodyCount < perFeedLimit) {
+            firstIds.push(id);
+            bodyCount += 1;
+          }
         }
         if (!existing) {
           if (firstIds.length > 0) {
@@ -1161,15 +1170,20 @@ export function ItemList({
       // section's More would no-op and the new row would only be revealed
       // by pull-to-refresh.
       const allowed = displayedByFeed.get(feedId);
+      // Only a BODY row within the window can be "unseen": load-time pins are
+      // window-exempt and rendered unconditionally by mergedRaw's pinned pass,
+      // so they neither need More to reveal them nor advance the window
+      // position.
       const hasUnseenTop =
         !!allowed &&
         (() => {
-          let pos = 0;
+          let bodyPos = 0;
           for (const fi of items) {
             if (fi.item.feedId !== feedId) continue;
-            if (pos >= perFeedLimit) break;
+            if (bodyPos >= perFeedLimit) break;
+            if (basePinnedRef.current.has(fi.item.id)) continue;
             if (!allowed.has(fi.item.id)) return true;
-            pos += 1;
+            bodyPos += 1;
           }
           return false;
         })();
@@ -1191,13 +1205,24 @@ export function ItemList({
       //   row that used to follow doesn't get skipped).
       let cursor: string | null;
       if (!allowed) {
-        cursor = existing ? existing.nextCursor : String(perFeedLimit);
+        // No sticky entry yet (rare — the init effect hasn't run): the window
+        // is every load-time pin plus `perFeedLimit` body rows, so the next
+        // page starts past both.
+        let pinnedCount = 0;
+        for (const fi of items) {
+          if (fi.item.feedId !== feedId) continue;
+          if (basePinnedRef.current.has(fi.item.id)) pinnedCount += 1;
+        }
+        cursor = existing
+          ? existing.nextCursor
+          : String(pinnedCount + perFeedLimit);
       } else {
-        let pos = 0;
+        let pos = 0; // offset into the server's pinned-then-body sequence
+        let bodyPos = 0; // body rows considered — the window holds perFeedLimit
         let firstUnseen = -1;
         for (const fi of items) {
           if (fi.item.feedId !== feedId) continue;
-          if (pos >= perFeedLimit) break;
+          if (bodyPos >= perFeedLimit) break;
           // A locally Done/Hidden base row is on its way out of the server's
           // sequence. Since a mutation no longer refetches, it's still sitting in
           // items[] — so skip it here rather than counting its slot, exactly as
@@ -1207,18 +1232,36 @@ export function ItemList({
           // Pinned rows stay in the server's sequence (exempt from Done/Hidden),
           // so a pinned+Done row still occupies an offset slot — count it.
           if (!st.pinned && (st.done || st.hidden)) continue;
+          // A load-time pin occupies a sequence slot but is window-exempt and
+          // always rendered, so it can't be the "unseen" row More must reveal
+          // and doesn't advance the body window either.
+          if (basePinnedRef.current.has(fi.item.id)) {
+            pos += 1;
+            continue;
+          }
           if (!allowed.has(fi.item.id)) {
             firstUnseen = pos;
             break;
           }
           pos += 1;
+          bodyPos += 1;
         }
         if (firstUnseen >= 0) {
           cursor = String(firstUnseen);
         } else {
           const inView = new Set<ItemId>();
           for (const fi of items) {
-            if (fi.item.feedId !== feedId || !allowed.has(fi.item.id)) continue;
+            if (fi.item.feedId !== feedId) continue;
+            // A window-exempt pin the sticky set never learned (a cross-device
+            // pin arriving on a refetch) is rendered by the pinned pass and
+            // occupies a sequence slot, so it counts toward the offset even
+            // outside `allowed`.
+            if (
+              !allowed.has(fi.item.id) &&
+              !basePinnedRef.current.has(fi.item.id)
+            ) {
+              continue;
+            }
             // Same as above: a locally-dismissed base row no longer counts toward
             // the server offset (it's gone from the server's filtered sequence).
             const st = ds.stateStore.get(fi.item.id);
@@ -1517,20 +1560,15 @@ export function ItemList({
       // pinned this session before the outbox synced, so `feed_items`' per-feed
       // date window excludes it and branch (c) can't yet rescue it — is NOT
       // promoted here even though it's still in `rowCacheRef`; it reappears on the
-      // next focus/resync once the pin syncs (Codex on #418). The cap belongs HERE
-      // and only here: it bounds the *pinned* rows to perFeedLimit so the overfetched
-      // has-more probe pin (the (perFeedLimit+1)th) can't leak. It must NOT cap
-      // the sticky fill below — an out-of-window pin is shown IN ADDITION to the
-      // window rows, never by displacing one (a displaced sticky row would be
-      // hidden yet still counted seen by handleFeedMore's cursor, skipping it
-      // until PTR — Codex P2 on #418).
-      let pinnedShown = 0;
+      // next focus/resync once the pin syncs (Codex on #418). No cap: pins are
+      // exempt from the per-feed window at the server too (0052 — a section is
+      // ALL its pins plus the body window, and the overfetched has-more probe is
+      // always a body row), so every promotable pin shows. A pin is shown IN
+      // ADDITION to the window rows, never by displacing one (a displaced sticky
+      // row would be hidden yet still counted seen by handleFeedMore's cursor,
+      // skipping it until PTR — Codex P2 on #418).
       for (const fi of baseRun) {
-        if (pinnedShown >= perFeedLimit) break;
-        if (promotablePin(fi)) {
-          push(fi);
-          pinnedShown += 1;
-        }
+        if (promotablePin(fi)) push(fi);
       }
       if (allowed) {
         // Fill with the sticky (opted-in) rows in iteration order — the order the
@@ -1557,14 +1595,20 @@ export function ItemList({
         }
       } else {
         // No sticky entry yet (init effect hasn't run on the first paint) — fall
-        // back to the "first perFeedLimit base rows" rule so the section isn't
-        // blank. The pinned-first pass above already seated any out-of-window pin;
-        // this fills the window with the first perFeedLimit not-yet-shown base
-        // rows. The init effect lands shortly after and `allowed` takes over.
+        // back to the "all pins + first perFeedLimit body rows" rule so the
+        // section isn't blank. The pinned-first pass above already seated the
+        // promotable pins; this seats any remaining load-time pin (window-
+        // exempt, uncounted) and fills the window with the first perFeedLimit
+        // not-yet-shown body rows. The init effect lands shortly after and
+        // `allowed` takes over.
         let shown = 0;
         for (const fi of baseRun) {
-          if (shown >= perFeedLimit) break;
           if (feedSeen.has(fi.item.id)) continue;
+          if (basePinnedRef.current.has(fi.item.id)) {
+            push(fi);
+            continue;
+          }
+          if (shown >= perFeedLimit) continue;
           push(fi);
           shown += 1;
         }
@@ -1781,15 +1825,27 @@ export function ItemList({
 
   // Which feed sections should show a "More" at their foot, and which are
   // mid-fetch. A feed has more when it already holds extras that aren't
-  // exhausted, or — before any expansion — when the base read returned MORE than
-  // the display window (the overfetched probe row survived), proving older rows
-  // exist. Using `> perFeedLimit` (not `>=`) is what keeps an exactly-full feed
-  // — count === window, nothing older — from showing a dead More that fetches an
-  // empty page and vanishes (SPEC: a feed at/under its window shows no More).
-  const baseRawCountByFeed = useMemo(() => {
-    const m = new Map<FeedId, number>();
+  // exhausted, or — before any expansion — when the base read returned MORE
+  // BODY rows than the display window (the overfetched probe row survived),
+  // proving older rows exist. Pins are excluded from the body count: they're
+  // window-exempt (all of them show, 0052), so a pin-heavy section mustn't
+  // read as "has more articles". Using `> perFeedLimit` (not `>=`) is what
+  // keeps an exactly-full feed — count === window, nothing older — from
+  // showing a dead More that fetches an empty page and vanishes (SPEC: a feed
+  // at/under its window shows no More). The total is kept alongside for the
+  // pre-0052 backend fallback in feedsWithMore below.
+  const baseCountsByFeed = useMemo(() => {
+    const m = new Map<FeedId, { total: number; body: number }>();
     if (!perGroupMore) return m;
-    for (const fi of items) m.set(fi.item.feedId, (m.get(fi.item.feedId) ?? 0) + 1);
+    for (const fi of items) {
+      let e = m.get(fi.item.feedId);
+      if (!e) {
+        e = { total: 0, body: 0 };
+        m.set(fi.item.feedId, e);
+      }
+      e.total += 1;
+      if (!basePinnedRef.current.has(fi.item.id)) e.body += 1;
+    }
     return m;
   }, [perGroupMore, items]);
   // Per-feed: does the base window contain at least one id the sticky set
@@ -1805,12 +1861,21 @@ export function ItemList({
     while (i < items.length) {
       const feedId = items[i].item.feedId;
       const allowed = displayedByFeed.get(feedId);
-      let pos = 0;
+      let bodyPos = 0;
       while (i < items.length && items[i].item.feedId === feedId) {
-        if (pos < perFeedLimit && allowed && !allowed.has(items[i].item.id)) {
-          s.add(feedId);
+        // Load-time pins are window-exempt and always rendered, so only a
+        // body row can be "unseen" — and pins don't advance the window
+        // position either.
+        if (!basePinnedRef.current.has(items[i].item.id)) {
+          if (
+            bodyPos < perFeedLimit &&
+            allowed &&
+            !allowed.has(items[i].item.id)
+          ) {
+            s.add(feedId);
+          }
+          bodyPos += 1;
         }
-        pos += 1;
         i += 1;
       }
     }
@@ -1819,7 +1884,7 @@ export function ItemList({
   const feedsWithMore = useMemo(() => {
     if (!perGroupMore || perFeedLimit == null) return undefined;
     const s = new Set<FeedId>();
-    for (const [feedId, count] of baseRawCountByFeed) {
+    for (const [feedId, { total, body }] of baseCountsByFeed) {
       const ex = feedExtras.get(feedId);
       // Re-enable More for an exhausted feed (`ex.done`) when the base window
       // has unseen rows — typically a polled-in or cross-device-promoted item
@@ -1827,12 +1892,27 @@ export function ItemList({
       // there's no path to reveal the new content short of pull-to-refresh.
       if (ex) {
         if (!ex.done || hasUnseenInBaseWindow.has(feedId)) s.add(feedId);
-      } else if (count > perFeedLimit || hasUnseenInBaseWindow.has(feedId)) {
+      } else if (
+        body > perFeedLimit ||
+        // Pre-0052 backend fallback: the old feed_items caps the WHOLE
+        // section (pins included) at the overfetched perFeedLimit + 1, so on
+        // a pinned section the body probe can never survive and the body
+        // count alone would hide More while articles sit clipped behind the
+        // cap (Codex P1 on #431). A section that came back exactly at that
+        // cap is the old server's has-more probe — honor it so those rows
+        // stay reachable until `make migrate` lands 0052. Against the new
+        // server this only re-adds the dead-button edge the old client
+        // already had (an exhausted pinned section of exactly
+        // perFeedLimit + 1 rows fetches one empty page); an un-pinned
+        // exactly-full section still gets no More (total === perFeedLimit).
+        total === perFeedLimit + 1 ||
+        hasUnseenInBaseWindow.has(feedId)
+      ) {
         s.add(feedId);
       }
     }
     return s;
-  }, [perGroupMore, perFeedLimit, baseRawCountByFeed, feedExtras, hasUnseenInBaseWindow]);
+  }, [perGroupMore, perFeedLimit, baseCountsByFeed, feedExtras, hasUnseenInBaseWindow]);
   // Canonical feed rank from the full base read — used by ItemRows to
   // interleave phantom sections at their proper ordinal position so a swept
   // middle feed doesn't shift to the end of the rendered list.

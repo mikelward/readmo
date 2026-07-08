@@ -204,9 +204,11 @@ export const HOME_WINDOW_MS = 3 * DAY_MS;
 export const FEED_FLOOR = 10;
 
 /** Per-feed window for the group-by-feed view: each feed section opens showing
- * at most this many of its listable items, with a per-section "More" button to
- * reveal the next `PER_FEED_WINDOW` (and so on) without paging the whole river.
- * Only applies when grouping by feed; the flat river pages globally instead.
- * Threaded into the `feed_items` RPC as `p_per_feed_limit` and mirrored by the
- * client merge in {@link ItemList}. */
+ * ALL of its pinned items plus at most this many of its listable body items,
+ * with a per-section "More" button to reveal the next `PER_FEED_WINDOW` (and so
+ * on) without paging the whole river. Pinned items are exempt from the cap so
+ * pins never crowd articles out of a refreshed section. Only applies when
+ * grouping by feed; the flat river pages globally instead. Threaded into the
+ * `feed_items` RPC as `p_per_feed_limit` and mirrored by the client merge in
+ * {@link ItemList}. */
 export const PER_FEED_WINDOW = 10;
