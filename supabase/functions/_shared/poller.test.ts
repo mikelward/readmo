@@ -135,6 +135,45 @@ describe('pollOne validator ordering', () => {
     expect(updatesWithValidators(calls)).toHaveLength(0);
   });
 
+  it('sanitizes the summary before storing (publisher HTML, guardrail #6)', async () => {
+    // A distinct <description> next to <content:encoded> survives as the
+    // summary — it is publisher HTML and must be sanitized like the body.
+    const body = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel>
+  <title>Test Feed</title>
+  <link>https://example.com/</link>
+  <item>
+    <title>First item</title>
+    <link>https://example.com/a</link>
+    <guid>https://example.com/a</guid>
+    <description>&lt;p onclick="steal()"&gt;Teaser&lt;/p&gt;&lt;script&gt;evil()&lt;/script&gt;</description>
+    <content:encoded>&lt;p&gt;Full body&lt;/p&gt;</content:encoded>
+  </item>
+</channel></rss>`;
+    const { client, calls } = makeClient();
+    const { fetchFn } = makeFetch({
+      status: 200,
+      headers: { 'content-type': 'application/rss+xml' },
+      body,
+    });
+
+    await pollOne(client, FEED, fetchFn);
+
+    const rpc = calls.find((c) => c.kind === 'rpc') as Extract<RecordedCall, { kind: 'rpc' }>;
+    const items = rpc.args.p_items as Array<Record<string, unknown>>;
+    expect(items[0].summary).toBe('<p>Teaser</p>');
+    // No distinct summary → null survives (not collapsed to '').
+    const { client: c2, calls: calls2 } = makeClient();
+    const { fetchFn: f2 } = makeFetch({
+      status: 200,
+      headers: { 'content-type': 'application/rss+xml' },
+      body: RSS_BODY,
+    });
+    await pollOne(c2, FEED, f2);
+    const rpc2 = calls2.find((c) => c.kind === 'rpc') as Extract<RecordedCall, { kind: 'rpc' }>;
+    expect((rpc2.args.p_items as Array<Record<string, unknown>>)[0].summary).toBeNull();
+  });
+
   it('does not clobber stored validators on a 304', async () => {
     const { client, calls } = makeClient();
     const { fetchFn, requests } = makeFetch({ status: 304 });

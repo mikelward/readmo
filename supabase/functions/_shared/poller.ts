@@ -140,7 +140,13 @@ export async function pollOne(
     author: it.author,
     published_at: it.publishedAt,
     content_html: sanitizeContent(it.contentHtml, it.url ?? parsed.siteUrl),
-    summary: it.summary,
+    // The summary is publisher HTML too (RSS <description>, Atom
+    // <summary type="html">) — never stored raw. Null (no distinct summary)
+    // survives; sanitizeContent would collapse it to ''.
+    summary:
+      it.summary == null
+        ? null
+        : sanitizeContent(it.summary, it.url ?? parsed.siteUrl),
     enclosures: it.enclosures,
     // content_hash detects edits → update in place rather than duplicate.
     content_hash: it.guid,

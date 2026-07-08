@@ -231,7 +231,11 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
     author: it.author,
     published_at: it.publishedAt,
     content_html: sanitizeContent(it.contentHtml, it.url ?? parsed.siteUrl),
-    summary: it.summary,
+    // The summary is publisher HTML too — never stored raw (same as poller.ts).
+    summary:
+      it.summary == null
+        ? null
+        : sanitizeContent(it.summary, it.url ?? parsed.siteUrl),
     enclosures: it.enclosures,
     content_hash: it.guid,
   }));
