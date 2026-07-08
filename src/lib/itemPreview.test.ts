@@ -104,6 +104,19 @@ describe('leadImageUrl', () => {
   it('returns null when there is no usable image anywhere', () => {
     expect(leadImageUrl(makeItem({ contentHtml: '<p>Just text.</p>' }))).toBeNull();
   });
+
+  it('entity-decodes a raw src before proxying (multi-param URLs)', () => {
+    // Attribute values in stored HTML are entity-encoded (& → &amp;), so a
+    // signed/multi-param image URL must be decoded before it reaches the
+    // proxy — otherwise the upstream sees literal "amp;h"/"amp;sig" params.
+    const item = makeItem({
+      contentHtml:
+        '<img src="https://cdn.example.com/p.jpg?w=800&amp;h=600&amp;sig=abc" alt="">',
+    });
+    expect(leadImageUrl(item)).toBe(
+      proxied('https://cdn.example.com/p.jpg?w=800&h=600&sig=abc'),
+    );
+  });
 });
 
 describe('itemPreviewText', () => {
@@ -138,4 +151,5 @@ describe('itemPreviewText', () => {
   it('returns an empty string for an empty body', () => {
     expect(itemPreviewText(makeItem({ contentHtml: '' }))).toBe('');
   });
+
 });

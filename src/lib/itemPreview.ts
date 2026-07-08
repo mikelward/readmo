@@ -46,9 +46,14 @@ export function leadImageUrl(item: Item): string | null {
   const fromProxiedContent = extractProxiedImageUrls(item.contentHtml)[0];
   if (fromProxiedContent) return fromProxiedContent;
 
+  // The captured src is an HTML attribute value, so it's entity-encoded — the
+  // sanitizer serializes & as &amp; — and must be decoded before use, or a
+  // multi-param URL (?w=800&amp;h=600) reaches the proxy with literal "amp;h"
+  // params and the upstream fetch 404s/403s (broken thumbnail).
   const rawContentImg = FIRST_RAW_IMG_SRC_RE.exec(item.contentHtml)?.[1];
-  if (rawContentImg && isSafeHttpUrl(rawContentImg)) {
-    return proxyImageUrl(rawContentImg);
+  if (rawContentImg) {
+    const decoded = decodeEntities(rawContentImg);
+    if (isSafeHttpUrl(decoded)) return proxyImageUrl(decoded);
   }
 
   const imageEnclosure = item.enclosures.find(
