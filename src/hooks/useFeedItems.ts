@@ -4,7 +4,15 @@ import {
 import type { FeedItem } from '../lib/types';
 import type { Page } from '../lib/data/DataSource';
 
-export type FetchPage = (cursor: string | null) => Promise<Page<FeedItem>>;
+/** Page fetcher for a feed view. `signal` is React Query's per-fetch abort
+ * signal, threaded through so a wrapper can tell whether the fetch it observed
+ * resolving was CANCELED (superseded by pagination/navigation — its result is
+ * discarded by the query cache) rather than applied; implementations are free
+ * to ignore it. */
+export type FetchPage = (
+  cursor: string | null,
+  signal?: AbortSignal,
+) => Promise<Page<FeedItem>>;
 
 /** Flatten query pages into the rendered list, keeping the first occurrence of
  * each item id. The server pages by offset over a newest-first list, so items
@@ -54,7 +62,7 @@ export function useFeedItems(
 ) {
   const query = useInfiniteQuery({
     queryKey: ['feed', viewKey],
-    queryFn: ({ pageParam }) => fetchPage(pageParam),
+    queryFn: ({ pageParam, signal }) => fetchPage(pageParam, signal),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage, allPages) =>
       adjustNextCursor

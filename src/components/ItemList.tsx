@@ -341,6 +341,62 @@ export function ItemList({
     },
     [ds],
   );
+  // Depth of Undo-triggered refetches (declared before the query so the fetch
+  // wrapper below can read it at fetch START — see undoRefetch further down).
+  const undoRefetchDepth = useRef(0);
+  // Latched when a whole-list RE-MATERIALIZING fetch begins: a first-page fetch
+  // (cursor null) issued while the list already has data, that isn't an Undo
+  // reconcile. That's a stale mount/focus past the 6h TTL, a reconnect confirm,
+  // a subscription-change invalidation, or pull-to-refresh — the fetches SPEC
+  // says re-materialize the published set. Armed inside the queryFn wrapper (at
+  // fetch start) rather than by observing an `isRefreshing` render, which a
+  // fast-settling fetch can skip entirely. Consumed by the settle effect below,
+  // which re-anchors the sticky display window on the fresh page.
+  // Three-state latch: 'inflight' from fetch start, 'landed' once the page
+  // promise RESOLVED (so the reset below can't fire against a commit where the
+  // fetch status settled but the fresh data hasn't been applied yet — React
+  // Query can deliver those in separate batches), back to 'idle' once consumed
+  // or on fetch failure.
+  const rematerializeRef = useRef<'idle' | 'inflight' | 'landed'>('idle');
+  // Monotonic stamp per armed fetch so a superseded fetch that settles LATE
+  // (after a newer page-1 fetch armed the latch) can't overwrite the newer
+  // fetch's state.
+  const rematerializeSeqRef = useRef(0);
+  const hasListDataRef = useRef(false);
+  const materializingFetchPage = useCallback<FetchPage>(
+    (cursor, signal) => {
+      if (
+        cursor == null &&
+        hasListDataRef.current &&
+        undoRefetchDepth.current === 0
+      ) {
+        const token = (rematerializeSeqRef.current += 1);
+        rematerializeRef.current = 'inflight';
+        return fetchPage(cursor, signal).then(
+          (page) => {
+            // A CANCELED refetch (superseded — e.g. the global "More" pager
+            // cancels an in-flight background refresh by default) can still
+            // resolve, but React Query discards its result. Marking that
+            // resolution 'landed' would let the settle effect reset the
+            // sticky state against data that was never applied (Codex P2 on
+            // #432) — only a fetch whose result will be applied lands.
+            if (token === rematerializeSeqRef.current) {
+              rematerializeRef.current = signal?.aborted ? 'idle' : 'landed';
+            }
+            return page;
+          },
+          (err: unknown) => {
+            if (token === rematerializeSeqRef.current) {
+              rematerializeRef.current = 'idle';
+            }
+            throw err;
+          },
+        );
+      }
+      return fetchPage(cursor, signal);
+    },
+    [fetchPage],
+  );
   const {
     items,
     isLoading,
@@ -354,17 +410,19 @@ export function ItemList({
     isRefreshing,
     refreshFailed,
     error,
-  } = useFeedItems(viewKey, fetchPage, adjustNextCursor);
+  } = useFeedItems(viewKey, materializingFetchPage, adjustNextCursor);
+  hasListDataRef.current = items.length > 0;
 
   // A fresh-list fetch (initial load, a stale mount/focus re-materialization, or
   // pull-to-refresh) can reorder the list under the reader, so the render below
   // covers it with a "Refreshing" state that blocks taps (SPEC.md *Feed views →
   // Refreshing*). Undo is the one exception: it restores instantly from the local
   // store overlay and its refetch is only a silent background reconcile (see
-  // handleUndoScroll), so it must NOT raise the Refreshing state. Track the depth
-  // of Undo-triggered refetches so `showRefreshing` can exclude them while PTR /
-  // stale-focus refetches still show it.
-  const undoRefetchDepth = useRef(0);
+  // handleUndoScroll), so it must NOT raise the Refreshing state. The depth of
+  // Undo-triggered refetches (declared above the query) lets `showRefreshing`
+  // and the re-materialization latch exclude them while PTR / stale-focus
+  // refetches still count. The depth is raised BEFORE refetch() (so the fetch
+  // wrapper sees it at fetch start) and lowered only after it settles.
   const undoRefetch = useCallback(() => {
     undoRefetchDepth.current += 1;
     const p = refetch();
@@ -979,15 +1037,20 @@ export function ItemList({
   // diff — is never mistaken for the reader pinning a row. A fresh pin on a row
   // in the loaded window is held at its place.
   //
-  // Unpinning does NOT drop the id here: the feed cache stays pinned-first until
-  // the unpin's refetch lands, so the row must keep being anchored to its body
-  // slot through that round-trip (placeStayInBodyPins re-sorts a held row by
-  // date whether or not it's still pinned). The id is cleared when it leaves the
-  // window (the GC effect below) or on the next consolidation (PTR / Sweep /
-  // view change) — by which point the cache no longer lifts it anyway.
+  // An UNPIN holds the row too (any local pinned-state change, either
+  // direction): the feed cache stays pinned-first until the next
+  // re-materialization, so an unpinned row must be anchored back to its body
+  // slot for that round-trip rather than lingering at the stale top
+  // (placeStayInBodyPins re-sorts a held row by date whether or not it's still
+  // pinned). This can't rely on the id remaining in the set from pin time —
+  // the re-materialization reset (above) clears the set, so a
+  // pin-consolidate-then-unpin sequence must re-add it here. The id is cleared
+  // when it leaves the window (the GC effect below) or on the next
+  // consolidation (PTR / TTL re-materialization / view change) — by which
+  // point the cache no longer lifts it anyway.
   useEffect(() => {
     return ds.stateStore.subscribeMutations((id, changed) => {
-      if (!changed.pinned) return;
+      if (changed.pinned === undefined) return;
       if (!itemIdsRef.current.has(id)) return;
       setStayInBodyIds((cur) => (cur.has(id) ? cur : new Set(cur).add(id)));
     });
@@ -1050,6 +1113,60 @@ export function ItemList({
       seenForBaseRef.current = new Set();
     }
   }, [viewKey]);
+
+  // Re-anchor the sticky display window when the published set RE-MATERIALIZES:
+  // any non-Undo whole-list refetch — a stale mount/focus past the 6h freshness
+  // TTL, a reconnect confirm, a subscription-change invalidation, or the
+  // pull-to-refresh refetch — that settles successfully. SPEC (*A stable set of
+  // articles*): the set re-materializes on a load/return past the TTL or a PTR;
+  // when it does, each section must repaint as its pinned block + the fresh
+  // window, not stay anchored to the previous read's ids. Without this reset the
+  // sticky window survived every non-PTR re-materialization, so a long-mounted
+  // (or persisted-cache-restored) grouped view whose displayed rows had all been
+  // dismissed re-fetched a fresh top it could never paint — and quiet feeds (at
+  // or under the window, so no probe row, no section "More", no phantom header)
+  // collapsed the whole grouped view to a false "You're all caught up." while
+  // unread articles sat in items[] behind the sticky gate (the empty
+  // grouped-view bug; flat mode has no sticky window, which is why it kept
+  // working).
+  //
+  // Undo (and its outbox-drain reconcile) routes through undoRefetch and keeps
+  // the window anchored — it must RESTORE rows into the existing view, not
+  // repaint it (excluded at fetch start via `undoRefetchDepth`). A FAILED
+  // refetch keeps the old data, so the anchored view must survive it too (same
+  // gating as the PTR handler's explicit reset, which this generalizes; that
+  // handler's own reset is now a harmless overlap). Deferred section-More taps
+  // queued during the refetch are dropped rather than drained: their cursors
+  // were computed against the pre-refresh window, and the repaint puts a fresh
+  // section (with its own "More") in front of the reader anyway —
+  // `justRematerializedRef` tells the drain effect below to consume the settle
+  // without firing them. The latch itself (`rematerializeRef`) is armed at
+  // fetch START by materializingFetchPage (above the query), so a fetch that
+  // settles without ever committing an intermediate fetching render still
+  // resets.
+  const justRematerializedRef = useRef(false);
+  // `items` is a dependency because a fast-settling refetch can go
+  // fetching→settled without ever committing an `isFetching: true` render —
+  // the fresh page landing (a new `items` identity) is the reliable settle
+  // signal. A More append or an Undo reconcile also changes `items`, but
+  // neither arms the latch, so those runs no-op. Consuming only the 'landed'
+  // state (set when the page promise resolved) keeps a commit that settled the
+  // fetch STATUS ahead of the fresh DATA from resetting against the stale page
+  // and re-anchoring the very ids the refetch replaced.
+  useEffect(() => {
+    if (isFetching || rematerializeRef.current !== 'landed') return;
+    rematerializeRef.current = 'idle';
+    if (error) return;
+    justRematerializedRef.current = true;
+    setDisplayedByFeed(new Map());
+    setFeedExtras(new Map());
+    setStayInBodyIds(new Set());
+    setPendingFeedMore(new Set());
+    feedMoreFetchingRef.current = new Set();
+    seenForBaseRef.current = new Set();
+    basePinnedRef.current = new Set();
+    grayedIdsRef.current = new Set();
+  }, [isFetching, error, items]);
 
   // Initialize the sticky display window for any feed seen in `items` that
   // doesn't have one yet. Takes every load-time-pinned id in that feed's run
@@ -1419,9 +1536,21 @@ export function ItemList({
   // tap that landed mid-refresh fetches the correct page against fresh
   // `items[]` instead of being lost. handleFeedMore re-checks its own guards
   // (done / unseen-top) against the current view, so a feed that no longer has
-  // a next page after the refetch simply no-ops.
+  // a next page after the refetch simply no-ops. This drain path now only
+  // applies to sticky-preserving refetches (Undo and its outbox-drain
+  // reconcile): a RE-MATERIALIZING refetch resets the sticky window on settle
+  // (the effect above) and drops deferred taps with it, so this effect must
+  // consume that settle without firing them — their cursors were computed
+  // against the pre-refresh window the reset just discarded.
   useEffect(() => {
-    if (isFetching || pendingFeedMore.size === 0) return;
+    if (isFetching) return;
+    // Consume the re-materialization latch on ANY settled run — even one with
+    // no queued taps — so a stale latch can't linger and swallow a later,
+    // legitimate drain.
+    const rematerialized = justRematerializedRef.current;
+    justRematerializedRef.current = false;
+    if (pendingFeedMore.size === 0) return;
+    if (rematerialized) return;
     // Only drain after a *successful* refetch. A failed one (`error` set, data
     // retained) leaves `items[]` as the stale pre-refetch window, so draining
     // now would compute the next-page offset off stale rows and could skip the
@@ -1437,13 +1566,14 @@ export function ItemList({
   }, [isFetching, error, pendingFeedMore, handleFeedMore]);
 
   // Per-id cache of FeedItem objects so a sticky row stays renderable even
-  // when a refetch flushes it out of `items[]` and `feedExtras` (e.g. more
-  // than perFeedLimit newer rows arrived at the top between fetches, so the
-  // returned base page no longer contains any of the previously displayed
-  // ids). Populated below from items[] and feedExtras on every render —
+  // when a refetch flushes it out of `items[]` and `feedExtras`. Since the
+  // re-materialization reset (a non-Undo whole-list refetch re-anchors the
+  // sticky window on the fresh page), the fallback's remaining job is the
+  // sticky-preserving refetches — Undo's immediate reconcile and its
+  // outbox-drain follow-up — where a restored row can be momentarily absent
+  // from the racing server read yet must keep rendering where the reader
+  // sees it. Populated below from items[] and feedExtras on every render —
   // mergedRaw falls back to it for sticky ids that didn't make the cut.
-  // This is what backs the SPEC's promise that the section "stays anchored
-  // on what the reader is already viewing" even under heavy refetches.
   const rowCacheRef = useRef<Map<ItemId, FeedItem>>(new Map());
   if (perGroupMore) {
     for (const fi of items) rowCacheRef.current.set(fi.item.id, fi);
@@ -3176,7 +3306,22 @@ export function ItemList({
 
       <PullToRefresh
         onRefresh={async () => {
-          await ds.refresh();
+          // The server-side re-poll is best-effort freshness: if it fails —
+          // the refresh function's per-caller rate limit (429, easy to hit
+          // when the reader pulls repeatedly), a timeout, offline — the pull
+          // must still re-run the view's fetch. The refetch is what actually
+          // repaints the list (the background poller keeps the DB fresh
+          // anyway), and aborting here made a pull a complete visual no-op
+          // with no error surfaced: the refresh-failure strip keys off the
+          // QUERY's error, and the query never ran.
+          try {
+            await ds.refresh();
+          } catch (err) {
+            console.warn(
+              '[readmo] pull-to-refresh server poll failed; refetching anyway:',
+              err,
+            );
+          }
           // React Query's `refetch()` resolves with the new result rather
           // than throwing on error, so a failed refresh would otherwise
           // proceed to clear sticky/extras against the stale cached page —
