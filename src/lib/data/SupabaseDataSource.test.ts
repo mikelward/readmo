@@ -147,6 +147,22 @@ describe('SupabaseDataSource reads', () => {
     expect(page.nextCursor).toBeNull();
   });
 
+  it('getHomeItems: keeps a pinned row even when it is also Done (pin exempt from the overlay drop)', async () => {
+    // A pinned-then-Done row (e.g. pinned, then opened on a mark-done-on-open
+    // feed) is returned by the server's pinned branch regardless of Done, so the
+    // local overlay must NOT drop it — it stays, lifted to the pinned top block.
+    // Without the pin exemption it vanished from the flat river.
+    const tables = seed();
+    tables.item_state = [
+      mkState('i2', { pinned: true, pinned_at: recent, done: true, done_at: recent }),
+      mkState('i1', { hidden: true, hidden_at: recent }),
+    ];
+    const local = setup(tables);
+    const page = await local.ds.getHomeItems();
+    expect(ids(page.items)).toContain('i2');
+    expect(ids(page.items)[0]).toBe('i2'); // pinned → top of the river
+  });
+
   it('getFeedItems: a single feed view includes a muted feed’s own items', async () => {
     const page = await env.ds.getFeedItems('feed-c');
     expect(ids(page.items)).toEqual(['i5']);
