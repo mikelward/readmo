@@ -1959,7 +1959,7 @@ four steps:
   `VisibilityOff` marker, since the article's own image can reveal the result (a
   scoreboard, a celebration); the row-body tap still opens the full article to
   reveal it.
-- **Excerpt** (`excerpt`) — a larger title with a **three-line preview**
+- **Excerpt** (`excerpt`) — a larger title with a **two-line preview**
   of the feed body (`contentHtml` stripped to plain text, entities decoded; *not*
   the AI `summary`), no image. When the headline itself is a **hidden sports
   spoiler** (the row shows the spoiler-free rewrite — see *Spoiler-free sports

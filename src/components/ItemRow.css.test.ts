@@ -31,6 +31,12 @@ function declarationsFor(selector: string): Record<string, string> {
   return out;
 }
 
+describe('excerpt preview contract', () => {
+  it('clamps the excerpt preview to two lines (SPEC "Article layout")', () => {
+    expect(declarationsFor('.item-row__excerpt')['-webkit-line-clamp']).toBe('2');
+  });
+});
+
 describe('thumbnail placement contract', () => {
   it('floats the lead thumbnail to the right', () => {
     expect(declarationsFor('.item-row__lead').float).toBe('right');
