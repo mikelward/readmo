@@ -134,11 +134,16 @@
 .item-row__excerpt {
   font-size: 0.9375rem;
   line-height: 1.4;
-  color: var(--rm-read);
+  color: var(--rm-text);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+/* Opened/read rows fade the excerpt along with the title. */
+.item-row--opened .item-row__excerpt {
+  color: var(--rm-read);
 }
 
 /* Spoiler placeholder standing in for a hidden excerpt: muted + italic so it
