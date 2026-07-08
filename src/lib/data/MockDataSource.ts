@@ -1,6 +1,7 @@
 import {
   FEED_FLOOR,
   HOME_WINDOW_MS,
+  PER_FEED_WINDOW,
   type Feed,
   type FeedId,
   type FeedItem,
@@ -28,6 +29,8 @@ import {
   type AllowlistEntry,
   type Capabilities,
   type DataSource,
+  type FeedProbeResult,
+  type ItemSort,
   type DiscoveredFeed,
   type FeedListOptions,
   type Page,
@@ -684,6 +687,39 @@ export class MockDataSource implements DataSource {
       feed.errorCount = 0;
       feed.lastError = null;
     }
+  }
+
+  /** `/debug` feed-read probe: the mock has no raw transport layer, so raw is
+   * null and the counts come straight from the same reads the views use. */
+  async debugFeedProbe(
+    sort: ItemSort = 'newest',
+    folder: string | null = null,
+  ): Promise<FeedProbeResult> {
+    const t0 = Date.now();
+    const opts = {
+      sort,
+      groupByFeed: true,
+      perFeedLimit: PER_FEED_WINDOW + 1,
+    };
+    const grouped =
+      folder != null
+        ? await this.getFolderItems(folder, opts)
+        : await this.getHomeItems(opts);
+    const per = new Map<string, number>();
+    for (const fi of grouped.items) {
+      per.set(fi.feed.title, (per.get(fi.feed.title) ?? 0) + 1);
+    }
+    const flat =
+      folder != null
+        ? await this.getFolderItems(folder, { sort })
+        : await this.getHomeItems({ sort });
+    return {
+      groupedMs: Date.now() - t0,
+      groupedRawRows: null,
+      groupedResolvedRows: grouped.items.length,
+      perFeed: [...per].map(([title, n]) => ({ title, rows: n })),
+      flatResolvedRows: flat.items.length,
+    };
   }
 
   async resyncState(): Promise<void> {

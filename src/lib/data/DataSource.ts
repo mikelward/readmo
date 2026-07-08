@@ -198,6 +198,24 @@ export interface FeedListOptions {
   perFeedLimit?: number;
 }
 
+/** Result of {@link DataSource.debugFeedProbe} — the `/debug` feed-read probe. */
+export interface FeedProbeResult {
+  /** Milliseconds the grouped read took end to end. */
+  groupedMs: number;
+  /** Rows the backend returned for the grouped windowed read, before any
+   * client-side resolution — null when the source has no raw layer (mock). */
+  groupedRawRows: number | null;
+  /** Grouped rows that survived feed-metadata resolution (what the view gets). */
+  groupedResolvedRows: number;
+  /** Resolved grouped rows per feed, in section order. */
+  perFeed: Array<{ title: string; rows: number }>;
+  /** Rows the flat first page resolved to (comparison baseline). */
+  flatResolvedRows: number;
+  /** Error message when a read failed; the counts above cover whatever
+   * completed before the failure. */
+  error?: string;
+}
+
 export interface DiscoveredFeed {
   url: string;
   title: string;
@@ -368,6 +386,17 @@ export interface DataSource {
    * on `/debug` as "Last sync". Optional: sources with no server to reconcile
    * against (the in-memory mock) omit it, and `/debug` then shows it as N/A. */
   getLastSyncedAt?(): number | null;
+  /** On-demand `/debug` probe: run the grouped windowed home read (and a flat
+   * page for comparison) OUTSIDE the query cache and report where rows survive
+   * — raw rows the backend returned, rows left after feed-metadata resolution,
+   * and the per-feed split — so a device with no devtools can pinpoint whether
+   * an empty grouped view lost its rows in transit, in resolution, or in
+   * rendering. Runs under the caller's active body sort — and, when the
+   * drawer's Home override scopes `/` to a folder, against that folder — so it
+   * exercises the same read as the view being diagnosed (defaults: newest,
+   * the all-subscriptions aggregate). Optional; `/debug` hides the probe when
+   * the source omits it. */
+  debugFeedProbe?(sort?: ItemSort, folder?: string | null): Promise<FeedProbeResult>;
 
   // --- newshacker dismissal mirror ------------------------------------------
   /** Whether this account has linked a newshacker app token, so dismissing a

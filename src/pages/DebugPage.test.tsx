@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, screen } from '@testing-library/react';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { DebugPage } from './DebugPage';
+import { MockDataSource } from '../lib/data/MockDataSource';
 import { isSupabaseConfigured, supabaseHealthUrl } from '../lib/supabase/client';
 import {
   DEBUG_SCROLL_JUMPS_KEY,
@@ -149,5 +150,34 @@ describe('DebugPage', () => {
     // The short SHA appears as its own row value (the summary line is a
     // single distinct text node, "main 42 (abc1234)").
     expect(screen.getByText('abc1234')).toBeInTheDocument();
+  });
+
+  it('runs the feed-read probe and lists raw/resolved/per-feed counts', async () => {
+    // The mock source implements debugFeedProbe (raw = n/a, counts from its own
+    // reads), so the button appears and produces a result list.
+    renderWithProviders(<DebugPage />, { route: '/debug' });
+    const btn = screen.getByRole('button', { name: 'Run feed probe' });
+    await act(async () => {
+      btn.click();
+    });
+    const results = await screen.findByTestId('feed-probe-results');
+    expect(results).toHaveTextContent('Grouped raw rows');
+    expect(results).toHaveTextContent('n/a'); // mock has no raw transport layer
+    expect(results).toHaveTextContent('Grouped resolved');
+    expect(results).toHaveTextContent('Flat page rows');
+    // Per-feed rows: the seed's feeds appear with their section counts.
+    expect(results).toHaveTextContent('The Verge');
+  });
+
+  it('surfaces a probe failure as an Error row instead of crashing', async () => {
+    const source = new MockDataSource(`dbg-${Math.random()}`);
+    vi.spyOn(source, 'debugFeedProbe').mockRejectedValue(new Error('boom 500'));
+    renderWithProviders(<DebugPage />, { route: '/debug', source });
+    await act(async () => {
+      screen.getByRole('button', { name: 'Run feed probe' }).click();
+    });
+    const results = await screen.findByTestId('feed-probe-results');
+    expect(results).toHaveTextContent('Error');
+    expect(results).toHaveTextContent('boom 500');
   });
 });
