@@ -1836,22 +1836,29 @@ export function ItemList({
   // in are blocked. Without a phantom header + "More" here the whole section
   // (and on a single-feed home/folder, the page) collapses to the empty state
   // and the reader can't pull the next page short of pull-to-refresh.
-  // Titles come from `items` (the cached page still carries the feed
-  // metadata even when every base row is filtered out of visibleItems).
+  // Titles and favicons come from `items` (the cached page still carries the
+  // feed metadata even when every base row is filtered out of visibleItems),
+  // so the phantom header keeps the same icon the live header showed.
   const emptyMoreSections = useMemo(() => {
     if (!feedsWithMore || feedsWithMore.size === 0) return undefined;
     const visibleFeedIds = new Set<FeedId>();
     for (const fi of visibleItems) visibleFeedIds.add(fi.item.feedId);
-    const out: Array<{ feedId: FeedId; title: string }> = [];
-    const titles = new Map<FeedId, string>();
+    const out: Array<{ feedId: FeedId; title: string; faviconUrl: string | null }> =
+      [];
+    const meta = new Map<FeedId, { title: string; faviconUrl: string | null }>();
     for (const fi of items) {
-      if (!titles.has(fi.item.feedId)) titles.set(fi.item.feedId, fi.feed.title);
+      if (!meta.has(fi.item.feedId)) {
+        meta.set(fi.item.feedId, {
+          title: fi.feed.title,
+          faviconUrl: fi.feed.faviconUrl,
+        });
+      }
     }
     for (const feedId of feedsWithMore) {
       if (visibleFeedIds.has(feedId)) continue;
-      const title = titles.get(feedId);
-      if (title === undefined) continue; // feed dropped out of items entirely
-      out.push({ feedId, title });
+      const m = meta.get(feedId);
+      if (m === undefined) continue; // feed dropped out of items entirely
+      out.push({ feedId, title: m.title, faviconUrl: m.faviconUrl });
     }
     return out.length > 0 ? out : undefined;
   }, [feedsWithMore, visibleItems, items]);

@@ -7416,6 +7416,61 @@ describe('ItemList', () => {
       expect(ids).toEqual(['A-3', 'A-4', 'A-5']);
     });
 
+    it('retains the feed favicon on the phantom header after sweeping the section empty', async () => {
+      // Regression: the phantom (swept-empty) section header dropped the feed's
+      // favicon — `emptyMoreSections` carried only the title, so the header fell
+      // back to the initials badge while its rows-and-More sibling state showed
+      // the real icon. The icon must survive the sweep like the title does.
+      const { source, mk } = await makeRows();
+      const K = 3;
+      const icon = 'https://feed-a.example/favicon.ico';
+      const withIcon = (fi: FeedItem): FeedItem => ({
+        ...fi,
+        feed: { ...fi.feed, faviconUrl: icon },
+      });
+      const base = [0, 1, 2, 3].map((n) => withIcon(mk('A', 'Feed A', n)));
+      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
+      const fetchFeedPage = vi.fn(() =>
+        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
+      );
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      });
+      const viewKey = `psm-phantom-favicon-${viewKeySeq++}`;
+      const { container } = renderWithProviders(
+        <ItemList
+          viewKey={viewKey}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+          groupByFeed
+          fetchFeedPage={fetchFeedPage}
+          perFeedLimit={K}
+        />,
+        { source, queryClient },
+      );
+      await screen.findAllByTestId('item-row');
+      // The live section header shows the feed's favicon.
+      expect(
+        container.querySelector(`img.item-list__group-favicon[src="${icon}"]`),
+      ).not.toBeNull();
+
+      await act(async () => {
+        source.stateStore.hideMany(['A-0', 'A-1', 'A-2'], Date.now());
+      });
+
+      // Rows gone, phantom header + More in their place — with the same icon.
+      await waitFor(() =>
+        expect(container.querySelectorAll('[data-item-id]')).toHaveLength(0),
+      );
+      expect(screen.getByText('Feed A')).toBeInTheDocument();
+      expect(
+        container.querySelector(`img.item-list__group-favicon[src="${icon}"]`),
+      ).not.toBeNull();
+      expect(
+        container.querySelector('.item-list__group-favicon.favicon--initials'),
+      ).toBeNull();
+    });
+
     it('after Sweep, the section does not auto-refill with `perFeedLimit − pinned` server-newer rows; tap More pulls the next page', async () => {
       // Captures the intended Sweep semantics: marking a section's unpinned
       // rows Done clears them from view. A mutation no longer refetches, so
