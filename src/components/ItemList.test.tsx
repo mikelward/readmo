@@ -804,6 +804,63 @@ describe('ItemList', () => {
     );
   });
 
+  it('sweeps rows that are visibly in the viewport before IntersectionObserver reports them', async () => {
+    const user = userEvent.setup();
+    uninstallIntersectionObserverMock();
+    vi.stubGlobal('IntersectionObserver', undefined);
+    vi.stubGlobal('matchMedia', vi.fn(() => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
+    Object.defineProperty(window, 'innerHeight', { value: 500, configurable: true });
+    const rect = {
+      top: 80,
+      bottom: 180,
+      left: 0,
+      right: 320,
+      width: 320,
+      height: 100,
+      x: 0,
+      y: 80,
+      toJSON: () => ({}),
+    } as DOMRect;
+    const zeroRect = {
+      top: 0,
+      bottom: 0,
+      left: 0,
+      right: 0,
+      width: 0,
+      height: 0,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect;
+    const rectSpy = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        return this.matches('li[data-item-id]') ? rect : zeroRect;
+      });
+    const source = new MockDataSource(`test-${Math.random()}`);
+
+    renderHome(source);
+    const rows = await screen.findAllByTestId('item-row');
+    const firstTitle = within(rows[0]).getByTestId('item-title').textContent;
+
+    const sweep = screen.getByTestId('sweep-btn');
+    expect(sweep).toBeEnabled();
+    await user.click(sweep);
+
+    await waitFor(() => {
+      expect(
+        screen
+          .queryAllByTestId('item-title')
+          .map((el) => el.textContent),
+      ).not.toContain(firstTitle);
+    });
+    rectSpy.mockRestore();
+  });
+
   it('consolidates an in-session pin to the top once Sweep clears the in-body hold', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
@@ -7350,6 +7407,50 @@ describe('ItemList', () => {
       await waitFor(() => expect(fetchFeedPage).toHaveBeenCalledTimes(1));
       expect(fetchFeedPage).toHaveBeenCalledWith('A', '0');
       expect(await screen.findByText('Feed A 3')).toBeInTheDocument();
+    });
+
+    it('keeps the real feed favicon on a swept section phantom header', async () => {
+      const { source, mk } = await makeRows();
+      const K = 3;
+      const base = [
+        mk('A', 'Feed A', 0),
+        mk('A', 'Feed A', 1),
+        mk('A', 'Feed A', 2),
+        mk('A', 'Feed A', 3),
+      ].map((fi) => ({
+        ...fi,
+        feed: { ...fi.feed, faviconUrl: 'https://example.com/a.ico' },
+      }));
+      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
+      const fetchFeedPage = vi.fn(() => Promise.resolve({ items: [], nextCursor: null }));
+      renderWithProviders(
+        <ItemList
+          viewKey={`psm-phantom-favicon-${viewKeySeq++}`}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+          groupByFeed
+          fetchFeedPage={fetchFeedPage}
+          perFeedLimit={K}
+        />,
+        { source },
+      );
+      await screen.findAllByTestId('item-row');
+
+      await act(async () => {
+        source.stateStore.hideMany(['A-0', 'A-1', 'A-2'], Date.now());
+      });
+
+      await waitFor(() =>
+        expect(document.querySelectorAll('[data-item-id]')).toHaveLength(0),
+      );
+      const header = document.querySelector(
+        '[data-header-for="empty-more:A"]',
+      ) as HTMLElement;
+      expect(header).not.toBeNull();
+      expect(header.querySelector('img.item-list__group-favicon')).toHaveAttribute(
+        'src',
+        'https://example.com/a.ico',
+      );
     });
 
     it('keeps the per-section More reachable after Sweeping an all-unpinned section (phantom header)', async () => {

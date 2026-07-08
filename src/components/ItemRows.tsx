@@ -95,7 +95,7 @@ interface Props {
    * unreachable until pull-to-refresh). Each row carries the feed title at the
    * call site to avoid a separate feed-metadata lookup. Title-only headers
    * have no Sweep/Undo (no rows to act on). */
-  emptyMoreSections?: Array<{ feedId: FeedId; title: string }>;
+  emptyMoreSections?: Array<{ feedId: FeedId; title: string; faviconUrl?: string | null }>;
   /** Canonical feed order (from the full base read, not just visible items),
    * used to interleave phantom sections at the right ordinal position so a
    * swept middle feed's header doesn't shift to the end of the list. Lower
@@ -511,11 +511,11 @@ export function ItemRows({
     );
   };
 
-  const renderPhantomSection = (p: { feedId: FeedId; title: string }): ReactNode => {
+  const renderPhantomSection = (p: { feedId: FeedId; title: string; faviconUrl?: string | null }): ReactNode => {
     const collapsed = collapsedFeeds?.has(p.feedId) ?? false;
     return (
       <li className="item-list__section" key={`empty-more:${p.feedId}`}>
-        {renderHeader(p.feedId, p.title, `empty-more:${p.feedId}`, true, null, anyFavicon)}
+        {renderHeader(p.feedId, p.title, `empty-more:${p.feedId}`, true, p.faviconUrl, anyFavicon)}
         {collapsed || !onFeedMore ? null : renderMore(p.feedId, p.title)}
       </li>
     );
