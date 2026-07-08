@@ -255,6 +255,62 @@ describe('useInViewIds onExitTop', () => {
     expect(seen).toEqual([]);
   });
 
+  // One observer callback can deliver SEVERAL records for the same row (one
+  // per observation frame) when delivery lags a busy main thread — ordered
+  // oldest→newest. Only the newest record reflects the row's current state.
+  describe('multiple records for one row in a single batch', () => {
+    function ViewProbe({ out }: { out: { current: ReadonlySet<ItemId> } }) {
+      const { inViewIds, getRowRef } = useInViewIds();
+      out.current = inViewIds;
+      return (
+        <ul>
+          <li data-item-id="a" ref={getRowRef('a')} />
+        </ul>
+      );
+    }
+
+    it('keeps a row in view when the newest record says fully visible', () => {
+      const out = { current: new Set<ItemId>() as ReadonlySet<ItemId> };
+      render(<ViewProbe out={out} />);
+      // Entered partially (older record), then crossed to fully visible
+      // (newer record) — both delivered in one lagged batch. The stale
+      // partial record must not override the newer fully-visible one, or the
+      // row sits on screen unswept with no follow-up callback to fix it.
+      fire(entryFor('a', 0.4), entryFor('a', 1));
+      expect(out.current.has('a')).toBe(true);
+    });
+
+    it('drops a row when the newest record says no longer fully visible', () => {
+      const out = { current: new Set<ItemId>() as ReadonlySet<ItemId> };
+      render(<ViewProbe out={out} />);
+      fire(entryFor('a', 1), entryFor('a', 0.4));
+      expect(out.current.has('a')).toBe(false);
+    });
+
+    it('auto-hides a row fully seen and top-exited within one lagged batch', () => {
+      const seen: ItemId[][] = [];
+      render(<Rows onExitTop={(ids) => seen.push(ids)} />);
+      // A never-before-seen row becomes fully visible and scrolls off the top
+      // before the batch is delivered: the intermediate fully-visible record
+      // must still mark it seen, so the final top-exit reports it.
+      fire(entryFor('a', 1), entryFor('a', 0, { rectBottom: 50, rootTop: 100 }));
+      expect(seen).toEqual([['a']]);
+    });
+
+    it('suppresses a top-exit that a newer reentry in the same batch reversed', () => {
+      const seen: ItemId[][] = [];
+      render(<Rows onExitTop={(ids) => seen.push(ids)} />);
+      fire(entryFor('a', 1));
+      // Exited the top, then bounced back into view before the batch was
+      // delivered: the row is on screen, so it must not be auto-hidden.
+      fire(
+        entryFor('a', 0, { rectBottom: 50, rootTop: 100 }),
+        entryFor('a', 0.5, { rectBottom: 150, rootTop: 100 }),
+      );
+      expect(seen).toEqual([]);
+    });
+  });
+
   it('applies to a row already fully visible when the feature is enabled', () => {
     const seen: ItemId[][] = [];
     const onExit = (ids: ItemId[]) => seen.push(ids);
