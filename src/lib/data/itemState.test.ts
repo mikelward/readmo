@@ -217,6 +217,43 @@ describe('ItemStateStore', () => {
     expect(general).toBe(4);
   });
 
+  it('subscribeHydrated reports the ids a sync newly pinned (cross-device pins only)', () => {
+    const store = new ItemStateStore(memoryPersistence());
+    const events: Array<readonly string[]> = [];
+    store.subscribeHydrated((newlyPinned) => events.push(newlyPinned));
+
+    // A cross-device pin of a fresh id → reported, so the feed can re-materialize
+    // to surface an article the overlay can't add.
+    store.hydrate([['b', state({ pinned: true, pinnedAt: NOW })]], new Map(), NOW);
+    expect(events).toEqual([['b']]);
+
+    // A cross-device dismiss changes the map but pins nothing → empty array, so
+    // the feed stays frozen (the overlay already drops a dismissed row).
+    store.hydrate(
+      [
+        ['b', state({ pinned: true, pinnedAt: NOW })],
+        ['c', state({ done: true, doneAt: NOW })],
+      ],
+      new Map(),
+      NOW,
+    );
+    expect(events[1]).toEqual([]);
+
+    // A local pin the server later confirms is NOT "newly pinned" — prev already
+    // had it — so a reader's own pin never re-materializes the set from under
+    // them. (The `e` row is only here to make the map change so the hydrate fires.)
+    store.set('d', 'pinned', true, NOW);
+    store.hydrate(
+      [
+        ['d', state({ pinned: true, pinnedAt: NOW })],
+        ['e', state({ done: true, doneAt: NOW })],
+      ],
+      new Map([['d', {}]]),
+      NOW,
+    );
+    expect(events[2]).toEqual([]);
+  });
+
   it('hidden→Done migration (constructor) surfaces a legacy hidden row in /done', () => {
     // A legacy hidden row: the constructor migrates it to Done so it surfaces in
     // /done instead of being invisible with no recovery path.

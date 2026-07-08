@@ -1414,7 +1414,9 @@ negligible and off every critical path. See the External services table in
    - **A stable set of articles.** The published set a feed view shows — which
      articles, in which order — is held **frozen** between reads. New items the
      poller adds, and cross-device changes the overlay can't express, do **not**
-     slide into the list under the reader. The set re-materializes — pulling new
+     slide into the list under the reader (the lone exception is a cross-device
+     pin of an article not in the loaded set — a pin must be visible, so it
+     re-materializes the feed; see *A dismiss never refetches* below). The set re-materializes — pulling new
      items in, consolidating a dismissal out, floating a server pin to the top
      block — only when the reader asks or enough time passes: a **load or return
      past the 6h freshness TTL** (`FEED_STALE_MS`; the same TTL gates mount,
@@ -1463,9 +1465,14 @@ negligible and off every critical path. See the External services table in
      A **cross-device change** (a resync that changes local state) is reflected
      **in place** through the same overlay — a pin renders its badge where the row
      sits, a dismissal of an on-screen row grays it where it is (see *Dismissed in
-     place* above) — and does **not** refetch or re-materialize the set; a change
-     the overlay can't express (a pin of an article outside the loaded window)
-     waits for the next re-materialization rather than repainting the list now. So returning to the feed right after acting on an article
+     place* above) — and does **not** refetch or re-materialize the set. The one
+     exception is a cross-device **pin of an article the overlay can't surface**
+     — one that isn't in the loaded set at all (an older article a persisted feed
+     set predates): a pinned article must be visible, so it re-materializes the
+     feed so the pin appears, rather than staying hidden until the next PTR / TTL /
+     More. Every *other* change the overlay can't express (a poller item, an
+     in-window reorder) still waits for the next re-materialization rather than
+     repainting the list now. So returning to the feed right after acting on an article
      yourself does not refetch it; a full refetch under (or on the way back from)
      the reader would re-render the whole list a beat later and can reflow it (a
      section's "More"/refresh footer toggling above the fold, rows shifting) out

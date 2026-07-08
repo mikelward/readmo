@@ -166,6 +166,14 @@ export type MutationListener = (
   changed: Partial<Record<ItemStateField, boolean>>,
 ) => void;
 
+/** Notified when a hydrate/cross-device sync changes the map, with the ids whose
+ * `pinned` flipped on in that sync (a cross-device pin — never a local one, which
+ * goes through `set`, not `hydrate`). The feed-invalidation hook uses this to
+ * re-materialize the frozen set only when a pin lands on an article the overlay
+ * can't surface (one outside the loaded window). Empty array = the map changed
+ * but gained no new pin (a cross-device done/hide, an unpin, a poller row). */
+export type HydratedListener = (newlyPinned: readonly ItemId[]) => void;
+
 /** Pluggable persistence for the state map. The mock uses localStorage; a
  * future Supabase-backed store swaps the implementation while the store API
  * (and every UI hook above it) stays identical. */
@@ -189,7 +197,7 @@ export class ItemStateStore {
   private listeners = new Set<StateListener>();
   private mutationListeners = new Set<MutationListener>();
   private syncedListeners = new Set<() => void>();
-  private hydratedListeners = new Set<() => void>();
+  private hydratedListeners = new Set<HydratedListener>();
   // Per-id cache of the retention-applied snapshot so `get()` returns a
   // referentially-stable object between store changes. Without this, an item
   // whose Hidden/Opened flag has aged past the TTL would yield a fresh object
@@ -436,17 +444,27 @@ export class ItemStateStore {
       if (!serverIds.has(id) && pending.has(id)) next[id] = this.map[id];
     }
     if (sameMap(this.map, next)) return;
+    const prev = this.map;
     this.map = next;
     this.persistence.save(this.map);
     this.emit();
+    // Ids this sync newly pinned (pinned never TTLs, so the raw flag is the
+    // authoritative value). A pin that was already set locally — a local pin the
+    // server now confirms — isn't "new" and doesn't fire, so a reader's own pin
+    // never re-materializes the set from under them.
+    const newlyPinned: ItemId[] = [];
+    for (const id of Object.keys(next)) {
+      if (next[id].pinned && !prev[id]?.pinned) newlyPinned.push(id);
+    }
     // Distinct from `emit()`: fires only when a hydrate/cross-device sync
     // actually changed the map (never on a local mutation, and never on a no-op
-    // hydrate). Feed-items queries subscribe to THIS — a local triage mutation
-    // reflects through the store overlay with no refetch, but a cross-device
-    // change can add/reorder rows the overlay can't express (e.g. a pin of an
-    // article not in the loaded window), so the feed must reconcile with the
-    // server. See useFeedInvalidation.
-    for (const l of this.hydratedListeners) l();
+    // hydrate). The feed-invalidation hook subscribes to THIS — a local triage
+    // mutation reflects through the store overlay with no refetch, but a
+    // cross-device change can add/reorder rows the overlay can't express (e.g. a
+    // pin of an article not in the loaded window), so the feed must reconcile
+    // with the server. `newlyPinned` lets that hook scope the reconcile to the
+    // one case the overlay can't cover. See useFeedInvalidation.
+    for (const l of this.hydratedListeners) l(newlyPinned);
   }
 
   set(
@@ -611,8 +629,9 @@ export class ItemStateStore {
    * cross-device resync ({@link hydrate}), never a local set/hide/sweep/undo,
    * a no-op hydrate, or an outbox drain. Lets the feed-items queries refetch to
    * pull in server-side row changes the local overlay can't express, while a
-   * local triage mutation is left to settle from the overlay alone. */
-  subscribeHydrated(listener: () => void): () => void {
+   * local triage mutation is left to settle from the overlay alone. The listener
+   * receives the ids newly pinned by this sync (see {@link HydratedListener}). */
+  subscribeHydrated(listener: HydratedListener): () => void {
     this.hydratedListeners.add(listener);
     return () => {
       this.hydratedListeners.delete(listener);
