@@ -11,6 +11,37 @@ import { useStickyInset } from './useStickyInset';
 // behind the sticky chrome the whole way down (Codex P2 on PR #44).
 const FULLY_VISIBLE_RATIO = 0.999;
 
+// Extra slack, in CSS px, subtracted from each *non-zero* sticky-chrome inset
+// before it shrinks the observer root. This is the fix for "sometimes after
+// sweeping a group, one article is left behind."
+//
+// The visibility test is a *ratio* (>= FULLY_VISIBLE_RATIO), but its pixel
+// tolerance is a function of row height: 0.999 of an 80px row is ~0.08px, of a
+// 200px card ~0.2px. `measureStickyInset`/`measureStickyBottomInset` floor the
+// inset so a row sitting *flush* below the chrome keeps ~1px of favorable slack
+// and clears the cutoff — but a row whose top is tucked a fraction of a pixel to
+// ~1px *behind* the top toolbar (or, in the pinned-bottom-bar layout, behind the
+// bottom bar) still falls under 0.999 and drops out of the sweepable set, even
+// though the reader can see ~99% of it. It reads as "fully visible," so a group
+// Sweep that skips it looks like it left one row. Because the amount tucked
+// depends on the sub-pixel scroll offset (and the "More" pager lands the next
+// page's first row flush under the chrome), it happens only *sometimes*.
+//
+// A few px of fixed tolerance decouples the boundary from row height: a row up
+// to this many px behind the occluding chrome counts as visible and is swept.
+// The occlusion is imperceptible at this size, and over-sweeping a barely-
+// occluded row is the same lean the flooring already takes (favor not stranding
+// a row the reader thinks they can see). Applied ONLY to a non-zero inset — the
+// bare viewport edge (inset 0, e.g. the relative bottom bar) stays exact, so a
+// row genuinely cut off by the screen edge is still correctly excluded.
+const SWEEP_EDGE_SLACK_PX = 2;
+
+/** Shrink an occluding-chrome inset by the visibility slack, but leave a zero
+ * inset (the bare screen edge) untouched so screen-clipped rows stay excluded. */
+function insetWithSlack(inset: number): number {
+  return inset > 0 ? Math.max(0, inset - SWEEP_EDGE_SLACK_PX) : 0;
+}
+
 // Tracks which list rows are *fully* visible right now, so Sweep can hide only
 // the rows the reader can actually see — not the whole loaded list (SPEC.md
 // *List toolbar → Sweep*). A row counts as in view iff its bounding box sits
@@ -160,7 +191,7 @@ export function useInViewIds(opts: Options = {}): {
       },
       {
         threshold: [0, FULLY_VISIBLE_RATIO, 1],
-        rootMargin: `-${topInset}px 0px -${bottomInset}px 0px`,
+        rootMargin: `-${insetWithSlack(topInset)}px 0px -${insetWithSlack(bottomInset)}px 0px`,
       },
     );
     observerRef.current = io;

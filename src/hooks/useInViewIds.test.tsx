@@ -67,12 +67,15 @@ describe('useInViewIds', () => {
     document.body.innerHTML = '';
   });
 
-  it('shrinks the observer root by both the top and bottom sticky insets', () => {
+  it('shrinks the observer root by both the top and bottom sticky insets, less the edge slack', () => {
     mountSticky('app-header', 56);
     mountSticky('list-toolbar', 104); // top chrome bottom = 104
     mountSticky('list-toolbar list-toolbar--bottom', 768); // pinned, height 48
     render(<Probe />);
-    expect(lastInit?.rootMargin).toBe('-104px 0px -48px 0px');
+    // Each occluding inset is pulled in by SWEEP_EDGE_SLACK_PX (2) so a row
+    // tucked a hair behind the chrome still counts as fully visible and sweeps —
+    // the "sometimes one row left after a group Sweep" fix.
+    expect(lastInit?.rootMargin).toBe('-102px 0px -46px 0px');
   });
 
   it('observes the fully-visible cutoff as a threshold so it fires on crossings', () => {
@@ -84,11 +87,21 @@ describe('useInViewIds', () => {
     expect(lastInit?.threshold).toEqual([0, 0.999, 1]);
   });
 
+  it('clamps a chrome inset smaller than the slack to zero, never negative', () => {
+    // A 1px chrome bottom minus the 2px slack must floor at 0, not -1 (a
+    // positive rootMargin would *grow* the root past the viewport).
+    mountSticky('app-header', 1);
+    render(<Probe />);
+    expect(lastInit?.rootMargin).toBe('-0px 0px -0px 0px');
+  });
+
   it('uses a zero bottom margin when no bottom toolbar is pinned', () => {
     mountSticky('app-header', 56);
     mountSticky('list-toolbar', 104);
     render(<Probe />);
-    expect(lastInit?.rootMargin).toBe('-104px 0px -0px 0px');
+    // Top inset gets the slack; the bare viewport edge (bottom inset 0) does
+    // NOT — a row genuinely cut off by the screen edge must stay excluded.
+    expect(lastInit?.rootMargin).toBe('-102px 0px -0px 0px');
   });
 });
 
