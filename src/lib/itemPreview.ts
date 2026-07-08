@@ -120,14 +120,25 @@ function decodeEntities(text: string): string {
  * is done in CSS (`-webkit-line-clamp`), so the full text is returned here.
  */
 export function itemPreviewText(item: Item): string {
+  // Stripped tags leave a NUL marker (not a plain space) so the punctuation
+  // reattach below can tell a gap *introduced by tag removal* ("Second
+  // <em>para</em>." → "…para␀.") from genuine publisher spacing (a "2 : 1"
+  // scoreline, French "Pourquoi ?") — only the former is re-glued. NUL can't
+  // occur in the sanitized body itself, and decodeEntities never produces it
+  // (&#0; is rejected), so the marker can't collide with real content.
   const withoutTags = item.contentHtml
     // Drop script/style wholesale (the body is sanitized, so this is defensive).
-    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ');
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '\u0000')
+    .replace(/<[^>]+>/g, '\u0000');
   return decodeEntities(withoutTags)
     .replace(/\s+/g, ' ')
-    // Inline tags become spaces, which can leave a space before punctuation
-    // ("Second <em>para</em>." → "…para ."). Reattach the punctuation.
-    .replace(/\s+([.,!?;:])/g, '$1')
+    // Reattach punctuation separated from its word only by removed tags
+    // (and any whitespace those tag boundaries carried).
+    // eslint-disable-next-line no-control-regex -- NUL is the tag marker (see above)
+    .replace(/[ \u0000]*\u0000[ \u0000]*([.,!?;:])/g, '$1')
+    // Remaining markers are ordinary word gaps: tags become spaces, as before.
+    // eslint-disable-next-line no-control-regex -- NUL is the tag marker (see above)
+    .replace(/\u0000/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }

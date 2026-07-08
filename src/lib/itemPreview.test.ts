@@ -152,4 +152,21 @@ describe('itemPreviewText', () => {
     expect(itemPreviewText(makeItem({ contentHtml: '' }))).toBe('');
   });
 
+  it('reattaches punctuation split off by a removed inline tag', () => {
+    const item = makeItem({
+      contentHtml: '<p>Second <em>para</em> .</p>',
+    });
+    expect(itemPreviewText(item)).toBe('Second para.');
+  });
+
+  it('preserves genuine publisher spacing before punctuation', () => {
+    // Only gaps introduced by tag removal are re-glued — a scoreline or
+    // French spaced punctuation is the publisher's own copy and stays as-is.
+    const item = makeItem({
+      contentHtml: '<p>United 2 : 1 City. Pourquoi ? Attention !</p>',
+    });
+    expect(itemPreviewText(item)).toBe(
+      'United 2 : 1 City. Pourquoi ? Attention !',
+    );
+  });
 });
