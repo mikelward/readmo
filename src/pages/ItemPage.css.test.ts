@@ -113,15 +113,14 @@ describe('reader toolbar feed-name link', () => {
 });
 
 describe('reader body typography contract', () => {
-  // SPEC.md "Reader view → Body": long-form article copy is set one step
-  // larger and denser than newshacker's 15px comment text. Sized in `rem`
-  // (1rem = 16px at the default root) so the body tracks the Settings
-  // "Text size" choice; guards both against a silent revert to the smaller
-  // 15px / 1.6 the reader shipped with AND against pinning it back to px,
-  // which would stop it scaling with the text-size setting.
-  it('sets 1rem (16px at default) body copy with 1.4 line-height', () => {
+  // SPEC.md "Reader view → Body": article copy matches the AI summary card's
+  // text size (.article-summary__body) so the two read as one continuous
+  // piece. Sized in `rem` so the body tracks the Settings "Text size" choice;
+  // guards against the two sizes drifting apart AND against pinning back to
+  // px, which would stop it scaling with the text-size setting.
+  it('sets body copy at the AI summary size (0.95rem) with 1.4 line-height', () => {
     const body = declarationsFor('.reader__body');
-    expect(body['font-size']).toBe('1rem');
+    expect(body['font-size']).toBe('0.95rem');
     expect(body['line-height']).toBe('1.4');
   });
 
