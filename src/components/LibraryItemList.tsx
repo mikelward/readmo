@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useStateBucket } from '../hooks/useItemState';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
@@ -40,6 +40,12 @@ export function LibraryItemList({
     // batch fetch fails offline, so /pinned and /favorites list their items
     // without connectivity (same as /offline).
     queryFn: () => resolveSavedItems(ds, queryClient, ids),
+    // A row's inverse action mutates the bucket, which is a NEW query key;
+    // without placeholder data the whole list blanks behind "Loading…" for a
+    // network round-trip on every purely local, optimistic toggle. The
+    // previous list is held through the refetch and the bucket filter below
+    // removes the toggled row immediately.
+    placeholderData: keepPreviousData,
   });
 
   // Full error to the console (desktop); the panel below shows the friendly
@@ -48,7 +54,17 @@ export function LibraryItemList({
     if (query.error) console.error('[readmo] loading the library view failed:', query.error);
   }, [query.error]);
 
-  const libraryItems = query.data ?? [];
+  // Filter to the CURRENT bucket so a just-toggled row disappears at once even
+  // while the held previous page (which still contains it) is on screen.
+  const bucketIds = new Set(ids);
+  const libraryItems = (query.data ?? []).filter((fi) => bucketIds.has(fi.item.id));
+  // An empty placeholder reads as a settled success (isLoading false), so a
+  // bucket growing out of a previously-empty view (a cross-device pin landing
+  // via hydrate) must not present the stale empty label as this fetch's
+  // result. A non-empty held list stays visible — that's the point above.
+  const loading =
+    query.isLoading ||
+    (query.isFetching && query.isPlaceholderData && libraryItems.length === 0);
   // A genuine failure with nothing to fall back to (resolveSavedItems already
   // recovers from the offline caches, so reaching here means even that was
   // empty). Show the same accurate miss-state the feed views use rather than a
@@ -71,7 +87,7 @@ export function LibraryItemList({
   return (
     <ItemRows
       items={libraryItems}
-      isLoading={query.isLoading}
+      isLoading={loading}
       emptyLabel={emptyLabel}
       rightAction={(fi) => ({
         label: actionLabel,
