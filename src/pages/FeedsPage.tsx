@@ -447,14 +447,22 @@ export function FeedsPage() {
   };
 
   const onExport = async () => {
-    const xml = await ds.exportOpml();
-    const blob = new Blob([xml], { type: 'text/xml' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'readmo-subscriptions.opml';
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      const xml = await ds.exportOpml();
+      const blob = new Blob([xml], { type: 'text/xml' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'readmo-subscriptions.opml';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      // The click handler doesn't await this, so an unguarded rejection
+      // (offline, signed-out session, server down) died as an unhandled
+      // rejection: no file, no feedback. Surface it like Import does.
+      console.warn('OPML export failed:', err);
+      showToast({ message: 'Export failed', detail: addFeedDetail(err) });
+    }
   };
 
   return (
