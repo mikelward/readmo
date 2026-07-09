@@ -277,17 +277,20 @@ declare n_total int; n_leaked int;
 begin
   perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
   set local role authenticated;
+  -- feed_items returns TABLE(item public.items): with a single composite OUT
+  -- column PostgreSQL discards the column name and the function returns
+  -- SETOF items, so the alias IS the items row (`fi.id`, not `(fi.item).id`).
   -- User 1 holds a pin on item E (T12), so it's returned regardless of window.
   select count(*) into n_total
     from public.feed_items('feed', null, 'dddddddd-dddd-dddd-dddd-dddddddddddd') fi
-    where (fi.item).id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+    where fi.id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
   if n_total <> 1 then
     raise exception 'FAIL T13: public item not returned by feed_items (test vacuous)';
   end if;
   select count(*) into n_leaked
     from public.feed_items('feed', null, 'dddddddd-dddd-dddd-dddd-dddddddddddd') fi
-    where (fi.item).id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
-      and (fi.item).ai_summary is not null;
+    where fi.id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
+      and fi.ai_summary is not null;
   if n_leaked <> 0 then
     raise exception 'FAIL T13: feed_items leaked ai_summary in a list payload';
   end if;
