@@ -10,7 +10,7 @@ import {
   type AnimationEvent as ReactAnimationEvent,
   type CSSProperties,
 } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { useFeedItems, dedupeFeedPages, type FetchPage } from '../hooks/useFeedItems';
@@ -23,7 +23,7 @@ import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
 import type { FeedId, FeedItem, ItemId } from '../lib/types';
 import { placeStayInBodyPins } from '../lib/feedOrder';
 import { measureStickyBottomInset, measureTopChromeHeight } from '../lib/stickyInset';
-import { adjustUnreadCounts } from '../lib/unreadAdjust';
+import { UnreadDecrementLedger } from '../lib/unreadAdjust';
 import { loadFailureCopy, presentableDetail } from '../lib/loadErrorCopy';
 import { LoadError } from './LoadError';
 import { checkForServiceWorkerUpdate } from '../lib/swUpdate';
@@ -48,6 +48,10 @@ const SCROLL_HIDE_BATCH_WINDOW_MS = 2000;
 // has genuinely ended rather than paused between frames, while staying short
 // enough that the dismissal still feels immediate once the reader stops.
 const SCROLL_SETTLE_MS = 200;
+
+// Stand-in pending set for sources without an outbox (`pendingItemIds`
+// optional — the mock's store is authoritative, nothing is ever un-synced).
+const EMPTY_ID_SET: ReadonlySet<ItemId> = new Set();
 
 // How far below the top sticky chrome a release-time scroll anchor must sit so
 // the auto-hide cascade can't sweep the anchor row itself (see
@@ -615,6 +619,14 @@ export function ItemList({
   // track the physical contact with them.
   const touchActiveRef = useRef(false);
   const bufferedExitTopRef = useRef<Set<ItemId>>(new Set());
+  // Bumped on every change to the exit-top buffer so renders that read it (the
+  // unread-badge memo's provisional decrements below) recompute. The buffer
+  // itself stays a ref — the IO callbacks and the settle flush mutate it
+  // synchronously mid-gesture and mostly don't need a render.
+  const [exitBufferVersion, bumpExitBufferVersion] = useReducer(
+    (x: number) => x + 1,
+    0,
+  );
   const settleFlushTimerRef = useRef<number | null>(null);
   const cancelSettleFlush = useCallback(() => {
     if (settleFlushTimerRef.current !== null) {
@@ -638,12 +650,19 @@ export function ItemList({
       // handleReenter, so whatever remains is still scrolled past.
       const ids = [...buffered];
       buffered.clear();
+      // Even when commitExitTop filters everything out (all pinned/mid-sweep)
+      // and so never touches the store, the emptied buffer must still reach
+      // the badge memo — its provisional decrements would otherwise linger.
+      bumpExitBufferVersion();
       commitExitTop(ids);
     }, SCROLL_SETTLE_MS);
   }, [cancelSettleFlush, commitExitTop]);
   const handleExitTop = useCallback(
     (ids: ItemId[]) => {
       for (const id of ids) bufferedExitTopRef.current.add(id);
+      // Surface the exit immediately: the badge decrements the moment the row
+      // leaves the screen (mid-gesture), not at the settle flush.
+      bumpExitBufferVersion();
       // While a finger is down the touch-release handler owns arming the
       // flush; for every other input the exit itself starts the settle clock
       // (and any scrolling still under way keeps pushing it back).
@@ -658,7 +677,13 @@ export function ItemList({
   // that follows the re-entry.
   const handleReenter = useCallback((ids: ItemId[]) => {
     if (bufferedExitTopRef.current.size === 0) return;
-    for (const id of ids) bufferedExitTopRef.current.delete(id);
+    let dropped = false;
+    for (const id of ids) {
+      if (bufferedExitTopRef.current.delete(id)) dropped = true;
+    }
+    // The row is back under the reader's eyes — lift its provisional badge
+    // decrement along with the buffered hide.
+    if (dropped) bumpExitBufferVersion();
   }, []);
   useEffect(() => {
     if (!hideOnScroll) return;
@@ -739,6 +764,7 @@ export function ItemList({
       cancelSettleFlush();
       touchActiveRef.current = false;
       buffered.clear();
+      bumpExitBufferVersion();
     };
   }, [hideOnScroll, armSettleFlush, cancelSettleFlush]);
 
@@ -2585,39 +2611,102 @@ export function ItemList({
   // Per-feed unread/to-do counts for the section-header badges (group-by-feed
   // only). Keyed under ['feed', …] so the app-wide feed invalidation
   // (useFeedInvalidation, fired on every item-state change) refreshes the badges
-  // when you sweep / open / mark done, alongside the list itself. The server
-  // count lags a just-applied local write by one sync cycle; it self-heals on
-  // that refetch. Disabled outside the grouped view (no headers to badge).
-  const { data: unreadCounts } = useQuery({
+  // when you sweep / open / mark done, alongside the list itself. Disabled
+  // outside the grouped view (no headers to badge).
+  //
+  // `keepPreviousData`: the key changes whenever the set of feeds in view does —
+  // under auto-hide-on-scroll a section empties (and drops out of the key)
+  // mid-scroll, which would otherwise blank EVERY badge until the new key's
+  // fetch lands. Painting the previous counts through the refetch keeps the
+  // surviving headers' badges steady.
+  //
+  // The server count lags local triage by a sync round-trip, so the badge is
+  // reconciled through `unreadLedger` below. The queryFn snapshots which noted
+  // dismissals had already drained (synced) when the fetch started: the server
+  // answered after those writes committed, so the moment this response lands
+  // the ledger can retire their decrements — and not a render before, which is
+  // what keeps the badge from bouncing up between drain and refetch.
+  const unreadLedgerRef = useRef(new UnreadDecrementLedger());
+  const { data: unreadCountsFetch } = useQuery({
     queryKey: ['feed', 'unread-counts', feedIdsInView.join(',')],
-    queryFn: () => ds.getFeedUnreadCounts(feedIdsInView),
+    queryFn: async () => ({
+      reflected: unreadLedgerRef.current.drainedIds(
+        ds.pendingItemIds?.() ?? EMPTY_ID_SET,
+        new Set(feedIdsInView),
+      ),
+      counts: await ds.getFeedUnreadCounts(feedIdsInView),
+    }),
     enabled: groupByFeed && feedIdsInView.length > 0,
+    placeholderData: keepPreviousData,
   });
 
-  // The badge above is a server-only count, so it lags local triage by a sync
-  // round-trip — right after a Sweep it would still read its pre-sweep value
-  // while the rows are already gone. Discount the rows the user just took out of
-  // the unread set whose write is still pending (unsynced); the adjustment
-  // self-clears as writes drain. `storeVersion` (bumped on every local mutation
-  // and on outbox drain via notifySynced) keys the recompute. No-op on the mock,
-  // which has no outbox and whose count is never stale.
+  // Reconcile the server count with local triage: a row the user just took out
+  // of the unread set (Sweep, row Done, auto-hide-on-scroll) discounts its
+  // feed's badge immediately and the decrement HOLDS — through the outbox drain
+  // and the row dropping out of the loaded pages — until a count response that
+  // reflects the write lands (or an Undo restores the row). See
+  // UnreadDecrementLedger for the lifecycle. `storeVersion` (bumped on every
+  // local mutation and on outbox drain via notifySynced) keys the recompute.
+  // No-op on the mock, which has no outbox and whose count is never stale.
   //
-  // Known residual: a server *count* can't be reconciled atomically with local
-  // triage, so a sub-second blip survives at sync-completion — the pending id
-  // drains at write-confirm, one round-trip before the invalidated count refetch
-  // returns, so the badge briefly reads the stale count before settling. This
-  // removes the multi-second post-sweep lag, not that final blip; the exact fix
-  // is the `feed_unread_ids` ID-list RPC (TODO.md §Server RPCs).
+  // On top of the ledger, rows buffered for auto-hide get a PROVISIONAL
+  // decrement: a top-exit is held until the viewport settles before its
+  // dismissal write commits (see handleExitTop/armSettleFlush), but the badge
+  // must not wait for the write — it counts the row out the moment it leaves
+  // the screen, mid-gesture. When the flush commits, the write's ledger entry
+  // replaces the provisional decrement in the same render (the buffer clears
+  // as hideMany applies); a row scrolled back into view is pruned from the
+  // buffer and its decrement lifts. `exitBufferVersion` keys both transitions.
   const adjustedUnreadCounts = useMemo(() => {
-    if (!groupByFeed || !unreadCounts) return unreadCounts;
+    if (!groupByFeed || !unreadCountsFetch) return undefined;
     void storeVersion;
-    return adjustUnreadCounts(
-      unreadCounts,
+    void exitBufferVersion;
+    const ledger = unreadLedgerRef.current;
+    const getState = (id: ItemId) => ds.stateStore.get(id);
+    // Tolerate a persisted cache written by the previous build (guardrail
+    // #11): it stored the bare counts map, not {reflected, counts}. On an
+    // offline boot right after an upgrade that restored value may be all the
+    // badge ever gets — read it as counts with no snapshot rather than
+    // blanking every header until a successful refetch.
+    const legacyShape =
+      typeof unreadCountsFetch.counts !== 'object' ||
+      unreadCountsFetch.counts === null;
+    const serverCounts = legacyShape
+      ? (unreadCountsFetch as unknown as Record<FeedId, number>)
+      : unreadCountsFetch.counts;
+    ledger.noteDismissals(
       mergedRaw,
-      (id) => ds.stateStore.get(id),
-      ds.pendingItemIds?.(),
+      getState,
+      ds.pendingItemIds?.() ?? EMPTY_ID_SET,
     );
-  }, [groupByFeed, unreadCounts, mergedRaw, ds, storeVersion]);
+    ledger.retire(legacyShape ? null : unreadCountsFetch.reflected, getState);
+    let counts = ledger.apply(serverCounts);
+    const buffered = bufferedExitTopRef.current;
+    if (buffered.size > 0) {
+      let out: Record<FeedId, number> | null = null;
+      for (const fi of mergedRaw) {
+        if (!buffered.has(fi.item.id)) continue;
+        // Only rows the server still counts as unread: a pinned row will be
+        // shielded from the flush, and a Done/Hidden/Opened one has already
+        // stopped counting (or is the ledger's to discount).
+        const st = getState(fi.item.id);
+        if (st.pinned || st.done || st.hidden || st.opened) continue;
+        const feedId = fi.item.feedId;
+        if ((out ?? counts)[feedId] == null) continue;
+        out ??= { ...counts };
+        out[feedId] = Math.max(0, out[feedId] - 1);
+      }
+      if (out) counts = out;
+    }
+    return counts;
+  }, [
+    groupByFeed,
+    unreadCountsFetch,
+    mergedRaw,
+    ds,
+    storeVersion,
+    exitBufferVersion,
+  ]);
 
   // The group-by-feed toggle rides the top toolbar on multi-feed views (the
   // page wires `onToggleGroupByFeed`); single-feed views leave it undefined so

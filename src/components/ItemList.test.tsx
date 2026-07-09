@@ -389,6 +389,264 @@ describe('ItemList', () => {
     });
   });
 
+  it('holds the badge decrement across the outbox drain instead of bouncing to the stale count', async () => {
+    // Regression (mark-done-on-scroll flicker): the decrement used to key off
+    // the outbox's pending set, which clears at write-confirm — one round-trip
+    // BEFORE the invalidated count refetch returns. Every synced burst bounced
+    // the badge up to the stale server count and back down. The decrement must
+    // hold through that gap and retire only when the reflecting count lands.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const page = await source.getHomeItems({ groupByFeed: true, limit: 100 });
+    source.getHomeItems = async () => page;
+    const pending = new Set<string>();
+    source.pendingItemIds = () => new Set(pending);
+    // Ungated, the "server" still returns the pre-sweep count (the write
+    // hasn't landed). After the drain the test gates the refetch open to make
+    // the drain→refetch window observable.
+    let gateResolve: ((counts: Record<string, number>) => void) | null = null;
+    let gated = false;
+    source.getFeedUnreadCounts = async () => {
+      if (!gated) return { 'feed-verge': 3 };
+      return new Promise((resolve) => {
+        gateResolve = resolve;
+      });
+    };
+    const vergeIds = page.items
+      .filter((fi) => fi.item.feedId === 'feed-verge')
+      .map((fi) => fi.item.id);
+    const swept = vergeIds.slice(0, 2);
+
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`gp-${Math.random()}`}
+        fetchPage={(cursor) =>
+          source.getHomeItems({ cursor, groupByFeed: true, limit: 100 })
+        }
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+    const badge = () =>
+      container.querySelector('.item-list__group-count')?.textContent;
+    await waitFor(() => expect(badge()).toBe('3'));
+
+    // Sweep two rows: Done locally, writes pending → badge drops to 1.
+    act(() => {
+      swept.forEach((id) => {
+        pending.add(id);
+        source.stateStore.set(id, 'done', true);
+      });
+    });
+    await waitFor(() => expect(badge()).toBe('1'));
+
+    // The outbox drains: the ids leave the pending set and notifySynced fires
+    // the count refetch — which the gate now holds open, exactly the window
+    // where the badge used to bounce back to the stale 3.
+    gated = true;
+    await act(async () => {
+      pending.clear();
+      source.stateStore.notifySynced();
+    });
+    expect(badge()).toBe('1');
+
+    // The post-drain fetch lands with the write reflected (server now says 1);
+    // the ledger retires its decrements as the data paints — still 1, never
+    // 3 (bounce) and never 0 (double-subtract).
+    await waitFor(() => expect(gateResolve).not.toBeNull());
+    await act(async () => {
+      gateResolve!({ 'feed-verge': 1 });
+    });
+    await waitFor(() => expect(badge()).toBe('1'));
+  });
+
+  it('keeps the surviving badges painted while a feeds-in-view change refetches the counts', async () => {
+    // Regression (mark-done-on-scroll flicker): the counts query is keyed by
+    // the feeds in view, so a section emptying mid-scroll changes the key —
+    // and without carrying the previous data across the key change, EVERY
+    // remaining header's badge blanked until the new fetch landed.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const page = await source.getHomeItems({ groupByFeed: true, limit: 100 });
+    source.getHomeItems = async () => page;
+    const pending = new Set<string>();
+    source.pendingItemIds = () => new Set(pending);
+    const counts: Record<string, number> = {
+      'feed-verge': 3,
+      'feed-nasa': 2,
+      'feed-css': 3,
+      'feed-reddit-prog': 2,
+    };
+    let gateResolve: (() => void) | null = null;
+    let gated = false;
+    source.getFeedUnreadCounts = async (ids) => {
+      if (gated) await new Promise<void>((resolve) => (gateResolve = resolve));
+      return Object.fromEntries(ids.map((id) => [id, counts[id] ?? 0]));
+    };
+    const vergeIds = page.items
+      .filter((fi) => fi.item.feedId === 'feed-verge')
+      .map((fi) => fi.item.id);
+
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`gp-${Math.random()}`}
+        fetchPage={(cursor) =>
+          source.getHomeItems({ cursor, groupByFeed: true, limit: 100 })
+        }
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+    const badges = () =>
+      [...container.querySelectorAll('.item-list__group-count')].map(
+        (c) => c.textContent,
+      );
+    await waitFor(() => expect(badges()).toEqual(['3', '2', '3', '2']));
+
+    // Sweep Verge's whole section: its header (and feed id) leaves the view,
+    // changing the counts query key; the gate holds the new key's fetch open.
+    gated = true;
+    act(() => {
+      vergeIds.forEach((id) => {
+        pending.add(id);
+        source.stateStore.set(id, 'done', true);
+      });
+    });
+
+    // The surviving sections' badges must keep their counts through the
+    // refetch instead of blanking.
+    await waitFor(() => expect(badges()).toEqual(['2', '3', '2']));
+    await waitFor(() => expect(gateResolve).not.toBeNull());
+    await act(async () => {
+      gateResolve!();
+    });
+    await waitFor(() => expect(badges()).toEqual(['2', '3', '2']));
+  });
+
+  it('reads a persisted count cache from the previous build (bare counts map)', async () => {
+    // Guardrail #11 / Codex P2 on #442: the previous build persisted the
+    // counts query as the bare {feedId: count} map, and the cache buster was
+    // not bumped for this PR's {reflected, counts} shape. On an offline boot
+    // right after the upgrade that restored value is all the badge ever gets —
+    // it must be read as counts (with no snapshot), not blanked.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const page = await source.getHomeItems({ groupByFeed: true, limit: 100 });
+    source.getHomeItems = async () => page;
+    // The refetch never lands — the legacy cached value is the only data.
+    source.getFeedUnreadCounts = () => new Promise(() => {});
+    const feedIds = [...new Set(page.items.map((fi) => fi.item.feedId))];
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryData(
+      ['feed', 'unread-counts', feedIds.join(',')],
+      { 'feed-verge': 3 },
+    );
+
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`gp-${Math.random()}`}
+        fetchPage={(cursor) =>
+          source.getHomeItems({ cursor, groupByFeed: true, limit: 100 })
+        }
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source, queryClient },
+    );
+    await screen.findAllByTestId('item-row');
+    await waitFor(() =>
+      expect(
+        container.querySelector('.item-list__group-count')?.textContent,
+      ).toBe('3'),
+    );
+  });
+
+  it('decrements the badge the moment a row scrolls off the top, before the settle flush commits', async () => {
+    // Auto-hide-on-scroll defers the dismissal WRITE until the viewport
+    // settles (scroll-anchoring correctness), but the badge must not wait for
+    // it: the count drops the instant the row leaves the screen — finger still
+    // down — and lifts again if the row scrolls back into view before the
+    // flush. When the flush does commit, the ledger's decrement replaces the
+    // provisional one seamlessly (no blip in either direction).
+    window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+    resetReadingPrefsCacheForTest();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const page = await source.getHomeItems({ groupByFeed: true, limit: 100 });
+    source.getHomeItems = async () => page;
+    // Freeze the server count at its pre-dismissal value and report every
+    // local dismissal as un-synced, like the real backend mid-sync.
+    source.getFeedUnreadCounts = async () => ({ 'feed-verge': 3 });
+    source.pendingItemIds = () =>
+      new Set(
+        page.items
+          .map((fi) => fi.item.id)
+          .filter((id) => {
+            const st = source.stateStore.get(id);
+            return st.done || st.hidden;
+          }),
+      );
+
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`gp-${Math.random()}`}
+        fetchPage={(cursor) =>
+          source.getHomeItems({ cursor, groupByFeed: true, limit: 100 })
+        }
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+    const badge = () =>
+      container.querySelector('.item-list__group-count')?.textContent;
+    await waitFor(() => expect(badge()).toBe('3'));
+
+    const firstRow = screen.getAllByTestId('item-row')[0];
+    const li = firstRow.closest('li')!;
+    const titleText = within(firstRow).getByTestId('item-title').textContent;
+    const titles = () =>
+      screen.queryAllByTestId('item-title').map((n) => n.textContent);
+
+    // Finger down (the flush can't run), then the row scrolls off the top:
+    // the write is buffered — the row is still rendered — but the badge
+    // already counts it out.
+    act(() => {
+      document.dispatchEvent(new Event('touchstart'));
+    });
+    act(() => {
+      setVisibilityForTest(li, 0);
+    });
+    expect(titles()).toContain(titleText);
+    expect(badge()).toBe('2');
+
+    // Scrolled back into view (even partially) before release → the
+    // provisional decrement lifts with the buffered hide.
+    act(() => {
+      setVisibilityForTest(li, 0.5);
+    });
+    expect(badge()).toBe('3');
+
+    // Off the top again, then the finger lifts: the flush commits after the
+    // settle window and the ledger takes over the decrement — the badge reads
+    // 2 throughout, with no blip in either direction.
+    act(() => {
+      setVisibilityForTest(li, 0);
+    });
+    expect(badge()).toBe('2');
+    act(() => {
+      const ev = new Event('touchend');
+      Object.defineProperty(ev, 'touches', { value: [] });
+      document.dispatchEvent(ev);
+    });
+    expect(badge()).toBe('2');
+    await waitFor(() => expect(titles()).not.toContain(titleText));
+    expect(badge()).toBe('2');
+  });
+
   it('renders no section headers when not grouping', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     const { container } = renderHome(source);
