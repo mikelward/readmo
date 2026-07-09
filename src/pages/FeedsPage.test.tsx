@@ -939,4 +939,23 @@ describe('FeedsPage — OPML import', () => {
 
     await screen.findByText('Import failed');
   });
+
+  it('surfaces an export failure instead of dying silently', async () => {
+    // Same shape as the import regression: onExport had no catch and its
+    // caller doesn't await it, so a rejected exportOpml (offline, signed-out,
+    // server down) produced no file, no toast — only an unhandled rejection in
+    // a console a phone user can't see.
+    class FailingExportSource extends MockDataSource {
+      async exportOpml(): Promise<string> {
+        throw new Error('server down');
+      }
+    }
+    const source = new FailingExportSource(`test-${Math.random()}`);
+    renderWithProviders(<FeedsPage />, { source });
+    await screen.findAllByTestId('sub-drag-handle');
+
+    fireEvent.click(screen.getByRole('button', { name: /export/i }));
+
+    await screen.findByText('Export failed');
+  });
 });
