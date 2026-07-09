@@ -42,6 +42,14 @@ import './ItemList.css';
 // on screen.
 const SCROLL_HIDE_BATCH_WINDOW_MS = 2000;
 
+// How long the viewport must be still — no finger on the glass, no scroll
+// events arriving — before a buffered auto-hide batch commits. Scroll events
+// during a drag, a wheel burst, or a post-flick momentum glide arrive at frame
+// cadence (~16ms even at the tail), so a 200ms quiet window means the motion
+// has genuinely ended rather than paused between frames, while staying short
+// enough that the dismissal still feels immediate once the reader stops.
+const SCROLL_SETTLE_MS = 200;
+
 // How far below the top sticky chrome a release-time scroll anchor must sit so
 // the auto-hide cascade can't sweep the anchor row itself (see
 // captureExitTopAnchor). One row's worth — comfortably past the sweep line and
@@ -527,21 +535,22 @@ export function ItemList({
   const sweepPendingIdsRef = useRef<ItemId[] | null>(null);
   // The ids of an auto-hide-on-scroll batch for the synchronous window of its
   // hideMany call. The single-dismiss anchor opt-out (the mutation subscription
-  // far below) keys off a Done flip but must NOT fire for auto-hide — those rows
-  // leave ABOVE the viewport and depend on anchoring staying on. Flagging the
-  // ids here lets that subscription, which runs synchronously inside hideMany,
-  // tell an auto-hide Done flip from a reader's in-view mark-done and skip it.
+  // far below) keys off a Done flip but must NOT fire for auto-hide — those
+  // rows leave ABOVE the viewport, held steady by the exit-top scroll pin.
+  // Flagging the ids here lets that subscription, which runs synchronously
+  // inside hideMany, tell an auto-hide Done flip from a reader's in-view
+  // mark-done and skip it.
   const autoHideInFlightRef = useRef<Set<ItemId> | null>(null);
-  // The reader's scroll anchor across a release-time top-exit flush: a row under
+  // The reader's scroll anchor across a settle-time top-exit flush: a row under
   // their eyes and where it sits on screen, held there until they next act on
   // the viewport. The browser's own scroll anchoring can't be trusted across
-  // this removal — it's suppressed for a beat right after a touch scroll, and
-  // even once live it under-compensates for a bulk removal, so the first
-  // still-visible row visibly jerks upward, at worst snapping the view to the
-  // next feed group — so we pin the row's on-screen position ourselves. Set by a
-  // preserveScroll commit; consumed by the restore layout effect; cleared on the
-  // next pointer/wheel/key input — or any native scroll we didn't cause (see
-  // below).
+  // this removal — it doesn't exist on iOS/Safari, is suppressed for a beat
+  // right after a touch scroll, and even once live it under-compensates for a
+  // bulk removal, so the first still-visible row visibly jerks upward, at worst
+  // snapping the view to the next feed group — so we pin the row's on-screen
+  // position ourselves. Set by commitExitTop; consumed by the restore layout
+  // effect; cleared on the next pointer/wheel/key input — or any native scroll
+  // we didn't cause (see below).
   const exitTopAnchorRef = useRef<{ id: ItemId; top: number } | null>(null);
   // The scrollY our last correction left behind, so a native `scroll` event can
   // tell our own restoring scrollBy (matches) from the reader's momentum/inertial
@@ -583,7 +592,7 @@ export function ItemList({
     exitTopAnchorRef.current = null;
   }, []);
   const commitExitTop = useCallback(
-    (ids: ItemId[], opts?: { preserveScroll?: boolean }) => {
+    (ids: ItemId[]) => {
       // Skip rows that are pinned (shielded) or already Done/Hidden — a
       // re-delivered id (e.g. observer recreation on a sticky-inset change
       // before the refetch drops the row) must not re-enter hideMany and
@@ -605,11 +614,11 @@ export function ItemList({
         return !st.pinned && !st.done && !st.hidden;
       });
       if (toHide.length === 0) return;
-      // Capture the anchor only when asked (the touch-release flush), and only
-      // now that a removal is certain — so the restore layout effect, keyed on
-      // the visibleItems shrink this hideMany causes, always fires to consume it
-      // and never strands a stale anchor for an unrelated later render.
-      if (opts?.preserveScroll) captureExitTopAnchor(new Set(toHide));
+      // Capture the anchor only now that a removal is certain — so the restore
+      // layout effect, keyed on the visibleItems shrink this hideMany causes,
+      // always fires to consume it and never strands a stale anchor for an
+      // unrelated later render.
+      captureExitTopAnchor(new Set(toHide));
       const now = Date.now();
       if (now - lastScrollHideAt.current >= SCROLL_HIDE_BATCH_WINDOW_MS) {
         // A gap ends the burst; mint a globally-unique key for the new one so it
@@ -628,35 +637,68 @@ export function ItemList({
     [ds, captureExitTopAnchor],
   );
 
-  // Auto-hide-on-scroll must not drop rows out from under a finger that's still
-  // on the screen. While the browser is mid-touch it suspends scroll anchoring,
-  // so removing rows *above* the viewport then shifts everything below up under
-  // the reader instead of holding the first visible row fixed — worst at the
-  // foot of the loaded list (a feed's "More"/the next section's header), where
-  // the shift yanks the next feed group into view. So we buffer top-exits while
-  // a touch is in progress and commit them on release, when anchoring is live
-  // again and absorbs the removal (the same guarantee the non-touch path already
-  // relies on). Pointer events can't gate this: a `pan-y` scroll fires
+  // Auto-hide-on-scroll must never remove rows while the viewport is still in
+  // motion. A removed row above the viewport shifts everything below it up by
+  // its height unless the scroll offset is corrected in the same frame, and
+  // mid-motion no correction can be trusted: the browser's own scroll anchoring
+  // doesn't exist on iOS/Safari, is suppressed during gestures (and for a beat
+  // after a touch) elsewhere, and our own pin must not fight a live fling (see
+  // onScroll below). Committing mid-glide therefore shunted rows the reader
+  // could still see up under the sticky chrome; the observer then reported
+  // those as scrolled past too, and the cascade ate the visible tail of a feed
+  // group and snapped the next group into view. So top-exits are buffered
+  // whenever the viewport is moving — a finger is down, or scroll events are
+  // still arriving (a drag, a wheel burst, or the momentum glide after a
+  // flick, which fires no touch/wheel/key events at all) — and the batch
+  // commits only once the viewport has been still for SCROLL_SETTLE_MS, under
+  // the scroll pin that holds the reader's position across the removal.
+  // Pointer events can't track the finger: a `pan-y` scroll fires
   // `pointercancel` the instant the browser claims the gesture, so the finger
   // looks "up" mid-scroll. Touch events keep firing through the scroll, so we
-  // track the physical contact with them. Non-touch input (wheel/trackpad) never
-  // fires these, so it keeps the original immediate behavior.
+  // track the physical contact with them.
   const touchActiveRef = useRef(false);
   const bufferedExitTopRef = useRef<Set<ItemId>>(new Set());
+  const settleFlushTimerRef = useRef<number | null>(null);
+  const cancelSettleFlush = useCallback(() => {
+    if (settleFlushTimerRef.current !== null) {
+      window.clearTimeout(settleFlushTimerRef.current);
+      settleFlushTimerRef.current = null;
+    }
+  }, []);
+  // (Re)start the settle clock: the buffer flushes once no input has arrived
+  // for a full quiet window. Re-arming on every scroll event pushes the flush
+  // back until the viewport is actually at rest.
+  const armSettleFlush = useCallback(() => {
+    cancelSettleFlush();
+    settleFlushTimerRef.current = window.setTimeout(() => {
+      settleFlushTimerRef.current = null;
+      // A finger came back down before the clock ran out (catching a glide) —
+      // the touch-release handler arms a fresh clock when it lifts.
+      if (touchActiveRef.current) return;
+      const buffered = bufferedExitTopRef.current;
+      if (buffered.size === 0) return;
+      // Rows scrolled back into view during the wait were already pruned by
+      // handleReenter, so whatever remains is still scrolled past.
+      const ids = [...buffered];
+      buffered.clear();
+      commitExitTop(ids);
+    }, SCROLL_SETTLE_MS);
+  }, [cancelSettleFlush, commitExitTop]);
   const handleExitTop = useCallback(
     (ids: ItemId[]) => {
-      if (touchActiveRef.current) {
-        for (const id of ids) bufferedExitTopRef.current.add(id);
-        return;
-      }
-      commitExitTop(ids);
+      for (const id of ids) bufferedExitTopRef.current.add(id);
+      // While a finger is down the touch-release handler owns arming the
+      // flush; for every other input the exit itself starts the settle clock
+      // (and any scrolling still under way keeps pushing it back).
+      if (!touchActiveRef.current) armSettleFlush();
     },
-    [commitExitTop],
+    [armSettleFlush],
   );
-  // A buffered row the reader scrolls back into view (fully or partially) before
-  // lifting is under their eyes again — drop it from the pending batch so the
-  // flush never marks a visible row Done. Fires synchronously from the observer,
-  // so it always wins the race against a touchend that follows the re-entry.
+  // A buffered row the reader scrolls back into view (fully or partially)
+  // before the flush is under their eyes again — drop it from the pending
+  // batch so the flush never marks a visible row Done. Fires synchronously
+  // from the observer, so it always wins the race against the settle flush
+  // that follows the re-entry.
   const handleReenter = useCallback((ids: ItemId[]) => {
     if (bufferedExitTopRef.current.size === 0) return;
     for (const id of ids) bufferedExitTopRef.current.delete(id);
@@ -684,6 +726,10 @@ export function ItemList({
     // our layout effect always lands scrollY back on pinnedScrollYRef, so a
     // scroll event whose offset differs is the fling, and we stop fighting it.
     const onScroll = () => {
+      // Still moving — push any pending settle flush back until the viewport
+      // rests. Mid-drag scrolls don't arm it (the finger owns the buffer until
+      // it lifts).
+      if (!touchActiveRef.current && buffered.size > 0) armSettleFlush();
       if (!exitTopAnchorRef.current) return;
       // Until our first correction has recorded where it left scrollY, the pin
       // isn't established — ignore scrolls (e.g. the drag's own position settling
@@ -698,44 +744,46 @@ export function ItemList({
     };
     const onTouchStart = () => {
       touchActiveRef.current = true;
+      cancelSettleFlush();
       releasePin();
     };
-    const flush = (e: TouchEvent) => {
+    const onTouchEnd = (e: TouchEvent) => {
       // Hold off until the *last* finger lifts — a multi-touch gesture that
       // releases one finger is still in progress.
       if (e.touches.length > 0) return;
       touchActiveRef.current = false;
       if (buffered.size === 0) return;
-      // Rows scrolled back into view before release were already pruned by
-      // handleReenter, so whatever remains is still scrolled past.
-      const ids = [...buffered];
-      buffered.clear();
-      // Pin the reader's scroll position across this release-time bulk removal —
-      // it's the case the browser's anchoring mishandles (see captureExitTopAnchor).
-      commitExitTop(ids, { preserveScroll: true });
+      // The lift is not rest: a flick keeps the viewport gliding on momentum,
+      // which fires only `scroll` events. Start the settle clock instead of
+      // committing here — glide scrolls keep pushing it back, so the buffered
+      // batch commits (pinned, via armSettleFlush) once the viewport truly
+      // stops.
+      armSettleFlush();
     };
     document.addEventListener('touchstart', onTouchStart, { passive: true });
-    document.addEventListener('touchend', flush, { passive: true });
-    document.addEventListener('touchcancel', flush, { passive: true });
+    document.addEventListener('touchend', onTouchEnd, { passive: true });
+    document.addEventListener('touchcancel', onTouchEnd, { passive: true });
     document.addEventListener('wheel', releasePin, { passive: true });
     document.addEventListener('keydown', releasePin);
     document.addEventListener('scroll', onScroll, { passive: true });
     return () => {
       document.removeEventListener('touchstart', onTouchStart);
-      document.removeEventListener('touchend', flush);
-      document.removeEventListener('touchcancel', flush);
+      document.removeEventListener('touchend', onTouchEnd);
+      document.removeEventListener('touchcancel', onTouchEnd);
       document.removeEventListener('wheel', releasePin);
       document.removeEventListener('keydown', releasePin);
       document.removeEventListener('scroll', onScroll);
-      // Toggling the feature off (or unmounting during a release-time scroll
-      // pin) must not strand buffered ids OR the temporary overflow-anchor
-      // opt-out. Otherwise the next list would inherit anchoring disabled and
-      // the stale pin could keep fighting scroll after the feature is gone.
+      // Toggling the feature off (or unmounting during a scroll pin or a
+      // pending settle flush) must not strand buffered ids, the armed timer,
+      // OR the temporary overflow-anchor opt-out. Otherwise the next list
+      // would inherit anchoring disabled and the stale pin could keep
+      // fighting scroll after the feature is gone.
       releasePin();
+      cancelSettleFlush();
       touchActiveRef.current = false;
       buffered.clear();
     };
-  }, [hideOnScroll, commitExitTop]);
+  }, [hideOnScroll, armSettleFlush, cancelSettleFlush]);
 
   // Cross-device "dismiss in place" (SPEC.md *Feed views → Dismissed in place*):
   // a server dismiss grays a row IN PLACE only while it's actually on screen —
@@ -1885,7 +1933,7 @@ export function ItemList({
     [ds],
   );
 
-  // Hold the reader's scroll position across a touch-release top-exit flush.
+  // Hold the reader's scroll position across a settle-time top-exit flush.
   // A layout effect (after React commits a render, before paint): reading
   // getBoundingClientRect first forces the layout that applies whatever the
   // browser's own anchoring managed, so we correct only the residual shift — to

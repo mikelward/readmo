@@ -1610,31 +1610,27 @@ negligible and off every critical path. See the External services table in
      freshly-surfaced rows — reading as "it swept the feed twice". A deliberate
      later sweep still goes through.
    - **Auto-hide on scroll** (opt-in, `readmo:hide-on-scroll`, off by default —
-     see *Settings → Reading*): when on, each unpinned row is marked **Done the
-     moment it scrolls fully off the top** of the viewport (you scrolled past it
-     without pinning it). This is **not** the Sweep button: there's **no timer
-     and no accumulation** — dismissal is immediate and per-row, driven directly
-     by the sweep IntersectionObserver firing as a row leaves the top edge after
-     having been fully visible. It reuses Sweep's `hideMany` and the same pin
-     shield (pinned rows are never auto-hidden), and rows still below the fold
-     are never auto-hidden — only ones you've actually scrolled past. Rows that
-     are already Done/Hidden are skipped, so a re-delivered id can't clobber the
-     undo baseline. **On touch, a row that scrolls off the top while a finger is
-     still down is held, not dropped, until the finger lifts** (`touchend`/
-     `touchcancel`): the browser suspends scroll anchoring mid-gesture, so
-     removing a row above the viewport then shifts the content up under the
-     reader — most visibly at the foot of a loaded feed section, where it yanks
-     the next feed group into view. Buffering the top-exits and committing them
-     on release confines that removal to a single moment, and on release the
-     reader's scroll position is **actively held**: the topmost row clear of the
-     sticky chrome is pinned and restored to the same on-screen spot as the rows
-     above it collapse — across the immediate removal, the invalidated refetch
-     that lands a beat later, *and* the follow-on auto-hide of rows the collapse
-     pushes under the chrome — until the reader next touches, wheels, or keys the
-     viewport. (The browser's own anchoring under-compensates for a bulk removal
-     and is suppressed for a beat after a touch, so it can't be relied on here.)
-     Flick-scrolling is unaffected (the finger has already lifted, so rows mark
-     Done live during the momentum glide); only a held-finger drag defers. **Undo restores the whole scroll burst, not just the last
+     see *Settings → Reading*): when on, each unpinned row you **scroll fully
+     off the top** of the viewport is marked Done (you scrolled past it without
+     pinning it). This is **not** the Sweep button: no tap and no selection —
+     every scrolled-past row is dismissed on its own. It reuses Sweep's
+     dismissal and the same pin shield (pinned rows are never auto-hidden), and
+     rows still below the fold are never auto-hidden — only ones you've
+     actually scrolled past, and a row scrolled back into view before its
+     dismissal commits is spared. Rows that are already Done/Hidden are
+     skipped, so a re-delivered id can't clobber the undo baseline.
+     **Dismissals commit only once the scroll comes to rest** — never while a
+     finger is still down or the viewport is still moving (a drag, a wheel
+     burst, or the momentum glide after a flick). Removing rows mid-motion
+     would shift the remaining content up under the reader, sweeping rows they
+     can still see past the top — at the foot of a feed section that dismisses
+     the section's last rows unread and yanks the next feed group into view.
+     When the batch commits, the reader's scroll position is **actively held**:
+     a row near the top of what they're looking at is restored to the same
+     on-screen spot as the rows above it collapse — across the removal and the
+     refetch that lands a beat later — until the reader next touches, wheels,
+     or keys the viewport. (The browser's own scroll anchoring can't be relied
+     on for either guarantee.) **Undo restores the whole scroll burst, not just the last
      row:** dismissals within a rolling **2s window** of each other extend a
      single undo batch (mirrors newshacker's dismiss-batch window), so one tap of
      the toolbar Undo brings back the run you just scrolled past; a gap longer
