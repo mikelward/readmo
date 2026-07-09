@@ -141,49 +141,6 @@ function readBuildInfo(): BuildInfo {
   };
 }
 
-// URL pattern for the Workbox data cache (Supabase REST/RPC reads). Derived
-// from the configured Supabase origin so it keeps matching after a gateway
-// migration — pointing VITE_SUPABASE_URL at e.g. api.readmo.app would otherwise
-// silently drop the offline cache, since reads would no longer hit
-// *.supabase.co. Falls back to any project ref when the URL is unset (local
-// dev, or .env-only setups where the var isn't in process.env at build time).
-function supabaseRestCachePattern(): RegExp {
-  const url = process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (url) {
-    try {
-      const host = new URL(url).host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      return new RegExp(`^https://${host}/rest/v1/.*`);
-    } catch {
-      // Malformed URL — fall through to the default below.
-    }
-  }
-  return /^https:\/\/.*\.supabase\.co\/rest\/v1\/.*/;
-}
-
-/** Matches the `item_state` PostgREST reads, served NetworkOnly (no cache
- * fallback) so item-state hydration is always live-or-fail. This keeps a
- * focus/online cross-device resync from reconciling the local store against a
- * stale cached snapshot (which would revert a just-made pin until reload), and
- * keeps an offline cold boot from dropping a resync-adopted row against a stale
- * cached boot snapshot — offline the read simply fails and the store keeps its
- * last-good localStorage state. (Write bases for an offline edit are seeded from
- * the persisted store, not the cache; see SupabaseDataSource.) NetworkFirst
- * already hits the network first when online, so this only changes the
- * offline/down path. Registered BEFORE the general NetworkFirst REST route so it
- * wins (Workbox: first match). */
-function supabaseItemStatePattern(): RegExp {
-  const url = process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (url) {
-    try {
-      const host = new URL(url).host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      return new RegExp(`^https://${host}/rest/v1/item_state(\\?.*)?$`);
-    } catch {
-      // Malformed URL — fall through to the default below.
-    }
-  }
-  return /^https:\/\/.*\.supabase\.co\/rest\/v1\/item_state(\?.*)?$/;
-}
-
 const TEST_BUILD_INFO: BuildInfo = {
   environment: 'test',
   shortSha: 'abc1234',
@@ -214,6 +171,15 @@ export default defineConfig({
         // lose on refresh, so the simpler behavior wins (see SPEC.md
         // *PWA & Offline → Service worker*).
         registerType: 'autoUpdate',
+        // Hand-written worker (src/sw.ts): the runtime caches are partitioned
+        // per user (guardrail #8), and picking a cache bucket per request
+        // needs code a declarative generateSW config can't express. The
+        // worker reproduces everything the old workbox block here emitted —
+        // precache, navigation fallback, strategies, caps — plus the
+        // per-user bucketing; see src/sw.ts.
+        strategies: 'injectManifest',
+        srcDir: 'src',
+        filename: 'sw.ts',
         includeAssets: [
           'favicon.svg',
           'favicon-32.png',
@@ -237,95 +203,6 @@ export default defineConfig({
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable',
-            },
-          ],
-        },
-        workbox: {
-          // Offline navigation to /pinned, /item/:id, etc. resolves to the
-          // precached shell and React Router takes over.
-          navigateFallback: '/index.html',
-          navigateFallbackDenylist: [/^\/api\//],
-          cleanupOutdatedCaches: true,
-          runtimeCaching: [
-            {
-              // Self-hosted typeface woff2 (Fontsource, hashed into /assets).
-              // The default precache glob omits woff2, so without this the
-              // active font would 404 offline and fall back to the system stack
-              // — exactly the cross-platform inconsistency the self-hosted fonts
-              // exist to remove. CacheFirst, cache-on-use: only the fonts
-              // actually fetched (the active one, plus all of them once the
-              // Settings picker is opened) get stored, not all six up front.
-              urlPattern: /\/assets\/.*\.woff2$/,
-              handler: 'CacheFirst',
-              options: {
-                cacheName: 'readmo-fonts',
-                expiration: {
-                  maxEntries: 30,
-                  maxAgeSeconds: 365 * 24 * 60 * 60,
-                },
-                cacheableResponse: { statuses: [0, 200] },
-              },
-            },
-            {
-              // item_state reads — NetworkOnly (no cache fallback) so item-state
-              // hydration is always live-or-fail and never reconciles the store
-              // against a stale cached snapshot (cross-device resync, or an
-              // offline cold boot). Offline the read fails and the store keeps its
-              // last-good localStorage state. MUST precede the NetworkFirst REST
-              // route below (Workbox: first match).
-              urlPattern: supabaseItemStatePattern(),
-              handler: 'NetworkOnly',
-            },
-            {
-              // Data reads from Supabase REST/RPC — NetworkFirst so a healthy
-              // network always wins, with a cache fallback offline (see
-              // SPEC.md *PWA & Offline → Caching strategy*). Pattern is derived
-              // from VITE_SUPABASE_URL so it follows a gateway/custom-domain
-              // migration instead of silently dropping the offline cache.
-              urlPattern: supabaseRestCachePattern(),
-              handler: 'NetworkFirst',
-              options: {
-                cacheName: 'readmo-data',
-                // A slow-but-working read falls back to cache after 6s rather
-                // than the old 10s, so a stuck single page fetch surfaces cached
-                // content sooner. Kept just below supabaseFetch's REQUEST_TIMEOUT_MS
-                // (8s) so the cache fallback fires before the app-level abort —
-                // move the two together if either changes.
-                networkTimeoutSeconds: 6,
-                expiration: { maxEntries: 200, maxAgeSeconds: 24 * 60 * 60 },
-                cacheableResponse: { statuses: [0, 200] },
-              },
-            },
-            {
-              // Article images proxied through our same-origin /api/img
-              // endpoint — CacheFirst, capped. The bytes are content-addressed
-              // (the `?url=` fully determines them) and the proxy serves them
-              // `immutable`, so a cache hit must NOT re-hit the network:
-              // StaleWhileRevalidate fired a background revalidation fetch on
-              // every view, multiplying proxy requests for image-heavy articles
-              // for no benefit. CacheFirst serves cached bytes with zero network;
-              // the maxAgeSeconds cap still bounds staleness. Doubles as the
-              // offline-image source (SPEC.md *Privacy* / *Article images*).
-              urlPattern: /\/api\/img(?:\?.*)?$/,
-              handler: 'CacheFirst',
-              options: {
-                cacheName: 'readmo-images',
-                expiration: { maxEntries: 300, maxAgeSeconds: 7 * 24 * 60 * 60 },
-                cacheableResponse: { statuses: [0, 200] },
-              },
-            },
-            {
-              // Favicons — CacheFirst, long TTL, capped.
-              urlPattern: /\/api\/favicon(?:\?.*)?$/,
-              handler: 'CacheFirst',
-              options: {
-                cacheName: 'readmo-favicons',
-                expiration: {
-                  maxEntries: 200,
-                  maxAgeSeconds: 30 * 24 * 60 * 60,
-                },
-                cacheableResponse: { statuses: [0, 200] },
-              },
             },
           ],
         },
