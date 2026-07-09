@@ -245,7 +245,10 @@ export function assertSafeUrl(url: string): URL {
   try {
     parsed = new URL(url);
   } catch {
-    throw new SsrfError(`Invalid URL: ${url}`);
+    // Never echo the raw input: the message lands in client-visible surfaces
+    // (feeds.last_error via the poller's recordFailure), and a malformed
+    // pasted URL can still carry a subscriber token (guardrail #7).
+    throw new SsrfError('Invalid URL');
   }
 
   const scheme = parsed.protocol.replace(/:$/, '').toLowerCase();

@@ -143,6 +143,20 @@ describe('assertSafeUrl', () => {
   it('accepts a well-formed public http(s) URL', () => {
     expect(() => assertSafeUrl('https://example.com/feed.xml')).not.toThrow();
   });
+
+  it('never echoes an unparseable URL in the error message (guardrail #7)', () => {
+    // The message lands in client-visible feeds.last_error via the poller's
+    // recordFailure, and a malformed pasted URL can still carry a token.
+    const malformed = 'https://example .com/feed?token=SECRET123';
+    try {
+      assertSafeUrl(malformed);
+      expect.unreachable('assertSafeUrl should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(SsrfError);
+      expect((err as Error).message).not.toContain('SECRET123');
+      expect((err as Error).message).not.toContain(malformed);
+    }
+  });
 });
 
 describe('safeFetch — with injected resolver/fetch', () => {
