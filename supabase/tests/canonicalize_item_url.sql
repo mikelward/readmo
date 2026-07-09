@@ -211,5 +211,53 @@ begin
   raise notice 'PASS T5: RPC folds a raw-url re-issue onto the canonical survivor';
 end $$;
 
+-- ===== Test 6 (0055): guid/url cross-collision must not abort the batch =====
+-- Feed holds row A (guid=G) and row B (url=U); the publisher emits an item
+-- claiming BOTH (guid=G, url=U). The INSERT conflicts on guid (row A), the DO
+-- UPDATE trips over row B's url, and the fallback's guid adoption onto row B
+-- collides with row A's guid. Before 0055 that second unique_violation escaped
+-- the handler and rolled back the whole per-feed batch — every poll, forever
+-- (a stuck feed). Now the content lands on the url survivor (sans guid
+-- adoption) and the REST of the batch still commits.
+do $$
+declare
+  n int;
+  got_title text;
+begin
+  insert into public.items (feed_id, guid, url, title) values
+    ('ca000000-0000-0000-0000-0000000000fe', 'cross-G',
+     'https://bbc.example/news/held-elsewhere', 'row A'),
+    ('ca000000-0000-0000-0000-0000000000fe', 'cross-G2',
+     'https://bbc.example/news/target', 'row B');
+
+  perform public.upsert_feed_items(
+    'ca000000-0000-0000-0000-0000000000fe',
+    jsonb_build_array(
+      jsonb_build_object(
+        'guid', 'cross-G',
+        'url',  'https://bbc.example/news/target',
+        'title','cross re-issue'),
+      jsonb_build_object(
+        'guid', 'cross-G3',
+        'url',  'https://bbc.example/news/rest-of-batch',
+        'title','batch survivor')));
+
+  -- The url survivor took the fresh content without adopting the guid.
+  select title into got_title from public.items
+    where feed_id = 'ca000000-0000-0000-0000-0000000000fe'
+      and url = 'https://bbc.example/news/target';
+  if got_title <> 'cross re-issue' then
+    raise exception 'FAIL T6: url survivor not updated, title=%', got_title;
+  end if;
+  -- Row A keeps its guid, and the batch's second item landed.
+  select count(*) into n from public.items
+    where feed_id = 'ca000000-0000-0000-0000-0000000000fe'
+      and guid in ('cross-G', 'cross-G3');
+  if n <> 2 then
+    raise exception 'FAIL T6: expected row A + batch survivor, got % rows', n;
+  end if;
+  raise notice 'PASS T6: guid/url cross-collision updates the survivor and the batch commits';
+end $$;
+
 -- --- Cleanup ---------------------------------------------------------------
 delete from public.feeds where id = 'ca000000-0000-0000-0000-0000000000fe';
