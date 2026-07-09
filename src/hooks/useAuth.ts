@@ -1,5 +1,6 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import { AUTH_STORAGE_KEY, getSupabase, isSupabaseConfigured } from '../lib/supabase/client';
+import { markExplicitSignOut } from '../lib/userCache';
 
 // Auth behind one stable shape: `{ user, signIn, signOut }` + a synchronous
 // `getActiveUid()` for boot-time cache keying.
@@ -257,6 +258,11 @@ export function useAuth(): {
   );
 
   const signOut = useCallback(() => {
+    // Mark the sign-out as the reader's own choice BEFORE tearing the session
+    // down: useUserCacheScope purges the departing user's on-device caches only
+    // for an explicit sign-out (or an account switch), not for a session that
+    // dropped on its own (a failed token refresh — routine offline).
+    markExplicitSignOut();
     if (configured) void getSupabase().auth.signOut();
     else setSignedIn(false);
   }, [configured]);

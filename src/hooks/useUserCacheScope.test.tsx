@@ -16,6 +16,7 @@ const DEMO_UID = 'mock:demo@readmo.app';
 describe('useUserCacheScope', () => {
   beforeEach(() => {
     window.localStorage.clear();
+    window.sessionStorage.clear();
     // Start signed-in so prevUid initialises to DEMO_UID and transitioning
     // begins false (reloadApp is mocked so a real reload never resets it).
     window.localStorage.setItem('readmo:mock-signed-in', '1');
@@ -59,6 +60,44 @@ describe('useUserCacheScope', () => {
     expect(caches.delete).toHaveBeenCalledWith('readmo-images');
     expect(caches.delete).toHaveBeenCalledWith('readmo-favicons');
     // ...then the app reloads to re-key the data source/persister.
+    await waitFor(() => expect(reloadApp).toHaveBeenCalledTimes(1));
+  });
+
+  it('keeps the persisted stores when the session drops WITHOUT an explicit sign-out', async () => {
+    // supabase-js clears the session when a token refresh fails — routine
+    // while offline. That transition must not purge the user's persisted
+    // stores: their /offline cache and pins live there, and the same account
+    // signs right back in. (The in-memory cache still empties and the app
+    // still reloads, so nothing of theirs paints while signed out.)
+    const queryClient = new QueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () => ({ transitioning: useUserCacheScope(), auth: useAuth() }),
+      { wrapper },
+    );
+    expect(result.current.transitioning).toBe(false);
+
+    queryClient.setQueryData(['feed'], { secret: 1 });
+    window.localStorage.setItem(rqCacheKey(DEMO_UID), 'blob');
+    window.localStorage.setItem(itemStateKey(DEMO_UID), 'state');
+
+    // Simulate the session dropping on its own: flip the persisted auth state
+    // and notify, WITHOUT going through auth.signOut() (which marks the
+    // sign-out explicit).
+    act(() => {
+      window.localStorage.removeItem('readmo:mock-signed-in');
+      window.dispatchEvent(new Event('readmo:auth-changed'));
+    });
+
+    expect(result.current.transitioning).toBe(true);
+    // In-memory cache still empties (nothing paints while signed out)…
+    expect(queryClient.getQueryData(['feed'])).toBeUndefined();
+    // …but the persisted stores survive for the next sign-in.
+    expect(window.localStorage.getItem(rqCacheKey(DEMO_UID))).toBe('blob');
+    expect(window.localStorage.getItem(itemStateKey(DEMO_UID))).toBe('state');
+    expect(caches.delete).not.toHaveBeenCalled();
     await waitFor(() => expect(reloadApp).toHaveBeenCalledTimes(1));
   });
 

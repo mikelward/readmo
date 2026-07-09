@@ -2927,9 +2927,10 @@ keys differ; the strategies map one-to-one:
   LWW, which makes a re-send idempotent) is the right bound; **Edge Functions**
   (`/functions/v1/` — refresh, discover, fulltext), which legitimately run longer
   than a read; and **auth** (`/auth/v1/`), where a capped token-refresh timeout
-  would surface as a failed `getSession()` → the user is nulled →
-  `useUserCacheScope` treats it as a sign-out and purges the offline cache,
-  turning a transient blip into a spurious sign-out. Every request still flows
+  would surface as a failed `getSession()` → the user is nulled → the app
+  bounces to `/signin`, turning a transient blip into a spurious sign-out.
+  (Even then the on-device caches survive — a dropped session is not a
+  departure; see *All client caches…* below.) Every request still flows
   through `trackedFetch`, so a real network failure flips the Offline pill.
 - **A read *timeout* is not treated as proof of offline.** A self-imposed 8s
   read cap is ambiguous: the device may be offline, or the backend may just be
@@ -2982,10 +2983,17 @@ keys differ; the strategies map one-to-one:
   change.** Because Readmo supports sign-out and renders private/tokenized
   content, a shared cache on a shared device could let user B rehydrate user
   A's data before the network corrects it. Key the IndexedDB store **and** every
-  Workbox runtime cache by `auth.uid()`, and on any auth transition (sign-out,
-  or sign-in as a different subject) purge the previous user's IndexedDB store +
+  Workbox runtime cache by `auth.uid()`, and on an **explicit sign-out or a
+  sign-in as a different subject** purge the previous user's IndexedDB store +
   named Cache Storage buckets before the new session paints (treated like a
-  `CACHE_BUSTER` bump). The outbox is per-user, flushed-or-discarded on
+  `CACHE_BUSTER` bump). A session that merely **drops on its own** — supabase-js
+  clears it when a token refresh fails, which happens routinely *offline* — is
+  **not** a departure and purges nothing: the stores are uid-scoped so nothing
+  can leak to another account, the same user's next sign-in finds their
+  `/offline` cache and pins intact, and a *different* user signing in later is a
+  uid mismatch that still purges (the boot sentinel keeps pointing at the
+  departed user through signed-out boots). The outbox is per-user,
+  flushed-or-discarded on
   sign-out. The one place Readmo must be stricter than newshacker, which never
   had multiple identities or private content on a device.
 - **On-device storage surfaces.** The client keys these surfaces by the
@@ -3006,8 +3014,10 @@ keys differ; the strategies map one-to-one:
     misleading "nothing saved" state.
   - `readmo:item-state:<uid>` — per-item triage state (pinned/favorite/…), in
     `localStorage` (small, synchronous).
-  - `readmo:last-uid` — the uid that last booted (sentinel; `''` when signed
-    out), used to detect an account switch that happened via a full-page reload.
+  - `readmo:last-uid` — the uid that last booted (sentinel), used to detect an
+    account switch that happened via a full-page reload. A signed-out boot
+    leaves it pointing at the previous user (see the purge rules above), so
+    only a different user's sign-in triggers the purge.
   - `readmo:cache-migrated` — one-shot flag marking that the pre-scoping global
     keys were migrated into the signed-in user's scoped keys (so an upgrade
     preserves pins/favorites instead of wiping them).
