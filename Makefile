@@ -43,12 +43,16 @@ deploy-poll: check-link
 deploy-img: check-link
 	supabase functions deploy img --import-map $(IMPORT_MAP) --no-verify-jwt
 
+# Reading-mode extraction. Browser-invoked with the caller's JWT, plus the pin
+# trigger's internal call relayed through `summary` (service-role bearer — a
+# project-signed JWT, so it passes verification), so deploy WITH jwt
+# verification.
 deploy-fulltext: check-link
 	supabase functions deploy fulltext --import-map $(IMPORT_MAP)
 
 # AI article summaries. Browser-invoked with the caller's JWT (verified for the
 # allowlist gate), so deploy WITH jwt verification like fulltext. The DB pin
-# trigger (0053) also calls it with the service-role key as bearer — that key is
+# trigger (0053/0054) also calls it with the service-role key as bearer — that key is
 # a project-signed JWT, so it passes verification too; no --no-verify-jwt
 # needed. Needs the GOOGLE_API_KEY secret set (see SETUP.md) to actually
 # generate.

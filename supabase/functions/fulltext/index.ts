@@ -11,6 +11,16 @@
 //     0002): a user who can't see the item gets a 404 — they cannot trigger a
 //     fetch for an article they aren't entitled to. The service-role client does
 //     the cached write (client item writes are revoked; 0002/0009).
+//   - INTERNAL caller: the DB pin trigger — via the `summary` function's
+//     pin-triggered work — calls this with the service-role bearer + the
+//     pinning user's identity (resolveInternalCaller, _shared/internalCaller.ts),
+//     so a pinned article's full body is downloaded even if the app closes
+//     right after the pin. That path REQUIRES the named user on the allowlist
+//     (empty list → no one; the server-initiated cost-guard convention),
+//     proves visibility by the pinned item_state row itself, and only fetches
+//     when the feed body looks truncated — the same gate the client's pinned
+//     prefetch applies (useOfflineCacheLock), so a pin never downloads a page
+//     whose feed body is already the whole article.
 //   - Reading mode is the highest copyright-exposure surface (it fetches beyond
 //     the feed AND stores a shared copy), so the DB `allowlist` table (the shared
 //     trusted-user list, managed from /admin; see _shared/allowlist.ts) restricts
@@ -65,6 +75,11 @@ import { robotsCheck } from '../_shared/robots.ts';
 import { looksTokenized, redactUrl } from '../_shared/urlSafety.ts';
 import { corsHeaders, preflight } from '../_shared/cors.ts';
 import { loadAllowlistFromDb, isAllowed } from '../_shared/allowlist.ts';
+import {
+  isInternalCallerAllowed,
+  resolveInternalCaller,
+} from '../_shared/internalCaller.ts';
+import { looksTruncatedHtml } from '../_shared/summary.ts';
 
 const JINA_MAX_BYTES = 4 * 1024 * 1024; // 4 MiB
 const FETCH_MAX_BYTES = 8 * 1024 * 1024; // 8 MiB — article pages can be large
@@ -88,8 +103,10 @@ async function handle(req: Request): Promise<Response> {
   }
 
   let itemId: string | undefined;
+  let bodyUserId: unknown;
+  let bodyEmail: unknown;
   try {
-    ({ itemId } = await req.json());
+    ({ itemId, userId: bodyUserId, email: bodyEmail } = await req.json());
   } catch {
     console.warn('fulltext: rejected request with invalid JSON body');
     return json({ error: 'Invalid JSON body' }, 400);
@@ -111,6 +128,20 @@ async function handle(req: Request): Promise<Response> {
     { auth: { autoRefreshToken: false, persistSession: false } },
   );
 
+  // The pin trigger's internal call (relayed via the `summary` function) vs. a
+  // normal user call. Internal requires the service-role bearer AND an explicit
+  // userId; anything else is a user call and the body's identity fields are
+  // ignored (never trusted).
+  const caller = resolveInternalCaller({
+    authHeader,
+    serviceRoleKey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
+    userId: bodyUserId,
+    email: bodyEmail,
+  });
+  if (caller.internal) {
+    console.log(`fulltext: pin-trigger call for item ${itemId}`);
+  }
+
   // Reading-mode allowlist (guardrail #6's content-exposure cousin): full text
   // both fetches beyond the feed AND stores a shared copy, so the operator can
   // restrict it to themselves/family via the `allowlist` table (the shared
@@ -130,7 +161,17 @@ async function handle(req: Request): Promise<Response> {
     console.error('fulltext: allowlist read failed — retryable unreachable:', err);
     return json({ status: 'unreachable', contentHtml: null });
   }
-  if (allowlist.size > 0) {
+  if (caller.internal) {
+    // The trigger names the pinning user; gate on THAT identity (the DB has no
+    // user JWT to forward). Server-initiated work REQUIRES a listed user — an
+    // empty allowlist triggers for no one (the cost-guard convention, unlike
+    // the client path's "empty = open" below). Silent decline; nothing reads
+    // this response but the summary function's log line.
+    if (!isInternalCallerAllowed(caller, allowlist)) {
+      console.log('fulltext: pinning user not on the allowlist — declining');
+      return json({ status: 'empty', contentHtml: null, retryable: true });
+    }
+  } else if (allowlist.size > 0) {
     const { data: auth, error: authError } = await userClient.auth.getUser();
     if (authError || !auth?.user) {
       // A transient auth lookup failure must NOT be cached as the terminal
@@ -155,15 +196,52 @@ async function handle(req: Request): Promise<Response> {
     }
   }
 
-  // RLS-scoped lookup: only resolves if the caller may see this item.
-  const { data: item, error } = await userClient
-    .from('items')
-    .select('id, feed_id, url, title, full_content_html, full_content_via_fallback')
-    .eq('id', itemId)
-    .maybeSingle();
-  if (error) {
-    console.error(`fulltext: item lookup for ${itemId} failed:`, error);
-    return json({ error: error.message }, 400);
+  // Item lookup. User path: RLS-scoped through the forwarded JWT — only
+  // resolves if the caller may see this item. Internal path: the service role
+  // bypasses RLS, so visibility is proven FIRST by the pinned item_state row
+  // the trigger fired on (the same permanent-state grant items_select honors;
+  // 0002) — no pin row (unpinned again before we ran, or a forged id) means no
+  // fetch (fail closed, 404 like the user path). The internal read also pulls
+  // content_html for the truncation gate below.
+  const itemColumns = 'id, feed_id, url, title, full_content_html, full_content_via_fallback';
+  let item;
+  if (caller.internal) {
+    const { data: pin, error: pinError } = await service
+      .from('item_state')
+      .select('item_id')
+      .eq('user_id', caller.userId)
+      .eq('item_id', itemId)
+      .eq('pinned', true)
+      .maybeSingle();
+    if (pinError) {
+      console.error(`fulltext: pin lookup for item ${itemId} failed:`, pinError);
+      return json({ status: 'unreachable', contentHtml: null });
+    }
+    if (!pin) {
+      console.warn(`fulltext: item ${itemId} not pinned by the named user — declining`);
+      return json({ error: 'Item not found' }, 404);
+    }
+    const { data, error } = await service
+      .from('items')
+      .select(`${itemColumns}, content_html`)
+      .eq('id', itemId)
+      .maybeSingle();
+    if (error) {
+      console.error(`fulltext: item lookup for ${itemId} failed:`, error);
+      return json({ error: error.message }, 400);
+    }
+    item = data;
+  } else {
+    const { data, error } = await userClient
+      .from('items')
+      .select(itemColumns)
+      .eq('id', itemId)
+      .maybeSingle();
+    if (error) {
+      console.error(`fulltext: item lookup for ${itemId} failed:`, error);
+      return json({ error: error.message }, 400);
+    }
+    item = data;
   }
   if (!item) {
     console.warn(`fulltext: item ${itemId} not found or not visible to caller`);
@@ -181,6 +259,19 @@ async function handle(req: Request): Promise<Response> {
       contentHtml: item.full_content_html,
       ...(item.full_content_via_fallback ? { viaFallback: true } : {}),
     });
+  }
+  // Pin-triggered download: only fetch when the feed body looks truncated —
+  // the same gate the client's pinned prefetch applies (useOfflineCacheLock /
+  // looksTruncated), sharing the client's 600-char threshold via
+  // looksTruncatedHtml. A complete feed body IS the article; the reader never
+  // shows an extraction for it unless the user asks, so downloading the page
+  // would spend a publisher fetch (and raise the stored-copy exposure) for
+  // content nothing displays. A user-initiated call is unaffected — the client
+  // already applied this gate (or the user asked explicitly via "Read more").
+  // Not recorded as a download attempt: nothing was attempted.
+  if (caller.internal && !looksTruncatedHtml(item.content_html)) {
+    console.log(`fulltext: item ${itemId} — feed body not truncated, nothing to fetch`);
+    return json({ status: 'empty', contentHtml: null, retryable: true });
   }
   // Paused feed → decline a NEW download (operator paused it from /admin/feeds).
   // Already-cached bodies still serve via the cache-hit return above; this only
