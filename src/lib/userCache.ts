@@ -32,6 +32,15 @@ export const OUTBOX_SUFFIX = ':outbox';
 // The uid that last booted the app, so a boot can detect an account switch that
 // completed via a full-page redirect/reload (no in-tab transition observed).
 const LAST_UID_KEY = 'readmo:last-uid';
+// Explicit sign-out marker (sessionStorage, same tab): set by useAuth.signOut
+// right before the auth session is torn down, consumed by useUserCacheScope
+// when the uid transitions to null. Distinguishes the reader ACTUALLY signing
+// out (purge the departing user's on-device data — guardrail #8) from the
+// session merely dropping on its own (supabase-js clears it when a token
+// refresh fails, which happens routinely OFFLINE): purging on the latter wiped
+// the offline cache exactly when it was needed, even though the same account
+// signs right back in.
+const EXPLICIT_SIGNOUT_KEY = 'readmo:explicit-signout';
 // Set once the legacy (pre-scoping) global stores have been migrated into a
 // user-scoped key, so the migration runs at most once.
 const MIGRATED_KEY = 'readmo:cache-migrated';
@@ -54,6 +63,29 @@ export function itemStateKey(uid: string | null): string {
 /** Offline item-state outbox key for a user (item-state key + suffix). */
 export function outboxKey(uid: string | null): string {
   return `${itemStateKey(uid)}${OUTBOX_SUFFIX}`;
+}
+
+/** Record that the reader chose to sign out (vs. the session dropping on its
+ * own). Called by useAuth.signOut before tearing the session down. */
+export function markExplicitSignOut(): void {
+  try {
+    window.sessionStorage.setItem(EXPLICIT_SIGNOUT_KEY, '1');
+  } catch {
+    // ignore (storage unavailable/denied)
+  }
+}
+
+/** Whether the current uid→null transition came from an explicit sign-out.
+ * Consumes the marker so a later, unrelated session drop isn't mistaken for
+ * one. */
+export function consumeExplicitSignOut(): boolean {
+  try {
+    const set = window.sessionStorage.getItem(EXPLICIT_SIGNOUT_KEY) !== null;
+    window.sessionStorage.removeItem(EXPLICIT_SIGNOUT_KEY);
+    return set;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -170,6 +202,15 @@ export async function reconcileUserCachesOnBoot(
   migrateLegacyCaches(currentUid);
   reclaimLegacyRqCache(currentUid);
 
+  // A SIGNED-OUT boot never purges, and leaves the sentinel alone. The session
+  // may have been dropped by a failed token refresh (routine while offline)
+  // rather than by a sign-out — so the previous user's scoped stores must
+  // survive for their next sign-in (their /offline cache and pins live there),
+  // and keeping the sentinel pointed at them means a DIFFERENT user signing in
+  // later still purges them (guardrail #8). An explicit sign-out already
+  // purged in-tab (useUserCacheScope), so skipping here loses nothing.
+  if (currentUid === null) return;
+
   let raw: string | null = null;
   try {
     raw = window.localStorage.getItem(LAST_UID_KEY);
@@ -182,7 +223,7 @@ export async function reconcileUserCachesOnBoot(
     await clearUserCaches(last);
   }
   try {
-    window.localStorage.setItem(LAST_UID_KEY, currentUid ?? '');
+    window.localStorage.setItem(LAST_UID_KEY, currentUid);
   } catch {
     // ignore (storage unavailable/denied)
   }

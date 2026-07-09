@@ -156,13 +156,51 @@ describe('reconcileUserCachesOnBoot', () => {
     expect(window.localStorage.getItem(rqCacheKey('demo'))).toBeNull();
   });
 
-  it('records the signed-out sentinel and purges the prior user', async () => {
+  it('a signed-out boot never purges and keeps the sentinel on the prior user', async () => {
+    // The session can drop on its own — supabase-js clears it when a token
+    // refresh fails, which happens routinely OFFLINE. A signed-out boot must
+    // not treat that as a departure: the prior user's stores survive for
+    // their next sign-in (their /offline cache lives there), and the sentinel
+    // keeps pointing at them so a DIFFERENT user signing in later still
+    // purges (guardrail #8). An explicit sign-out purges in-tab instead.
     window.localStorage.setItem('readmo:last-uid', 'old');
+    window.localStorage.setItem(itemStateKey('old'), 'pins-and-favorites');
+
     await reconcileUserCachesOnBoot(null);
-    // Sentinel is recorded as '' (present) to distinguish signed-out from a
-    // never-booted (first-run) install.
-    expect(window.localStorage.getItem('readmo:last-uid')).toBe('');
+
+    expect(window.localStorage.getItem(itemStateKey('old'))).toBe(
+      'pins-and-favorites',
+    );
+    expect(caches.delete).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem('readmo:last-uid')).toBe('old');
+  });
+
+  it('the same user signing back in after a transient session drop keeps their caches', async () => {
+    // Follow-on from the signed-out boot above: the user re-authenticates.
+    // Sentinel still points at them → same-uid boot → no purge.
+    window.localStorage.setItem('readmo:last-uid', 'old');
+    window.localStorage.setItem(itemStateKey('old'), 'pins-and-favorites');
+
+    await reconcileUserCachesOnBoot(null); // transient signed-out boot
+    await reconcileUserCachesOnBoot('old'); // signs back in
+
+    expect(window.localStorage.getItem(itemStateKey('old'))).toBe(
+      'pins-and-favorites',
+    );
+    expect(caches.delete).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem('readmo:last-uid')).toBe('old');
+  });
+
+  it('a different user signing in after a transient drop still purges the prior user', async () => {
+    window.localStorage.setItem('readmo:last-uid', 'old');
+    window.localStorage.setItem(itemStateKey('old'), 'private');
+
+    await reconcileUserCachesOnBoot(null); // transient signed-out boot
+    await reconcileUserCachesOnBoot('new'); // someone else signs in
+
+    expect(window.localStorage.getItem(itemStateKey('old'))).toBeNull();
     expect(caches.delete).toHaveBeenCalledWith('readmo-data');
+    expect(window.localStorage.getItem('readmo:last-uid')).toBe('new');
   });
 
   it('migrates the legacy item-state store into the user scope on first keyed boot', async () => {
