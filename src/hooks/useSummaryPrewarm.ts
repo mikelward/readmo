@@ -16,10 +16,10 @@ import { isSummarySettled, summaryStaleTime, type SummaryResult } from '../lib/s
  * This prefetch is best-effort by nature (an in-flight call dies with the
  * page — pin, lock the phone, and it's gone). The GUARANTEE that a pin
  * generates the summary is server-side: the pin's sync write fires the
- * `summary` function from the database (0053's pin trigger), independent of
- * this hook. What this hook adds on top is the on-device React Query cache
- * warm (so the open is instant, not just cheap) and the in-session retry of
- * transient failures.
+ * `summary` function from the database (the 0053/0054 pin trigger, which also
+ * downloads the full article first), independent of this hook. What this hook
+ * adds on top is the on-device React Query cache warm (so the open is
+ * instant, not just cheap) and the in-session retry of transient failures.
  *
  * The summary itself is NOT gated on pinned — `useSummary` shows it for any
  * article an allowlisted user opens. Pinning is just a **prefetch signal**: a

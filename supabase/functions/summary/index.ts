@@ -9,13 +9,20 @@
 // Two callers, one trigger (the pin):
 //   - The CLIENT (reader pre-warm / on-open / "Generate summary" button), with
 //     the user's JWT.
-//   - The DATABASE: 0053's pin trigger POSTs { itemId, userId, email } with the
-//     service-role bearer the moment a pin commits to item_state, so generation
-//     happens even if the app closes right after pinning. Recognized by
-//     resolveSummaryCaller (_shared/summary.ts): service bearer + explicit
-//     userId; a client passing userId with its own JWT stays on the user path.
-//     pg_net never reads the outcome, so this path answers as soon as the gates
-//     pass and finishes the generation in the background (EdgeRuntime.waitUntil).
+//   - The DATABASE: the pin trigger (0053/0054) POSTs { itemId, userId, email }
+//     with the service-role bearer the moment a pin commits to item_state, so
+//     the work happens even if the app closes right after pinning. Recognized
+//     by resolveInternalCaller (_shared/internalCaller.ts): service bearer +
+//     explicit userId; a client passing userId with its own JWT stays on the
+//     user path. pg_net never reads the outcome, so this path answers as soon
+//     as the gates pass and runs in the background (EdgeRuntime.waitUntil):
+//     FIRST make sure the full article is downloaded + cached (one internal
+//     call to the `fulltext` function — truncation-gated there, mirroring the
+//     client's pinned prefetch), THEN generate the summary if it's still
+//     missing. Full text first on purpose: the pin should leave the article
+//     readable offline, and the stored full body is the summary's fallback
+//     text when Jina fails — sequencing keeps this one-shot kick from
+//     deferring on a feed stub.
 //
 // Trust + access:
 //   - User path: the caller's forwarded JWT scopes the item lookup through RLS
@@ -23,9 +30,11 @@
 //     service-role client does the cached write (client item writes are revoked;
 //     0002/0009).
 //   - Internal path: the trigger names the pinning user; the allowlist is
-//     checked against THAT identity, and visibility is proven by the pinned
-//     item_state row itself (the same permanent-state grant items_select
-//     honors) — no pin row, no summary (404).
+//     REQUIRED for that identity — an EMPTY allowlist means the trigger works
+//     for no one (isInternalCallerAllowed; the poller's cost-guard convention,
+//     unlike the client paths' "empty = open") — and visibility is proven by
+//     the pinned item_state row itself (the same permanent-state grant
+//     items_select honors) — no pin row, no summary (404).
 //   - Summaries are a generation-cost surface (each cache miss is a Jina fetch +
 //     a Gemini call), so — like reading mode and Google News — they're gated on
 //     the DB `allowlist` table (the shared trusted-user list, managed from
@@ -78,10 +87,14 @@ import {
   coalesceSummaryGeneration,
   parseGeminiText,
   pickStoredContent,
-  resolveSummaryCaller,
   stripSummaryPreamble,
 } from '../_shared/summary.ts';
 import type { SummaryLeaseClient, SummaryOutcome } from '../_shared/summary.ts';
+import {
+  isInternalCallerAllowed,
+  resolveInternalCaller,
+} from '../_shared/internalCaller.ts';
+import type { InternalCaller } from '../_shared/internalCaller.ts';
 
 const MODEL = 'gemini-2.5-flash-lite';
 const GEMINI_ENDPOINT =
@@ -134,10 +147,10 @@ async function handle(req: Request): Promise<Response> {
     { auth: { autoRefreshToken: false, persistSession: false } },
   );
 
-  // The DB pin trigger (0053) vs. a normal user call. Internal requires the
-  // service-role bearer AND an explicit userId; anything else is a user call
-  // and the body's identity fields are ignored (never trusted).
-  const caller = resolveSummaryCaller({
+  // The DB pin trigger (0053/0054) vs. a normal user call. Internal requires
+  // the service-role bearer AND an explicit userId; anything else is a user
+  // call and the body's identity fields are ignored (never trusted).
+  const caller = resolveInternalCaller({
     authHeader,
     serviceRoleKey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
     userId: bodyUserId,
@@ -160,28 +173,28 @@ async function handle(req: Request): Promise<Response> {
     console.error('summary: allowlist read failed — retryable unreachable:', err);
     return json({ status: 'unreachable', summary: null });
   }
-  if (allowlist.size > 0) {
-    if (caller.internal) {
-      // The trigger names the pinning user; gate on THAT identity (the DB has
-      // no user JWT to forward). Same silent decline as the user path — the
-      // outcome is discarded by pg_net anyway.
-      if (!isAllowed({ id: caller.userId, email: caller.email }, allowlist)) {
-        console.log('summary: pinning user not on the allowlist — no summary');
-        return json({ status: 'empty', summary: null, retryable: true });
-      }
-    } else {
-      const { data: auth, error: authError } = await userClient.auth.getUser();
-      if (authError || !auth?.user) {
-        // A transient auth lookup failure must not be cached as the terminal
-        // `empty`; report the retryable `unreachable` so an allowlisted caller
-        // retries instead of being stuck with no summary.
-        console.warn('summary: auth lookup failed — retryable unreachable:', authError);
-        return json({ status: 'unreachable', summary: null });
-      }
-      if (!isAllowed({ id: auth.user.id, email: auth.user.email }, allowlist)) {
-        console.log('summary: caller not on the allowlist — no summary');
-        return json({ status: 'empty', summary: null, retryable: true });
-      }
+  if (caller.internal) {
+    // The trigger names the pinning user; gate on THAT identity (the DB has no
+    // user JWT to forward). Server-initiated work REQUIRES a listed user — an
+    // empty allowlist triggers for no one (the poller's cost-guard convention,
+    // unlike the client paths' "empty = open" below). Silent decline; the
+    // outcome is discarded by pg_net anyway.
+    if (!isInternalCallerAllowed(caller, allowlist)) {
+      console.log('summary: pinning user not on the allowlist — no summary');
+      return json({ status: 'empty', summary: null, retryable: true });
+    }
+  } else if (allowlist.size > 0) {
+    const { data: auth, error: authError } = await userClient.auth.getUser();
+    if (authError || !auth?.user) {
+      // A transient auth lookup failure must not be cached as the terminal
+      // `empty`; report the retryable `unreachable` so an allowlisted caller
+      // retries instead of being stuck with no summary.
+      console.warn('summary: auth lookup failed — retryable unreachable:', authError);
+      return json({ status: 'unreachable', summary: null });
+    }
+    if (!isAllowed({ id: auth.user.id, email: auth.user.email }, allowlist)) {
+      console.log('summary: caller not on the allowlist — no summary');
+      return json({ status: 'empty', summary: null, retryable: true });
     }
   }
 
@@ -235,6 +248,23 @@ async function handle(req: Request): Promise<Response> {
   if (!item) {
     console.warn(`summary: item ${itemId} not found or not visible to caller`);
     return json({ error: 'Item not found' }, 404);
+  }
+
+  if (caller.internal) {
+    // The pin trigger's call is fire-and-forget: nothing reads the outcome, and
+    // pg_net aborts the request at its timeout — well inside the fulltext +
+    // Jina + Gemini work. So answer now (every gate above passed) and do the
+    // real work in the background: full-text download first, then the summary
+    // (see runPinTriggeredWork). Fall back to a synchronous run on a runtime
+    // without waitUntil (the request may then be aborted mid-work, which is no
+    // worse than the pre-trigger status quo).
+    const work = runPinTriggeredWork(service, caller, itemId);
+    if (globalThis.EdgeRuntime?.waitUntil) {
+      globalThis.EdgeRuntime.waitUntil(work);
+    } else {
+      await work;
+    }
+    return json({ status: 'accepted', summary: null }, 202);
   }
 
   // Cache hit — the summary lives on the shared item, so one caller's generation
@@ -296,43 +326,114 @@ async function handle(req: Request): Promise<Response> {
   // `ai_summary_generated_at` (set while `ai_summary` is null = in flight),
   // claimed by the atomic conditional UPDATE below. This is what collapses N
   // simultaneous misses for the same shared item into a single Gemini call.
-  const leaseClient = makeLeaseClient(service);
-  const generateOnce = () =>
-    coalesceSummaryGeneration({
-      client: leaseClient,
+  const outcome = await coalesceSummaryGeneration({
+    client: makeLeaseClient(service),
+    itemId,
+    now: () => Date.now(),
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    generate: () => generateAndCache(service, apiKey, item, itemId),
+  });
+  // `cached` is internal to the coalescer (drives lease release); keep the wire
+  // envelope exactly `{ status, summary, retryable? }` for older clients.
+  const { cached: _cached, ...body } = outcome;
+  return json(body);
+}
+
+// How long the pin-triggered work waits for the internal fulltext call. Its
+// pipeline can run ~30 s worst case (12 s direct fetch + 15 s Jina fallback +
+// robots reads + extraction); give it headroom rather than abandoning a fetch
+// that's about to land.
+const FULLTEXT_KICK_TIMEOUT_MS = 60_000;
+
+/** The pin trigger's background work (runs under EdgeRuntime.waitUntil after
+ * the 202 is sent). Full text FIRST — the pin should leave the article fully
+ * readable offline, and the stored full body is the summary's fallback text
+ * when Jina fails — then the summary, if one is still missing. Every step is
+ * best-effort: the trigger is one-shot, and the client pre-warm / on-open
+ * generation remain the retry paths. */
+async function runPinTriggeredWork(
+  service: any,
+  caller: InternalCaller,
+  itemId: string,
+): Promise<void> {
+  try {
+    await ensureFullTextForPin(caller, itemId);
+
+    // Re-read the item AFTER the full-text step: the row may now carry
+    // full_content_html (a better Gemini fallback than the pre-fulltext read),
+    // or a summary another caller cached while we fetched.
+    const { data: item, error } = await service
+      .from('items')
+      .select('id, feed_id, url, title, content_html, full_content_html, ai_summary')
+      .eq('id', itemId)
+      .maybeSingle();
+    if (error || !item) {
+      console.error(`summary: item ${itemId} — pin-triggered re-read failed:`, error);
+      return;
+    }
+    if (item.ai_summary) {
+      console.log(`summary: item ${itemId} — pin-triggered: summary already cached`);
+      return;
+    }
+
+    // Same generation guards as the user path (which this call bypassed by
+    // returning its 202 before them).
+    const { data: feed } = await service
+      .from('feeds')
+      .select('paused')
+      .eq('id', item.feed_id)
+      .maybeSingle();
+    if (feed?.paused) {
+      console.log(`summary: item ${itemId} — pin-triggered: feed paused, declining`);
+      return;
+    }
+    const apiKey = Deno.env.get('GOOGLE_API_KEY');
+    if (!apiKey) {
+      console.warn('summary: pin-triggered: GOOGLE_API_KEY not set — skipping');
+      return;
+    }
+
+    const outcome = await coalesceSummaryGeneration({
+      client: makeLeaseClient(service),
       itemId,
       now: () => Date.now(),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       generate: () => generateAndCache(service, apiKey, item, itemId),
     });
-
-  if (caller.internal) {
-    // The pin trigger's pg_net call is fire-and-forget: nothing reads the
-    // outcome, and pg_net aborts the request at its timeout — well inside the
-    // up-to-~35 s Jina + Gemini work. So answer now (the gates all passed) and
-    // finish the generation in the background; the result lands on
-    // items.ai_summary as usual. Fall back to a synchronous run on a runtime
-    // without waitUntil (the request may then be aborted mid-generation, which
-    // is no worse than the pre-trigger status quo).
-    const work = generateOnce().then(
-      (outcome) =>
-        console.log(`summary: item ${itemId} — pin-triggered generation: ${outcome.status}`),
-      (err) =>
-        console.error(`summary: item ${itemId} — pin-triggered generation failed:`, err),
-    );
-    if (globalThis.EdgeRuntime?.waitUntil) {
-      globalThis.EdgeRuntime.waitUntil(work);
-    } else {
-      await work;
-    }
-    return json({ status: 'accepted', summary: null }, 202);
+    console.log(`summary: item ${itemId} — pin-triggered generation: ${outcome.status}`);
+  } catch (err) {
+    console.error(`summary: item ${itemId} — pin-triggered work failed:`, err);
   }
+}
 
-  const outcome = await generateOnce();
-  // `cached` is internal to the coalescer (drives lease release); keep the wire
-  // envelope exactly `{ status, summary, retryable? }` for older clients.
-  const { cached: _cached, ...body } = outcome;
-  return json(body);
+/** Make sure the pinned article's full body is downloaded + cached, via one
+ * internal call to the `fulltext` function (same service bearer + named-user
+ * shape as the trigger's own call; fulltext re-checks the allowlist and the
+ * pin, then applies its usual truncation gate, robots checks, SSRF-hardened
+ * fetch, sanitization, and cache write). An HTTP hop rather than an import so
+ * the whole reading-mode pipeline stays in one place. Best-effort: any failure
+ * is logged and the summary still generates from what's stored. */
+async function ensureFullTextForPin(
+  caller: InternalCaller,
+  itemId: string,
+): Promise<void> {
+  try {
+    const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/fulltext`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ itemId, userId: caller.userId, email: caller.email }),
+      signal: AbortSignal.timeout(FULLTEXT_KICK_TIMEOUT_MS),
+    });
+    const rec = res.ok ? await res.json().catch(() => null) : null;
+    console.log(
+      `summary: item ${itemId} — pin-triggered full-text: HTTP ${res.status}, status ${rec?.status ?? 'n/a'}`,
+    );
+  } catch (err) {
+    console.warn(`summary: item ${itemId} — pin-triggered full-text failed:`, err);
+  }
 }
 
 /** Run the actual Jina fetch + stored-body fallback + Gemini call + cache write

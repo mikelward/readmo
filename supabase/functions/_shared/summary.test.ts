@@ -9,7 +9,6 @@ import {
   looksTruncatedHtml,
   parseGeminiText,
   pickStoredContent,
-  resolveSummaryCaller,
   stripSummaryPreamble,
 } from './summary';
 import type { SummaryLeaseClient, SummaryOutcome } from './summary';
@@ -262,83 +261,6 @@ describe('stripSummaryPreamble', () => {
   it('leaves a bullet list with no preamble untouched', () => {
     expect(stripSummaryPreamble('- alpha\n- beta')).toBe('- alpha\n- beta');
     expect(stripSummaryPreamble('* alpha\n* beta')).toBe('* alpha\n* beta');
-  });
-});
-
-describe('resolveSummaryCaller', () => {
-  const KEY = 'service-role-key-123';
-
-  it('recognizes the pin trigger: service bearer + userId (+ email)', () => {
-    expect(
-      resolveSummaryCaller({
-        authHeader: `Bearer ${KEY}`,
-        serviceRoleKey: KEY,
-        userId: 'user-1',
-        email: 'family@example.com',
-      }),
-    ).toEqual({ internal: true, userId: 'user-1', email: 'family@example.com' });
-  });
-
-  it('tolerates a missing email (allowlist then matches on id only)', () => {
-    expect(
-      resolveSummaryCaller({
-        authHeader: `Bearer ${KEY}`,
-        serviceRoleKey: KEY,
-        userId: 'user-1',
-        email: null,
-      }),
-    ).toEqual({ internal: true, userId: 'user-1', email: null });
-  });
-
-  it('ignores a userId sent with an ordinary user JWT (no spoofing)', () => {
-    expect(
-      resolveSummaryCaller({
-        authHeader: 'Bearer some-user-jwt',
-        serviceRoleKey: KEY,
-        userId: 'victim-user',
-        email: 'victim@example.com',
-      }),
-    ).toEqual({ internal: false, userId: null, email: null });
-  });
-
-  it('a service-bearer call without a userId stays on the user path', () => {
-    expect(
-      resolveSummaryCaller({
-        authHeader: `Bearer ${KEY}`,
-        serviceRoleKey: KEY,
-      }),
-    ).toEqual({ internal: false, userId: null, email: null });
-  });
-
-  it('never matches when the service key env is unset or empty (fails closed)', () => {
-    for (const serviceRoleKey of [undefined, null, '']) {
-      expect(
-        resolveSummaryCaller({
-          authHeader: 'Bearer ',
-          serviceRoleKey,
-          userId: 'user-1',
-        }),
-      ).toEqual({ internal: false, userId: null, email: null });
-    }
-  });
-
-  it('normalizes non-string/empty identity fields to null', () => {
-    expect(
-      resolveSummaryCaller({
-        authHeader: `Bearer ${KEY}`,
-        serviceRoleKey: KEY,
-        userId: 42,
-        email: {},
-      }),
-    ).toEqual({ internal: false, userId: null, email: null });
-    expect(
-      resolveSummaryCaller({
-        authHeader: `Bearer ${KEY}`,
-        serviceRoleKey: KEY,
-        userId: 'user-1',
-        email: '',
-      }),
-    ).toEqual({ internal: true, userId: 'user-1', email: null });
   });
 });
 

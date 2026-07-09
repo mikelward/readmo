@@ -44,6 +44,13 @@ function prefetchImages(html: string): void {
  *
  * Mount once near the app root. It subscribes to the shared item-state store, so
  * it reacts to every pin/favorite path centrally.
+ *
+ * For an allowlisted user, a PIN's sync write also triggers the full-text
+ * download (and AI summary) SERVER-side — the 0053/0054 pin trigger — so the
+ * shared item usually already carries `full_content_html` by the time this
+ * hook warms it; the warm here is then a cheap cache hit that just fills the
+ * device cache. This hook remains the only warmer for favorites and for the
+ * feed-body/image caching.
  */
 export function useOfflineCacheLock(): void {
   const ds = useDataSource();

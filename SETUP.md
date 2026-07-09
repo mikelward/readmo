@@ -439,9 +439,11 @@ select vault.create_secret(
 );
 ```
 
-The pin→summary trigger (0053, see SPEC *AI article summaries*) reads the same
-two secrets, so once they're set for the signup notifier there's nothing extra
-to configure; while they're absent both triggers silently no-op.
+The pin trigger (0053/0054 — full-article download + AI summary on pin, see
+SPEC *AI article summaries*) reads the same two secrets, so once they're set
+for the signup notifier there's nothing extra to configure; while they're
+absent both triggers silently no-op. Note the pin trigger also requires a
+**non-empty allowlist** (§13) — it works for listed users only.
 
 ### 9c. Deploy
 

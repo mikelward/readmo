@@ -2363,16 +2363,27 @@ page's discipline is unchanged.
     generate) — silent, like the rest of the card's soft states. A pin made while
     reading warms the summary via the pre-warm subscriber, so it appears without a
     button too.
-  - **A pin triggers generation server-side the moment it syncs.** The pin's
-    server write fires the `summary` function **from the database** (the pin
-    trigger; same allowlist gate, checked against the pinning user), so a pinned
-    article's summary generates even when the app closes or loses the network
-    right after the pin — the client pre-warm is best-effort (its in-flight call
-    dies with the page), and this is the guarantee behind it. A pin made offline
-    triggers when it syncs. The trigger skips items that already have a cached
-    summary, and it's a no-op until the operator configures the Vault secrets
-    (SETUP.md §9b). The per-device **Auto generate summaries** toggle governs
-    only the device pre-warm below, not this server-side trigger.
+  - **A pin triggers the work server-side the moment it syncs — full article
+    first, then the summary.** The pin's server write fires the `summary`
+    function **from the database** (the pin trigger), so a pinned article is
+    made ready even when the app closes or loses the network right after the
+    pin — the client pre-warm and pinned prefetch are best-effort (their
+    in-flight calls die with the page), and this is the guarantee behind them.
+    A pin made offline triggers when it syncs. The server-side work is:
+    **(1) download + cache the full article** (the reading-mode extraction, via
+    an internal call to `fulltext` — applied only when the feed body looks
+    truncated, the same gate as the client's pinned prefetch, and subject to
+    all of reading mode's usual checks: robots, SSRF hardening, sanitization,
+    paused feeds), then **(2) generate the AI summary** if one still isn't
+    cached — in that order, so the summary's fallback text is the full body
+    rather than a feed stub. The trigger **requires the pinning user to be on
+    the allowlist — an empty allowlist triggers for no one** (the same
+    cost-guard convention as the poller's spoiler-title pass; client-initiated
+    calls keep their "empty list = open" semantics), skips items that already
+    have both artifacts cached, and is a no-op until the operator configures
+    the Vault secrets (SETUP.md §9b). The per-device **Auto generate
+    summaries** toggle governs only the device pre-warm below, not this
+    server-side trigger.
   - **Pin is also a prefetch signal (incl. cross-device), generate-once.**
     `useSummaryPrewarm` pre-warms the summary for **every pinned item** — pinned
     on this device, synced from another device, or restored on boot — the summary
@@ -3131,6 +3142,11 @@ uid the page announces to the worker; the fonts cache alone stays shared.
 - Pinned/Favorite cache entries lock at `gcTime: Infinity` while the state
   holds and re-lock on cross-tab change / rehydrate / late image fetch (the
   `subscribeToPinnedCacheLocking` pattern). Never evicted while pinned/favorited.
+- **The server prepares pinned articles too.** For an allowlisted user, a pin's
+  sync write also triggers the full-article download and AI summary
+  **server-side** (see *AI article summaries*), so the shared item carries both
+  even if this device's prefetch dies with the page — the next warm (this
+  device or another) is then a cheap cache hit.
 
 ### Offline UX (mirrors newshacker)
 
