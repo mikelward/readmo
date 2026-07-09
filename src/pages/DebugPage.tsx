@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import type { FeedProbeResult } from '../lib/data/DataSource';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
@@ -102,6 +103,37 @@ export function DebugPage() {
   // override scopes `/` to a folder, against that folder.
   const { itemSort } = useItemSort();
   const { homeFeed } = useHomeFeed();
+  const queryClient = useQueryClient();
+  // Snapshot of every live feed-list query (['feed', <viewKey>], excluding the
+  // unread-count badges): what the VIEW's cache holds, alongside the probe's
+  // fresh read — the comparison that tells a stale/undersized cached page from
+  // a healthy one the render is dropping.
+  const snapshotFeedQueries = (): Row[] =>
+    queryClient
+      .getQueryCache()
+      .findAll({ queryKey: ['feed'] })
+      .filter((q) => q.queryKey[1] !== 'unread-counts')
+      .map((q) => {
+        const data = q.state.data as
+          | { pages?: Array<{ items?: unknown[] }> }
+          | undefined;
+        const rows = (data?.pages ?? []).reduce(
+          (n, page) => n + (page.items?.length ?? 0),
+          0,
+        );
+        const ageMin = q.state.dataUpdatedAt
+          ? Math.round((Date.now() - q.state.dataUpdatedAt) / 60000)
+          : null;
+        const err = q.state.error;
+        return {
+          label: `cache ${String(q.queryKey[1] ?? '')}`,
+          value:
+            `${rows} rows · ${ageMin === null ? 'never' : `${ageMin}m old`}` +
+            ` · ${q.state.status}/${q.state.fetchStatus}` +
+            (err ? ` · ${err instanceof Error ? err.message : String(err)}` : ''),
+          ...(err ? { state: 'down' as StatusBadge } : {}),
+        };
+      });
   useDocumentTitle('Debug · readmo');
 
   // Live backend reachability, the readmo analog of newshacker's /debug Services
@@ -182,6 +214,7 @@ export function DebugPage() {
                 homeFeed.kind === 'folder' ? homeFeed.name : null,
               )
             }
+            snapshotQueries={snapshotFeedQueries}
           />
         ) : null}
       </section>
@@ -193,9 +226,17 @@ export function DebugPage() {
  * page) outside the query cache and lists where rows survive — raw backend
  * rows, resolved rows, and the per-feed split — so an empty grouped view can
  * be diagnosed from a phone with no devtools. */
-function FeedProbe({ run }: { run: () => Promise<FeedProbeResult> }) {
+function FeedProbe({
+  run,
+  snapshotQueries,
+}: {
+  run: () => Promise<FeedProbeResult>;
+  snapshotQueries: () => Row[];
+}) {
   const [state, setState] = useState<
-    { phase: 'idle' } | { phase: 'running' } | { phase: 'done'; result: FeedProbeResult }
+    | { phase: 'idle' }
+    | { phase: 'running' }
+    | { phase: 'done'; result: FeedProbeResult; cacheRows: Row[] }
   >({ phase: 'idle' });
   const rows: Row[] =
     state.phase === 'done'
@@ -217,6 +258,7 @@ function FeedProbe({ run }: { run: () => Promise<FeedProbeResult> }) {
             label: f.title,
             value: String(f.rows),
           })),
+          ...state.cacheRows,
         ]
       : [];
   return (
@@ -228,7 +270,8 @@ function FeedProbe({ run }: { run: () => Promise<FeedProbeResult> }) {
         onClick={() => {
           setState({ phase: 'running' });
           void run().then(
-            (result) => setState({ phase: 'done', result }),
+            (result) =>
+              setState({ phase: 'done', result, cacheRows: snapshotQueries() }),
             (err: unknown) =>
               setState({
                 phase: 'done',
@@ -240,6 +283,7 @@ function FeedProbe({ run }: { run: () => Promise<FeedProbeResult> }) {
                   flatResolvedRows: 0,
                   error: err instanceof Error ? err.message : String(err),
                 },
+                cacheRows: snapshotQueries(),
               }),
           );
         }}
