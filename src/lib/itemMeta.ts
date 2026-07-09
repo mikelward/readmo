@@ -1,6 +1,6 @@
-// Display-only meta helpers for item rows. Kept self-contained (no
-// dependency on the ported format.ts) so the row renders the same way in
-// the mock and Supabase data sources.
+// Display-only meta helpers for item rows.
+
+import { formatDisplayDomain as formatRegistrableDomain } from './format';
 
 /** Compact relative age, e.g. "just now", "3h", "2d", "5w". */
 export function formatAge(publishedAt: number, now: number = Date.now()): string {
@@ -22,33 +22,14 @@ export function formatAge(publishedAt: number, now: number = Date.now()): string
 }
 
 /** Trim a URL to its registrable-ish domain for the source label, matching
- * newshacker's domain trimming (old.reddit.com → reddit.com, www stripped). */
+ * newshacker's domain trimming (old.reddit.com → reddit.com, www stripped).
+ * Delegates to format.ts's implementation — the one place that knows about
+ * compound eTLDs (jasoneckert.github.io must keep its owner label, not trim
+ * to the bare public suffix "github.io") and the fuller ccTLD second-level
+ * set (or.kr, ne.jp, edu.au, …). A second hand-rolled copy here silently
+ * lacked both and mislabeled those publishers. */
 export function formatDisplayDomain(url: string | null): string {
-  if (!url) return '';
-  let host: string;
-  try {
-    host = new URL(url).hostname;
-  } catch {
-    return '';
-  }
-  host = host.replace(/^www\./, '');
-  const parts = host.split('.');
-  // Keep the last two labels for common TLDs; leave multi-part ccTLDs alone
-  // enough for a readable label (e.g. news.bbc.co.uk → bbc.co.uk).
-  if (parts.length > 2) {
-    const last = parts[parts.length - 1];
-    const secondLast = parts[parts.length - 2];
-    const ccSecondLevel = new Set(['co', 'com', 'org', 'net', 'gov', 'ac']);
-    // A bare 3-label host under a ccTLD second level (smh.com.au) is already
-    // the registrable domain — trimming it to slice(-2) would render just the
-    // public suffix ("com.au"), so keep three labels whenever the last two
-    // form a multi-part ccTLD.
-    if (last.length === 2 && ccSecondLevel.has(secondLast)) {
-      return parts.slice(-3).join('.');
-    }
-    return parts.slice(-2).join('.');
-  }
-  return host;
+  return formatRegistrableDomain(url ?? undefined);
 }
 
 /** The article's publisher domain, to show next to the feed name — but only

@@ -50,6 +50,24 @@ describe('formatDisplayDomain', () => {
     expect(formatDisplayDomain(null)).toBe('');
     expect(formatDisplayDomain('not a url')).toBe('');
   });
+
+  it('keeps the owner label on compound eTLDs instead of trimming to the public suffix', () => {
+    // Regression: a hand-rolled copy of the trimmer here lacked format.ts's
+    // compound-eTLD list, so user-subdomain hosts lost their owner — every
+    // github.io/substack author rendered (and compared) as the bare suffix.
+    expect(formatDisplayDomain('https://jasoneckert.github.io/post')).toBe(
+      'jasoneckert.github.io',
+    );
+    expect(formatDisplayDomain('https://author.substack.com/p/x')).toBe(
+      'author.substack.com',
+    );
+  });
+
+  it('covers the fuller ccTLD second-level set (or.kr, ne.jp, edu.au)', () => {
+    expect(formatDisplayDomain('https://www.kobis.or.kr/x')).toBe('kobis.or.kr');
+    expect(formatDisplayDomain('https://foo.ne.jp/x')).toBe('foo.ne.jp');
+    expect(formatDisplayDomain('https://www.sydney.edu.au/x')).toBe('sydney.edu.au');
+  });
 });
 
 describe('articleSourceDomain', () => {
