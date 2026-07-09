@@ -68,3 +68,53 @@ export function findCachedFeedItem(
   }
   return null;
 }
+
+/** Gather every FeedItem into `out` (first copy of each id wins) from one
+ * cached query's data: the three list shapes `pluckFeedItem` handles, plus a
+ * bare FeedItem (a warmed `['item', id]` detail cache). */
+function collectFeedItems(
+  data: unknown,
+  seen: Set<string>,
+  out: FeedItem[],
+): void {
+  if (!data || typeof data !== 'object') return;
+  if (isFeedItem(data)) {
+    if (!seen.has(data.item.id)) {
+      seen.add(data.item.id);
+      out.push(data);
+    }
+    return;
+  }
+  const pages = (data as { pages?: unknown }).pages;
+  if (Array.isArray(pages)) {
+    for (const page of pages) collectFeedItems(page, seen, out);
+    return;
+  }
+  const items = Array.isArray(data)
+    ? data
+    : (data as { items?: unknown }).items;
+  if (!Array.isArray(items)) return;
+  for (const entry of items) {
+    if (isFeedItem(entry) && !seen.has(entry.item.id)) {
+      seen.add(entry.item.id);
+      out.push(entry);
+    }
+  }
+}
+
+/**
+ * Every article this device holds a cached copy of — the union of all cached
+ * list pages (feed views, library lists) and warmed per-item details, deduped
+ * by id, newest published first. This is what `/offline` lists beyond the
+ * saved (pinned/favorited) set: whatever the last successful fetches left in
+ * the persisted query cache is readable without connectivity.
+ */
+export function collectCachedFeedItems(client: QueryClient): FeedItem[] {
+  const out: FeedItem[] = [];
+  const seen = new Set<string>();
+  for (const [, data] of client.getQueriesData({})) {
+    collectFeedItems(data, seen, out);
+  }
+  out.sort((a, b) => b.item.publishedAt - a.item.publishedAt);
+  return out;
+}

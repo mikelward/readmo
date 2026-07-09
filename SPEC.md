@@ -1545,7 +1545,9 @@ negligible and off every critical path. See the External services table in
      *Prefetch on Pin/Favorite*). Shown only once rows exist; dismissable via a
      single 44×44 close button, persisted per-device
      (`readmo:promo-dismissed:pin-to-download`).
-   - **`/offline`** — items cached on this device.
+   - **`/offline`** — everything readable without the network: saved
+     (pinned/favorited) items first, then all other articles still cached from
+     recent fetches.
 
 3. **Item row** — see *Item row layout*. Right-side button = **Pin/Unpin** on
    feed views; the view-contextual inverse on library views.
@@ -2752,7 +2754,7 @@ immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
 | `/favorites` | favorite items (permanent) |
 | `/done` | completed items (30-day history) |
 | `/opened` | recently opened (30-day history) |
-| `/offline` | items cached on this device |
+| `/offline` | saved items + all articles cached on this device |
 | `/item/:id` | reader view |
 | `/search` | search over feed + item titles |
 | `/settings` | reading, sort, bottom toolbar, theme/palette/text-size/font, account; reached from the account menu (top-right avatar) |
@@ -3054,6 +3056,12 @@ keys differ; the strategies map one-to-one:
   for each saved (pinned-or-favorited) id it reads the warmed `['item', id]`
   detail, falling back to any copy of the item still in a cached feed/library
   list (`findCachedFeedItem`) for an item loaded into a list but not yet warmed.
+  **Below the saved block it lists every other article still in the cache** —
+  whatever the last successful fetches left in the persisted feed/library
+  pages and warmed details, deduped, newest first, minus rows the reader
+  dismissed (Done/Hidden) — so losing connectivity never costs the articles
+  already pulled: the last fetch is offline reading material by default,
+  pinning just makes it durable.
   The list re-derives on cache mutations (a just-warmed pin appears live) and is
   guarded by `useIsRestoring` so it doesn't flash the empty copy mid-hydration.
   Its empty state reflects what's actually true: if IndexedDB is unusable

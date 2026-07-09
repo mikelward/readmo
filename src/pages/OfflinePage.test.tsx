@@ -113,6 +113,60 @@ describe('OfflinePage', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('lists cached feed articles after the saved block — the last fetch is readable offline', async () => {
+    // /offline is not just the saved (pinned/favorited) items: whatever the
+    // last successful fetches left in the persisted query cache renders too,
+    // saved rows first, so a device that loses connectivity can still read
+    // the articles it already pulled.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    source.stateStore.set('item-2', 'pinned', true);
+
+    const queryClient = cacheClient();
+    const seed = new MockDataSource(`seed-${Math.random()}`);
+    const page = await seed.getHomeItems();
+    queryClient.setQueryData(['feed', 'home-all:test'], {
+      pages: [page],
+      pageParams: [null],
+    });
+
+    renderWithProviders(<OfflinePage />, { route: '/offline', source, queryClient });
+
+    // The pinned row leads; unsaved cached rows follow.
+    const rows = await screen.findAllByTestId('item-row');
+    expect(rows.length).toBeGreaterThan(1);
+    const ids = [...document.querySelectorAll('[data-item-id]')].map((el) =>
+      el.getAttribute('data-item-id'),
+    );
+    expect(ids[0]).toBe('item-2');
+    expect(ids).toContain('item-1');
+  });
+
+  it('drops a dismissed article from the cached tail (Done is the completion log, not offline reading)', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+
+    const queryClient = cacheClient();
+    const seed = new MockDataSource(`seed-${Math.random()}`);
+    const page = await seed.getHomeItems();
+    queryClient.setQueryData(['feed', 'home-all:test'], {
+      pages: [page],
+      pageParams: [null],
+    });
+
+    renderWithProviders(<OfflinePage />, { route: '/offline', source, queryClient });
+    const idsShown = () =>
+      [...document.querySelectorAll('[data-item-id]')].map((el) =>
+        el.getAttribute('data-item-id'),
+      );
+    await screen.findAllByTestId('item-row');
+    expect(idsShown()).toContain('item-1');
+
+    // Marking it Done removes it from the offline tail live.
+    await act(async () => {
+      source.stateStore.set('item-1', 'done', true);
+    });
+    expect(idsShown()).not.toContain('item-1');
+  });
+
   it('shows the empty copy when nothing is saved', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     renderWithProviders(<OfflinePage />, {
