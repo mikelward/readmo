@@ -9,6 +9,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useDataSource } from '../lib/data/context';
 import { buildInfo, buildInfoRows, summarizeBuild } from '../lib/buildInfo';
 import { formatLastSync } from '../lib/lastSync';
+import { formatLastFeedFetch, getLastFeedFetch } from '../lib/lastFetch';
 import { isSupabaseConfigured, supabaseHealthUrl } from '../lib/supabase/client';
 import {
   describeSupabase,
@@ -21,7 +22,12 @@ import './PageHeader.css';
 
 type Row = { label: string; value: string; state?: StatusBadge };
 
-function runtimeRows(online: boolean, supabase: Row, lastSync: Row): Row[] {
+function runtimeRows(
+  online: boolean,
+  supabase: Row,
+  lastSync: Row,
+  lastFetch: Row,
+): Row[] {
   const hasNavigator = typeof navigator !== 'undefined';
   // Badged status rows first, grouped together — the glanceable health signals
   // (Network, Service worker, Supabase) read as one block of dots.
@@ -38,9 +44,10 @@ function runtimeRows(online: boolean, supabase: Row, lastSync: Row): Row[] {
     rows.push({ label: 'Service worker', value: sw, state: sw === 'active' ? 'ok' : 'idle' });
   }
   rows.push(supabase);
-  // Last sync sits just under Supabase — it's the cross-device pull against that
-  // backend — then the informational rows (no badge) follow.
+  // Last sync and Last fetch sit just under Supabase — both describe traffic
+  // against that backend — then the informational rows (no badge) follow.
   rows.push(lastSync);
+  rows.push(lastFetch);
   if (hasNavigator) {
     rows.push({ label: 'Language', value: navigator.language || 'unknown' });
   }
@@ -126,10 +133,19 @@ export function DebugPage() {
   ];
 
   const supabase = describeSupabase(supabaseState);
+  // The most recent feed-list fetch outcome — when it ran and, on failure,
+  // what the server said (rate limit, 5xx, network) — since the console isn't
+  // reachable on a phone.
+  const lastFetch = getLastFeedFetch();
   const runtime = runtimeRows(
     online,
     { label: 'Supabase', value: supabase.value, state: supabase.badge },
     { label: 'Last sync', value: formatLastSync(dataSource.getLastSyncedAt?.()) },
+    {
+      label: 'Last fetch',
+      value: formatLastFeedFetch(lastFetch),
+      state: lastFetch ? (lastFetch.ok ? 'ok' : 'down') : undefined,
+    },
   );
 
   return (

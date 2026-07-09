@@ -3,6 +3,7 @@ import {
 } from '@tanstack/react-query';
 import type { FeedItem } from '../lib/types';
 import type { Page } from '../lib/data/DataSource';
+import { recordFeedFetch } from '../lib/lastFetch';
 
 /** Page fetcher for a feed view. `signal` is React Query's per-fetch abort
  * signal, threaded through so a wrapper can tell whether the fetch it observed
@@ -62,7 +63,19 @@ export function useFeedItems(
 ) {
   const query = useInfiniteQuery({
     queryKey: ['feed', viewKey],
-    queryFn: ({ pageParam, signal }) => fetchPage(pageParam, signal),
+    // Record every settled feed fetch for /debug's "Last fetch" row — the
+    // phone-reachable answer to "did my refresh run, and what did it say?".
+    // A canceled fetch (superseded by pagination/navigation) isn't an outcome.
+    queryFn: async ({ pageParam, signal }) => {
+      try {
+        const page = await fetchPage(pageParam, signal);
+        if (!signal?.aborted) recordFeedFetch(true);
+        return page;
+      } catch (err) {
+        if (!signal?.aborted) recordFeedFetch(false, err);
+        throw err;
+      }
+    },
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage, allPages) =>
       adjustNextCursor
