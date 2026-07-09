@@ -24,11 +24,19 @@
       // (readmo:entry-reload, mirrors ENTRY_RELOAD_GUARD_KEY in
       // src/lib/chunkReload.ts) which main.tsx clears on a successful boot, so a
       // second stale entry later in the session auto-reloads again.
+      //
+      // Once the app has booted (window.__readmoBooted, set by main.tsx when it
+      // clears the entry budget) this guard stands down: post-boot /assets/
+      // failures (a lazy route's chunk or CSS 404ing) belong to the CHUNK budget
+      // in chunkReload.ts, which fails closed. Without this check a persistently
+      // failing post-boot asset would loop forever — every boot clears the entry
+      // budget, so every failure would spend it again and reload.
       (function () {
         var KEY = 'readmo:entry-reload';
         window.addEventListener(
           'error',
           function (event) {
+            if (window.__readmoBooted) return;
             var el = event && event.target;
             if (!el || (el.tagName !== 'SCRIPT' && el.tagName !== 'LINK')) return;
             if (!/\/assets\//.test(el.src || el.href || '')) return;
