@@ -241,6 +241,52 @@ function stripHeadPreamble(text: string): string {
   return out;
 }
 
+/** Who is asking for a summary. Normal requests carry the user's JWT (RLS
+ * scopes the item read; `auth.getUser()` identifies them for the allowlist).
+ * INTERNAL requests come from the pin trigger in Postgres
+ * (0053_pin_triggers_summary.sql): the database can't mint a user JWT, so the
+ * trigger authenticates with the service-role bearer and names the pinning user
+ * explicitly in the body. */
+export interface SummaryCaller {
+  /** True only for the DB pin trigger's call: the service-role key as the
+   * bearer AND an explicit `userId` in the body. */
+  internal: boolean;
+  /** The pinning user's id (internal calls only; null on the user path, which
+   * identifies the caller from the JWT instead). */
+  userId: string | null;
+  /** The pinning user's account email (internal calls only) — the key the
+   * allowlist matches on. */
+  email: string | null;
+}
+
+/**
+ * Classify a summary request as the pin trigger's internal call or a normal
+ * user call. Internal requires BOTH the service-role bearer and a non-empty
+ * `userId`: a client passing `userId` with its own JWT stays on the user path
+ * (the field is ignored, not trusted), and a service-bearer call without a
+ * `userId` also falls through to the user path (where its `auth.getUser()`
+ * fails) rather than becoming an anonymous privileged read. An unset/empty
+ * `serviceRoleKey` can never match, so a missing env var fails closed.
+ */
+export function resolveSummaryCaller(args: {
+  authHeader: string | null | undefined;
+  serviceRoleKey: string | null | undefined;
+  userId?: unknown;
+  email?: unknown;
+}): SummaryCaller {
+  const userId =
+    typeof args.userId === 'string' && args.userId.length > 0 ? args.userId : null;
+  const email =
+    typeof args.email === 'string' && args.email.length > 0 ? args.email : null;
+  const internal =
+    typeof args.serviceRoleKey === 'string' &&
+    args.serviceRoleKey.length > 0 &&
+    args.authHeader === `Bearer ${args.serviceRoleKey}` &&
+    userId !== null;
+  if (!internal) return { internal: false, userId: null, email: null };
+  return { internal: true, userId, email };
+}
+
 /** Minimal shape of the Gemini `generateContent` REST response we read. */
 export interface GeminiResponseLike {
   candidates?: Array<{
