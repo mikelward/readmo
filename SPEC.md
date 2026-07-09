@@ -1387,9 +1387,9 @@ negligible and off every critical path. See the External services table in
          the section header + "More" still render as a **phantom row** so the
          reader can pull the next page without remounting; the empty state
          only appears once every section is genuinely exhausted. When the set
-         **re-materializes** — a load/return or window focus past the 6h
-         freshness TTL, a reconnect, or a pull-to-refresh (*A stable set of
-         articles*) — the sticky set **resets with it**: each section repaints
+         **re-materializes** — an app open, a load/return or window focus past
+         the 6h freshness TTL, a reconnect, or a pull-to-refresh (*A stable set
+         of articles*) — the sticky set **resets with it**: each section repaints
          as its pinned block plus the fresh window (an expansion collapses back
          to the opening window, an in-session pin consolidates to the top,
          exactly as pull-to-refresh always did). It must never stay anchored to
@@ -1436,9 +1436,12 @@ negligible and off every critical path. See the External services table in
      poller adds, and cross-device changes the overlay can't express, do **not**
      slide into the list under the reader. The set re-materializes — pulling new
      items in, consolidating a dismissal out, floating a server pin to the top
-     block — only when the reader asks or enough time passes: a **load or return
-     past the 6h freshness TTL** (`FEED_STALE_MS`; the same TTL gates mount,
-     window-focus, and the warm-on-open prefetch) or an explicit
+     block — only when the reader asks or enough time passes: **every app
+     open** (a boot/reload always fetches fresh, painting the cached set
+     underneath until the fetch lands — and keeping it untouched if the fetch
+     fails or the device is offline), a **return or window focus past the 6h
+     freshness TTL** (`FEED_STALE_MS`; the TTL gates the in-session paths —
+     remount, window-focus, and the warm-on-open prefetch), or an explicit
      **pull-to-refresh**. **More** extends the set *downward* with older articles
      (an explicit, non-jumping addition at the bottom) but does **not** pull newer
      top rows in — it pages the existing cursor, so only PTR or the TTL bring the

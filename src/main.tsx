@@ -11,7 +11,10 @@ import { MockDataSource } from './lib/data/MockDataSource';
 import { SupabaseDataSource } from './lib/data/SupabaseDataSource';
 import { isSupabaseConfigured } from './lib/supabase/client';
 import { retryDelayMs, shouldRetryQuery } from './lib/queryRetry';
-import { configureFeedFreshness } from './lib/feedFreshness';
+import {
+  configureFeedFreshness,
+  rematerializeFeedsOnBoot,
+} from './lib/feedFreshness';
 import {
   applyFont,
   applyFontSize,
@@ -155,15 +158,14 @@ void reconcileUserCachesOnBoot(bootUid).finally(() => {
           maxAge: PERSIST_MAX_AGE,
           buster: CACHE_BUSTER,
         }}
-        // No onSuccess feed invalidation: forcing a refetch after the persisted
-        // cache hydrates would re-materialize the frozen set on EVERY boot,
-        // regardless of the 6h TTL, letting poller items / server pins jump in
-        // (Codex P2 on #411). Preexisting Done/Hidden state already takes effect
-        // immediately via ItemList's `visibleItems` overlay (a render-time
-        // filter); the cached pages themselves re-materialize on the normal
-        // schedule — a load/return once the persisted query is older than the 6h
-        // TTL, a pull-to-refresh, or More. See SPEC.md *Feed views → A stable set
-        // of articles*.
+        // Every boot re-materializes the feed views once the persisted cache
+        // has hydrated: opening the app IS the reader asking for the news, so
+        // it always fetches — the cached set paints immediately underneath and
+        // survives a failed fetch untouched. The freshness TTL still gates the
+        // in-session paths (remount/focus/warm-on-open) so the set never
+        // re-materializes under the reader. See SPEC.md *Feed views → A stable
+        // set of articles*.
+        onSuccess={() => rematerializeFeedsOnBoot(queryClient)}
       >
         <DataSourceProvider source={dataSource}>
           <ToastProvider>

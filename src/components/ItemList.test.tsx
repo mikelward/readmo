@@ -6315,6 +6315,67 @@ describe('ItemList', () => {
       expect(fetchFeedPage).toHaveBeenCalledWith('A', '3');
     });
 
+    it('a re-materialized pinned section still shows all pins PLUS the full body window', async () => {
+      // Regression: the re-materialization reset cleared `basePinnedRef`, and
+      // the sticky-window init effect runs in the same effect flush — its state
+      // updater executes at the top of the NEXT render, before the render-body
+      // baseline loop repopulates the ref. So after any re-materializing
+      // refetch (focus/TTL, reconnect, PTR) every pin was counted AGAINST the
+      // body window and a pinned section repainted with `perFeedLimit − pins`
+      // articles instead of `perFeedLimit` (SPEC: a section is ALL its pins
+      // plus the window).
+      const { source, mk } = await makeRows();
+      const K = 3;
+      // A-9 is pinned before load — the server returns it first (pinned block),
+      // then the body (newest-first) with one overfetched probe row (A-13).
+      source.stateStore.hydrate([
+        ['A-9', { ...DEFAULT_ITEM_STATE, pinned: true, pinnedAt: Date.now() }],
+      ]);
+      let basePage: FeedItem[] = [
+        mk('A', 'Feed A', 9),
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+      ];
+      const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
+      const fetchFeedPage = vi.fn(() =>
+        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
+      );
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      });
+      const viewKey = `psm-repin-${viewKeySeq++}`;
+      renderWithProviders(
+        <ItemList
+          viewKey={viewKey}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+          groupByFeed
+          fetchFeedPage={fetchFeedPage}
+          perFeedLimit={K}
+        />,
+        { source, queryClient },
+      );
+      await screen.findAllByTestId('item-row');
+      const order = () =>
+        [...document.querySelectorAll('[data-item-id]')].map((el) =>
+          el.getAttribute('data-item-id'),
+        );
+      // Opening view: the pin plus the full K-row body window (probe hidden).
+      expect(order()).toEqual(['A-9', 'A-0', 'A-1', 'A-2']);
+
+      // Overnight drift; a focus/TTL refetch re-materializes the set. The pin
+      // still leads, and the fresh window must again hold K body rows.
+      basePage = [
+        mk('A', 'Feed A', 9),
+        mk('A', 'Feed A', 10), mk('A', 'Feed A', 11), mk('A', 'Feed A', 12), mk('A', 'Feed A', 13),
+      ];
+      await act(async () => {
+        await queryClient.refetchQueries({ queryKey: ['feed', viewKey] });
+      });
+      await waitFor(() => {
+        expect(order()).toEqual(['A-9', 'A-10', 'A-11', 'A-12']);
+      });
+    });
+
     it('repaints quiet sections after a full-drift refetch instead of a false "caught up" (empty grouped view)', async () => {
       // THE empty-grouped-view regression (reported live): a long-mounted (or
       // persisted-cache-restored) grouped view whose displayed rows were all
