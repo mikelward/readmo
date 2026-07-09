@@ -1346,39 +1346,33 @@ negligible and off every critical path. See the External services table in
      - **Per-section More + per-feed window** (group-by-feed only). Each section
        opens showing **all of its pinned rows** plus its newest
        **`PER_FEED_WINDOW` (10)** listable body rows, so a busy feed doesn't
-       dump its whole freshness window into the river — and pins never crowd
+       dump its whole set into the view at once — and pins never crowd
        articles out: after any refresh a section is its full pinned block *and*
        the first 10 articles, however many pins there are. A
-       **"More"** at the **foot of each section** appends that feed's next batch
+       **"More"** at the **foot of each section** reveals that feed's next batch
        **inline** (another 10), independent of the other sections, until the feed
        is exhausted — its window ∪ floor ∪ pinned set, the same ceiling the
-       single-feed page shows. The opening view is a **single batched read**
-       carrying **`PER_FEED_FETCH` (31) body rows per feed** — the opening
-       window plus two follow-up More batches and a has-more probe: `feed_items`
-       caps each section's body at that depth (`p_per_feed_limit`; pinned rows
-       are exempt) and returns every section in one page, so there's **no
-       global bottom "More"** in this view (only Back-to-top remains). A
-       section "More" first **reveals the next 10 already-fetched rows
-       instantly — no request, and it works offline** since the whole response
-       lands in the cache; only once the fetched run is spent does it page
-       deeper via the **single-feed read** (`getFeedItems` with an offset),
-       never refetching the others. A feed whose read came back **short of the
-       fetch depth is fully in hand**: once its fetched rows are all revealed
-       (or it fit inside the opening window) it shows **no More** — no dead
-       button, no wasted empty fetch. A feed that filled the depth keeps its
-       More (the last row is the surviving probe: the server may hold older
-       rows). Because
-       the read is bounded by `feeds × PER_FEED_FETCH` (plus pins), a **planned
-       per-account
-       feed cap** (`TODO(feed-cap)`) keeps it under PostgREST's 1000-row response
-       cap; until that cap lands, a very large account could clip sections past
-       the row cap. (Drilling into a single feed's own page is the flat pager.)
-       Expanded extra pages get the same live item-state overlay as base rows
-       (locally Done/Hidden are filtered, pin/opened read from the store); the
-       one known staleness is a server-side change to a row *past* the opening
-       window that the local store hasn't learned (e.g. a cross-device Done) —
-       base rows self-heal on the next refetch, but a cached extra row can
-       linger until that feed's window changes or the view remounts.
+       single-feed page shows. The opening view is a **single batched read that
+       fetches and accepts everything the server returns** for every section —
+       **the server decides any fetch cap, never the client** (today it returns
+       each feed's full listable set; a future cap is a server-side decision
+       deployable without a client change). The per-feed window is purely a
+       client-side **display** window over that response, so every section
+       lands in one page and there's **no global bottom "More"** in this view
+       (only Back-to-top remains). A section "More" **reveals the next 10
+       already-fetched rows instantly — no request, and it works offline**
+       since the whole response lands in the cache. The fetched run IS the
+       feed: once its rows are all revealed (or it fit inside the opening
+       window) the section shows **no More** — no dead button, no wasted
+       fetch — and there is no per-section server paging at all. If an
+       account's grouped read overflows the server's response row cap
+       (PostgREST's 1000), the read pages by cursor via a bottom "More" so
+       later sections aren't dropped; a **planned per-account feed cap**
+       (`TODO(feed-cap)`) will keep normal accounts under it. (Drilling into a
+       single feed's own page is the flat pager.)
+       Revealed rows get the same live item-state overlay as window rows
+       (locally Done/Hidden are filtered, pin/opened read from the store), and
+       the whole fetched set self-heals together on the next refetch.
        - **Sticky displayed window per section.** Each section's displayed set
          is anchored from its first read (the opening pinned block +
          `PER_FEED_WINDOW` body rows)
@@ -1386,12 +1380,12 @@ negligible and off every critical path. See the External services table in
          or Sweep never refetches — see *A dismiss never refetches* — so nothing
          refills a section behind the reader's back.) Concretely this means
          **Sweep does not auto-refill** (sweeping unpinned rows clears the section
-         to its pinned rows; tap "More" to pull the next full page); and **pinning
-         an "extra" row does not shrink the section** (the pinned id is in
+         to its pinned rows; tap "More" to reveal the next batch); and **pinning
+         a revealed row does not shrink the section** (the pinned id is in
          the sticky set so promoting it into the base window is a no-op for
          the displayed list). When a swept section has no pins to anchor it,
          the section header + "More" still render as a **phantom row** so the
-         reader can pull the next page without remounting; the empty state
+         reader can reveal the next batch without remounting; the empty state
          only appears once every section is genuinely exhausted. When the set
          **re-materializes** — an app open, a load/return or window focus past
          the 6h freshness TTL, a reconnect, or a pull-to-refresh (*A stable set
@@ -1402,26 +1396,25 @@ negligible and off every critical path. See the External services table in
          the previous read's ids across a re-materialization — a long-lived
          grouped view whose displayed rows had all been read would otherwise
          strand on those dead ids, hide every fresh article behind the gate,
-         and (on quiet feeds with no probe row) collapse to a false "all caught
-         up". Undo's reconcile refetch is the exception that stays anchored: it
-         restores rows into the view the reader is looking at. A section's
-         "More" **stays a stable, tappable
+         and (on quiet feeds with nothing left unshown) collapse to a false
+         "all caught up". Undo's reconcile refetch is the exception that stays
+         anchored: it restores rows into the view the reader is looking at. A
+         section's "More" **stays a stable, tappable
          "More" through a background refetch** — it is never flickered to a
          disabled "Loading…" by a refresh the reader didn't trigger — and a
          tap that lands mid-refresh is never run against the stale list: if
          the refresh preserved the window (Undo) the tap fires once it
          settles; if it re-materialized the section, the repaint supersedes
          the tap — the fresh window, with its own "More", is what the tap
-         was after. Only the
-         section the reader actually tapped shows "Loading…", and a rapid
-         double tap issues a single page fetch.
+         was after. Only a section whose tap was deferred by an in-flight
+         refresh shows "Loading…".
    - **Done and Hidden filtered out**; **Opened** items render with the faded
      title.
    - **Initial paint one page (30 items)** in the flat river; the grouped view
      instead opens each feed at its pinned rows plus its first
-     **`PER_FEED_WINDOW` (10)** articles — from one windowed read that already
-     carries the next batches (`PER_FEED_FETCH`) — and grows per section.
-     Further flat pages only via an explicit **More**
+     **`PER_FEED_WINDOW` (10)** articles — from one deep read that already
+     carries everything the server returned for each feed — and grows per
+     section. Further flat pages only via an explicit **More**
      button (no infinite scroll). Same pagination discipline.
    - **Refreshing state.** Any time a feed view is fetching a **fresh article
      list** — the first page from an empty cache, a re-materialization on

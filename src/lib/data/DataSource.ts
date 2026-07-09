@@ -185,17 +185,11 @@ export interface FeedListOptions {
   sort?: ItemSort;
   /** Group the body by feed (feed-title sections, A→Z), instead of one flat
    * chronological river. Pinned items stay in the global top section, ungrouped.
-   * No effect on a single-feed view. Defaults to `false`. */
+   * No effect on a single-feed view. Defaults to `false`. The grouped read
+   * carries each feed's full listable set in one deep page — the client sends
+   * no per-feed fetch cap; the server decides what (and how much) to return,
+   * and the view windows it client-side for display. */
   groupByFeed?: boolean;
-  /** Group-by-feed only: cap each feed's section to its newest this-many
-   * listable BODY items so a busy feed doesn't dump its whole window into the
-   * river. Pinned items are exempt from the cap — a section is its full pinned
-   * block plus this window, so pins never crowd articles out of the opening
-   * view. The view's per-section "More" then pages deeper into that one feed
-   * (via a single-feed read), independent of the other sections. Ignored when
-   * not grouping (the flat river pages globally instead) and on a single-feed
-   * view. Threaded to the `feed_items` RPC as `p_per_feed_limit`. */
-  perFeedLimit?: number;
 }
 
 /** Result of {@link DataSource.debugFeedProbe} — the `/debug` feed-read probe. */

@@ -203,23 +203,13 @@ export const HOME_WINDOW_MS = 3 * DAY_MS;
  * the `feed_items` RPC. */
 export const FEED_FLOOR = 10;
 
-/** Per-feed window for the group-by-feed view: each feed section opens showing
- * ALL of its pinned items plus at most this many of its listable body items,
- * with a per-section "More" button to reveal the next `PER_FEED_WINDOW` (and so
- * on) without paging the whole river. Pinned items are exempt from the cap so
- * pins never crowd articles out of a refreshed section. Only applies when
- * grouping by feed; the flat river pages globally instead. Threaded into the
- * `feed_items` RPC as `p_per_feed_limit` and mirrored by the client merge in
- * {@link ItemList}. */
+/** Per-feed DISPLAY window for the group-by-feed view: each feed section opens
+ * showing ALL of its pinned items plus at most this many of its listable body
+ * items, with a per-section "More" button to reveal the next `PER_FEED_WINDOW`
+ * (and so on) from the already-fetched rows. Pinned items are exempt from the
+ * window so pins never crowd articles out of a refreshed section. Only applies
+ * when grouping by feed; the flat river pages globally instead. Purely a
+ * client-side display window: the grouped read fetches whatever the server
+ * returns for each feed — the server decides any fetch cap, not the client
+ * (SPEC.md *Per-section More + per-feed window*). */
 export const PER_FEED_WINDOW = 10;
-
-/** Body rows the grouped view FETCHES per feed in its one windowed read: three
- * "More" pages' worth plus one overfetched has-more probe. Sections still open
- * at {@link PER_FEED_WINDOW}; the rest ride along in the same response so a
- * section "More" reveals the next `PER_FEED_WINDOW` instantly from the fetched
- * set (no request, works offline — the whole response lands in the persisted
- * cache), only hitting the server once the fetched rows run out. A feed
- * typically publishes ~30 items, so one read usually carries the whole feed.
- * Threaded into the `feed_items` RPC as `p_per_feed_limit` (pins ride along
- * exempt, 0052). */
-export const PER_FEED_FETCH = PER_FEED_WINDOW * 3 + 1;

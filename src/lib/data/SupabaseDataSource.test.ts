@@ -2249,42 +2249,22 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(ids(page.items)).toEqual(['i2', 'i6', 'i3']);
   });
 
-  it('windows each feed section to perFeedLimit body rows, pins exempt (group by feed)', async () => {
+  it('fetches each feed section in full — no per-feed cap sent, everything accepted (group by feed)', async () => {
     const env = setup();
-    // An extra, older feed-a body item so the 1-row body cap has something to
-    // clip: feed-a body is i6 (day 6) then i9 (day 1).
+    // An extra, older feed-a body item so there's depth to carry: feed-a body
+    // is i6 (day 6) then i9 (day 1).
     env.fake.store.items.push(mkItem('i9', 'feed-a', 1, 'Old A'));
-    // Cap each section's BODY to 1 row. feed-a → i2 (pinned, EXEMPT from the
-    // cap — 0052) plus its newest body row i6; feed-b → i3. The clipped i9 is
-    // reachable via the per-section More.
-    const page = await env.ds.getHomeItems({ groupByFeed: true, perFeedLimit: 1 });
-    expect(ids(page.items)).toEqual(['i2', 'i6', 'i3']);
-    // The windowed grouped read is a single page (no global next cursor).
+    // The grouped read sends no fetch cap — the server decides what each
+    // section carries (today: its full listable set) and the client accepts
+    // every returned row. feed-a → i2 (pinned) + i6 + i9; feed-b → i3.
+    const page = await env.ds.getHomeItems({ groupByFeed: true });
+    expect(ids(page.items)).toEqual(['i2', 'i6', 'i9', 'i3']);
+    // The grouped read is a single deep page (no global next cursor).
     expect(page.nextCursor).toBeNull();
-    // The cap was threaded to the RPC.
+    // No client-side cap was threaded to the RPC.
     const call = env.fake.rpcCalls.find((c) => c.name === 'feed_items');
-    expect(call?.params).toMatchObject({ p_group_by_feed: true, p_per_feed_limit: 1 });
-
-    // The per-section More re-reads that one feed past the window — offset 2 =
-    // the pinned row + the 1-row body window.
-    const more = await env.ds.getFeedItems('feed-a', { cursor: '2', limit: 1 });
-    expect(ids(more.items)).toEqual(['i9']);
-  });
-
-  it('windows each feed independently even when two subscriptions share a sort ordinal', async () => {
-    // The per-feed cap must partition by feed id, not the subscription sort
-    // ordinal — otherwise two feeds sharing a sort value would be ranked as one
-    // window and the first could starve the second out of the opening read.
-    const tables = seed();
-    tables.subscriptions = tables.subscriptions.map((s) =>
-      s.feed_id === 'feed-b' ? { ...s, sort: 0 } : s,
-    );
-    const { ds } = setup(tables);
-    const page = await ds.getHomeItems({ groupByFeed: true, perFeedLimit: 1 });
-    const feeds = new Set(page.items.map((fi) => fi.item.feedId));
-    // Each feed keeps its own 1-row window; neither is starved by the other.
-    expect(feeds.has('feed-a')).toBe(true);
-    expect(feeds.has('feed-b')).toBe(true);
+    expect(call?.params).toMatchObject({ p_group_by_feed: true });
+    expect('p_per_feed_limit' in (call?.params ?? {})).toBe(false);
   });
 
   it('keeps tied feed sections contiguous (no interleaving / duplicate headers)', async () => {
@@ -2317,32 +2297,29 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(runs).toHaveLength(new Set(feedSeq).size);
   });
 
-  it('pages windowed grouped reads past the row cap (offset threaded, not forced to 0)', async () => {
+  it('pages grouped reads past the row cap (offset threaded, not forced to 0)', async () => {
     const env = setup();
-    // A cursor on a windowed grouped read continues from that offset so the next
-    // batch of feed-sections isn't dropped when an account overflows the row cap.
-    await env.ds.getHomeItems({ groupByFeed: true, perFeedLimit: 1, cursor: '1000' });
+    // A cursor on a grouped read continues from that offset so the next batch
+    // of feed-sections isn't dropped when an account overflows the row cap.
+    await env.ds.getHomeItems({ groupByFeed: true, cursor: '1000' });
     const call = env.fake.rpcCalls.find((c) => c.name === 'feed_items');
-    expect(call?.params).toMatchObject({ p_offset: 1000, p_per_feed_limit: 1 });
+    expect(call?.params).toMatchObject({ p_offset: 1000, p_group_by_feed: true });
   });
 
-  it('omits the p_per_feed_limit arg entirely on flat/single-feed reads (forward-compatible payload)', async () => {
-    // Sending the 8th arg only for the windowed grouped read keeps flat/folder/
-    // single-feed reads on the 7-arg payload, so a client deployed before
-    // migration 0021 still resolves them against the old 7-arg function
-    // (PostgREST 404s a call carrying an unknown parameter name).
+  it('never sends p_per_feed_limit — the server decides the fetch cap, not the client', async () => {
+    // Every read keeps the 7-arg payload: the client never dictates a per-feed
+    // fetch cap. The RPC's own default applies, so a future cap is a
+    // server-side migration with no client change (and the 7-arg call resolves
+    // against every deployed feed_items version).
     const env = setup();
     await env.ds.getHomeItems(); // flat
     await env.ds.getFeedItems('feed-a'); // single feed
+    await env.ds.getHomeItems({ groupByFeed: true }); // grouped
     const calls = env.fake.rpcCalls.filter((c) => c.name === 'feed_items');
-    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.length).toBeGreaterThan(2);
     for (const c of calls) {
       expect('p_per_feed_limit' in c.params).toBe(false);
     }
-    // The grouped windowed read does carry it.
-    await env.ds.getHomeItems({ groupByFeed: true, perFeedLimit: 5 });
-    const grouped = env.fake.rpcCalls.filter((c) => c.name === 'feed_items').at(-1);
-    expect(grouped?.params).toMatchObject({ p_per_feed_limit: 5 });
   });
 
   it('debugFeedProbe reports raw vs resolved grouped rows, the per-feed split, and the flat page', async () => {

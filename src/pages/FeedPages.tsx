@@ -8,7 +8,7 @@ import { ItemList } from '../components/ItemList';
 import { HomeEmptyCoach } from '../components/HomeEmptyCoach';
 import { Edit } from '../components/icons';
 import { FeedFavicon } from '../components/FeedFavicon';
-import { PER_FEED_FETCH, PER_FEED_WINDOW } from '../lib/types';
+import { PER_FEED_WINDOW } from '../lib/types';
 import './PageHeader.css';
 
 /** `/` — the aggregate river across all non-muted subscriptions, or a chosen
@@ -61,23 +61,14 @@ export function HomePage() {
   }
   // Fold the sort/group prefs into both the query key (so a change refetches
   // from page 1 with the new ordering) and the fetch options. Grouping fetches
-  // PER_FEED_FETCH body rows per feed in the one windowed read (pinned rows are
-  // exempt and all show); each section opens at PER_FEED_WINDOW and its "More"
-  // reveals the next PER_FEED_WINDOW from the already-fetched rows, paging
-  // deeper via getFeedItems only once those run out. The last fetched row
-  // doubles as the has-more probe — a feed that comes back short of
-  // PER_FEED_FETCH is fully in hand, so its exhausted section shows no dead
-  // "More" button.
-  const opts = {
-    sort: itemSort,
-    groupByFeed,
-    ...(groupByFeed ? { perFeedLimit: PER_FEED_FETCH } : {}),
-  };
+  // each feed's whole listable set in the one deep read — the client sends no
+  // fetch cap; the server decides how much each section carries and the view
+  // accepts all of it. Each section opens at PER_FEED_WINDOW and its "More"
+  // reveals the next PER_FEED_WINDOW from the already-fetched rows until
+  // they're spent — a section's fetched run IS the feed, so an exhausted
+  // section shows no dead "More" button.
+  const opts = { sort: itemSort, groupByFeed };
   const prefKey = `${itemSort}:${groupByFeed ? 'grouped' : 'flat'}`;
-  const fetchFeedPage = groupByFeed
-    ? (feedId: string, cursor: string | null) =>
-        ds.getFeedItems(feedId, { cursor, sort: itemSort, limit: PER_FEED_WINDOW })
-    : undefined;
   if (homeFeed.kind === 'folder') {
     const name = homeFeed.name;
     return (
@@ -86,9 +77,7 @@ export function HomePage() {
         fetchPage={(cursor) => ds.getFolderItems(name, { cursor, ...opts })}
         emptyLabel={`No items in ${name}.`}
         groupByFeed={groupByFeed}
-        fetchFeedPage={fetchFeedPage}
         perFeedLimit={groupByFeed ? PER_FEED_WINDOW : undefined}
-        perFeedFetch={groupByFeed ? PER_FEED_FETCH : undefined}
         onToggleGroupByFeed={toggleGroupByFeed}
         itemSort={itemSort}
         onToggleSort={toggleSort}
@@ -101,9 +90,7 @@ export function HomePage() {
       fetchPage={(cursor) => ds.getHomeItems({ cursor, ...opts })}
       emptyLabel="You’re all caught up."
       groupByFeed={groupByFeed}
-      fetchFeedPage={fetchFeedPage}
       perFeedLimit={groupByFeed ? PER_FEED_WINDOW : undefined}
-      perFeedFetch={groupByFeed ? PER_FEED_FETCH : undefined}
       onToggleGroupByFeed={toggleGroupByFeed}
       itemSort={itemSort}
       onToggleSort={toggleSort}
@@ -127,28 +114,13 @@ export function FolderPage() {
       <ItemList
         viewKey={`folder:${name}:${prefKey}`}
         fetchPage={(cursor) =>
-          ds.getFolderItems(name, {
-            cursor,
-            sort: itemSort,
-            groupByFeed,
-            // Deep windowed read; sections open at PER_FEED_WINDOW (see HomePage).
-            ...(groupByFeed ? { perFeedLimit: PER_FEED_FETCH } : {}),
-          })
+          // Grouped: one deep uncapped read; sections open at PER_FEED_WINDOW
+          // (see HomePage).
+          ds.getFolderItems(name, { cursor, sort: itemSort, groupByFeed })
         }
         emptyLabel={`No items in ${name}.`}
         groupByFeed={groupByFeed}
-        fetchFeedPage={
-          groupByFeed
-            ? (feedId, cursor) =>
-                ds.getFeedItems(feedId, {
-                  cursor,
-                  sort: itemSort,
-                  limit: PER_FEED_WINDOW,
-                })
-            : undefined
-        }
         perFeedLimit={groupByFeed ? PER_FEED_WINDOW : undefined}
-        perFeedFetch={groupByFeed ? PER_FEED_FETCH : undefined}
         onToggleGroupByFeed={() => setGroupByFeed(!groupByFeed)}
         itemSort={itemSort}
         onToggleSort={() =>

@@ -13,7 +13,6 @@ import {
   ITEM_SORT_KEY,
   resetReadingPrefsCacheForTest,
 } from '../hooks/useReadingPrefs';
-import { PER_FEED_FETCH } from '../lib/types';
 
 function renderFeed(source: MockDataSource, feedId: string) {
   return renderWithProviders(
@@ -162,10 +161,11 @@ describe('HomePage (group-by-feed toolbar toggle)', () => {
     );
   });
 
-  it('fetches the grouped view at PER_FEED_FETCH depth in one batched read', async () => {
-    // The grouped home read is ONE request carrying every section's window
-    // plus its ride-along More batches (SPEC: More reveals fetched rows
-    // first) — not a request per feed, and not a bare window + probe.
+  it('fetches the grouped view in one batched read with no client-side fetch cap', async () => {
+    // The grouped home read is ONE request carrying every section in full —
+    // not a request per feed. The client sends no per-feed fetch cap (the
+    // server decides what each section carries; SPEC: More reveals fetched
+    // rows until they're spent).
     window.localStorage.setItem(GROUP_BY_FEED_KEY, '1');
     resetReadingPrefsCacheForTest();
     const source = new MockDataSource(`test-${Math.random()}`);
@@ -174,7 +174,10 @@ describe('HomePage (group-by-feed toolbar toggle)', () => {
 
     await screen.findAllByTestId('item-row');
     expect(spy).toHaveBeenCalledWith(
-      expect.objectContaining({ groupByFeed: true, perFeedLimit: PER_FEED_FETCH }),
+      expect.objectContaining({ groupByFeed: true }),
+    );
+    expect(spy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ perFeedLimit: expect.anything() }),
     );
   });
 });
