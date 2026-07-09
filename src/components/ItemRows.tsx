@@ -318,8 +318,10 @@ export function ItemRows({
         placeholderClassName="item-list__group-favicon-placeholder"
       />
     ) : null;
-    const count =
-      !phantom && groupCounts ? (groupCounts[feedId] ?? 0) : 0;
+    // Phantom (swept-empty) headers keep their live count too: the feed still
+    // holds unread articles past the sticky display set (that's why its More
+    // renders), and the badge is what tells the reader the section isn't done.
+    const count = groupCounts ? (groupCounts[feedId] ?? 0) : 0;
     const showCount = count > 0;
     const ariaLabel = `${title}${showCount ? `, ${count} unread` : ''}: ${
       collapsed ? 'expand' : 'collapse'

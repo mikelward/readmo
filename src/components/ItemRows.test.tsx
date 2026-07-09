@@ -297,6 +297,37 @@ describe('ItemRows', () => {
     ).toBeNull();
   });
 
+  it('shows the unread count badge on a phantom (empty) More section header', async () => {
+    // Regression: phantom headers zeroed their count, so sweeping a section
+    // blanked the badge even while the feed still held unread articles behind
+    // its More button. The badge must keep reporting the feed's total.
+    const items = await sampleItems(1);
+    const headers = new Map([
+      [items[0].item.id, { feedId: items[0].item.feedId, title: 'Live Feed' }],
+    ]);
+    const { container } = renderWithProviders(
+      <ItemRows
+        items={items}
+        emptyLabel="Nothing here."
+        groupHeaders={headers}
+        groupCounts={{ [items[0].item.feedId]: 2, swept: 7 }}
+        onToggleCollapse={() => {}}
+        onFeedMore={() => {}}
+        emptyMoreSections={[{ feedId: 'swept', title: 'Swept Feed', faviconUrl: null }]}
+      />,
+    );
+    const counts = [...container.querySelectorAll('.item-list__group-count')].map(
+      (c) => c.textContent,
+    );
+    // Live section first, then the phantom — both badged.
+    expect(counts).toEqual(['2', '7']);
+    // The phantom's chevron announces the count like a live header's does.
+    const phantomToggle = screen
+      .getAllByTestId('group-toggle')
+      .find((b) => b.getAttribute('aria-label')?.startsWith('Swept Feed'));
+    expect(phantomToggle?.getAttribute('aria-label')).toContain('7 unread');
+  });
+
   it('tags a dark-monochrome group favicon (vox.com) for dark-mode inversion', async () => {
     const items = await sampleItems(2);
     const headers = new Map([
