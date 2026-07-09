@@ -156,22 +156,25 @@ constraint is documented in more detail.
   server-side subscription-scoped feed join (the `feed_items` RPC already covers
   the paged path). See `SupabaseDataSource.feedView` and SPEC.md §Data.
 
-- **`feed_unread_ids` RPC for exact, flicker-free section badges.** The per-feed
-  unread badge reads `getFeedUnreadCounts` (a server-only *count*), so it lags
-  local triage by a sync round-trip. The client patches this with
-  `adjustUnreadCounts` (discount loaded rows with a pending Sweep/Done write),
-  which removes the multi-second post-sweep lag but leaves a sub-second blip at
-  sync-completion: the pending id drains at write-confirm, one round-trip before
-  the invalidated count refetch returns, so the badge briefly reads the stale
-  count. A *number* can't be reconciled atomically with local triage — there's
-  always a window where count and the local signal disagree (Codex P2 threads on
-  PR #194). The exact fix is a `feed_unread_ids` RPC returning the per-feed
-  unread **ID list** (~tens of KB; the listable set is already capped under the
-  PostgREST row limit): the client holds the unread set and mutates it
-  atomically with triage, so the badge is exact with no transient. Backend
-  migration + manual `make migrate`/`make deploy`; keep the client tolerant of
-  the count-only backend until it lands. See `src/lib/unreadAdjust.ts`, SPEC.md
-  §"Per-feed unread count", and PR #194.
+- **`feed_unread_ids` RPC for exact section badges.** The per-feed unread badge
+  reads `getFeedUnreadCounts` (a server-only *count*), so it lags local triage by
+  a sync round-trip. The client reconciles this with `UnreadDecrementLedger`
+  (`src/lib/unreadAdjust.ts`): a dismissal's decrement applies immediately and
+  holds until a count response that provably reflects the synced write lands, so
+  the flicker at sync-completion (the badge bouncing to the stale count between
+  outbox drain and count refetch — Codex P2 threads on PR #194) is gone. What
+  remains approximate: a pinned-then-read row later marked Done lags until its
+  write syncs (the conservative predicate can't tell it was server-counted); an
+  Undo *after* the dismissal synced under-counts for one round-trip in the other
+  direction; and a count fetch that starts pre-drain but is evaluated post-commit
+  server-side double-discounts its item (badge one low) until the drain-triggered
+  refetch lands — a bare count can't reveal whether it includes a given write. The exact fix is a `feed_unread_ids` RPC returning the
+  per-feed unread **ID list** (~tens of KB; the listable set is already capped
+  under the PostgREST row limit): the client holds the unread set and mutates it
+  atomically with triage, so the badge is exact with no approximation at all.
+  Backend migration + manual `make migrate`/`make deploy`; keep the client
+  tolerant of the count-only backend until it lands. See SPEC.md §"Per-feed
+  unread count" and PR #194.
 
 ## Server / batch query limits
 

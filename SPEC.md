@@ -309,21 +309,23 @@ recent — you always see at least its latest handful. Both are knobs
   feed will still show how much it holds unread) — the header *display* lands with
   the grouped-view pagination work, not in this change. (Server-side count, so on
   its own it would lag a just-applied local Sweep/Done until the outbox syncs.
-  The badge **display** corrects for this client-side: it discounts loaded rows
-  with a still-**pending** write whose current state unambiguously means the
-  server still counts them but local triage has removed them — Done/active-Hidden,
-  not pinned, not Opened — so a sweep drops the badge immediately. It reads only
-  the *current* state, never an inferred server state: the outbox coalesces
-  pending writes, so a field's pre-sync value can't be recovered by flipping the
-  pending change, and guessing would over-count. The one accepted cost is that a
-  pinned-then-read row later marked Done keeps lagging until its write syncs. The
-  adjustment self-clears as each write drains — see `adjustUnreadCounts` +
-  `DataSource.pendingItemIds`. The mock has no outbox, so its count never lags
-  and the adjustment is a no-op. A *count* can't be reconciled atomically with
-  local triage, so a sub-second blip survives at sync-completion — the pending id
-  drains a round-trip before the invalidated count refetch returns; the exact,
-  flicker-free fix is the `feed_unread_ids` ID-list RPC, deferred in
-  TODO.md §Server RPCs.)
+  The badge **display** corrects for this client-side: a row local triage
+  unambiguously took out of the unread set — Done/active-Hidden, not pinned, not
+  Opened — stops counting the moment it's dismissed, and that decrement **holds
+  steady** until the server count reflects the synced write (or an Undo restores
+  the row). The badge never bounces back to the stale count mid-sync — under
+  mark-Done-on-scroll a burst of dismissals counts straight down and stays down.
+  Under mark-Done-on-scroll the count drops **the moment a row scrolls off the
+  top of the screen** — mid-gesture, before the deferred dismissal itself
+  commits at scroll-settle — and lifts again if the row is scrolled back into
+  view before that commit.
+  The correction reads only the *current* local state, never an inferred server
+  state (guessing a pre-sync value could over-count); the one accepted cost is
+  that a pinned-then-read row later marked Done keeps lagging until its write
+  syncs. The mock has no outbox, so its count never lags and the correction is a
+  no-op. Badges also keep their last counts while the set of feeds in view
+  changes — a section swept or scrolled empty mid-scroll must not blank the
+  surviving headers' badges while the counts refetch.)
 
 Rationale: readmo has no upstream ranker (unlike newshacker, whose HN
 `top`/`best` lists are already recency-bounded), so an explicit window + floor
