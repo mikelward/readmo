@@ -800,6 +800,52 @@ describe('ItemList', () => {
     expect(screen.getAllByTestId('item-row')).toHaveLength(3);
   });
 
+  it('disarms the More scroll anchor when the fetch appends nothing (failed More)', async () => {
+    // Regression: a More tap arms a scroll anchor (the last row before the
+    // fetch) that only the successful-append path cleared. After a failed
+    // fetch (offline, server error) the stale anchor survived until ANY later
+    // items change — a PTR, a TTL re-materialization, or the same ids landing
+    // in a different view — and then smooth-scrolled the viewport out from
+    // under the reader.
+    const user = userEvent.setup();
+    const scrollToSpy = vi.fn();
+    vi.stubGlobal('scrollTo', scrollToSpy);
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const all = (await source.getHomeItems()).items;
+    expect(all.length).toBeGreaterThanOrEqual(3);
+    const fetchPage = vi.fn((cursor: string | null) =>
+      cursor === null
+        ? Promise.resolve({ items: [all[0], all[1]], nextCursor: '1' })
+        : Promise.reject(new Error('fetch failed')),
+    );
+    const { rerender } = renderWithProviders(
+      <ItemList viewKey="anchor-fail" fetchPage={fetchPage} emptyLabel="All caught up." />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+
+    // The More tap arms the anchor, then the page fetch fails.
+    await user.click(screen.getByTestId('more-btn'));
+    await waitFor(() =>
+      expect(fetchPage).toHaveBeenCalledWith('1', expect.anything()),
+    );
+
+    // A later refresh of the list (here: a new view rendering a superset of
+    // the same ids, with rows following the old anchor) must NOT trigger the
+    // armed scroll.
+    rerender(
+      <ItemList
+        viewKey="anchor-fail-next"
+        fetchPage={() =>
+          Promise.resolve({ items: [all[0], all[1], all[2]], nextCursor: null })
+        }
+        emptyLabel="All caught up."
+      />,
+    );
+    expect(await screen.findByText(all[2].item.title)).toBeInTheDocument();
+    expect(scrollToSpy).not.toHaveBeenCalled();
+  });
+
   it('re-measures end-of-list when sections collapse, so the pinned bar fetches instead of paging down', async () => {
     const user = userEvent.setup();
     // Pin the bottom bar to the viewport (where "More" is a pager).
