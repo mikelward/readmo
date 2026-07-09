@@ -8,7 +8,7 @@ import { ItemList } from '../components/ItemList';
 import { HomeEmptyCoach } from '../components/HomeEmptyCoach';
 import { Edit } from '../components/icons';
 import { FeedFavicon } from '../components/FeedFavicon';
-import { PER_FEED_WINDOW } from '../lib/types';
+import { PER_FEED_FETCH, PER_FEED_WINDOW } from '../lib/types';
 import './PageHeader.css';
 
 /** `/` — the aggregate river across all non-muted subscriptions, or a chosen
@@ -60,17 +60,18 @@ export function HomePage() {
     return <HomeEmptyCoach />;
   }
   // Fold the sort/group prefs into both the query key (so a change refetches
-  // from page 1 with the new ordering) and the fetch options. Grouping windows
-  // each feed section to PER_FEED_WINDOW body rows up front (pinned rows are
-  // exempt and all show); the per-section "More" pages deeper into one feed via
-  // getFeedItems. The read overfetches ONE extra body row per feed
-  // (PER_FEED_WINDOW + 1) as a has-more probe — the client renders only the
-  // window and uses the surviving extra to decide whether to show a section
-  // "More", so an exactly-full feed shows none instead of a dead button.
+  // from page 1 with the new ordering) and the fetch options. Grouping fetches
+  // PER_FEED_FETCH body rows per feed in the one windowed read (pinned rows are
+  // exempt and all show); each section opens at PER_FEED_WINDOW and its "More"
+  // reveals the next PER_FEED_WINDOW from the already-fetched rows, paging
+  // deeper via getFeedItems only once those run out. The last fetched row
+  // doubles as the has-more probe — a feed that comes back short of
+  // PER_FEED_FETCH is fully in hand, so its exhausted section shows no dead
+  // "More" button.
   const opts = {
     sort: itemSort,
     groupByFeed,
-    ...(groupByFeed ? { perFeedLimit: PER_FEED_WINDOW + 1 } : {}),
+    ...(groupByFeed ? { perFeedLimit: PER_FEED_FETCH } : {}),
   };
   const prefKey = `${itemSort}:${groupByFeed ? 'grouped' : 'flat'}`;
   const fetchFeedPage = groupByFeed
@@ -87,6 +88,7 @@ export function HomePage() {
         groupByFeed={groupByFeed}
         fetchFeedPage={fetchFeedPage}
         perFeedLimit={groupByFeed ? PER_FEED_WINDOW : undefined}
+        perFeedFetch={groupByFeed ? PER_FEED_FETCH : undefined}
         onToggleGroupByFeed={toggleGroupByFeed}
         itemSort={itemSort}
         onToggleSort={toggleSort}
@@ -101,6 +103,7 @@ export function HomePage() {
       groupByFeed={groupByFeed}
       fetchFeedPage={fetchFeedPage}
       perFeedLimit={groupByFeed ? PER_FEED_WINDOW : undefined}
+      perFeedFetch={groupByFeed ? PER_FEED_FETCH : undefined}
       onToggleGroupByFeed={toggleGroupByFeed}
       itemSort={itemSort}
       onToggleSort={toggleSort}
@@ -128,8 +131,8 @@ export function FolderPage() {
             cursor,
             sort: itemSort,
             groupByFeed,
-            // +1 = overfetch one row per feed as a has-more probe (see HomePage).
-            ...(groupByFeed ? { perFeedLimit: PER_FEED_WINDOW + 1 } : {}),
+            // Deep windowed read; sections open at PER_FEED_WINDOW (see HomePage).
+            ...(groupByFeed ? { perFeedLimit: PER_FEED_FETCH } : {}),
           })
         }
         emptyLabel={`No items in ${name}.`}
@@ -145,6 +148,7 @@ export function FolderPage() {
             : undefined
         }
         perFeedLimit={groupByFeed ? PER_FEED_WINDOW : undefined}
+        perFeedFetch={groupByFeed ? PER_FEED_FETCH : undefined}
         onToggleGroupByFeed={() => setGroupByFeed(!groupByFeed)}
         itemSort={itemSort}
         onToggleSort={() =>

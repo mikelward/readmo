@@ -212,3 +212,14 @@ export const FEED_FLOOR = 10;
  * `feed_items` RPC as `p_per_feed_limit` and mirrored by the client merge in
  * {@link ItemList}. */
 export const PER_FEED_WINDOW = 10;
+
+/** Body rows the grouped view FETCHES per feed in its one windowed read: three
+ * "More" pages' worth plus one overfetched has-more probe. Sections still open
+ * at {@link PER_FEED_WINDOW}; the rest ride along in the same response so a
+ * section "More" reveals the next `PER_FEED_WINDOW` instantly from the fetched
+ * set (no request, works offline — the whole response lands in the persisted
+ * cache), only hitting the server once the fetched rows run out. A feed
+ * typically publishes ~30 items, so one read usually carries the whole feed.
+ * Threaded into the `feed_items` RPC as `p_per_feed_limit` (pins ride along
+ * exempt, 0052). */
+export const PER_FEED_FETCH = PER_FEED_WINDOW * 3 + 1;
