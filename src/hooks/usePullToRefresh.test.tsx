@@ -7,13 +7,20 @@ import { usePullToRefresh } from './usePullToRefresh';
 // A 160px downward drag → (160 - 8) * 0.5 = 76px displayed ≥ TRIGGER_PX,
 // so releasing commits the refresh.
 
-function makePointerEvent(init: { clientX: number; clientY: number; pointerId: number }) {
+function makePointerEvent(init: {
+  clientX: number;
+  clientY: number;
+  pointerId: number;
+  pointerType?: string;
+  buttons?: number;
+}) {
   return {
     clientX: init.clientX,
     clientY: init.clientY,
     pointerId: init.pointerId,
-    pointerType: 'touch',
+    pointerType: init.pointerType ?? 'touch',
     button: 0,
+    buttons: init.buttons ?? 1,
     currentTarget: { setPointerCapture: vi.fn() },
     preventDefault: vi.fn(),
   } as unknown as React.PointerEvent<HTMLElement>;
@@ -75,5 +82,67 @@ describe('usePullToRefresh', () => {
       );
     });
     expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a stale mouse press (released outside) on a button-less move instead of arming a phantom pull', () => {
+    // Regression: capture is only taken once the pull arms, so a mouse press
+    // at scroll-top released outside the container (up over the app header)
+    // never delivered its pointerup. The stale start then blocked real pulls,
+    // and a button-less hover back down the list re-armed the "pull" — a later
+    // click far enough below the stale start triggered a spurious refresh.
+    const onRefresh = vi.fn();
+    const { result } = renderHook(() =>
+      usePullToRefresh({ onRefresh, isAtTop: () => true }),
+    );
+
+    act(() => {
+      result.current.handlers.onPointerDown(
+        makePointerEvent({ clientX: 100, clientY: 50, pointerId: 1, pointerType: 'mouse' }),
+      );
+    });
+    // (mouse released outside the container — no pointerup delivered)
+
+    // Button-less hover back over the list: must drop the stale start, not
+    // arm a pull.
+    act(() => {
+      result.current.handlers.onPointerMove(
+        makePointerEvent({
+          clientX: 100,
+          clientY: 150,
+          pointerId: 1,
+          pointerType: 'mouse',
+          buttons: 0,
+        }),
+      );
+    });
+    expect(result.current.phase).toBe('idle');
+    expect(result.current.pull).toBe(0);
+
+    // A later plain click 200px below the stale start must not refresh.
+    act(() => {
+      result.current.handlers.onPointerUp(
+        makePointerEvent({
+          clientX: 100,
+          clientY: 250,
+          pointerId: 1,
+          pointerType: 'mouse',
+          buttons: 0,
+        }),
+      );
+    });
+    expect(onRefresh).not.toHaveBeenCalled();
+
+    // And the gesture isn't wedged: a fresh press starts a real pull.
+    act(() => {
+      result.current.handlers.onPointerDown(
+        makePointerEvent({ clientX: 100, clientY: 100, pointerId: 1, pointerType: 'mouse' }),
+      );
+    });
+    act(() => {
+      result.current.handlers.onPointerMove(
+        makePointerEvent({ clientX: 100, clientY: 200, pointerId: 1, pointerType: 'mouse' }),
+      );
+    });
+    expect(result.current.phase).toBe('pulling');
   });
 });

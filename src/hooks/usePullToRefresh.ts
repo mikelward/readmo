@@ -158,6 +158,20 @@ export function usePullToRefresh({
   const onPointerMove = useCallback((e: PointerEvent<HTMLElement>) => {
     const start = startRef.current;
     if (!start || start.pointerId !== e.pointerId) return;
+    // Pointer capture is only taken once the pull arms, so a mouse/pen press
+    // released OUTSIDE the container (e.g. up over the app header) never
+    // delivers its pointerup and the start state goes stale — blocking real
+    // pulls and letting a button-less hover arm a phantom pull that a later
+    // click could turn into a spurious refresh. A hover-capable pointer
+    // moving with no button held is that stale case: drop it. Touch is
+    // excluded — implicit capture always delivers its pointerup/cancel.
+    if (
+      e.buttons === 0 &&
+      (e.pointerType === 'mouse' || e.pointerType === 'pen')
+    ) {
+      startRef.current = null;
+      return;
+    }
     const dx = e.clientX - start.x;
     const dy = e.clientY - start.y;
 
