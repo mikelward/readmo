@@ -2,10 +2,13 @@ import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  clearExplicitSignOut,
   clearUserCaches,
   COLLAPSED_FEEDS_KEY,
   itemStateKey,
+  markExplicitSignOut,
   outboxKey,
+  peekExplicitSignOut,
   reconcileUserCachesOnBoot,
   rqCacheKey,
 } from './userCache';
@@ -201,6 +204,206 @@ describe('reconcileUserCachesOnBoot', () => {
     expect(window.localStorage.getItem(itemStateKey('old'))).toBeNull();
     expect(caches.delete).toHaveBeenCalledWith('readmo-data');
     expect(window.localStorage.getItem('readmo:last-uid')).toBe('new');
+  });
+
+  it('finishes an explicit sign-out whose in-tab purge never ran (marker survives to boot)', async () => {
+    // Codex P2 on #434: the reader taps Sign out, but the tab reloads/closes
+    // before useUserCacheScope observes the transition. The marker (in
+    // localStorage, so it survives the tab) must make the next boot finish
+    // the purge and record the signed-out sentinel — an explicit sign-out
+    // may never leave the departing user's data behind (guardrail #8).
+    markExplicitSignOut();
+    window.localStorage.setItem('readmo:last-uid', 'old');
+    window.localStorage.setItem(itemStateKey('old'), 'private');
+
+    await reconcileUserCachesOnBoot(null);
+
+    expect(window.localStorage.getItem(itemStateKey('old'))).toBeNull();
+    expect(caches.delete).toHaveBeenCalledWith('readmo-data');
+    expect(window.localStorage.getItem('readmo:last-uid')).toBe('');
+    // The marker moves pending → purged (never hard-cleared while active):
+    // still active through the grace so any tab's late writes get re-purged,
+    // then it expires and a later transient drop can't be misread.
+    expect(
+      window.localStorage.getItem('readmo:explicit-signout'),
+    ).toMatch(/^d:/);
+  });
+
+  it('a PENDING marker never expires — the purge is owed however late the next boot is', async () => {
+    // Codex P2 on #436, round 4: sign out, tab dies before ANY purge runs,
+    // device reopened days later. The pending marker must still be honored —
+    // expiring it would leave private data behind despite an explicit
+    // sign-out. (Only the purged state expires; see below.)
+    window.localStorage.setItem(
+      'readmo:explicit-signout',
+      `p:${Date.now() - 3 * 24 * 60 * 60 * 1000}`,
+    );
+    window.localStorage.setItem('readmo:last-uid', 'old');
+    window.localStorage.setItem(itemStateKey('old'), 'private');
+
+    await reconcileUserCachesOnBoot(null);
+
+    expect(window.localStorage.getItem(itemStateKey('old'))).toBeNull();
+    expect(caches.delete).toHaveBeenCalledWith('readmo-data');
+  });
+
+  it('a same-uid signed-in boot with a pending marker purges but LEAVES the marker (cross-tab race)', async () => {
+    // Codex P2 on #436, rounds 2-3: the marker is localStorage, so a SECOND
+    // still-signed-in tab reloading between Sign out being tapped and
+    // Supabase emitting SIGNED_OUT boots as the SAME uid. That boot must
+    // purge (reading the marker as stale would let the original tab's
+    // old→null transition be misread as a transient drop) — but it is NOT
+    // the auth-transition owner: the signing-out tab may still re-write keys
+    // after this purge, so the marker stays pending for that tab's own
+    // transition (or the next boot) to re-purge and settle.
+    markExplicitSignOut();
+    window.localStorage.setItem('readmo:last-uid', 'same');
+    window.localStorage.setItem(itemStateKey('same'), 'private');
+
+    await reconcileUserCachesOnBoot('same');
+
+    expect(window.localStorage.getItem(itemStateKey('same'))).toBeNull();
+    expect(caches.delete).toHaveBeenCalledWith('readmo-data');
+    expect(peekExplicitSignOut()).toBe(true); // still active for the owner
+
+    // The signing-out side's own path — here, the next signed-out boot —
+    // re-purges (idempotent, covers late writes) and re-stamps; the marker
+    // then dies by grace expiry, not by any tab clearing it.
+    await reconcileUserCachesOnBoot(null);
+    expect(
+      window.localStorage.getItem('readmo:explicit-signout'),
+    ).toMatch(/^d:/);
+    expect(window.localStorage.getItem('readmo:last-uid')).toBe('');
+  });
+
+  it('an expired PURGED marker reads as absent — a later session drop stays transient', async () => {
+    // A purged marker means the sign-out's purge already completed; it stays
+    // active only through a short grace (for the owner tab's late writes).
+    // Past that it must read as absent: treating it as a live sign-out would
+    // turn a token-refresh drop days later — routine offline — into a
+    // spurious cache wipe (the #434 bug). A signed-in boot sweeps it.
+    window.localStorage.setItem(
+      'readmo:explicit-signout',
+      `d:${Date.now() - 11 * 60 * 1000}`,
+    );
+    window.localStorage.setItem('readmo:last-uid', 'old');
+    window.localStorage.setItem(itemStateKey('old'), 'pins-and-favorites');
+
+    expect(peekExplicitSignOut()).toBe(false);
+    await reconcileUserCachesOnBoot(null); // treated as a transient drop
+    expect(window.localStorage.getItem(itemStateKey('old'))).toBe(
+      'pins-and-favorites',
+    );
+    expect(caches.delete).not.toHaveBeenCalled();
+
+    await reconcileUserCachesOnBoot('old'); // same-user boot sweeps the leftover
+    expect(window.localStorage.getItem('readmo:explicit-signout')).toBeNull();
+  });
+
+  it('reloads after a reauth keep the new session; only the shared Workbox caches sweep during the grace', async () => {
+    // Codex P2 round 6 + P1 round 7 on #436, together: after a completed
+    // sign-out (marker `purged`), a reauth within the grace must NOT wipe the
+    // new session's uid-scoped stores on every reload (round 6's restamp
+    // loop) — but the marker must survive the sign-in, because the GLOBAL
+    // Workbox caches can be repopulated by the departed session's in-flight
+    // requests settling after the purge, and only the graced marker keeps
+    // sweeping them (round 7).
+    markExplicitSignOut();
+    window.localStorage.setItem('readmo:last-uid', 'old');
+    window.localStorage.setItem(itemStateKey('old'), 'pre-signout');
+    await reconcileUserCachesOnBoot(null); // sign-out completes: purge + 'd:'
+    const stamped = window.localStorage.getItem('readmo:explicit-signout');
+    expect(stamped).toMatch(/^d:/);
+
+    // Reauth within the grace: the marker survives, marked `reauthed`, on its
+    // ORIGINAL timestamp (no refresh — the grace stays anchored to the
+    // sign-out).
+    await reconcileUserCachesOnBoot('old');
+    expect(window.localStorage.getItem('readmo:explicit-signout')).toBe(
+      `r:${stamped!.slice(2)}`,
+    );
+
+    // The new session accumulates uid-scoped caches; a reload within the
+    // grace keeps them and sweeps ONLY the shared Workbox caches.
+    window.localStorage.setItem(itemStateKey('old'), 'fresh-session');
+    (caches.delete as ReturnType<typeof vi.fn>).mockClear();
+    await reconcileUserCachesOnBoot('old');
+    expect(window.localStorage.getItem(itemStateKey('old'))).toBe(
+      'fresh-session',
+    );
+    expect(caches.delete).toHaveBeenCalledWith('readmo-data');
+
+    // Past the grace the marker reads as absent and the next sign-in boot
+    // sweeps the leftover key; reloads stop touching the Workbox caches.
+    window.localStorage.setItem(
+      'readmo:explicit-signout',
+      `d:${Date.now() - 11 * 60 * 1000}`,
+    );
+    (caches.delete as ReturnType<typeof vi.fn>).mockClear();
+    await reconcileUserCachesOnBoot('old');
+    expect(window.localStorage.getItem('readmo:explicit-signout')).toBeNull();
+    expect(caches.delete).not.toHaveBeenCalled();
+  });
+
+  it('a session drop after a reauth keeps the new session (reauthed marker never full-purges)', async () => {
+    // Codex P2 on #436, round 8: sign-out completes (marker purged), the
+    // reader signs back in within the grace, then Supabase drops the session
+    // on a routine offline token-refresh failure. That drop belongs to the
+    // NEW session — treating the leftover marker as a live sign-out wiped the
+    // reauthenticated user's pins/offline stores. Only the shared Workbox
+    // caches may keep sweeping.
+    markExplicitSignOut();
+    window.localStorage.setItem('readmo:last-uid', 'old');
+    window.localStorage.setItem(itemStateKey('old'), 'pre-signout');
+    await reconcileUserCachesOnBoot(null); // sign-out completes: purge + 'd:'
+    await reconcileUserCachesOnBoot('old'); // reauth: marker → 'r:'
+
+    // The new session accumulates data; then the transient drop hits.
+    window.localStorage.setItem(itemStateKey('old'), 'fresh-session');
+    (caches.delete as ReturnType<typeof vi.fn>).mockClear();
+    await reconcileUserCachesOnBoot(null);
+
+    expect(window.localStorage.getItem(itemStateKey('old'))).toBe(
+      'fresh-session',
+    );
+    // Sentinel still points at the user, so signing back in purges nothing.
+    expect(window.localStorage.getItem('readmo:last-uid')).toBe('old');
+    // The shared Workbox caches were swept (the only grace action left).
+    expect(caches.delete).toHaveBeenCalledWith('readmo-data');
+
+    await reconcileUserCachesOnBoot('old');
+    expect(window.localStorage.getItem(itemStateKey('old'))).toBe(
+      'fresh-session',
+    );
+  });
+
+  it('a marker pending across an account switch is satisfied by the uid-mismatch purge', async () => {
+    // A sign-out (marker set, purge never ran) followed by a DIFFERENT user
+    // signing in: the mismatch purge clears the departed user and stamps the
+    // marker purged; the new user's fresh scope is untouched.
+    markExplicitSignOut();
+    window.localStorage.setItem('readmo:last-uid', 'old');
+    window.localStorage.setItem(itemStateKey('old'), 'private');
+    window.localStorage.setItem(itemStateKey('new'), 'mine');
+
+    await reconcileUserCachesOnBoot('new');
+
+    expect(window.localStorage.getItem(itemStateKey('old'))).toBeNull();
+    expect(window.localStorage.getItem(itemStateKey('new'))).toBe('mine');
+    expect(
+      window.localStorage.getItem('readmo:explicit-signout'),
+    ).toMatch(/^d:/);
+  });
+
+  it('peeking the sign-out marker does not consume it (a killed purge can retry on the next boot)', () => {
+    // Codex P2 on #436: the marker must survive being READ at purge start —
+    // it's dropped only after the purge resolves, so a tab killed mid-purge
+    // (async IndexedDB/Cache API deletes) leaves it for the next boot.
+    markExplicitSignOut();
+    expect(peekExplicitSignOut()).toBe(true);
+    expect(peekExplicitSignOut()).toBe(true); // read-only — still pending
+    clearExplicitSignOut();
+    expect(peekExplicitSignOut()).toBe(false);
   });
 
   it('migrates the legacy item-state store into the user scope on first keyed boot', async () => {

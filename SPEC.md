@@ -3017,7 +3017,28 @@ keys differ; the strategies map one-to-one:
   - `readmo:last-uid` — the uid that last booted (sentinel), used to detect an
     account switch that happened via a full-page reload. A signed-out boot
     leaves it pointing at the previous user (see the purge rules above), so
-    only a different user's sign-in triggers the purge.
+    only a different user's sign-in — or an explicit sign-out — triggers the
+    purge.
+  - `readmo:explicit-signout` — marker set when the reader taps Sign out,
+    distinguishing an explicit sign-out (purge) from a session that dropped on
+    its own (keep — see the purge rules above). Withdrawn immediately if the
+    sign-out call fails without ending the session (the reader stayed signed
+    in — no purge is owed). Three states tracking the episode's lifecycle:
+    **pending** (no purge has completed yet) never expires — the sign-out is
+    owed a purge however late the device next wakes — and every
+    transition/boot that sees it purges; **purged** (a purge completed, no
+    sign-in since) keeps signed-out paths re-purging in full through a short
+    grace, covering late writes from the sign-out's surviving tabs;
+    **reauthed** (a sign-in followed the purge) ends the episode for the
+    user's own stores — a session drop in the remaining grace is the new
+    session's routine token blip and must not purge — while sign-ins, reloads,
+    and drops alike keep sweeping just the shared (not-yet-uid-keyed) Workbox
+    caches, the one surface a departed session's late request could poison
+    across users. Past the grace the marker reads as absent, since a completed
+    sign-out must not turn a much-later session drop into a spurious purge. No
+    tab ever hard-clears an active marker (any tab could be the wrong one to
+    settle it); markers die by the purge stamp + grace expiry, and dead
+    leftovers are swept on signed-in boots. Carries no user data.
   - `readmo:cache-migrated` — one-shot flag marking that the pre-scoping global
     keys were migrated into the signed-in user's scoped keys (so an upgrade
     preserves pins/favorites instead of wiping them).
