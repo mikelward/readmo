@@ -169,6 +169,28 @@ describe('DebugPage', () => {
     expect(results).toHaveTextContent('The Verge');
   });
 
+  it('appends the live feed-query cache snapshot to the probe results', async () => {
+    const { QueryClient } = await import('@tanstack/react-query');
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    // A cached grouped home page, as the view's query would hold it.
+    queryClient.setQueryData(['feed', 'home-all:newest:grouped'], {
+      pages: [{ items: [{}, {}, {}], nextCursor: null }],
+      pageParams: [null],
+    });
+    // The unread-count badge query must be excluded from the dump.
+    queryClient.setQueryData(['feed', 'unread-counts', 'x'], { a: 1 });
+    renderWithProviders(<DebugPage />, { route: '/debug', queryClient });
+    await act(async () => {
+      screen.getByRole('button', { name: 'Run feed probe' }).click();
+    });
+    const results = await screen.findByTestId('feed-probe-results');
+    expect(results).toHaveTextContent('cache home-all:newest:grouped');
+    expect(results).toHaveTextContent('3 rows');
+    expect(results).not.toHaveTextContent('unread-counts');
+  });
+
   it('surfaces a probe failure as an Error row instead of crashing', async () => {
     const source = new MockDataSource(`dbg-${Math.random()}`);
     vi.spyOn(source, 'debugFeedProbe').mockRejectedValue(new Error('boom 500'));
