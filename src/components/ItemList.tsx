@@ -944,12 +944,14 @@ export function ItemList({
     pendingAnchorId.current = items[items.length - 1]?.item.id ?? null;
     const baselineRendered = renderedCountOf(items);
     let pagesLoaded = pageCount;
+    let appended = false;
     for (let i = 0; i < MAX_AUTO_SKIP_PAGES; i++) {
       const res = await fetchMore();
       const pages = res.data?.pages ?? [];
       // No new page appended (true end, or a fetch error) → stop.
       if (pages.length <= pagesLoaded) break;
       pagesLoaded = pages.length;
+      appended = true;
       // Measure progress on the same deduped view the list renders: an
       // appended page can consist entirely of already-loaded items (offset
       // drift re-serving the previous page's tail), which renders nothing —
@@ -958,6 +960,12 @@ export function ItemList({
       // Something new rendered (a row or a new header), or nothing left → done.
       if (renderedCountOf(all) > baselineRendered || !(res.hasNextPage ?? false)) break;
     }
+    // Nothing appended (offline, server error, or the true end): disarm the
+    // anchor. Left armed, it would survive until some LATER items change — a
+    // PTR, a TTL re-materialization, even this view's ids appearing in a
+    // different view — and the scroll effect would then yank the viewport to
+    // whatever happens to follow the anchor row in that unrelated refresh.
+    if (!appended) pendingAnchorId.current = null;
   }, [pinnedBar, atListEnd, items, pageCount, fetchMore, renderedCountOf]);
 
   useEffect(() => {
@@ -1144,6 +1152,10 @@ export function ItemList({
       setDisplayedByFeed(new Map());
       setStayInBodyIds(new Set());
       setPendingFeedMore(new Set());
+      // A "More" anchor armed in the previous view must not fire here: the
+      // same item ids can appear in this view (home ↔ single feed), and a
+      // stale anchor found mid-list would immediately scroll the fresh view.
+      pendingAnchorId.current = null;
       // A new view starts clean: no carried-over on-screen/grayed tracking,
       // local-dismiss bookkeeping, or pin baseline from the previous view.
       onScreenIdsRef.current = new Set();
