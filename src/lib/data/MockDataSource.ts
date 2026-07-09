@@ -1,7 +1,6 @@
 import {
   FEED_FLOOR,
   HOME_WINDOW_MS,
-  PER_FEED_WINDOW,
   type Feed,
   type FeedId,
   type FeedItem,
@@ -234,41 +233,22 @@ export class MockDataSource implements DataSource {
       return byDate(a.fi, b.fi);
     });
 
-    // Group-by-feed only: cap each feed's section to its newest `perFeedLimit`
-    // BODY rows (the sort above made each feed run contiguous, pinned-first).
-    // Pinned rows are exempt from the cap — a section is its full pinned block
-    // plus the body window — so pins never crowd articles out of the opening
-    // view. The per-section "More" pages deeper into one feed via getFeedItems.
-    // Mirrors the `feed_items` RPC's p_per_feed_limit window (0052). A
-    // single-feed read (no groupByFeed) is never capped — that's the path
-    // "More" pages through.
-    const perFeedLimit = opts?.perFeedLimit;
-    if (groupByFeed && perFeedLimit != null && perFeedLimit >= 0) {
-      const seen = new Map<FeedId, number>();
-      const capped: typeof rows = [];
-      for (const r of rows) {
-        if (r.pinned) {
-          capped.push(r);
-          continue;
-        }
-        const fid = r.fi.item.feedId;
-        const n = seen.get(fid) ?? 0;
-        if (n >= perFeedLimit) continue;
-        seen.set(fid, n + 1);
-        capped.push(r);
-      }
-      return capped.map((r) => r.fi);
-    }
-
+    // No per-feed cap: like the live `feed_items` read, a grouped section
+    // carries the feed's whole listable set — the "server" (here, the mock)
+    // decides what to return and the client accepts all of it. The view
+    // windows each section for display and its "More" reveals already-fetched
+    // rows.
     return rows.map((r) => r.fi);
   }
 
   private paginate(all: FeedItem[], opts?: FeedListOptions): Page<FeedItem> {
-    // Grouped + per-feed windowed: each section is already capped to its newest
-    // `perFeedLimit` rows, so the whole (bounded) river is returned in one page.
-    // The view pages deeper into a single feed via its own "More" (getFeedItems),
-    // not by globally fetching the next page — so there's no global next cursor.
-    if (opts?.groupByFeed && opts?.perFeedLimit != null) {
+    // Grouped: one deep page carrying every section in full, mirroring the
+    // live source's single GROUPED_WINDOW_ROW_CAP-sized read (mock data is far
+    // smaller than any real row cap, so there's never a next cursor). An
+    // explicit `limit` still pages below — it models the row-cap-overflow
+    // case (the cap splitting the read across pages), which tests exercise
+    // with small limits.
+    if (opts?.groupByFeed && opts?.limit == null) {
       return { items: all, nextCursor: null };
     }
     const limit = opts?.limit ?? PAGE_SIZE;
@@ -699,7 +679,6 @@ export class MockDataSource implements DataSource {
     const opts = {
       sort,
       groupByFeed: true,
-      perFeedLimit: PER_FEED_WINDOW + 1,
     };
     const grouped =
       folder != null

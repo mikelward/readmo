@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -5340,16 +5339,12 @@ describe('ItemList', () => {
       const { source, mk } = await makeRows();
       const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2)];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() =>
-        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
-      );
       renderWithProviders(
         <ItemList
           viewKey={`psm-pin-${viewKeySeq++}`}
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={3}
         />,
         { source },
@@ -5386,16 +5381,12 @@ describe('ItemList', () => {
       const { source, mk } = await makeRows();
       const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2)];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() =>
-        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
-      );
       renderWithProviders(
         <ItemList
           viewKey={`psm-xpin-${viewKeySeq++}`}
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={3}
         />,
         { source },
@@ -5447,16 +5438,12 @@ describe('ItemList', () => {
       ]);
       const base = [mk('A', 'Feed A', 0)];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() =>
-        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
-      );
       renderWithProviders(
         <ItemList
           viewKey={`psm-pin-done-${viewKeySeq++}`}
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={3}
         />,
         { source },
@@ -5500,16 +5487,12 @@ describe('ItemList', () => {
         mk('B', 'Feed B', 0),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() =>
-        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
-      );
       renderWithProviders(
         <ItemList
           viewKey={`psm-pin-done-section-${viewKeySeq++}`}
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={3}
         />,
         { source },
@@ -5539,16 +5522,12 @@ describe('ItemList', () => {
       source.stateStore.set('A-1', 'pinned', true);
       const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1)];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() =>
-        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
-      );
       renderWithProviders(
         <ItemList
           viewKey={`psm-pin-window-${viewKeySeq++}`}
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={1}
         />,
         { source },
@@ -5579,11 +5558,11 @@ describe('ItemList', () => {
     it('shows a promoted out-of-window pin IN ADDITION to the window rows, never displacing one', async () => {
       // Codex P2 on #418: a pin promoted from outside the window must not evict a
       // sticky window row — a displaced row would be hidden yet still counted as
-      // seen by handleFeedMore's cursor, skipping it until PTR. The pin shows on
-      // top of the full window instead.
+      // shown, wasting a More batch slot. The pin shows on top of the full
+      // window instead.
       const { source, mk } = await makeRows();
-      // A-3 is the overfetched (perFeedLimit+1)th row and is pinned; the window is
-      // A-0..A-2.
+      // A-3 is a fetched row past the display window and is pinned; the window
+      // is A-0..A-2.
       source.stateStore.set('A-3', 'pinned', true);
       const base = [
         mk('A', 'Feed A', 0),
@@ -5592,16 +5571,12 @@ describe('ItemList', () => {
         mk('A', 'Feed A', 3),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() =>
-        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
-      );
       renderWithProviders(
         <ItemList
           viewKey={`psm-pin-additive-${viewKeySeq++}`}
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={3}
         />,
         { source },
@@ -5631,16 +5606,12 @@ describe('ItemList', () => {
       const fetchPage = vi.fn(() =>
         Promise.resolve({ items: pageItems, nextCursor: null }),
       );
-      const fetchFeedPage = vi.fn(() =>
-        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
-      );
       renderWithProviders(
         <ItemList
           viewKey={`psm-pin-ptr-${viewKeySeq++}`}
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={1}
         />,
         { source },
@@ -5723,16 +5694,12 @@ describe('ItemList', () => {
       const fetchPage = vi.fn(() =>
         Promise.resolve({ items: pageItems, nextCursor: null }),
       );
-      const fetchFeedPage = vi.fn(() =>
-        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
-      );
       const { container } = renderWithProviders(
         <ItemList
           viewKey={`psm-ptr-pollfail-${viewKeySeq++}`}
           fetchPage={fetchPage}
           emptyLabel="You’re all caught up."
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={3}
         />,
         { source },
@@ -5795,16 +5762,12 @@ describe('ItemList', () => {
       const { source, mk } = await makeRows();
       const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2)];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() =>
-        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
-      );
       const { container } = renderWithProviders(
         <ItemList
           viewKey={`psm-collapse-gray-${viewKeySeq++}`}
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={3}
         />,
         { source },
@@ -5831,35 +5794,26 @@ describe('ItemList', () => {
     });
 
     it('More reveals the next batch from the already-fetched rows — no request — until they run out', async () => {
-      // The deep windowed read (PER_FEED_FETCH) carries several More pages'
-      // worth of body rows in the base response. A section More must page
-      // through those already-fetched rows instantly — batch by batch, no
-      // network — and only call fetchFeedPage once the fetched run is spent.
+      // The deep grouped read carries everything the server returned for each
+      // feed. A section More pages through those already-fetched rows
+      // instantly — batch by batch, no network — and disappears once the
+      // fetched run is spent: the fetched run IS the feed (the server decided
+      // what it holds), so there is nothing left to fetch.
       const user = userEvent.setup();
       const { source, mk } = await makeRows();
       const K = 3;
-      const FETCH = 7; // window (3) + two ride-along batches (3 + 1 = the probe slot)
       const base = [
         ...[0, 1, 2, 3, 4, 5, 6].map((n) => mk('A', 'Feed A', n)),
         mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) =>
-        Promise.resolve(
-          cursor === '7'
-            ? { items: [mk('A', 'Feed A', 7)], nextCursor: null }
-            : { items: [], nextCursor: null },
-        ),
-      );
       renderWithProviders(
         <ItemList
           viewKey={`psm-local-${viewKeySeq++}`}
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
-          perFeedFetch={FETCH}
         />,
         { source },
       );
@@ -5877,49 +5831,36 @@ describe('ItemList', () => {
       // First tap: the next K fetched rows appear instantly, no request.
       await user.click(moreBtns()[0]);
       expect(ids()).toEqual(['A-0', 'A-1', 'A-2', 'A-3', 'A-4', 'A-5', 'B-0', 'B-1']);
-      expect(fetchFeedPage).not.toHaveBeenCalled();
+      expect(fetchPage).toHaveBeenCalledTimes(1);
+      expect(moreBtns()).toHaveLength(1);
 
-      // Second tap: the last fetched row (the probe slot) appears — still no
-      // request. The read came back at the full fetch depth, so the server
-      // may hold more and the button stays.
+      // Second tap: the last fetched row appears — still no request — and the
+      // fetched run is spent, so the button drops (exhausted section, no dead
+      // More).
       await user.click(moreBtns()[0]);
       expect(ids()).toEqual([
         'A-0', 'A-1', 'A-2', 'A-3', 'A-4', 'A-5', 'A-6', 'B-0', 'B-1',
       ]);
-      expect(fetchFeedPage).not.toHaveBeenCalled();
-      expect(moreBtns()).toHaveLength(1);
-
-      // Third tap: the fetched run is spent — NOW More pages the server, from
-      // the offset just past everything displayed.
-      await user.click(moreBtns()[0]);
-      await screen.findByText('Feed A 7');
-      expect(fetchFeedPage).toHaveBeenCalledTimes(1);
-      expect(fetchFeedPage).toHaveBeenCalledWith('A', '7');
+      expect(fetchPage).toHaveBeenCalledTimes(1);
+      expect(moreBtns()).toHaveLength(0);
     });
 
-    it('a feed fetched short of the fetch depth exhausts locally — More vanishes without ever fetching', async () => {
-      // The feed published fewer rows than PER_FEED_FETCH, so the whole feed
-      // is in hand. More reveals the fetched tail and then disappears — it
-      // must never fire a server fetch that would return an empty page (and
-      // it keeps working offline, since no request is needed).
+    it('a feed fetched short of the opening window exhausts locally — More vanishes after one reveal', async () => {
+      // The whole feed is in hand (the base read carries everything the server
+      // returned). More reveals the fetched tail and then disappears — no
+      // server fetch exists to fire, so it keeps working offline too.
       const user = userEvent.setup();
       const { source, mk } = await makeRows();
       const K = 3;
-      const FETCH = 7;
-      const base = [0, 1, 2, 3, 4].map((n) => mk('A', 'Feed A', n)); // 5 < 7
+      const base = [0, 1, 2, 3, 4].map((n) => mk('A', 'Feed A', n));
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() =>
-        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
-      );
       renderWithProviders(
         <ItemList
           viewKey={`psm-local-short-${viewKeySeq++}`}
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
-          perFeedFetch={FETCH}
         />,
         { source },
       );
@@ -5934,72 +5875,55 @@ describe('ItemList', () => {
       await user.click(screen.getByTestId('group-more'));
       expect(ids()).toEqual(['A-0', 'A-1', 'A-2', 'A-3', 'A-4']);
 
-      // Fully in hand: the button is gone and nothing was ever fetched.
+      // Fully in hand: the button is gone and only the base read ever ran.
       expect(screen.queryAllByTestId('group-more')).toHaveLength(0);
-      expect(fetchFeedPage).not.toHaveBeenCalled();
+      expect(fetchPage).toHaveBeenCalledTimes(1);
     });
 
     it('grows one feed section inline, leaving the others untouched, until exhausted', async () => {
       const user = userEvent.setup();
       const { source, mk } = await makeRows();
       const K = 3;
-      // Base page: feed A came back at the full fetch depth (3 rows with
-      // perFeedFetch = 3 → the server may have more), feed B is short (2 rows →
-      // fully shown, no More).
+      // Base page: feed A carries depth past its opening window (5 fetched
+      // rows, window 3), feed B is short (2 rows → fully shown, no More).
       const base = [
         mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
+        mk('A', 'Feed A', 3), mk('A', 'Feed A', 4),
         mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      // First More pages from the fetched edge (offset 3): A3 + A4; then A5
-      // exhausts the feed.
-      const aMore: Record<string, { items: FeedItem[]; nextCursor: string | null }> = {
-        '3': { items: [mk('A', 'Feed A', 3), mk('A', 'Feed A', 4)], nextCursor: '5' },
-        '5': { items: [mk('A', 'Feed A', 5)], nextCursor: null },
-      };
-      const fetchFeedPage = vi.fn((feedId: string, cursor: string | null) =>
-        Promise.resolve(
-          feedId === 'A' ? aMore[cursor ?? ''] ?? { items: [], nextCursor: null } : { items: [], nextCursor: null },
-        ),
-      );
       renderWithProviders(
         <ItemList
           viewKey={`psm-${viewKeySeq++}`}
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
-          perFeedFetch={K}
         />,
         { source },
       );
       await screen.findAllByTestId('item-row');
 
-      // Only feed A (full window) offers a More; the short feed B does not.
+      // Only feed A (unshown fetched rows) offers a More; the short feed B
+      // does not.
       const moreButtons = () => screen.queryAllByTestId('group-more');
       expect(moreButtons()).toHaveLength(1);
       expect(moreButtons()[0].getAttribute('data-feed-more')).toBe('A');
 
-      // Tapping A's More appends its next page inside A's own section.
+      // Tapping A's More reveals its next fetched batch inside A's own section.
       await user.click(moreButtons()[0]);
       await screen.findByText('Feed A 3');
       expect(screen.getByText('Feed A 4')).toBeInTheDocument();
-      // The appended rows stay within A's section — before feed B's rows.
+      // The revealed rows stay within A's section — before feed B's rows.
       const ids = [...document.querySelectorAll('[data-item-id]')].map((el) =>
         el.getAttribute('data-item-id'),
       );
       expect(ids).toContain('A-4');
       expect(ids.indexOf('A-4')).toBeLessThan(ids.indexOf('B-0'));
-      // A still has more, so its More persists.
-      expect(moreButtons()).toHaveLength(1);
-
-      // Tap again → the last row lands and the section is exhausted (More gone).
-      await user.click(moreButtons()[0]);
-      await screen.findByText('Feed A 5');
+      // The reveal spent A's fetched run — the section is exhausted (More gone)
+      // and feed B never changed.
       expect(moreButtons()).toHaveLength(0);
-      expect(fetchFeedPage).toHaveBeenCalledWith('A', '3');
-      expect(fetchFeedPage).toHaveBeenCalledWith('A', '5');
+      expect(screen.getByText('Feed B 0')).toBeInTheDocument();
     });
 
     it('marking one row Done in a windowed section shrinks it without refilling or reordering (group-by-feed)', async () => {
@@ -6020,23 +5944,19 @@ describe('ItemList', () => {
       // untouched.
       const { source, mk } = await makeRows();
       const K = 3;
-      // Feed A opens windowed to A0-A2 with an overfetched probe (A3); feed B
-      // follows so we can assert the next section never moves.
+      // Feed A opens windowed to A0-A2 with a fetched row past the window
+      // (A3); feed B follows so we can assert the next section never moves.
       const basePage = [
         mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
         mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() =>
-        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
-      );
       const { container } = renderWithProviders(
         <ItemList
           viewKey={`psm-single-done-${viewKeySeq++}`}
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
         />,
         { source },
@@ -6046,7 +5966,7 @@ describe('ItemList', () => {
         [...container.querySelectorAll('[data-item-id]')].map((el) =>
           el.getAttribute('data-item-id'),
         );
-      // Section A opens windowed to A0-A2 (probe A3 not painted); B shows in full.
+      // Section A opens windowed to A0-A2 (fetched A3 not painted); B shows in full.
       expect(idsOf()).toEqual(['A-0', 'A-1', 'A-2', 'B-0', 'B-1']);
 
       // The reader marks the middle visible row Done — the single-dismiss store
@@ -6055,82 +5975,20 @@ describe('ItemList', () => {
       act(() => {
         source.stateStore.hide('A-1');
       });
-      // A shrank by exactly one and did NOT refill — the gated A-3/A-4 stay put,
+      // A shrank by exactly one and did NOT refill — the gated A-3 stays put,
       // the survivors keep their order, and feed B never moved.
       await waitFor(() => expect(idsOf()).toEqual(['A-0', 'A-2', 'B-0', 'B-1']));
 
       // It stays shrunk across a microtask flush — no in-flight refetch can slot
-      // A-3/A-4 into A's window.
+      // A-3 into A's window.
       await act(async () => {
         await Promise.resolve();
       });
       expect(idsOf()).toEqual(['A-0', 'A-2', 'B-0', 'B-1']);
-      // …and A-4 is still reachable on demand — A keeps offering More.
+      // …and A-3 is still reachable on demand — A keeps offering More.
       expect(
         screen.getByTestId('group-more').getAttribute('data-feed-more'),
       ).toBe('A');
-    });
-
-    it("shrinks a section's next-More cursor when an extra-loaded row is Done on another device", async () => {
-      // Regression: the section's next-More cursor counts how many already-seen
-      // rows the server still carries (the offset for the next batch). A cached
-      // extra that another device marked Done — learned locally via the
-      // item_state resync — is no longer in the server's filtered sequence, so
-      // counting it pushes the cursor one past the row that now follows and
-      // skips it. The cursor must shrink to exclude the dropped extra.
-      const user = userEvent.setup();
-      const { source, mk } = await makeRows();
-      const K = 3;
-      // Feed A came back at the full fetch depth (3 rows, perFeedFetch = 3) →
-      // A offers More. B is short.
-      const base = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
-        mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
-      ];
-      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      const aMore: Record<string, { items: FeedItem[]; nextCursor: string | null }> = {
-        // More #1: append A3 + A4; server says the next batch is at 5.
-        '3': { items: [mk('A', 'Feed A', 3), mk('A', 'Feed A', 4)], nextCursor: '5' },
-        // After A4 is Done server-side, the next unseen row (A5) sits at offset 4.
-        '4': { items: [mk('A', 'Feed A', 5)], nextCursor: null },
-        // The buggy offset (5) would skip A5 and land on A6.
-        '5': { items: [mk('A', 'Feed A', 6)], nextCursor: null },
-      };
-      const fetchFeedPage = vi.fn((feedId: string, cursor: string | null) =>
-        Promise.resolve(
-          feedId === 'A' ? aMore[cursor ?? ''] ?? { items: [], nextCursor: null } : { items: [], nextCursor: null },
-        ),
-      );
-      renderWithProviders(
-        <ItemList
-          viewKey={`psm-doneextra-${viewKeySeq++}`}
-          fetchPage={fetchPage}
-          emptyLabel="x"
-          groupByFeed
-          fetchFeedPage={fetchFeedPage}
-          perFeedLimit={K}
-          perFeedFetch={K}
-        />,
-        { source },
-      );
-      await screen.findAllByTestId('item-row');
-
-      // More #1 loads extras A3, A4.
-      await user.click(screen.getByTestId('group-more'));
-      await screen.findByText('Feed A 4');
-      expect(fetchFeedPage).toHaveBeenCalledWith('A', '3');
-
-      // Another device marks A4 (an extra) Done; the resync surfaces it locally.
-      act(() => {
-        source.stateStore.set('A-4', 'done', true);
-      });
-
-      // More #2 must page from offset 4 (A4 no longer counts), fetching A5 —
-      // not offset 5, which would skip A5 and land on A6.
-      await user.click(screen.getByTestId('group-more'));
-      await screen.findByText('Feed A 5');
-      expect(fetchFeedPage).toHaveBeenCalledWith('A', '4');
-      expect(fetchFeedPage).not.toHaveBeenCalledWith('A', '5');
     });
 
     it('shows no per-section More in the flat (non-grouped) view', async () => {
@@ -6149,14 +6007,12 @@ describe('ItemList', () => {
       const { source, mk } = await makeRows();
       const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2)];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() => Promise.resolve({ items: [], nextCursor: null }));
       renderWithProviders(
         <ItemList
           viewKey={`psm-noglobal-${viewKeySeq++}`}
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={3}
         />,
         { source },
@@ -6175,14 +6031,12 @@ describe('ItemList', () => {
       const fetchPage = vi.fn((cursor: string | null) =>
         Promise.resolve(cursor ? { items: [], nextCursor: null } : { items: base, nextCursor: '1' }),
       );
-      const fetchFeedPage = vi.fn(() => Promise.resolve({ items: [], nextCursor: null }));
       renderWithProviders(
         <ItemList
           viewKey={`psm-overflow-${viewKeySeq++}`}
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={3}
         />,
         { source },
@@ -6191,121 +6045,20 @@ describe('ItemList', () => {
       expect(screen.getByTestId('more-btn')).toBeInTheDocument();
     });
 
-    it('keeps a section’s More retryable after a failed first fetch', async () => {
-      const user = userEvent.setup();
-      const { source, mk } = await makeRows();
-      const K = 3;
-      // The feed came back at the full fetch depth (perFeedFetch = 3), so the
-      // section offers a More that pages the server.
-      const base = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
-      ];
-      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      let attempts = 0;
-      const fetchFeedPage = vi.fn((_feedId: string, _cursor: string | null) => {
-        attempts += 1;
-        return attempts === 1
-          ? Promise.reject(new Error('boom')) // first More fails
-          : Promise.resolve({ items: [mk('A', 'Feed A', 3)], nextCursor: null });
-      });
-      renderWithProviders(
-        <ItemList
-          viewKey={`psm-retry-${viewKeySeq++}`}
-          fetchPage={fetchPage}
-          emptyLabel="x"
-          groupByFeed
-          fetchFeedPage={fetchFeedPage}
-          perFeedLimit={K}
-          perFeedFetch={K}
-        />,
-        { source },
-      );
-      await screen.findAllByTestId('item-row');
-
-      // First tap fails — nothing appended, button stays present and enabled.
-      await user.click(screen.getByTestId('group-more'));
-      await waitFor(() => expect(fetchFeedPage).toHaveBeenCalledTimes(1));
-      expect(screen.queryByText('Feed A 3')).toBeNull();
-      expect(screen.getByTestId('group-more')).toBeEnabled();
-
-      // Retry pages from the SAME cursor and succeeds (no permanently-inert button).
-      await user.click(screen.getByTestId('group-more'));
-      await screen.findByText('Feed A 3');
-      expect(fetchFeedPage).toHaveBeenNthCalledWith(1, 'A', '3');
-      expect(fetchFeedPage).toHaveBeenNthCalledWith(2, 'A', '3');
-    });
-
-    it('ignores a rapid double tap on a section More (no duplicate page fetch)', async () => {
-      // Two taps fired in the same tick — before React commits the first tap's
-      // `loading: true` (and the resulting `disabled`) — must not issue two
-      // `fetchFeedPage` requests. The synchronous in-flight ref rejects the
-      // second; `fireEvent` (no act flush between clicks) reproduces the race
-      // that a `disabled` attribute alone can't catch.
-      const { source, mk } = await makeRows();
-      const K = 3;
-      const base = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
-      ];
-      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      // Hold the section fetch open so both taps land while the first is in
-      // flight.
-      let releaseFeedPage: ((items: FeedItem[]) => void) | null = null;
-      const fetchFeedPage = vi.fn(
-        () =>
-          new Promise<{ items: FeedItem[]; nextCursor: string | null }>((resolve) => {
-            releaseFeedPage = (items) => resolve({ items, nextCursor: null });
-          }),
-      );
-      renderWithProviders(
-        <ItemList
-          viewKey={`psm-double-tap-${viewKeySeq++}`}
-          fetchPage={fetchPage}
-          emptyLabel="x"
-          groupByFeed
-          fetchFeedPage={fetchFeedPage}
-          perFeedLimit={K}
-          perFeedFetch={K}
-        />,
-        { source },
-      );
-      await screen.findAllByTestId('item-row');
-
-      const moreBtn = screen.getByTestId('group-more');
-      await act(async () => {
-        fireEvent.click(moreBtn);
-        fireEvent.click(moreBtn);
-        await Promise.resolve();
-      });
-      expect(fetchFeedPage).toHaveBeenCalledTimes(1);
-
-      // The single in-flight fetch settles and appends exactly one page.
-      await act(async () => {
-        releaseFeedPage!([mk('A', 'Feed A', 3), mk('A', 'Feed A', 4), mk('A', 'Feed A', 5)]);
-        await Promise.resolve();
-      });
-      await screen.findByText('Feed A 5');
-      expect(fetchFeedPage).toHaveBeenCalledTimes(1);
-    });
-
     it('pinning an extra keeps the section expanded; the next re-materializing refetch consolidates it', async () => {
-      // Regression for the bug where pinning an item that was loaded via
+      // Regression for the bug where pinning an item that was revealed via
       // "More" silently collapsed the section back to its first `perFeedLimit`
-      // rows. The pin moved the extra into the base window, which shifted the
-      // first-N base ids and (under the old design) tripped a membership-
-      // change detector, dropping the rest of the extras.
+      // rows. The pin moved the revealed row into the base window, which
+      // shifted the first-N base ids and (under the old design) tripped a
+      // membership-change detector, dropping the rest of the expansion.
       const user = userEvent.setup();
       const { source, mk } = await makeRows();
       const K = 3;
       let basePage: FeedItem[] = [
         mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
+        mk('A', 'Feed A', 3), mk('A', 'Feed A', 4), mk('A', 'Feed A', 5),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() =>
-        Promise.resolve({
-          items: [mk('A', 'Feed A', 3), mk('A', 'Feed A', 4), mk('A', 'Feed A', 5)],
-          nextCursor: null,
-        }),
-      );
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -6316,23 +6069,21 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
-          perFeedFetch={K}
         />,
         { source, queryClient },
       );
       await screen.findAllByTestId('item-row');
 
-      // Expand the section: window (3) + extras (3) = 6 rows displayed.
+      // Expand the section: window (3) + the revealed batch (3) = 6 rows.
       await user.click(screen.getByTestId('group-more'));
       await screen.findByText('Feed A 5');
       expect(screen.getAllByTestId('item-row')).toHaveLength(6);
 
-      // Pin A-4 (an extra). A pin does NOT refetch, so the expanded section
-      // must stay exactly as displayed — 6 rows, A-4 badged in place (SPEC.md
-      // "pinning a body row keeps its position"); the in-session tracking
-      // covers extras revealed by More, not just base-window rows.
+      // Pin A-4 (a revealed row). A pin does NOT refetch, so the expanded
+      // section must stay exactly as displayed — 6 rows, A-4 badged in place
+      // (SPEC.md "pinning a body row keeps its position"); the in-session
+      // tracking covers rows revealed by More, not just base-window rows.
       await act(async () => {
         source.stateStore.set('A-4', 'pinned', true);
       });
@@ -6378,15 +6129,6 @@ describe('ItemList', () => {
         mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
-      // After the repaint, the section More pages below the fresh window —
-      // offset 3 (the three fresh body rows on display).
-      const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) =>
-        Promise.resolve(
-          cursor === '3'
-            ? { items: [mk('A', 'Feed A', 0)], nextCursor: null }
-            : { items: [], nextCursor: null },
-        ),
-      );
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -6397,9 +6139,7 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
-          perFeedFetch={K}
         />,
         { source, queryClient },
       );
@@ -6411,10 +6151,11 @@ describe('ItemList', () => {
       ).toEqual(['A-0', 'A-1', 'A-2', 'B-0', 'B-1']);
 
       // Overnight drift: brand new items land at the top of A. The refetch
-      // re-materializes the set — the fresh window paints; older rows stay
-      // behind the section More.
+      // re-materializes the set — the fresh window paints; the older fetched
+      // rows stay behind the section More.
       basePage = [
         mk('A', 'Feed A', 9), mk('A', 'Feed A', 8), mk('A', 'Feed A', 7),
+        mk('A', 'Feed A', 0),
         mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
       ];
       await act(async () => {
@@ -6432,11 +6173,9 @@ describe('ItemList', () => {
       );
       expect(moreBtns()).toHaveLength(1);
 
-      // Tap More: pages below the fresh window (offset 3 = the displayed
-      // fresh body rows) and appends the older row.
+      // Tap More: reveals the older fetched row below the fresh window.
       await user.click(moreBtns()[0]);
       await screen.findByText('Feed A 0');
-      expect(fetchFeedPage).toHaveBeenCalledWith('A', '3');
     });
 
     it('a re-materialized pinned section still shows all pins PLUS the full body window', async () => {
@@ -6451,7 +6190,7 @@ describe('ItemList', () => {
       const { source, mk } = await makeRows();
       const K = 3;
       // A-9 is pinned before load — the server returns it first (pinned block),
-      // then the body (newest-first) with one overfetched probe row (A-13).
+      // then the body (newest-first) with one fetched row past the window.
       source.stateStore.hydrate([
         ['A-9', { ...DEFAULT_ITEM_STATE, pinned: true, pinnedAt: Date.now() }],
       ]);
@@ -6460,9 +6199,6 @@ describe('ItemList', () => {
         mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() =>
-        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
-      );
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -6473,7 +6209,6 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
         />,
         { source, queryClient },
@@ -6483,7 +6218,7 @@ describe('ItemList', () => {
         [...document.querySelectorAll('[data-item-id]')].map((el) =>
           el.getAttribute('data-item-id'),
         );
-      // Opening view: the pin plus the full K-row body window (probe hidden).
+      // Opening view: the pin plus the full K-row body window (A-3 gated).
       expect(order()).toEqual(['A-9', 'A-0', 'A-1', 'A-2']);
 
       // Overnight drift; a focus/TTL refetch re-materializes the set. The pin
@@ -6505,7 +6240,7 @@ describe('ItemList', () => {
       // persisted-cache-restored) grouped view whose displayed rows were all
       // dismissed over the day, refetched past the TTL against a fully drifted
       // top. The stale sticky window blocked every fresh row, and with QUIET
-      // feeds (at/under the window → no probe row → no section More → no
+      // feeds (at/under the window → nothing unshown → no section More → no
       // phantom header) the entire view collapsed to "You're all caught up."
       // while unread articles sat in items[]. Flat mode has no sticky window,
       // which is why it kept working. A re-materializing refetch must repaint
@@ -6517,7 +6252,6 @@ describe('ItemList', () => {
         mk('B', 'Feed B', 0), mk('B', 'Feed B', 1), mk('B', 'Feed B', 2),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() => Promise.resolve({ items: [], nextCursor: null }));
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -6528,7 +6262,6 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="You’re all caught up."
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
         />,
         { source, queryClient },
@@ -6564,118 +6297,19 @@ describe('ItemList', () => {
       expect(screen.queryByText('You’re all caught up.')).not.toBeInTheDocument();
     });
 
-    it('a viewKey reset during an in-flight More discards the response on both feedExtras AND the sticky display set', async () => {
-      // Regression: the sticky-window extension used to run unconditionally
-      // after `await fetchFeedPage` returned, so a viewKey reset that wiped
-      // `feedExtras` mid-flight (e.g. flipping sort, switching home →
-      // folder) had its setFeedExtras updater reject the response while
-      // setDisplayedByFeed still added the response's ids to the *new*
-      // view's sticky set. Any of those ids that overlapped the new base
-      // window would render without a fresh More tap. Gating both updates
-      // on the same reqId-match decision via flushSync closes that path.
-      const user = userEvent.setup();
-      const { source, mk } = await makeRows();
-      const K = 3;
-      // The first view's base read.
-      const baseV1 = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
-      ];
-      // The second view's base read happens to include one of the OLD
-      // More page's ids (A-5). If the sticky update leaks, A-5 would
-      // surface without a tap.
-      const baseV2 = [
-        mk('A', 'Feed A', 5), mk('A', 'Feed A', 6), mk('A', 'Feed A', 7),
-      ];
-      let activeBase: FeedItem[] = baseV1;
-      const fetchPage = vi.fn(() =>
-        Promise.resolve({ items: activeBase, nextCursor: null }),
-      );
-      // Hold the More response open.
-      let release: (() => void) | null = null;
-      const fetchFeedPage = vi.fn(
-        () =>
-          new Promise<{ items: FeedItem[]; nextCursor: string | null }>((resolve) => {
-            release = () =>
-              resolve({ items: [mk('A', 'Feed A', 4), mk('A', 'Feed A', 5)], nextCursor: null });
-          }),
-      );
-      const queryClient = new QueryClient({
-        defaultOptions: { queries: { retry: false, gcTime: 0 } },
-      });
-
-      function Harness() {
-        const [v, setV] = useState(0);
-        return (
-          <>
-            <button data-testid="switch-view" onClick={() => setV(1)}>
-              switch
-            </button>
-            <ItemList
-              viewKey={`view-${v}`}
-              fetchPage={() => fetchPage()}
-              emptyLabel="x"
-              groupByFeed
-              fetchFeedPage={fetchFeedPage}
-              perFeedLimit={K}
-              perFeedFetch={K}
-            />
-          </>
-        );
-      }
-      const { container } = renderWithProviders(<Harness />, { source, queryClient });
-      await screen.findAllByTestId('item-row');
-
-      // Start a More for view 0.
-      await user.click(screen.getByTestId('group-more'));
-      await waitFor(() => expect(fetchFeedPage).toHaveBeenCalledTimes(1));
-
-      // Switch to view 1 BEFORE releasing the response: viewKey reset wipes
-      // displayedByFeed and feedExtras. Swap the base data while we're at it.
-      activeBase = baseV2;
-      await act(async () => {
-        screen.getByTestId('switch-view').click();
-      });
-      await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
-
-      // Release the stale response. setFeedExtras rejects (no entry for A
-      // because feedExtras was cleared). The sticky extension MUST also be
-      // skipped; otherwise A-5 would slip into view 1's sticky and the
-      // base loop would render it without a fresh tap.
-      await act(async () => {
-        release?.();
-        await Promise.resolve();
-      });
-
-      // View 1 shows its first `perFeedLimit` rows only. A-5 stays hidden
-      // until More is tapped explicitly.
-      const ids = [...container.querySelectorAll('[data-item-id]')].map((el) =>
-        el.getAttribute('data-item-id'),
-      );
-      expect(ids).toEqual(['A-5', 'A-6', 'A-7']);
-      // (A-5 IS in items[] for view 1 — but only because it's the new top
-      // item of the fresh window, not because the stale More leaked it
-      // into sticky. The sticky set was rebuilt from baseV2's first 3 ids.)
-    });
-
-    it('a heavy refetch repaints an expanded section to the fresh window (stale anchors and extras drop together)', async () => {
-      // An expanded section (base + More extras) hit by a heavy refetch is
-      // re-materialized whole: the fresh window paints and BOTH the stale
-      // anchored rows and the surviving extras drop — no mixed ordering of
-      // cached anchors alongside old extras under the new top.
+    it('a heavy refetch repaints an expanded section to the fresh window (stale anchors and reveals drop together)', async () => {
+      // An expanded section (window + revealed fetched rows) hit by a heavy
+      // refetch is re-materialized whole: the fresh window paints and BOTH the
+      // stale anchored rows and the stale reveals drop — no mixed ordering of
+      // cached anchors alongside old rows under the new top.
       const user = userEvent.setup();
       const { source, mk } = await makeRows();
       const K = 3;
       let basePage: FeedItem[] = [
         mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
+        mk('A', 'Feed A', 3), mk('A', 'Feed A', 4),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
-      const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) =>
-        Promise.resolve(
-          cursor === '3'
-            ? { items: [mk('A', 'Feed A', 3), mk('A', 'Feed A', 4)], nextCursor: null }
-            : { items: [], nextCursor: null },
-        ),
-      );
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -6686,15 +6320,13 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
-          perFeedFetch={K}
         />,
         { source, queryClient },
       );
       await screen.findAllByTestId('item-row');
 
-      // Expand: extras hold A-3, A-4.
+      // Expand: More reveals the fetched A-3, A-4.
       await user.click(screen.getByTestId('group-more'));
       await screen.findByText('Feed A 4');
       expect(
@@ -6702,7 +6334,7 @@ describe('ItemList', () => {
       ).toEqual(['A-0', 'A-1', 'A-2', 'A-3', 'A-4']);
 
       // Heavy refetch swaps items[] to a wholly fresh top window → the
-      // section repaints to it; the old anchors and the extras drop.
+      // section repaints to it; the old anchors and the reveals drop.
       basePage = [
         mk('A', 'Feed A', 90), mk('A', 'Feed A', 91), mk('A', 'Feed A', 92),
       ];
@@ -6716,82 +6348,13 @@ describe('ItemList', () => {
       });
     });
 
-    it('pages cleanly below the fresh window after a heavy re-materialization (old extras never inflate the cursor)', async () => {
-      // Before the re-materialization reset, a heavy refetch left the old
-      // sticky rows + extras alongside the fresh top, and the More cursor
-      // recompute could over-count from that union (offset 7 from
-      // {A-0..A-2, A-3, A-4, A-90..}), skipping the unseen tail. The reset
-      // structurally prevents the over-count: the repaint drops the stale
-      // sticky/extras, and More pages from the fresh window's own offset.
-      const user = userEvent.setup();
-      const { source, mk } = await makeRows();
-      const K = 3;
-      let basePage: FeedItem[] = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
-      ];
-      const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
-      const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) => {
-        if (cursor === '3') {
-          // Serves BOTH the pre-refetch expansion (old window offset 3) and
-          // the post-repaint More (fresh window offset 3) — keyed purely on
-          // the offset, as the server would.
-          return fetchFeedPage.mock.calls.length <= 1
-            ? Promise.resolve({ items: [mk('A', 'Feed A', 3), mk('A', 'Feed A', 4)], nextCursor: '5' })
-            : Promise.resolve({ items: [mk('A', 'Feed A', 93)], nextCursor: null });
-        }
-        return Promise.resolve({ items: [], nextCursor: null });
-      });
-      const queryClient = new QueryClient({
-        defaultOptions: { queries: { retry: false, gcTime: 0 } },
-      });
-      const viewKey = `psm-cap-${viewKeySeq++}`;
-      const { container } = renderWithProviders(
-        <ItemList
-          viewKey={viewKey}
-          fetchPage={fetchPage}
-          emptyLabel="x"
-          groupByFeed
-          fetchFeedPage={fetchFeedPage}
-          perFeedLimit={K}
-          perFeedFetch={K}
-        />,
-        { source, queryClient },
-      );
-      await screen.findAllByTestId('item-row');
-
-      // Expand: A-3, A-4 land via extras; sticky += {A-3, A-4}.
-      await user.click(screen.getByTestId('group-more'));
-      await screen.findByText('Feed A 4');
-
-      // Heavy refetch shifts items[] to a fresh top window → repaint: the
-      // stale expansion is dropped, the fresh window paints.
-      basePage = [
-        mk('A', 'Feed A', 90), mk('A', 'Feed A', 91), mk('A', 'Feed A', 92),
-      ];
-      await act(async () => {
-        await queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
-      });
-      await waitFor(() => {
-        const ids = [...container.querySelectorAll('[data-item-id]')].map(
-          (el) => el.getAttribute('data-item-id'),
-        );
-        expect(ids).toEqual(['A-90', 'A-91', 'A-92']);
-      });
-
-      // Tap More: offset '3' — the fresh window's own edge, NOT an
-      // over-counted union of old sticky + extras (which would be 7).
-      await user.click(screen.getByTestId('group-more'));
-      await screen.findByText('Feed A 93');
-      expect(fetchFeedPage).toHaveBeenLastCalledWith('A', '3');
-    });
-
     it('extends sticky window when a split feed\'s second page arrives (row-cap-overflow boundary)', async () => {
       // Regression: when the grouped base read overflows GROUPED_WINDOW_ROW_CAP,
       // a feed at the page boundary can have its opening window split across
       // pages — page 1 returns the first N rows of that feed, page 2 returns
       // the rest. Without extension, sticky would lock to the partial-page N
-      // rows and the rest would never paint (and the section More cursor
-      // would be off). The init effect now appends the page-2 rows when the
+      // rows and the rest would never paint (nor be revealable by the section
+      // More). The init effect now appends the page-2 rows when the
       // existing sticky ids remain the contiguous prefix of items[].
       const { source, mk } = await makeRows();
       const K = 6;
@@ -6812,7 +6375,6 @@ describe('ItemList', () => {
               },
         ),
       );
-      const fetchFeedPage = vi.fn(() => Promise.resolve({ items: [], nextCursor: null }));
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -6823,7 +6385,6 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
         />,
         { source, queryClient },
@@ -6843,8 +6404,8 @@ describe('ItemList', () => {
       await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
 
       // Sticky window extended: A-2..A-5 now paint alongside A-0, A-1. The
-      // 6th row (A-6) sits past perFeedLimit — it's the probe and stays
-      // hidden until a section More.
+      // 6th row (A-6) sits past perFeedLimit — a fetched row that stays
+      // hidden until a section More reveals it.
       await waitFor(() => {
         const idsNow = [...container.querySelectorAll('[data-item-id]')].map((el) =>
           el.getAttribute('data-item-id'),
@@ -6856,26 +6417,16 @@ describe('ItemList', () => {
     it('an exhausted section repaints with a newly arrived top item on the next re-materializing refetch', async () => {
       // Once `ex.done === true` the section has no More. When a brand new top
       // item arrives, the re-materializing refetch repaints the section with
-      // it directly — no tap needed — and clears the exhausted state so the
-      // section's More (there are again rows past the fresh window) returns.
+      // it directly — no tap needed — and the fresh read's own depth brings
+      // the section's More (there are again rows past the fresh window) back.
       const user = userEvent.setup();
       const { source, mk } = await makeRows();
       const K = 3;
       let basePage: FeedItem[] = [
         mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
+        mk('A', 'Feed A', 3),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
-      const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) => {
-        if (cursor === '3' && fetchFeedPage.mock.calls.length <= 1) {
-          // First tap exhausts the section (old window offset 3).
-          return Promise.resolve({ items: [mk('A', 'Feed A', 3), mk('A', 'Feed A', 4)], nextCursor: null });
-        }
-        if (cursor === '3') {
-          // Post-repaint tap: pages below the fresh window (A-9, A-0, A-1).
-          return Promise.resolve({ items: [mk('A', 'Feed A', 2)], nextCursor: null });
-        }
-        return Promise.resolve({ items: [], nextCursor: null });
-      });
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -6886,22 +6437,23 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
-          perFeedFetch={K}
         />,
         { source, queryClient },
       );
       await screen.findAllByTestId('item-row');
 
-      // Tap More to exhaust the section. `ex.done` is now true; no More shows.
+      // Tap More to exhaust the section (the last fetched row reveals); no
+      // More shows.
       await user.click(screen.getByTestId('group-more'));
-      await screen.findByText('Feed A 4');
+      await screen.findByText('Feed A 3');
+      expect(screen.queryAllByTestId('group-more')).toHaveLength(0);
 
       // A new top item arrives via a background refresh → the section
       // repaints as the fresh window, new item on top, expansion dropped.
       basePage = [
         mk('A', 'Feed A', 9), mk('A', 'Feed A', 0), mk('A', 'Feed A', 1),
+        mk('A', 'Feed A', 2),
       ];
       await act(async () => {
         await queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
@@ -6913,82 +6465,14 @@ describe('ItemList', () => {
         expect(ids).toEqual(['A-9', 'A-0', 'A-1']);
       });
 
-      // The exhausted flag was reset with the repaint: More is back (the
-      // fresh read came back at the full fetch depth), and it pages below
-      // the fresh window.
+      // The exhausted state was reset with the repaint: More is back (the
+      // fresh read carries a row past the window) and reveals it.
       const aMore = screen
         .getAllByTestId('group-more')
         .find((b) => b.getAttribute('data-feed-more') === 'A');
       expect(aMore).toBeDefined();
       await user.click(aMore!);
       await screen.findByText('Feed A 2');
-      expect(fetchFeedPage).toHaveBeenLastCalledWith('A', '3');
-    });
-
-    it('rebases an existing More cursor when a displayed row drops out of the server sequence (no permanent skip)', async () => {
-      // Regression: handleFeedMore used to reuse the saved `nextCursor` on
-      // every tap. When a row the user had already seen leaves the server's
-      // filtered sequence (a local dismiss — the mutation doesn't refetch),
-      // the cursor still pointed past where it should have, so the next More
-      // fetched one row TOO FAR and the adjacent unseen row was silently
-      // skipped. Recomputing cursor as "count of LIVE sticky ids still
-      // present in items[] ∪ extras" on every tap auto-shrinks by the count
-      // of dropped rows.
-      const user = userEvent.setup();
-      const { source, mk } = await makeRows();
-      const K = 3;
-      const basePage: FeedItem[] = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
-      ];
-      const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
-      // First More tap returns [A-3, A-4]; second tap, after a server-side
-      // drop of A-0, should fetch from cursor='4' (not '5') and return A-5.
-      const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) => {
-        if (cursor === '3') {
-          return Promise.resolve({ items: [mk('A', 'Feed A', 3), mk('A', 'Feed A', 4)], nextCursor: '5' });
-        }
-        if (cursor === '4') {
-          return Promise.resolve({ items: [mk('A', 'Feed A', 5)], nextCursor: null });
-        }
-        return Promise.resolve({ items: [], nextCursor: null });
-      });
-      const queryClient = new QueryClient({
-        defaultOptions: { queries: { retry: false, gcTime: 0 } },
-      });
-      const viewKey = `psm-rebase-${viewKeySeq++}`;
-      renderWithProviders(
-        <ItemList
-          viewKey={viewKey}
-          fetchPage={fetchPage}
-          emptyLabel="x"
-          groupByFeed
-          fetchFeedPage={fetchFeedPage}
-          perFeedLimit={K}
-          perFeedFetch={K}
-        />,
-        { source, queryClient },
-      );
-      await screen.findAllByTestId('item-row');
-
-      // Expand: first tap loads A-3, A-4. Saved nextCursor = '5'.
-      await user.click(screen.getByTestId('group-more'));
-      await screen.findByText('Feed A 4');
-      expect(fetchFeedPage).toHaveBeenLastCalledWith('A', '3');
-
-      // A-0 is dismissed locally (swipe / mark-done-on-open). A mutation
-      // doesn't refetch, so items[] still carries A-0 — but the server's
-      // sequence has dropped it.
-      await act(async () => {
-        source.stateStore.hideMany(['A-0'], Date.now());
-      });
-
-      // Tap More again. Saved nextCursor was '5', but the server view has
-      // shrunk by one, so the right offset is '4'. The recomputed cursor
-      // yields '4' (live sticky overlap = {A-1, A-2, A-3, A-4} = 4 ids; the
-      // dismissed A-0 no longer counts), and the response brings A-5 in.
-      await user.click(screen.getByTestId('group-more'));
-      await screen.findByText('Feed A 5');
-      expect(fetchFeedPage).toHaveBeenLastCalledWith('A', '4');
     });
 
     it('a row the server filtered out drops with the repaint of a re-materializing refetch', async () => {
@@ -7002,7 +6486,6 @@ describe('ItemList', () => {
         mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() => Promise.resolve({ items: [], nextCursor: null }));
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -7013,7 +6496,6 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
         />,
         { source, queryClient },
@@ -7038,14 +6520,12 @@ describe('ItemList', () => {
     it('renders every pinned row plus the body window — pins are exempt from the section cap', async () => {
       // SPEC *Per-section More + per-feed window*: after a refresh a section
       // shows ALL of its pinned rows plus the first perFeedLimit body rows —
-      // pins never crowd articles out and are never clipped by the window.
-      // (The server mirrors this since 0052: p_per_feed_limit caps only body
-      // rows, and the overfetched has-more probe is always a body row, so a
-      // returned pin is always genuine.)
+      // pins never crowd articles out and are never clipped by the display
+      // window.
       const { source, mk } = await makeRows();
       const K = 3;
       // Four pinned rows — more than the K-row body window — plus a full body
-      // window with its probe (A-7, the (K+1)th body row, must not paint).
+      // window and a fetched tail (A-7, the (K+1)th body row, must not paint).
       source.stateStore.set('A-0', 'pinned', true);
       source.stateStore.set('A-1', 'pinned', true);
       source.stateStore.set('A-2', 'pinned', true);
@@ -7055,7 +6535,6 @@ describe('ItemList', () => {
         mk('A', 'Feed A', 4), mk('A', 'Feed A', 5), mk('A', 'Feed A', 6), mk('A', 'Feed A', 7),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() => Promise.resolve({ items: [], nextCursor: null }));
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -7066,7 +6545,6 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
         />,
         { source, queryClient },
@@ -7092,7 +6570,6 @@ describe('ItemList', () => {
         mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() => Promise.resolve({ items: [], nextCursor: null }));
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -7103,7 +6580,6 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
         />,
         { source, queryClient },
@@ -7147,7 +6623,6 @@ describe('ItemList', () => {
           nextCursor: null,
         }),
       );
-      const fetchFeedPage = vi.fn(() => Promise.resolve({ items: [], nextCursor: null }));
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -7158,7 +6633,6 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
         />,
         { source, queryClient },
@@ -7217,12 +6691,12 @@ describe('ItemList', () => {
       // Sister case to the phantom-More test: when Sweep leaves a pinned row
       // behind, the section stays in `visibleItems` so it's NOT in
       // `emptyMoreSections`. The button must NOT flicker to "Loading…" during
-      // a background refetch, and a tap that lands mid-refetch must not fetch
-      // against the stale pre-refetch `items[]`. When the refetch settles it
+      // a background refetch, and a tap that lands mid-refetch must not reveal
+      // from the stale pre-refetch `items[]`. When the refetch settles it
       // RE-MATERIALIZES the section (fresh window repaints, pin consolidated),
-      // so the deferred tap — whose cursor belonged to the discarded window —
-      // is dropped with it; the repainted section keeps its own More for a
-      // fresh tap that pages below the fresh window.
+      // so the deferred tap — which targeted the discarded window — is dropped
+      // with it; the repainted section keeps its own More for a fresh tap that
+      // reveals below the fresh window.
       const user = userEvent.setup();
       const { source, mk } = await makeRows();
       const K = 3;
@@ -7234,15 +6708,6 @@ describe('ItemList', () => {
             releaseFetchPage = (items) => resolve({ items, nextCursor: null });
           }),
       );
-      // Keyed on cursor so we can assert the post-repaint tap fetched the
-      // fresh-window offset ('4' — the pin + the three fresh body rows).
-      const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) =>
-        Promise.resolve(
-          cursor === '4'
-            ? { items: [mk('A', 'Feed A', 6)], nextCursor: null }
-            : { items: [], nextCursor: null },
-        ),
-      );
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -7253,17 +6718,17 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
-          perFeedFetch={K}
         />,
         { source, queryClient },
       );
       await act(async () => {
-        // A-0 pinned (window-exempt) + a full K-row body window (A-1..A-3) at
-        // the full fetch depth, so the section carries a live "More".
+        // A-0 pinned (window-exempt) + a full K-row body window (A-1..A-3)
+        // with one fetched row past it (A-4), so the section carries a live
+        // "More".
         releaseFetchPage!([
           mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+          mk('A', 'Feed A', 4),
         ]);
         await Promise.resolve();
       });
@@ -7291,16 +6756,19 @@ describe('ItemList', () => {
       expect(aMore()).toHaveTextContent('More');
       expect(aMore()).not.toHaveTextContent('Loading');
 
-      // Tapping during the refetch is deferred, not run against stale items[].
+      // Tapping during the refetch is deferred, not run against stale items[]:
+      // the gated A-4 must not paint yet.
       await user.click(aMore());
-      expect(fetchFeedPage).not.toHaveBeenCalled();
+      expect(container.querySelector('[data-item-id="A-4"]')).toBeNull();
 
-      // Release the refetch with the fresh top page (pin + 3 body — the full
-      // fetch depth keeps More alive). The settle re-materializes: fresh
-      // window repaints, the deferred tap is dropped — no fetch fired.
+      // Release the refetch with the fresh top page (pin + 3 body + one
+      // fetched row past the window, which keeps More alive). The settle
+      // re-materializes: fresh window repaints, the deferred tap is dropped —
+      // the gated tail stays gated.
       await act(async () => {
         releaseFetchPage!([
           mk('A', 'Feed A', 0), mk('A', 'Feed A', 3), mk('A', 'Feed A', 4), mk('A', 'Feed A', 5),
+          mk('A', 'Feed A', 6),
         ]);
         await Promise.resolve();
       });
@@ -7310,21 +6778,18 @@ describe('ItemList', () => {
         );
         expect(ids).toEqual(['A-0', 'A-3', 'A-4', 'A-5']);
       });
-      expect(fetchFeedPage).not.toHaveBeenCalled();
 
-      // A fresh tap pages below the repainted window — offset '4' (pin + 3
-      // fresh body rows), not a stale-window offset.
+      // A fresh tap reveals below the repainted window — the fresh page's own
+      // gated tail (A-6), not anything from the stale window.
       await user.click(aMore());
       expect(await screen.findByText('Feed A 6')).toBeInTheDocument();
-      expect(fetchFeedPage).toHaveBeenCalledWith('A', '4');
     });
 
     it('drops a deferred More instead of draining it when the triggering refetch FAILS (items[] still stale)', async () => {
       // A tap deferred during a refetch must not drain when that refetch fails:
-      // `items[]` is still the stale pre-refetch window, so running the cursor
-      // calc now would compute the old offset and skip the fresh page. Drop the
-      // queued tap (button reverts to "More") rather than fetch against stale
-      // data; the reader retries once a refresh succeeds.
+      // `items[]` is still the stale pre-refetch window, so revealing now
+      // would surface stale rows. Drop the queued tap (button reverts to
+      // "More"); the reader retries once a refresh succeeds.
       const user = userEvent.setup();
       const { source, mk } = await makeRows();
       const K = 3;
@@ -7348,7 +6813,6 @@ describe('ItemList', () => {
           rejectRefetch = () => reject(new Error('refresh failed'));
         });
       });
-      const fetchFeedPage = vi.fn(() => Promise.resolve({ items: [], nextCursor: null }));
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -7359,7 +6823,6 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
         />,
         { source, queryClient },
@@ -7377,22 +6840,23 @@ describe('ItemList', () => {
         screen
           .getAllByTestId('group-more')
           .find((b) => b.getAttribute('data-feed-more') === 'A')!;
-      // Tap during the in-flight refetch → deferred (no fetch yet).
+      // Tap during the in-flight refetch → deferred (nothing revealed yet:
+      // the gated A-3 stays hidden).
       await user.click(aMore());
-      expect(fetchFeedPage).not.toHaveBeenCalled();
+      expect(document.querySelector('[data-item-id="A-3"]')).toBeNull();
 
       // The refetch FAILS. The drain effect runs (isFetching went false) but
-      // must NOT fetch, because `items[]` is still the stale pre-refetch window
-      // — draining now would compute a stale offset and skip the fresh page.
-      // The "Couldn't refresh" strip (role=alert) marks the failure settling.
+      // must NOT reveal, because `items[]` is still the stale pre-refetch
+      // window. The "Couldn't refresh" strip (role=alert) marks the failure
+      // settling.
       await act(async () => {
         rejectRefetch!();
         await Promise.resolve();
       });
       await screen.findByText(/Couldn.t refresh/i);
-      // Old behavior (drain on any isFetching=false) would have called
-      // fetchFeedPage('A', <stale offset>) here; the fix drops the queued tap.
-      expect(fetchFeedPage).not.toHaveBeenCalled();
+      // Old behavior (drain on any isFetching=false) would have revealed A-3
+      // against the stale window here; the fix drops the queued tap.
+      expect(document.querySelector('[data-item-id="A-3"]')).toBeNull();
     });
 
     it('drops a deferred section More when the global pager fetches mid-refetch (fetchNextPage settles with stale page 1, no error)', async () => {
@@ -7415,8 +6879,9 @@ describe('ItemList', () => {
         }
         if (!call1Done) {
           call1Done = true;
-          // First page: window (3) + probe (A-3), and nextCursor so hasMore is
-          // true → the global "More" renders alongside feed A's section "More".
+          // First page: window (3) + one gated fetched row (A-3), and
+          // nextCursor so hasMore is true → the global "More" renders
+          // alongside feed A's section "More".
           return Promise.resolve({
             items: [
               mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
@@ -7435,7 +6900,6 @@ describe('ItemList', () => {
           });
         });
       });
-      const fetchFeedPage = vi.fn(() => Promise.resolve({ items: [], nextCursor: null }));
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -7446,7 +6910,6 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
         />,
         { source, queryClient },
@@ -7463,9 +6926,10 @@ describe('ItemList', () => {
       });
       await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2));
 
-      // Queue a section tap during the refetch, then tap the global pager.
+      // Queue a section tap during the refetch (nothing revealed — the gated
+      // A-3 stays hidden), then tap the global pager.
       await user.click(screen.getByTestId('group-more'));
-      expect(fetchFeedPage).not.toHaveBeenCalled();
+      expect(document.querySelector('[data-item-id="A-3"]')).toBeNull();
       await user.click(screen.getByTestId('more-btn'));
       // The global pager ran fetchNextPage (page 2, cursor '1').
       await waitFor(() =>
@@ -7487,8 +6951,8 @@ describe('ItemList', () => {
         expect(a).toHaveTextContent('More');
       });
       // The deferred tap was dropped, so the drain never ran it against stale
-      // page 1. (Without the fix it would have called fetchFeedPage here.)
-      expect(fetchFeedPage).not.toHaveBeenCalled();
+      // page 1 — the gated A-3 is still hidden.
+      expect(document.querySelector('[data-item-id="A-3"]')).toBeNull();
     });
 
     it('a refetch CANCELED by the global pager does not re-materialize the sections (no reset against unapplied data)', async () => {
@@ -7516,6 +6980,7 @@ describe('ItemList', () => {
           return Promise.resolve({
             items: [
               mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
+              mk('A', 'Feed A', 4),
             ],
             nextCursor: '1',
           });
@@ -7525,18 +6990,12 @@ describe('ItemList', () => {
           releaseRefetch = () => resolve({
             items: [
               mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
+              mk('A', 'Feed A', 4),
             ],
             nextCursor: '1',
           });
         });
       });
-      const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) =>
-        Promise.resolve(
-          cursor === '3'
-            ? { items: [mk('A', 'Feed A', 4)], nextCursor: null }
-            : { items: [], nextCursor: null },
-        ),
-      );
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -7547,15 +7006,13 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
-          perFeedFetch={K}
         />,
         { source, queryClient },
       );
       await screen.findAllByTestId('item-row');
 
-      // Expand feed A's section (extras hold A-4).
+      // Expand feed A's section (More reveals the gated A-4).
       await user.click(screen.getByTestId('group-more'));
       await screen.findByText('Feed A 4');
 
@@ -7588,10 +7045,9 @@ describe('ItemList', () => {
     it('keeps a phantom More tappable through a re-materializing refetch; the repaint replaces the deferred tap', async () => {
       // With the phantom-section path, an empty post-Sweep section renders the
       // header + a "More" button immediately. While the base refetch is still
-      // in flight, `items[]` is the pre-Sweep window — so a cursor calc run now
-      // would land at `perFeedLimit` (all sticky ids in the stale window count
-      // as "seen") and `getFeedItems` would skip past the freshest non-Done
-      // page. Instead of disabling the button (which flickered it to
+      // in flight, `items[]` is the pre-Sweep window — so a reveal run now
+      // would surface stale rows the settling refetch is about to replace.
+      // Instead of disabling the button (which flickered it to
       // "Loading…"), it stays a tappable "More"; the tap is deferred, and the
       // refetch's settle re-materializes the section with the fresh page
       // itself — dropping the deferred tap along with the stale window.
@@ -7606,11 +7062,6 @@ describe('ItemList', () => {
             releaseFetchPage = (items) => resolve({ items, nextCursor: null });
           }),
       );
-      // Must never be called in this flow: the deferred tap is dropped by the
-      // repaint, and the fresh page arrives via the base refetch itself.
-      const fetchFeedPage = vi.fn(() =>
-        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
-      );
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -7621,7 +7072,6 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
         />,
         { source, queryClient },
@@ -7659,9 +7109,10 @@ describe('ItemList', () => {
       expect(aMore()).toHaveTextContent('More');
       expect(aMore()).not.toHaveTextContent('Loading');
 
-      // Tapping during the refetch defers rather than reading stale items[].
+      // Tapping during the refetch defers rather than revealing from the
+      // stale items[] — the gated A-3 must not paint yet.
       await user.click(aMore());
-      expect(fetchFeedPage).not.toHaveBeenCalled();
+      expect(document.querySelector('[data-item-id="A-3"]')).toBeNull();
 
       // Release the refetch with the fresh top non-Done page. The settle
       // RE-MATERIALIZES the section: the fresh window repaints directly (no
@@ -7675,7 +7126,9 @@ describe('ItemList', () => {
       });
       expect(await screen.findByText('Feed A 3')).toBeInTheDocument();
       expect(await screen.findByText('Feed A 5')).toBeInTheDocument();
-      expect(fetchFeedPage).not.toHaveBeenCalled();
+      // The deferred tap was dropped with the repaint: the fresh page's own
+      // gated tail (A-6) stays gated until a fresh tap.
+      expect(document.querySelector('[data-item-id="A-6"]')).toBeNull();
     });
 
     it('keeps the per-section More reachable after Sweeping an all-unpinned section (phantom header)', async () => {
@@ -7687,19 +7140,17 @@ describe('ItemList', () => {
       const user = userEvent.setup();
       const { source, mk } = await makeRows();
       const K = 3;
-      // Only feed A is present, no pins. Sweep marks A-0..A-2 Done; a mutation
-      // no longer refetches, so `items[]` keeps the pre-Sweep window. Every
-      // displayed id is now Done, so without the phantom header path the page
-      // would collapse to the empty state.
-      const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2)];
+      // Only feed A is present, no pins. The base read carries the whole feed
+      // (A-0..A-5); the section opens at A-0..A-2. Sweep marks those Done; a
+      // mutation no longer refetches, so `items[]` keeps the pre-Sweep window.
+      // Every displayed id is now Done, so without the phantom header path the
+      // page would collapse to the empty state — even though unread fetched
+      // rows (A-3..A-5) sit right behind the sticky gate.
+      const base = [
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
+        mk('A', 'Feed A', 3), mk('A', 'Feed A', 4), mk('A', 'Feed A', 5),
+      ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) =>
-        Promise.resolve(
-          cursor === '0'
-            ? { items: [mk('A', 'Feed A', 3), mk('A', 'Feed A', 4), mk('A', 'Feed A', 5)], nextCursor: null }
-            : { items: [], nextCursor: null },
-        ),
-      );
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -7710,9 +7161,7 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
-          perFeedFetch={K}
         />,
         { source, queryClient },
       );
@@ -7732,10 +7181,9 @@ describe('ItemList', () => {
       expect(aMore).toBeDefined();
       expect(screen.getByText('Feed A')).toBeInTheDocument();
 
-      // Tap More — fetches the freshest page and renders it.
+      // Tap More — reveals the next fetched batch and renders it.
       await user.click(aMore!);
       await screen.findByText('Feed A 5');
-      expect(fetchFeedPage).toHaveBeenCalledWith('A', '0');
       const ids = [...container.querySelectorAll('[data-item-id]')].map(
         (el) => el.getAttribute('data-item-id'),
       );
@@ -7756,9 +7204,6 @@ describe('ItemList', () => {
       });
       const base = [0, 1, 2, 3].map((n) => withIcon(mk('A', 'Feed A', n)));
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() =>
-        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
-      );
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -7769,7 +7214,6 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
         />,
         { source, queryClient },
@@ -7805,13 +7249,13 @@ describe('ItemList', () => {
       // More button. The badge must keep showing the feed's remaining total.
       const { source, mk } = await makeRows();
       const K = 3;
-      const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2)];
+      const base = [
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
+        mk('A', 'Feed A', 3),
+      ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() =>
-        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
-      );
-      // The server holds 5 unread beyond the swept rows (prefetched/deeper
-      // pages), whatever the local triage did.
+      // The server holds 5 unread beyond the swept rows (the fetched tail and
+      // deeper), whatever the local triage did.
       const getCounts = vi.fn(async (ids: string[]) =>
         Object.fromEntries(ids.map((id) => [id, id === 'A' ? 5 : 0])),
       );
@@ -7826,9 +7270,7 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
-          perFeedFetch={K}
         />,
         { source, queryClient },
       );
@@ -7861,10 +7303,11 @@ describe('ItemList', () => {
     it('after Sweep, the section does not auto-refill with `perFeedLimit − pinned` server-newer rows; tap More pulls the next page', async () => {
       // Captures the intended Sweep semantics: marking a section's unpinned
       // rows Done clears them from view. A mutation no longer refetches, so
-      // `items[]` keeps the pre-Sweep window (the pin at the top, then the next
-      // unread + probe); the sticky display window blocks the gated rows from
-      // auto-sliding up. Without this, every Sweep silently pulled
-      // `perFeedLimit − pinned` fresh rows just to fill the slots back up.
+      // `items[]` keeps the pre-Sweep window (the pin at the top, then the
+      // swept rows and the gated fetched tail); the sticky display window
+      // blocks the gated rows from auto-sliding up. Without this, every Sweep
+      // silently surfaced `perFeedLimit − pinned` fresh rows just to fill the
+      // slots back up.
       const user = userEvent.setup();
       const { source, mk } = await makeRows();
       const K = 3;
@@ -7873,22 +7316,14 @@ describe('ItemList', () => {
       // (the pinned row stays put; the rest get marked Done).
       source.stateStore.set('A-0', 'pinned', true);
       // A-0 (pinned, window-exempt) at top of A's section + A-1..A-3 (the
-      // K-row body window, at the full fetch depth). After Sweep of A-1..A-3,
-      // nothing may slide up to refill the swept slots.
+      // K-row body window) + the gated fetched tail A-4..A-6. After Sweep of
+      // A-1..A-3, nothing may slide up to refill the swept slots.
       const base = [
         mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+        mk('A', 'Feed A', 4), mk('A', 'Feed A', 5), mk('A', 'Feed A', 6),
         mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      // After Sweep + tap More, cursor='1' — only A-0 (pinned) is still a
-      // non-Done sticky overlap for A, so the More tap fetches from offset 1.
-      const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) =>
-        Promise.resolve(
-          cursor === '1'
-            ? { items: [mk('A', 'Feed A', 4), mk('A', 'Feed A', 5), mk('A', 'Feed A', 6)], nextCursor: null }
-            : { items: [], nextCursor: null },
-        ),
-      );
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
@@ -7899,9 +7334,7 @@ describe('ItemList', () => {
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
-          perFeedFetch={K}
         />,
         { source, queryClient },
       );
@@ -7925,74 +7358,35 @@ describe('ItemList', () => {
         ).toEqual(['A-0', 'B-0', 'B-1']),
       );
 
-      // A still offers a section "More" (items[] for A has rows past the
-      // sticky overlap, so feedsWithMore picks it up).
+      // A still offers a section "More" (items[] for A has unshown fetched
+      // rows, so feedsWithMore picks it up).
       const aMore = screen
         .getAllByTestId('group-more')
         .find((b) => b.getAttribute('data-feed-more') === 'A');
       expect(aMore).toBeDefined();
 
-      // Tap More — fetches from cursor='1' (A-0 is the only sticky overlap
-      // with the new base window) and brings the fresh page in below the pin.
+      // Tap More — reveals the gated fetched tail below the pin.
       await user.click(aMore!);
       await screen.findByText('Feed A 6');
-      expect(fetchFeedPage).toHaveBeenCalledWith('A', '1');
       const afterMoreIds = [...container.querySelectorAll('[data-item-id]')].map(
         (el) => el.getAttribute('data-item-id'),
       );
       expect(afterMoreIds).toEqual(['A-0', 'A-4', 'A-5', 'A-6', 'B-0', 'B-1']);
     });
 
-    it('keeps a pinned section’s More against a pre-0052 backend (whole-section cap, pins included)', async () => {
-      // Rollout guardrail (Codex P1 on #431): before migration 0052 deploys,
-      // feed_items caps the WHOLE section — pins included — at the overfetched
-      // perFeedLimit + 1, so a pinned section's BODY probe can never survive
-      // and the body count alone would hide More while older articles sit
-      // clipped behind the cap. A section returned exactly at the old cap is
-      // the old server's has-more signal and must keep its More button.
+    it('shows no per-section More for an exactly-full feed (nothing left unshown)', async () => {
       const { source, mk } = await makeRows();
       const K = 3;
-      source.stateStore.set('A-0', 'pinned', true);
-      // Old-server response shape: 1 pin + 3 body = exactly K + 1 rows total
-      // (the pin consumed the probe slot; body count is only K).
-      const base = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
-      ];
-      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() => Promise.resolve({ items: [], nextCursor: null }));
-      renderWithProviders(
-        <ItemList
-          viewKey={`psm-pre0052-${viewKeySeq++}`}
-          fetchPage={fetchPage}
-          emptyLabel="x"
-          groupByFeed
-          fetchFeedPage={fetchFeedPage}
-          perFeedLimit={K}
-        />,
-        { source },
-      );
-      await screen.findAllByTestId('item-row');
-      const aMore = screen
-        .getAllByTestId('group-more')
-        .find((b) => b.getAttribute('data-feed-more') === 'A');
-      expect(aMore).toBeDefined();
-    });
-
-    it('shows no per-section More for an exactly-full feed (no overfetch probe)', async () => {
-      const { source, mk } = await makeRows();
-      const K = 3;
-      // Exactly the window, no probe row survived → no More: no dead button, no
-      // wasted empty fetch. All window rows still render.
+      // The server returned exactly the window — the feed is fully in hand,
+      // so no More: no dead button. All window rows still render.
       const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2)];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      const fetchFeedPage = vi.fn(() => Promise.resolve({ items: [], nextCursor: null }));
       renderWithProviders(
         <ItemList
           viewKey={`psm-exact-${viewKeySeq++}`}
           fetchPage={fetchPage}
           emptyLabel="x"
           groupByFeed
-          fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
         />,
         { source },
@@ -8000,76 +7394,8 @@ describe('ItemList', () => {
       await screen.findAllByTestId('item-row');
       expect(screen.queryAllByTestId('group-more')).toHaveLength(0);
       expect(screen.getAllByTestId('item-row')).toHaveLength(3);
-      expect(fetchFeedPage).not.toHaveBeenCalled();
     });
 
-    it('a base refetch that lands mid-More discards the in-flight response cleanly (no stale ids leak into the repaint)', async () => {
-      // A whole-list refetch settling re-materializes the section — the
-      // repaint wipes extras and the sticky set, so an in-flight More response
-      // from the pre-repaint window must be DISCARDED when it lands: its entry
-      // is gone, the reqId match fails, and neither setFeedExtras nor
-      // setDisplayedByFeed may leak the stale page's ids into the fresh
-      // window (both are gated on the same commit decision via flushSync).
-      const user = userEvent.setup();
-      const { source, mk } = await makeRows();
-      const K = 3;
-      let basePage: FeedItem[] = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
-      ];
-      const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
-      let release: (() => void) | null = null;
-      const fetchFeedPage = vi.fn(
-        () =>
-          new Promise<{ items: FeedItem[]; nextCursor: string | null }>((resolve) => {
-            release = () =>
-              resolve({ items: [mk('A', 'Feed A', 3), mk('A', 'Feed A', 4)], nextCursor: null });
-          }),
-      );
-      const queryClient = new QueryClient({
-        defaultOptions: { queries: { retry: false, gcTime: 0 } },
-      });
-      const viewKey = `psm-inflight-${viewKeySeq++}`;
-      renderWithProviders(
-        <ItemList
-          viewKey={viewKey}
-          fetchPage={fetchPage}
-          emptyLabel="x"
-          groupByFeed
-          fetchFeedPage={fetchFeedPage}
-          perFeedLimit={K}
-          perFeedFetch={K}
-        />,
-        { source, queryClient },
-      );
-      await screen.findAllByTestId('item-row');
-
-      // Start a More (in flight, gated open).
-      await user.click(screen.getByTestId('group-more'));
-      await waitFor(() => expect(fetchFeedPage).toHaveBeenCalledTimes(1));
-
-      // A brand new item arrives in the base window mid-flight; the refetch
-      // settles and RE-MATERIALIZES the section (fresh window paints).
-      basePage = [
-        mk('A', 'Feed A', 9), mk('A', 'Feed A', 0), mk('A', 'Feed A', 1),
-      ];
-      await act(async () => {
-        await queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
-      });
-      await screen.findByText('Feed A 9');
-
-      // Release the stale More response. Its extras entry was wiped by the
-      // repaint, so the reqId match fails and the response is discarded —
-      // the old page's rows must NOT appear under the fresh window.
-      await act(async () => {
-        release?.();
-        await Promise.resolve();
-      });
-      const ids = [...document.querySelectorAll('[data-item-id]')].map((el) =>
-        el.getAttribute('data-item-id'),
-      );
-      expect(ids).toEqual(['A-9', 'A-0', 'A-1']);
-      expect(screen.queryByText('Feed A 4')).toBeNull();
-    });
   });
 
   describe('prefetch on reader open', () => {

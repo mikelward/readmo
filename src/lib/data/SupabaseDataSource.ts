@@ -13,7 +13,6 @@ import {
   type ListLayout,
   type OpenMode,
   type Subscription,
-  PER_FEED_WINDOW,
 } from '../types';
 import type { FullTextResult, FullTextStatus } from '../fullText';
 import type { SummaryResult, SummaryStatus } from '../summary';
@@ -137,11 +136,12 @@ function isMissingColumnError(err: unknown): boolean {
  * unbounded request that could exceed the request-line/query limit. */
 const ID_LOOKUP_CHUNK = 200;
 
-/** Row ceiling the group-by-feed windowed read asks for, so every feed
- * section's opening window lands in a single response. PostgREST caps a
- * response at 1000 rows anyway; with each section's body capped to
- * PER_FEED_WINDOW (pins ride on top uncapped, but are few) the caller-bounded
- * feed count keeps feeds × window well under this. */
+/** Page size the group-by-feed read asks for, sized so every feed section
+ * normally lands in a single response. This is NOT a fetch cap — the client
+ * sends no per-feed limit and accepts everything the server returns (the
+ * server decides any cap); it's the largest page PostgREST will serve anyway
+ * (1000 rows). An account whose grouped view overflows it still pages by row
+ * cursor, so later sections aren't silently dropped. */
 const GROUPED_WINDOW_ROW_CAP = 1000;
 
 /** Page size for the full item_state hydrate read. PostgREST caps a single
@@ -707,7 +707,6 @@ export class SupabaseDataSource implements DataSource {
           p_offset: 0,
           p_sort: sort,
           p_group_by_feed: true,
-          p_per_feed_limit: PER_FEED_WINDOW + 1,
         }),
       );
       out.groupedRawRows = rows.length;
@@ -1017,20 +1016,18 @@ export class SupabaseDataSource implements DataSource {
     args: { p_scope: 'home' | 'folder' | 'feed'; p_folder: string | null; p_feed_id: FeedId | null },
     opts?: FeedListOptions,
   ): Promise<Page<FeedItem>> {
-    // Group-by-feed windowed read: each feed section's BODY is capped to
-    // `perFeedLimit` rows server-side (pinned rows are exempt and all ride
-    // along, 0052), so a single read holds every section's opening window and
-    // depth comes from the per-section "More" — not a global page. We ask for up
-    // to the PostgREST row cap; with a bounded feed count (feeds × perFeedLimit)
-    // that's one page. If an account still overflows the cap (more than
-    // GROUPED_WINDOW_ROW_CAP / perFeedLimit populated feeds, until the planned
-    // feed cap lands), the read still pages by row cursor so the later
+    // Group-by-feed read: one deep page that carries every section in full.
+    // The client sends NO per-feed fetch cap — the server decides how much of
+    // each feed to return (today: the feed's whole listable set, its freshness
+    // window ∪ floor ∪ pins; any future cap is a server-side decision) and the
+    // client accepts everything that comes back. Sections are windowed for
+    // DISPLAY in ItemList; depth comes from the per-section "More" revealing
+    // already-fetched rows. We ask for up to the PostgREST row cap; if an
+    // account overflows it the read still pages by row cursor so the later
     // feed-sections aren't silently dropped — the bottom "More" loads the next
     // batch of sections.
-    const perFeedLimit =
-      opts?.groupByFeed && opts?.perFeedLimit != null ? opts.perFeedLimit : null;
-    const windowed = perFeedLimit != null;
-    const limit = windowed ? GROUPED_WINDOW_ROW_CAP : opts?.limit ?? PAGE_SIZE;
+    const grouped = opts?.groupByFeed ?? false;
+    const limit = grouped ? GROUPED_WINDOW_ROW_CAP : opts?.limit ?? PAGE_SIZE;
     const offset = decodeCursor(opts?.cursor);
 
     // Hydrate item_state so the UI's per-row pin/opened affordances and
@@ -1050,17 +1047,14 @@ export class SupabaseDataSource implements DataSource {
         // Body ordering/sectioning is applied server-side so it holds across
         // pages (0016_feed_items_sort_group.sql). Pinned stay oldest-first on top.
         p_sort: opts?.sort ?? 'newest',
-        p_group_by_feed: opts?.groupByFeed ?? false,
-        // Cap each feed's section to its newest this-many BODY rows — pins are
-        // exempt (0021, pinned-exempt since 0052) — grouping only. Sent ONLY
-        // for the windowed grouped read so flat/folder/single-feed
-        // reads keep the 7-arg payload — that way a client that rolls out before
-        // migration 0021 still resolves those against the old 7-arg function
-        // (PostgREST matches a function by the arg-name set, so an unknown
-        // p_per_feed_limit key would 404 the whole read). After 0021 the arg
-        // defaults to null, so the omitted key is fine; only the grouped view
-        // depends on the new function.
-        ...(windowed ? { p_per_feed_limit: perFeedLimit } : {}),
+        p_group_by_feed: grouped,
+        // No p_per_feed_limit: the client never dictates a per-feed fetch cap.
+        // The RPC's own default (null → uncapped) applies, so the server owns
+        // the decision — a future cap is a migration changing that default,
+        // deployable without any client change. Old cached clients that still
+        // send the arg keep resolving against the same function (it retains
+        // the parameter), and the 7-arg payload here resolves against every
+        // deployed feed_items version.
       }),
     );
     // PostgREST expands composite OUT columns flat: `returns table (item items)`
@@ -1101,10 +1095,10 @@ export class SupabaseDataSource implements DataSource {
     // tradeoff vs. a total count: when the result set is an exact multiple of
     // `limit`, the final fetch returns an empty page before stopping.
     // A full page (server returned exactly `limit` rows) means more may follow.
-    // The windowed grouped read is normally a single page (the per-section
-    // "More" handles depth), but if it filled the row cap there are more
-    // sections than fit — keep a cursor so the bottom "More" can load the next
-    // batch rather than dropping them.
+    // The grouped read is normally a single deep page (the per-section "More"
+    // reveals its already-fetched depth), but if it filled the row cap there
+    // are more rows than fit — keep a cursor so the bottom "More" can load the
+    // next batch rather than dropping them.
     const nextOffset = offset + limit;
     return {
       items,
@@ -1127,14 +1121,14 @@ export class SupabaseDataSource implements DataSource {
    * In the **grouped** view it returns the server rows UNCHANGED — no local
    * Done/Hidden drop and no pin lift. ItemList already filters Done/Hidden for
    * display (`visibleItems`) and reads pin/opened per row from the store, so
-   * dropping here is redundant for display; worse, it would shrink the
-   * per-feed has-more probe (the overfetched `PER_FEED_WINDOW + 1`th row) below
-   * the threshold while an optimistic Done/Hidden is still outbox-pending —
-   * transiently hiding that section's "More" even though the server returned
-   * older rows. Keeping the raw server rows means the has-more count reflects
-   * what the server actually returned; the dismissed row is filtered from the
-   * rendered list by ItemList and self-heals on the next clean refetch. (The
-   * server already sections pinned within each feed, so no lift is needed.)
+   * dropping here is redundant for display; worse, ItemList's per-section
+   * "More" reveals from the fetched run, and dropping a row here while its
+   * optimistic Done/Hidden is still outbox-pending would transiently shrink
+   * that run even though the server returned the row. Keeping the raw server
+   * rows means the fetched set reflects what the server actually returned; the
+   * dismissed row is filtered from the rendered list by ItemList and
+   * self-heals on the next clean refetch. (The server already sections pinned
+   * within each feed, so no lift is needed.)
    */
   private overlayLocalState(items: ItemRow[], groupByFeed: boolean): ItemRow[] {
     if (groupByFeed) return items;
