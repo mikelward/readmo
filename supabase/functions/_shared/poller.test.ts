@@ -554,8 +554,8 @@ describe('pollOne favicon discovery', () => {
   });
 
   it('never uses the Jina fallback for a secret-backed feed (guardrail #6)', async () => {
-    // parseFeedBody resolves against the tokenized secret_url, so siteUrl can
-    // land under the secret path — the homepage must not be forwarded to Jina.
+    // An absolute channel <link> can echo the tokenized fetch URL, so a secret
+    // feed's homepage must not be forwarded to Jina.
     const { client, calls } = makeClient();
     const jinaTargets: string[] = [];
     const jinaFetch = (t: string) => {
@@ -573,5 +573,46 @@ describe('pollOne favicon discovery', () => {
     // Jina was never called; favicon fell back to the origin-root guess.
     expect(jinaTargets).toEqual([]);
     expect(faviconOf(calls)).toBe('https://example.com/favicon.ico');
+  });
+
+  it('absolutizes relative feed links against the public url, never the secret_url (guardrail #7)', async () => {
+    // A relative channel/item <link> in a tokenized feed must not resolve
+    // under the secret path: that would persist the token into
+    // subscriber-visible feeds.site_url / items.url — and diverge from
+    // refresh/index.ts (which parses against feed.url), splitting the
+    // (feed_id, url) dedup key between the two writers.
+    const relativeLinkBody = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+  <title>Test Feed</title>
+  <link>home/</link>
+  <item>
+    <title>First item</title>
+    <link>posts/1</link>
+    <guid>g-1</guid>
+  </item>
+</channel></rss>`;
+    const { client, calls } = makeClient();
+    const { fetchFn } = routedFetch({
+      'https://example.com/secret/TOKEN/feed.xml': {
+        ct: 'application/rss+xml',
+        body: relativeLinkBody,
+      },
+    });
+    const feed = {
+      ...FEED,
+      favicon_url: 'https://cdn.example.com/ft.ico',
+      secret_url: 'https://example.com/secret/TOKEN/feed.xml',
+    };
+
+    await pollOne(client, feed, fetchFn);
+
+    const meta = calls.find(
+      (c) => c.kind === 'update' && 'site_url' in c.values,
+    ) as { values: Record<string, unknown> } | undefined;
+    expect(meta?.values.site_url).toBe('https://example.com/home/');
+    const upsert = calls.find((c) => c.kind === 'rpc') as
+      | { args: { p_items: Array<{ url: string | null }> } }
+      | undefined;
+    expect(upsert?.args.p_items[0]?.url).toBe('https://example.com/posts/1');
   });
 });

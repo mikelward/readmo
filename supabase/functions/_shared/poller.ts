@@ -98,7 +98,13 @@ export async function pollOne(
   // nothing and the content-type confirms it's an HTML page (bot-challenge /
   // paywall redirect). Mislabelled-but-valid feeds (real RSS served as
   // text/html) are accepted if parseFeed extracts a title or items.
-  const parsed = parseFeedBody(body, fetchUrl, ct);
+  //
+  // Absolutize against the PUBLIC feed.url, never the tokenized secret_url: a
+  // relative channel/item <link> would otherwise resolve under the secret path,
+  // persisting the token into subscriber-visible feeds.site_url / items.url
+  // (guardrail #7) — and diverge from refresh/index.ts, which parses with
+  // feed.url, splitting the (feed_id, url) dedup key between the two writers.
+  const parsed = parseFeedBody(body, feed.url, ct);
   console.log(`poll: feed ${feed.id} parsed — ${parsed.items.length} item(s)`);
 
   // When the feed advertises no icon of its own, the parser hands back the
@@ -106,8 +112,8 @@ export async function pollOne(
   // discover a real icon from the site homepage's <link rel="icon">, once, and
   // reuse it on later polls so this stays a one-time extra fetch per feed.
   // Never hand a secret-backed feed's homepage to the third-party Jina fallback:
-  // parseFeedBody resolved against the tokenized secret_url, so parsed.siteUrl can
-  // land under the secret path, and a short token might slip the URL screen. The
+  // even parsed against the public feed.url, an absolute channel <link> can still
+  // echo the tokenized fetch URL, and a short token might slip the URL screen. The
   // article Jina paths skip secret_url feeds for the same reason (guardrail #6);
   // favicon discovery still falls back to the origin-root /favicon.ico guess.
   const jina = feed.secret_url ? null : jinaFetch;
