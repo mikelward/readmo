@@ -32,8 +32,13 @@ import { reloadApp } from './reload';
 //     Clearing it on boot instead would loop the reload for a genuinely-gone
 //     chunk (offline / broken deploy) whose route re-renders right after boot.
 //
-// The two budgets are disjoint in time — an entry failure means no boot, so no
-// chunk failure can follow it in the same load — so they never double-reload.
+// The inline boot guard's listener is installed for the tab's lifetime, so
+// clearing the entry budget on boot alone would let it loop on a *post-boot*
+// /assets/ failure (a lazy route's chunk or CSS 404ing after a broken deploy):
+// every boot clears the budget, every failure spends it and reloads. To keep
+// the entry budget strictly pre-boot, `clearEntryReloadGuard` also sets
+// `window.__readmoBooted`, which the inline guard checks before acting —
+// post-boot asset failures are the CHUNK budget's job (it fails closed).
 // `sessionStorage` scoping means each fresh app open starts with both clean.
 
 /** Session-scoped one-shot guard key for post-boot chunk failures (lazy route
@@ -76,11 +81,24 @@ export function clearChunkReloadGuard(): void {
   }
 }
 
+declare global {
+  interface Window {
+    /** Set on a successful boot; the inline boot guard in `index.html` checks
+     * it and stands down, leaving post-boot asset failures to the CHUNK
+     * budget. Hard-coded there (it runs before any module can load). */
+    __readmoBooted?: boolean;
+  }
+}
+
 /** Reset the entry-load budget. Called from `main.tsx` on a successful boot: the
  * entry evaluated, so a stale-entry failure it may have recovered from is
  * resolved, and a second stale entry later in the same session should auto-reload
- * again. Never throws. */
+ * again. Also marks the app booted so the inline boot guard (whose listener
+ * lives for the whole tab) stops reacting to post-boot asset failures — with
+ * the budget cleared each boot, it would otherwise reload in a loop for a
+ * persistently failing lazy chunk. Never throws. */
 export function clearEntryReloadGuard(): void {
+  if (typeof window !== 'undefined') window.__readmoBooted = true;
   try {
     sessionStorage.removeItem(ENTRY_RELOAD_GUARD_KEY);
   } catch {

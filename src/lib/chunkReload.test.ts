@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { reloadApp } from './reload';
 import {
@@ -107,6 +109,78 @@ describe('entry vs chunk budgets are independent', () => {
     });
     expect(() => clearEntryReloadGuard()).not.toThrow();
     vi.restoreAllMocks();
+  });
+});
+
+describe('index.html inline boot guard', () => {
+  // Exercise the real inline script so this suite fails if index.html and the
+  // constants here drift apart. The script only touches window.addEventListener,
+  // window.__readmoBooted, sessionStorage, and location.reload, so it runs
+  // against fakes — no listener leaks onto the shared jsdom window.
+  const extractInlineGuard = (): string => {
+    const html = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8');
+    const match = /<script>([\s\S]*?)<\/script>/.exec(html);
+    if (!match) throw new Error('index.html inline boot guard not found');
+    return match[1];
+  };
+
+  type Handler = (event: { target: unknown }) => void;
+
+  const runGuard = (booted: boolean) => {
+    let handler: Handler | undefined;
+    const fakeWindow = {
+      __readmoBooted: booted || undefined,
+      addEventListener: (_type: string, fn: Handler) => {
+        handler = fn;
+      },
+    };
+    const reloadFn = vi.fn();
+    new Function('window', 'sessionStorage', 'location', extractInlineGuard())(
+      fakeWindow,
+      sessionStorage,
+      { reload: reloadFn },
+    );
+    if (!handler) throw new Error('guard installed no error listener');
+    const fire = (src: string, tagName = 'SCRIPT') =>
+      handler!({ target: { tagName, src } });
+    return { fire, reloadFn, fakeWindow };
+  };
+
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
+  it('reloads once on a pre-boot /assets/ failure and spends the entry budget', () => {
+    const { fire, reloadFn } = runGuard(false);
+    fire('https://readmo.app/assets/index-oldhash.js');
+    expect(reloadFn).toHaveBeenCalledTimes(1);
+    expect(sessionStorage.getItem(ENTRY_RELOAD_GUARD_KEY)).not.toBeNull();
+    fire('https://readmo.app/assets/index-oldhash.js');
+    expect(reloadFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores failures outside /assets/', () => {
+    const { fire, reloadFn } = runGuard(false);
+    fire('https://readmo.app/api/img?url=x', 'IMG');
+    fire('https://readmo.app/other/thing.js');
+    expect(reloadFn).not.toHaveBeenCalled();
+  });
+
+  it('stands down after boot: a post-boot asset failure must not reload', () => {
+    // Regression: the listener lives for the whole tab and main.tsx clears the
+    // entry budget on every boot, so without the booted check a persistently
+    // failing lazy-route asset (broken deploy) reloads in an endless loop —
+    // the exact loop the CHUNK budget in chunkReload.ts exists to prevent.
+    const { fire, reloadFn } = runGuard(true);
+    fire('https://readmo.app/assets/FeedsPage-gone.js');
+    expect(reloadFn).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(ENTRY_RELOAD_GUARD_KEY)).toBeNull();
+  });
+
+  it('clearEntryReloadGuard marks the app booted for the inline guard', () => {
+    window.__readmoBooted = undefined;
+    clearEntryReloadGuard();
+    expect(window.__readmoBooted).toBe(true);
   });
 });
 
