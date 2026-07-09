@@ -8,6 +8,11 @@ import {
   DEBUG_SCROLL_JUMPS_KEY,
   resetReadingPrefsCacheForTest,
 } from '../hooks/useReadingPrefs';
+import {
+  _resetNetworkStatusForTests,
+  getConnectivityStatus,
+  trackedFetch,
+} from '../lib/networkStatus';
 
 // Mock the config accessors DebugPage/useAuth read so a test can simulate a
 // partial config. Manual (not importOriginal) to avoid re-evaluating client.ts
@@ -33,6 +38,7 @@ describe('DebugPage', () => {
     vi.unstubAllGlobals();
     window.localStorage.clear();
     resetReadingPrefsCacheForTest();
+    _resetNetworkStatusForTests();
   });
 
   it('shows the build summary from the injected build info', () => {
@@ -98,6 +104,23 @@ describe('DebugPage', () => {
     expect(container.querySelector('.debug__badge[data-state="ok"]')).toBeTruthy();
     // Every row reserves a badge slot for alignment, even status-less ones.
     expect(container.querySelectorAll('.debug__badge').length).toBeGreaterThan(0);
+  });
+
+  it('labels a backend outage "backend unreachable", not "offline"', async () => {
+    // Regression: the row was derived from the two-state online boolean, so a
+    // backend 5xx (device network fine) read "Network: offline" on the very
+    // page an operator opens to diagnose the outage — the mislabel the
+    // three-way connectivity tracker exists to avoid.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('oops', { status: 503 })),
+    );
+    await trackedFetch('/rest/v1/x');
+    expect(getConnectivityStatus()).toBe('backend-unreachable');
+
+    renderWithProviders(<DebugPage />, { route: '/debug' });
+    expect(screen.getByText('backend unreachable')).toBeInTheDocument();
+    expect(screen.queryByText('offline')).not.toBeInTheDocument();
   });
 
   it('shows the Last sync row (N/A under the mock data source)', () => {

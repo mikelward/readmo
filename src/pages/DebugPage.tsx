@@ -5,7 +5,8 @@ import type { FeedProbeResult } from '../lib/data/DataSource';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useDebugScrollJumps, useItemSort } from '../hooks/useReadingPrefs';
 import { useHomeFeed } from '../hooks/useHomeFeed';
-import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { useConnectivityStatus } from '../hooks/useOnlineStatus';
+import type { ConnectivityStatus } from '../lib/networkStatus';
 import { useAuth } from '../hooks/useAuth';
 import { useDataSource } from '../lib/data/context';
 import { buildInfo, buildInfoRows, summarizeBuild } from '../lib/buildInfo';
@@ -24,7 +25,7 @@ import './PageHeader.css';
 type Row = { label: string; value: string; state?: StatusBadge };
 
 function runtimeRows(
-  online: boolean,
+  connectivity: ConnectivityStatus,
   supabase: Row,
   lastSync: Row,
   lastFetch: Row,
@@ -32,8 +33,16 @@ function runtimeRows(
   const hasNavigator = typeof navigator !== 'undefined';
   // Badged status rows first, grouped together — the glanceable health signals
   // (Network, Service worker, Supabase) read as one block of dots.
+  // Three-way, not the online boolean: during a backend outage the device's
+  // network is fine, and labeling that "offline" on the one page an operator
+  // opens to diagnose it (right next to a Supabase row probing the same
+  // backend) is exactly the mislabel the connectivity tracker distinguishes.
   const rows: Row[] = [
-    { label: 'Network', value: online ? 'online' : 'offline', state: online ? 'ok' : 'down' },
+    {
+      label: 'Network',
+      value: connectivity === 'backend-unreachable' ? 'backend unreachable' : connectivity,
+      state: connectivity === 'online' ? 'ok' : 'down',
+    },
   ];
   if (hasNavigator) {
     const sw =
@@ -94,7 +103,7 @@ function DebugSection({ title, rows }: { title: string; rows: Row[] }) {
 /** `/debug` — build, runtime, and config diagnostics. Open to everyone (no
  * auth gate) and shows only public/presence info, no secrets. */
 export function DebugPage() {
-  const online = useOnlineStatus();
+  const connectivity = useConnectivityStatus();
   const { user } = useAuth();
   const dataSource = useDataSource();
   const { debugScrollJumps, setDebugScrollJumps } = useDebugScrollJumps();
@@ -170,7 +179,7 @@ export function DebugPage() {
   // reachable on a phone.
   const lastFetch = getLastFeedFetch();
   const runtime = runtimeRows(
-    online,
+    connectivity,
     { label: 'Supabase', value: supabase.value, state: supabase.badge },
     { label: 'Last sync', value: formatLastSync(dataSource.getLastSyncedAt?.()) },
     {
