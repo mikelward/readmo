@@ -409,6 +409,8 @@ describe('reconcileUserCachesOnBoot', () => {
   it('migrates the legacy item-state store into the user scope on first keyed boot', async () => {
     // No sentinel / no migrated flag → an install upgrading to the keyed layout.
     window.localStorage.setItem(itemStateKey(null), 'legacy-state');
+    // Writes queued offline on the pre-scoping build (same v2 entry shape).
+    window.localStorage.setItem(outboxKey(null), 'legacy-outbox');
     // A legacy localStorage React-Query blob from before the IndexedDB move.
     window.localStorage.setItem(rqCacheKey(null), 'legacy-rq');
 
@@ -417,6 +419,11 @@ describe('reconcileUserCachesOnBoot', () => {
     // Item-state is moved into the demo user's scope, not wiped.
     expect(window.localStorage.getItem(itemStateKey('demo'))).toBe('legacy-state');
     expect(window.localStorage.getItem(itemStateKey(null))).toBeNull();
+    // The queued offline writes move with it — orphaned at the unscoped key
+    // they were never replayed (and never purged), silently dropping the user
+    // triage the outbox exists to make durable.
+    expect(window.localStorage.getItem(outboxKey('demo'))).toBe('legacy-outbox');
+    expect(window.localStorage.getItem(outboxKey(null))).toBeNull();
     // The React-Query blob now lives in IndexedDB, so the localStorage copy is
     // dropped rather than carried into the user's scope.
     expect(window.localStorage.getItem(rqCacheKey('demo'))).toBeNull();

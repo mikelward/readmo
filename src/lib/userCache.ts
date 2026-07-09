@@ -275,6 +275,13 @@ function migrateLegacyCaches(currentUid: string | null): void {
     // so there's nothing to move for it — only the item-state store migrates.
     // reclaimLegacyRqCache() below drops any stale localStorage RQ blob.
     moveKey(ITEM_STATE_BASE, itemStateKey(currentUid));
+    // The offline write outbox lives beside the state map under the same base
+    // key, and its v2 (LWW-era) entry shape predates uid scoping unchanged —
+    // so writes queued offline on the pre-scoping build are real, replayable
+    // data. Left at the unscoped key they were silently orphaned: never
+    // replayed (hydrate's LWW eventually reverted the optimistic flags to
+    // server truth) and never purged.
+    moveKey(ITEM_STATE_BASE + OUTBOX_SUFFIX, outboxKey(currentUid));
     window.localStorage.setItem(MIGRATED_KEY, '1');
   } catch {
     // ignore (storage unavailable/denied)
