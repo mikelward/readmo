@@ -46,6 +46,7 @@ import {
   reconcileUserCachesOnBoot,
   rqCacheKey,
 } from './lib/userCache';
+import { announceUidToServiceWorker } from './lib/swScope';
 import {
   clearEntryReloadGuard,
   installGlobalChunkReloadGuard,
@@ -121,6 +122,12 @@ configureFeedFreshness(queryClient);
 // the unscoped base store. Seamless re-keying without a reload, and per-user
 // prefixing of the Workbox runtime caches, land with real multi-user auth in PR2.
 const bootUid = getActiveUid();
+
+// Tell the service worker whose runtime-cache buckets the uncredentialed
+// proxy requests (/api/img, /api/favicon) belong to (guardrail #8 — the
+// runtime caches are partitioned per user; Supabase data reads bucket by
+// their own JWT instead). Best-effort and fire-and-forget.
+announceUidToServiceWorker(bootUid);
 
 // Apply the stored theme + palette + text size before first paint to avoid a
 // flash.

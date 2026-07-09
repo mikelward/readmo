@@ -2881,7 +2881,11 @@ content. Closest mirror of newshacker.
 ### Caching strategy
 
 Client reads through Supabase rather than newshacker's `/api/*` proxies, so the
-keys differ; the strategies map one-to-one:
+keys differ; the strategies map one-to-one. The runtime caches are
+**partitioned per user** (guardrail #8 — see *On-device storage surfaces*): an
+account only ever reads its own buckets, the data bucket is chosen by the
+credential each request itself carries, and the image/favicon buckets by the
+uid the page announces to the worker; the fonts cache alone stays shared.
 
 - **App shell** — precached; navigation falls back to `index.html`.
 - **Data reads (Supabase REST/RPC)** — **NetworkFirst** (~6s timeout, short
@@ -3028,9 +3032,10 @@ keys differ; the strategies map one-to-one:
     **reauthed** (a sign-in followed the purge) ends the episode for the
     user's own stores — a session drop in the remaining grace is the new
     session's routine token blip and must not purge — while sign-ins, reloads,
-    and drops alike keep sweeping just the shared (not-yet-uid-keyed) Workbox
-    caches, the one surface a departed session's late request could poison
-    across users. Past the grace the marker reads as absent, since a completed
+    and drops alike keep sweeping the Workbox runtime caches through the
+    grace (belt-and-braces now that those caches are partitioned per user —
+    chiefly against legacy unscoped buckets from a pre-partitioning worker).
+    Past the grace the marker reads as absent, since a completed
     sign-out must not turn a much-later session drop into a spurious purge. No
     tab ever hard-clears an active marker (any tab could be the wrong one to
     settle it); markers die by the purge stamp + grace expiry, and dead
@@ -3056,9 +3061,16 @@ keys differ; the strategies map one-to-one:
   app reloads (re-keying the singletons); the anonymous scope is preserved so an
   upgrade-while-signed-out can migrate its legacy data on the next sign-in. The
   Workbox runtime caches (`readmo-data`/`readmo-images`/`readmo-favicons`) are
-  **purged** on transition/boot in PR1 but not yet per-user *prefixed* — true
-  per-user keying lands with real auth in PR2, when the NetworkFirst data cache
-  actually holds Supabase responses (PR1 has none). The persisted-query-cache
+  **partitioned per user** — every account reads and writes only its own
+  `<base>:<uid>` bucket (`:anon` when signed out; the fonts cache stays a
+  single shared bucket, carrying no user signal). The data cache partitions by
+  the credential **the request itself carries** (the JWT's subject), so even a
+  departing session's in-flight read lands in its own bucket — no ambient
+  "current user" race can cross the boundary; the uncredentialed image/favicon
+  proxies partition by the uid the page announces to the worker at boot. A
+  purge deletes the departing user's buckets (plus the legacy unscoped names a
+  pre-partitioning worker used, which the new worker also deletes once on
+  activation). The persisted-query-cache
   IndexedDB move has landed (see `readmo:rq-cache:<uid>` above).
 
 ### Prefetch on Pin/Favorite (mirrors newshacker's pin/favorite prefetch)

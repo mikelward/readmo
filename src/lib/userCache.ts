@@ -1,9 +1,14 @@
 import { removeItem as idbRemoveItem } from './idbStorage';
+import {
+  isRuntimeWorkboxCache,
+  scopedWorkboxCacheName,
+  WORKBOX_RUNTIME_CACHE_BASES,
+} from './swScope';
 
 // Per-user cache scoping (AGENTS guardrail #8). Derives the storage keys for the
 // persisted React-Query blob (IndexedDB) and the item-state store (localStorage)
 // from the signed-in user id, and purges a departing user's persisted data +
-// named Workbox runtime caches, so a shared device never leaks one user's
+// per-user Workbox runtime cache buckets, so a shared device never leaks one user's
 // cached/private content to the next.
 //
 // PR1 keys against the mock-auth uid (see useAuth); the same surface keys
@@ -47,10 +52,11 @@ const EXPLICIT_SIGNOUT_KEY = 'readmo:explicit-signout';
 // user-scoped key, so the migration runs at most once.
 const MIGRATED_KEY = 'readmo:cache-migrated';
 
-// The named Workbox runtime caches (see vite.config.ts runtimeCaching). These
-// are not per-user prefixed yet, so a purge deletes them wholesale; the next
-// user simply repopulates from the network under their own RLS.
-const WORKBOX_CACHES = ['readmo-data', 'readmo-images', 'readmo-favicons'];
+// The Workbox runtime caches are PARTITIONED PER USER (src/sw.ts +
+// lib/swScope.ts): each account reads and writes only its own
+// `<base>:<uid>` bucket, so a purge targets the departing user's buckets —
+// plus the legacy unscoped names a pre-partitioning worker used, which could
+// hold anyone's responses.
 
 /** Persisted React-Query cache key for a user (base key when signed out). */
 export function rqCacheKey(uid: string | null): string {
@@ -85,9 +91,9 @@ export function outboxKey(uid: string | null): string {
 //     the uid-scoped stores: a session drop within the remaining grace is the
 //     new session's routine token blip, and full-purging on it wiped the
 //     reauthenticated user's pins/offline cache (Codex round 8). Through the
-//     rest of the grace this state only keeps sweeping the shared Workbox
-//     caches (the surface the departed session's late requests can poison
-//     across users — round 7), never the current user's stores.
+//     rest of the grace this state only keeps sweeping the Workbox runtime
+//     caches (belt-and-braces against legacy shared buckets from a
+//     pre-partitioning worker — round 7), never the current user's stores.
 //
 // No path ever hard-clears an ACTIVE marker (any tab could be the wrong one
 // to settle it — Codex round 5); markers die by stamp-after-purge + grace
@@ -173,14 +179,35 @@ export function clearExplicitSignOut(): void {
   }
 }
 
-/** Delete the named GLOBAL Workbox runtime caches (they are not per-user
- * prefixed yet — see WORKBOX_CACHES). Best-effort and never throws; the Cache
- * API is absent under jsdom/SSR. */
+/** Delete EVERY Workbox runtime cache bucket — all users' partitions plus the
+ * legacy unscoped names. The wholesale sweep the sign-out grace runs: with
+ * per-user partitioning the cross-user exposure is already structurally
+ * closed (each account only reads its own buckets, and a departing session's
+ * late write lands in its own bucket), so this survives as belt-and-braces —
+ * chiefly against legacy caches written by a pre-partitioning worker.
+ * Best-effort and never throws; the Cache API is absent under jsdom/SSR. */
 export async function clearWorkboxCaches(): Promise<void> {
   if (typeof caches === 'undefined') return;
-  await Promise.all(
-    WORKBOX_CACHES.map((name) => caches.delete(name).catch(() => false)),
-  );
+  let names: string[];
+  try {
+    names = (await caches.keys()).filter(isRuntimeWorkboxCache);
+  } catch {
+    // keys() unavailable/denied — fall back to the legacy fixed names.
+    names = [...WORKBOX_RUNTIME_CACHE_BASES];
+  }
+  await Promise.all(names.map((name) => caches.delete(name).catch(() => false)));
+}
+
+/** Delete ONE user's Workbox runtime cache buckets, plus the legacy unscoped
+ * names (a pre-partitioning worker wrote everyone's responses there, so any
+ * departure must take them along). Best-effort and never throws. */
+async function clearWorkboxCachesForUser(uid: string | null): Promise<void> {
+  if (typeof caches === 'undefined') return;
+  const names = WORKBOX_RUNTIME_CACHE_BASES.flatMap((base) => [
+    scopedWorkboxCacheName(base, uid),
+    base,
+  ]);
+  await Promise.all(names.map((name) => caches.delete(name).catch(() => false)));
 }
 
 /**
@@ -208,7 +235,7 @@ export async function clearUserCaches(uid: string | null): Promise<void> {
   // Kick it off WITHOUT awaiting first, so the synchronous Cache-API deletes
   // below still dispatch in the same tick (a caller may reload right after).
   const idbDone = idbRemoveItem(rqCacheKey(uid));
-  await Promise.all([idbDone, clearWorkboxCaches()]);
+  await Promise.all([idbDone, clearWorkboxCachesForUser(uid)]);
   // Delete the localStorage keys AGAIN before resolving: the app is still
   // alive during the async deletions above, and an in-flight outbox send
   // settling (its finally → persist()) or a landing hydration save can
@@ -327,7 +354,7 @@ export async function reconcileUserCachesOnBoot(
     } else if (marker === 'reauthed') {
       // A sign-in ended the episode for the uid-scoped stores; this
       // signed-out boot is the NEW session's routine drop (offline token
-      // refresh). Keep the stores and the sentinel — only the shared Workbox
+      // refresh). Keep the stores and the sentinel — only the Workbox
       // caches stay under the grace's sweep (Codex rounds 7-8).
       await clearWorkboxCaches();
     }
@@ -362,19 +389,19 @@ export async function reconcileUserCachesOnBoot(
   //    may not be the sign-out's owner (Codex P2 on #436, round 3): the
   //    signing-out tab can still write after our purge, and its own
   //    transition re-purges within the grace.
-  //  - purged/reauthed → sweep the GLOBAL Workbox caches only and mark the
+  //  - purged/reauthed → sweep the Workbox runtime caches only and mark the
   //    episode `reauthed` (keeping the ORIGINAL stamp). The full purge
   //    already ran, and a full re-purge here would wipe the new session's
-  //    uid-scoped stores on every reload within the grace (Codex round 6) —
-  //    but the Workbox runtime caches are not uid-keyed yet, so a request
-  //    from the departed user's dying tab settling AFTER the purge can
-  //    repopulate `readmo-data` with their RLS-scoped response where the
-  //    next user's service worker would serve it (Codex P1, round 7).
-  //    Sweeping just those shared caches on every sign-in/reload until the
-  //    grace ends closes that without touching the new session's own data,
-  //    and the `reauthed` state tells the signed-out paths that a later
-  //    session drop belongs to the NEW session — full-purging on it wiped the
-  //    reauthenticated user's stores (Codex round 8).
+  //    uid-scoped stores on every reload within the grace (Codex round 6).
+  //    The sweep guarded a real leak when these caches were single shared
+  //    buckets (a departed session's late `/rest/v1/` response could land
+  //    where the next user's service worker served it — Codex P1, round 7);
+  //    now that the buckets are partitioned per user (src/sw.ts, keyed by the
+  //    request's own JWT) it survives as belt-and-braces, chiefly against
+  //    legacy unscoped buckets from a pre-partitioning worker. The `reauthed`
+  //    state tells the signed-out paths that a later session drop belongs to
+  //    the NEW session — full-purging on it wiped the reauthenticated user's
+  //    stores (Codex round 8).
   //  - absent/expired → sweep the leftover key.
   if (marker === 'pending') {
     markSignOutPurgeCompleted();

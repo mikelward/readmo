@@ -53,8 +53,8 @@ export function useUserCacheScope(): boolean {
     // A `reauthed` marker is NOT a live sign-out: a sign-in ended the episode
     // for the uid-scoped stores, so a uid→null transition under it is the new
     // session's routine drop — full-purging on it wiped the reauthenticated
-    // user's pins/offline cache (Codex round 8). Only the shared Workbox
-    // caches stay under the grace's sweep.
+    // user's pins/offline cache (Codex round 8). Only the Workbox runtime
+    // caches stay under the grace's sweep (belt-and-braces — see userCache).
     const explicit =
       uid === null && (marker === 'pending' || marker === 'purged');
     // Empty the in-memory cache, then reload so the new session boots with
@@ -77,15 +77,16 @@ export function useUserCacheScope(): boolean {
             // account switch is left on its ORIGINAL stamp: this purge just
             // ran anyway, re-stamping would extend the grace into the new
             // session (Codex round 6), and the post-reload boot keeps
-            // sweeping the shared Workbox caches until the grace ends (Codex
-            // P1, round 7).
+            // sweeping the Workbox runtime caches until the grace ends
+            // (Codex P1, round 7 — belt-and-braces now that the buckets are
+            // partitioned per user).
             if (explicit || marker === 'pending') {
               markSignOutPurgeCompleted();
             }
           })
         : marker === 'reauthed'
           ? // Transient drop within a reauthed episode's grace: the stores
-            // stay, but the shared Workbox caches keep getting swept.
+            // stay, but the Workbox runtime caches keep getting swept.
             clearWorkboxCaches()
           : Promise.resolve();
     void purge.finally(reloadApp);
