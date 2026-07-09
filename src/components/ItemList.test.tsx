@@ -3949,43 +3949,12 @@ describe('ItemList', () => {
       });
     });
 
-    it('keeps scroll anchoring on when a row auto-hides off the top', async () => {
-      // The sweep fix opts the body out of scroll anchoring, but ONLY for the
-      // sweep — which dismisses rows inside the viewport. Auto-hide-on-scroll
-      // removes rows ABOVE the viewport top and depends on native anchoring to
-      // keep the first still-visible row fixed; disabling it there would jolt
-      // the content upward by each removed row's height. So an auto-hide must
-      // never set the sweep's `overflow-anchor: none` opt-out on the body.
-      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
-      resetReadingPrefsCacheForTest();
-      const source = new MockDataSource(`test-${Math.random()}`);
-      renderHome(source);
-
-      const firstRow = (await screen.findAllByTestId('item-row'))[0];
-      const titleText = within(firstRow).getByTestId('item-title').textContent;
-
-      act(() => {
-        setVisibilityForTest(firstRow.closest('li')!, 0);
-      });
-      await waitFor(() => {
-        const titles = screen
-          .queryAllByTestId('item-title')
-          .map((n) => n.textContent);
-        expect(titles).not.toContain(titleText);
-      });
-
-      // The row was removed and the invalidation refresh is in flight — the
-      // general height lock may apply, but anchoring must stay ON.
-      expect(
-        screen.getByTestId('item-list-body').style.overflowAnchor,
-      ).not.toBe('none');
-    });
-
-    it('defers an auto-hide while a touch is in progress, committing it on release', async () => {
+    it('defers an auto-hide while a touch is in progress, committing it once the scroll settles after release', async () => {
       // Removing a row above the viewport while the reader's finger is still
       // down shifts content up under them (the browser suspends scroll
       // anchoring mid-touch) — at the foot of the list that yanks the next feed
-      // group into view. The top-exit must be buffered until the finger lifts.
+      // group into view. The top-exit must be buffered until the finger lifts
+      // and the viewport comes to rest.
       window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
       resetReadingPrefsCacheForTest();
       const source = new MockDataSource(`test-${Math.random()}`);
@@ -4008,12 +3977,15 @@ describe('ItemList', () => {
       await Promise.resolve();
       expect(titles()).toContain(titleText);
 
-      // The finger lifts (no touches remain) → the buffered hide commits.
+      // The finger lifts (no touches remain) → the buffered hide commits once
+      // the settle window passes with no further scrolling.
       act(() => {
         const ev = new Event('touchend');
         Object.defineProperty(ev, 'touches', { value: [] });
         document.dispatchEvent(ev);
       });
+      // Not at the lift itself — the viewport may still be gliding.
+      expect(titles()).toContain(titleText);
       await waitFor(() => {
         expect(titles()).not.toContain(titleText);
       });
@@ -4169,16 +4141,20 @@ describe('ItemList', () => {
         // Still deferred while held — nothing removed, scroll untouched.
         expect(scrollBySpy).not.toHaveBeenCalled();
 
-        // The finger lifts → the buffered batch commits and the pin restores the
-        // anchor: the three rows above it leave, so it would jump from top 80 to
+        // The finger lifts → the buffered batch commits once the viewport has
+        // been still for the settle window, and the pin restores the anchor:
+        // the three rows above it leave, so it would jump from top 80 to
         // top 80 - 3*80 = -160 (delta -240); the pin scrolls back by that delta.
         await act(async () => {
           const ev = new Event('touchend');
           Object.defineProperty(ev, 'touches', { value: [] });
           document.dispatchEvent(ev);
         });
+        // Nothing commits at the lift itself — the viewport may still be
+        // gliding on momentum.
+        expect(scrollBySpy).not.toHaveBeenCalled();
 
-        expect(scrollBySpy).toHaveBeenCalledWith(0, -240);
+        await waitFor(() => expect(scrollBySpy).toHaveBeenCalledWith(0, -240));
         // …leaving the anchor row exactly where the reader left it.
         expect(anchorLi.getBoundingClientRect().top).toBe(80);
       } finally {
@@ -4257,7 +4233,8 @@ describe('ItemList', () => {
           document.dispatchEvent(ev);
         });
 
-        expect(body.style.overflowAnchor).toBe('none');
+        // The settle flush commits the batch and arms the pin.
+        await waitFor(() => expect(body.style.overflowAnchor).toBe('none'));
 
         act(() => {
           window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '0');
@@ -4272,13 +4249,18 @@ describe('ItemList', () => {
       }
     });
 
-    it('releases the scroll pin on post-flick momentum scroll, so it does not fight the fling', async () => {
-      // Regression (Codex review on #253): after the release flush arms the pin,
-      // a flick keeps scrolling as momentum/inertia — which fires no touch,
-      // wheel, or keydown, only `scroll`. The pin must let go on a native scroll
-      // it didn't cause (offset differs from the one its own correction left),
-      // or it would keep snapping the viewport back to the anchor and cancel the
-      // fling until the reader taps. Same virtual-layout model as the test above.
+    it('buffers top-exits through a momentum glide and commits them pinned once the viewport settles', async () => {
+      // Regression: a flick keeps scrolling as momentum/inertia after the
+      // finger lifts — which fires no touch, wheel, or keydown, only `scroll`.
+      // Top-exits used to commit live during that glide with no scroll
+      // correction (the pin must not fight the fling, and native anchoring is
+      // absent on iOS and suppressed mid-gesture elsewhere), so each removal
+      // shifted the remaining content up under the reader, shoving rows they
+      // could still see past the sweep line — whose exits then dismissed THEM
+      // too. That cascade ate the last rows of a feed group and snapped the
+      // next group into view. Exits must instead buffer while scroll events
+      // keep arriving and commit as one pinned batch at rest.
+      // Same virtual-layout model as the test above.
       window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
       resetReadingPrefsCacheForTest();
       const ROW = 80;
@@ -4327,9 +4309,10 @@ describe('ItemList', () => {
         const lis = (await screen.findAllByTestId('item-row')).map(
           (r) => r.closest('li')!,
         );
+        const gliderId = lis[3].getAttribute('data-item-id');
 
-        // Flick: finger down, three rows scroll off the top, finger lifts → the
-        // flush commits and the pin restores (scrollBy(0, -240), scrollY → 0).
+        // Flick: finger down, three rows scroll off the top (buffered), finger
+        // lifts. Nothing commits at the lift — the viewport is still moving.
         act(() => {
           document.dispatchEvent(new Event('touchstart'));
         });
@@ -4341,20 +4324,45 @@ describe('ItemList', () => {
           Object.defineProperty(ev, 'touches', { value: [] });
           document.dispatchEvent(ev);
         });
-        expect(scrollBySpy).toHaveBeenCalledTimes(1);
+        expect(scrollBySpy).not.toHaveBeenCalled();
 
         // Momentum glides the viewport on (no touch/wheel/key) and fires scroll.
         act(() => {
-          scrollY = 60;
+          scrollY = 320;
           document.dispatchEvent(new Event('scroll'));
         });
 
-        // A further row now scrolls off during the glide. With the pin released
-        // the list just drops it — it must NOT scrollBy to snap back to the old
-        // anchor (which is exactly what fought the fling before the fix).
-        await act(async () => {
+        // A fourth row scrolls off mid-glide. It must be buffered, not
+        // dismissed — committing here is what set off the cascade.
+        act(() => {
           setVisibilityForTest(lis[3], 0);
         });
+        expect(
+          document.querySelector(`[data-item-id="${gliderId}"]`),
+        ).not.toBeNull();
+        expect(scrollBySpy).not.toHaveBeenCalled();
+
+        // The glide ends — nothing arrives for a settle window, so all four
+        // rows commit as one batch under the pin. The anchor (DOM index 5 at
+        // top 5*80-320 = 80, the first row clear of the 56px sweep margin)
+        // drops to index 1 (top 1*80-320 = -240) as the four rows above it
+        // leave, so the pin scrolls by -320 to hold it at 80.
+        await waitFor(() => expect(scrollBySpy).toHaveBeenCalledWith(0, -320));
+        expect(
+          document.querySelector(`[data-item-id="${gliderId}"]`),
+        ).toBeNull();
+        const body = screen.getByTestId('item-list-body');
+        expect(body.style.overflowAnchor).toBe('none');
+
+        // A NEW reader fling (a native scroll the pin's correction didn't
+        // cause) releases the pin so it can't snap the viewport back and
+        // fight the fling: the anchoring opt-out lifts and no further
+        // correction fires.
+        act(() => {
+          scrollY = 500;
+          document.dispatchEvent(new Event('scroll'));
+        });
+        expect(body.style.overflowAnchor).toBe('');
         expect(scrollBySpy).toHaveBeenCalledTimes(1);
       } finally {
         rectSpy.mockRestore();
