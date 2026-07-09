@@ -142,6 +142,22 @@ export function useSwipeToDismiss({
     (e: PointerEvent<HTMLElement>) => {
       const start = startRef.current;
       if (!start || start.pointerId !== e.pointerId) return;
+      // Pointer capture is only taken once a swipe arms, so a mouse/pen press
+      // released OUTSIDE the row never delivers its pointerup and the start
+      // state goes stale. A hover-capable pointer moving with no button held
+      // is that stale case (a mouse keeps one pointerId for the whole
+      // session): resuming from it would drag the row under a button-less
+      // hover and let a later plain click commit a swipe action. Drop it.
+      // Touch is excluded — contact implies buttons=1 and implicit capture
+      // always delivers the touch's pointerup/pointercancel.
+      if (
+        e.buttons === 0 &&
+        (e.pointerType === 'mouse' || e.pointerType === 'pen')
+      ) {
+        startRef.current = null;
+        clearLongPressTimer();
+        return;
+      }
       const dx = e.clientX - start.x;
       const dy = e.clientY - start.y;
       if (

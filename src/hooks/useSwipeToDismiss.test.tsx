@@ -9,7 +9,14 @@ import { useSwipeToDismiss } from './useSwipeToDismiss';
 
 function makePointerEvent(
   type: string,
-  init: { clientX: number; clientY: number; pointerId?: number; width?: number },
+  init: {
+    clientX: number;
+    clientY: number;
+    pointerId?: number;
+    width?: number;
+    pointerType?: string;
+    buttons?: number;
+  },
 ) {
   // useSwipeToDismiss reads currentTarget.getBoundingClientRect().width on
   // pointerdown to compute the per-direction commit threshold. React's
@@ -36,7 +43,8 @@ function makePointerEvent(
     clientY: init.clientY,
     pointerId: init.pointerId ?? 1,
     button: 0,
-    pointerType: 'touch',
+    buttons: init.buttons ?? 1,
+    pointerType: init.pointerType ?? 'touch',
     currentTarget: target,
     setPointerCapture: vi.fn(),
     preventDefault: vi.fn(),
@@ -375,6 +383,83 @@ describe('useSwipeToDismiss', () => {
         result.current.handlers.onClickCapture(bodyClick);
       });
       expect(bodyClick.preventDefault).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('stale mouse press released outside the row', () => {
+    // Capture is only taken once a swipe arms, so a mouse press released
+    // outside the row never delivers its pointerup and the start state went
+    // stale. Since a mouse reuses one pointerId for the whole session, a
+    // button-less hover back across the row used to resume the "swipe" from
+    // the stale start point — dragging the row with no button held — and a
+    // later plain click could land far enough from the old start to commit
+    // Done/Pin.
+    it('drops the gesture on a button-less mouse move instead of resuming it', () => {
+      const onSwipeRight = vi.fn();
+      const { result } = renderHook(() => useSwipeToDismiss({ onSwipeRight }));
+
+      act(() => {
+        result.current.handlers.onPointerDown(
+          makePointerEvent('pointerdown', {
+            clientX: 100,
+            clientY: 24,
+            pointerType: 'mouse',
+          }),
+        );
+      });
+      // (mouse released outside the row — no pointerup delivered)
+
+      // Hover back across the row: no button held. Must not translate the row.
+      act(() => {
+        result.current.handlers.onPointerMove(
+          makePointerEvent('pointermove', {
+            clientX: 300,
+            clientY: 24,
+            pointerType: 'mouse',
+            buttons: 0,
+          }),
+        );
+      });
+      expect(result.current.offset).toBe(0);
+      expect(result.current.dragging).toBe(false);
+
+      // A later plain click's pointerup (300px right of the stale start) must
+      // not commit a swipe-right.
+      act(() => {
+        result.current.handlers.onPointerUp(
+          makePointerEvent('pointerup', {
+            clientX: 400,
+            clientY: 24,
+            pointerType: 'mouse',
+            buttons: 0,
+          }),
+        );
+      });
+      act(() => {
+        vi.advanceTimersByTime(250);
+      });
+      expect(onSwipeRight).not.toHaveBeenCalled();
+
+      // And the row isn't wedged: a fresh press starts a new gesture.
+      act(() => {
+        result.current.handlers.onPointerDown(
+          makePointerEvent('pointerdown', {
+            clientX: 400,
+            clientY: 24,
+            pointerType: 'mouse',
+          }),
+        );
+      });
+      act(() => {
+        result.current.handlers.onPointerMove(
+          makePointerEvent('pointermove', {
+            clientX: 460,
+            clientY: 24,
+            pointerType: 'mouse',
+          }),
+        );
+      });
+      expect(result.current.dragging).toBe(true);
     });
   });
 });
