@@ -124,6 +124,40 @@ describe('useAuth (Supabase configured)', () => {
     expect(result.current.user).toBeNull();
   });
 
+  it('keeps the pending sign-out marker when signOut succeeds (the purge paths settle it)', async () => {
+    window.localStorage.clear();
+    h.fakeAuth.signOut.mockResolvedValueOnce({ error: null });
+    const { result } = renderHook(() => useAuth());
+
+    await act(async () => {
+      result.current.signOut();
+      await new Promise((r) => setTimeout(r));
+    });
+
+    expect(window.localStorage.getItem('readmo:explicit-signout')).toMatch(
+      /^p:/,
+    );
+  });
+
+  it('withdraws the sign-out marker when signOut FAILS without removing the session', async () => {
+    // auth-js returns early on a non-401/403/404 revoke failure (offline, an
+    // auth 5xx) WITHOUT removing the local session — the reader stays signed
+    // in. The durable pending marker must not survive that, or the next boot
+    // would purge their caches as if they'd left (Codex P2 on #436, round 7).
+    window.localStorage.clear();
+    h.fakeAuth.signOut.mockResolvedValueOnce({
+      error: new Error('auth unavailable'),
+    } as never);
+    const { result } = renderHook(() => useAuth());
+
+    await act(async () => {
+      result.current.signOut();
+      await new Promise((r) => setTimeout(r));
+    });
+
+    expect(window.localStorage.getItem('readmo:explicit-signout')).toBeNull();
+  });
+
   it('reports initializing=true until the first getSession() resolves', async () => {
     window.localStorage.clear();
     h.fakeAuth.getSession.mockResolvedValueOnce({ data: { session: null } });

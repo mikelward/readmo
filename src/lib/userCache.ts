@@ -32,14 +32,16 @@ export const OUTBOX_SUFFIX = ':outbox';
 // The uid that last booted the app, so a boot can detect an account switch that
 // completed via a full-page redirect/reload (no in-tab transition observed).
 const LAST_UID_KEY = 'readmo:last-uid';
-// Explicit sign-out marker (sessionStorage, same tab): set by useAuth.signOut
-// right before the auth session is torn down, consumed by useUserCacheScope
-// when the uid transitions to null. Distinguishes the reader ACTUALLY signing
-// out (purge the departing user's on-device data — guardrail #8) from the
-// session merely dropping on its own (supabase-js clears it when a token
-// refresh fails, which happens routinely OFFLINE): purging on the latter wiped
-// the offline cache exactly when it was needed, even though the same account
-// signs right back in.
+// Explicit sign-out marker: set by useAuth.signOut right before the auth
+// session is torn down, consumed by useUserCacheScope when it handles the
+// transition — or, if the tab reloaded/closed before that ran, by the next
+// boot's reconcile, which finishes the purge then (Codex P2 on #434). It lives
+// in localStorage (not sessionStorage) precisely so it survives that tab
+// closure. Distinguishes the reader ACTUALLY signing out (purge the departing
+// user's on-device data — guardrail #8) from the session merely dropping on
+// its own (supabase-js clears it when a token refresh fails, which happens
+// routinely OFFLINE): purging on the latter wiped the offline cache exactly
+// when it was needed, even though the same account signs right back in.
 const EXPLICIT_SIGNOUT_KEY = 'readmo:explicit-signout';
 // Set once the legacy (pre-scoping) global stores have been migrated into a
 // user-scoped key, so the migration runs at most once.
@@ -65,27 +67,120 @@ export function outboxKey(uid: string | null): string {
   return `${itemStateKey(uid)}${OUTBOX_SUFFIX}`;
 }
 
+// The sign-out marker is a THREE-STATE flag tracking the sign-out episode's
+// lifecycle, because its failure modes pull in opposite directions and must
+// be told apart (Codex rounds on #434/#436):
+//
+//   - `pending` — Sign out was tapped and NO purge has completed yet. This
+//     state NEVER expires: an explicit sign-out is owed a purge, however late
+//     the device next wakes (a tab closed mid-sign-out, reopened days later).
+//     While it stands, every transition/boot purges the departing user.
+//   - `purged` — a purge HAS completed and no sign-in has happened since. A
+//     tab from the sign-out may still be alive and re-writing keys, so
+//     signed-out paths keep FULL-purging through a short grace; past the
+//     grace it reads as absent — a completed-but-unsettled marker must not
+//     turn a much-later token-refresh drop (routine offline) into a spurious
+//     cache wipe, the exact bug the marker exists to prevent (#434).
+//   - `reauthed` — a SIGN-IN happened after the purge, ending the episode for
+//     the uid-scoped stores: a session drop within the remaining grace is the
+//     new session's routine token blip, and full-purging on it wiped the
+//     reauthenticated user's pins/offline cache (Codex round 8). Through the
+//     rest of the grace this state only keeps sweeping the shared Workbox
+//     caches (the surface the departed session's late requests can poison
+//     across users — round 7), never the current user's stores.
+//
+// No path ever hard-clears an ACTIVE marker (any tab could be the wrong one
+// to settle it — Codex round 5); markers die by stamp-after-purge + grace
+// expiry, and inactive leftovers are swept on signed-in boots. The purge is
+// idempotent, so overlapping re-purges are harmless.
+const EXPLICIT_SIGNOUT_TTL_MS = 10 * 60 * 1000;
+
+export type SignOutMarker = 'pending' | 'purged' | 'reauthed';
+
 /** Record that the reader chose to sign out (vs. the session dropping on its
  * own). Called by useAuth.signOut before tearing the session down. */
 export function markExplicitSignOut(): void {
   try {
-    window.sessionStorage.setItem(EXPLICIT_SIGNOUT_KEY, '1');
+    window.localStorage.setItem(EXPLICIT_SIGNOUT_KEY, `p:${Date.now()}`);
   } catch {
     // ignore (storage unavailable/denied)
   }
 }
 
-/** Whether the current uid→null transition came from an explicit sign-out.
- * Consumes the marker so a later, unrelated session drop isn't mistaken for
- * one. */
-export function consumeExplicitSignOut(): boolean {
+/** Record that a purge satisfying the sign-out marker has COMPLETED, moving
+ * it `pending` → `purged` (re-stamping a purged marker just refreshes its
+ * timestamp — harmless). Callers stamp only after `clearUserCaches` resolves,
+ * so a tab killed mid-purge leaves the marker `pending` and the next boot
+ * retries. */
+export function markSignOutPurgeCompleted(): void {
   try {
-    const set = window.sessionStorage.getItem(EXPLICIT_SIGNOUT_KEY) !== null;
-    window.sessionStorage.removeItem(EXPLICIT_SIGNOUT_KEY);
-    return set;
+    window.localStorage.setItem(EXPLICIT_SIGNOUT_KEY, `d:${Date.now()}`);
   } catch {
-    return false;
+    // ignore (storage unavailable/denied)
   }
+}
+
+/** Record that a sign-in happened after the sign-out's purge, moving the
+ * marker `purged` → `reauthed` while PRESERVING its original timestamp — the
+ * grace stays anchored to the sign-out, so the shared-cache sweeps still end
+ * ~10 minutes after it. No-op for pending/absent markers. */
+export function markSignOutReauthed(): void {
+  try {
+    const raw = window.localStorage.getItem(EXPLICIT_SIGNOUT_KEY);
+    if (raw === null || !raw.startsWith('d:')) return;
+    window.localStorage.setItem(EXPLICIT_SIGNOUT_KEY, `r:${raw.slice(2)}`);
+  } catch {
+    // ignore (storage unavailable/denied)
+  }
+}
+
+/** The sign-out marker's ACTIVE state, or null when absent/expired:
+ * `pending` — a purge is owed (any age); `purged` — a purge completed
+ * recently (within the grace), no sign-in since; `reauthed` — a sign-in
+ * followed the purge (shared-cache sweeps only). Read-only. */
+export function peekSignOutMarker(): SignOutMarker | null {
+  try {
+    const raw = window.localStorage.getItem(EXPLICIT_SIGNOUT_KEY);
+    if (raw === null) return null;
+    if (raw.startsWith('d:') || raw.startsWith('r:')) {
+      const at = Number(raw.slice(2));
+      if (Number.isNaN(at)) return null;
+      if (Date.now() - at > EXPLICIT_SIGNOUT_TTL_MS) return null;
+      return raw.startsWith('d:') ? 'purged' : 'reauthed';
+    }
+    // `p:<ts>` — and any legacy format ('1', a bare timestamp) from an older
+    // client, which predates the purged state and so can't prove a purge
+    // completed: treat as pending, erring toward honoring the sign-out.
+    return 'pending';
+  } catch {
+    return null;
+  }
+}
+
+/** Whether the sign-out marker is ACTIVE in either state. */
+export function peekExplicitSignOut(): boolean {
+  return peekSignOutMarker() !== null;
+}
+
+/** Drop an INACTIVE marker (expired `purged` leftovers) — the sweep signed-in
+ * boots run so dead markers don't accumulate. Never called on an active
+ * marker; those convert via {@link markSignOutPurgeCompleted} and expire. */
+export function clearExplicitSignOut(): void {
+  try {
+    window.localStorage.removeItem(EXPLICIT_SIGNOUT_KEY);
+  } catch {
+    // ignore (storage unavailable/denied)
+  }
+}
+
+/** Delete the named GLOBAL Workbox runtime caches (they are not per-user
+ * prefixed yet — see WORKBOX_CACHES). Best-effort and never throws; the Cache
+ * API is absent under jsdom/SSR. */
+export async function clearWorkboxCaches(): Promise<void> {
+  if (typeof caches === 'undefined') return;
+  await Promise.all(
+    WORKBOX_CACHES.map((name) => caches.delete(name).catch(() => false)),
+  );
 }
 
 /**
@@ -113,13 +208,7 @@ export async function clearUserCaches(uid: string | null): Promise<void> {
   // Kick it off WITHOUT awaiting first, so the synchronous Cache-API deletes
   // below still dispatch in the same tick (a caller may reload right after).
   const idbDone = idbRemoveItem(rqCacheKey(uid));
-  const cachesDone =
-    typeof caches !== 'undefined'
-      ? Promise.all(
-          WORKBOX_CACHES.map((name) => caches.delete(name).catch(() => false)),
-        )
-      : Promise.resolve();
-  await Promise.all([idbDone, cachesDone]);
+  await Promise.all([idbDone, clearWorkboxCaches()]);
   // Delete the localStorage keys AGAIN before resolving: the app is still
   // alive during the async deletions above, and an in-flight outbox send
   // settling (its finally → persist()) or a landing hydration save can
@@ -202,14 +291,7 @@ export async function reconcileUserCachesOnBoot(
   migrateLegacyCaches(currentUid);
   reclaimLegacyRqCache(currentUid);
 
-  // A SIGNED-OUT boot never purges, and leaves the sentinel alone. The session
-  // may have been dropped by a failed token refresh (routine while offline)
-  // rather than by a sign-out — so the previous user's scoped stores must
-  // survive for their next sign-in (their /offline cache and pins live there),
-  // and keeping the sentinel pointed at them means a DIFFERENT user signing in
-  // later still purges them (guardrail #8). An explicit sign-out already
-  // purged in-tab (useUserCacheScope), so skipping here loses nothing.
-  if (currentUid === null) return;
+  const marker = peekSignOutMarker();
 
   let raw: string | null = null;
   try {
@@ -217,14 +299,89 @@ export async function reconcileUserCachesOnBoot(
   } catch {
     // ignore (storage unavailable/denied)
   }
+
+  // A SIGNED-OUT boot normally never purges, and leaves the sentinel alone.
+  // The session may have been dropped by a failed token refresh (routine
+  // while offline) rather than by a sign-out — so the previous user's scoped
+  // stores must survive for their next sign-in (their /offline cache and pins
+  // live there), and keeping the sentinel pointed at them means a DIFFERENT
+  // user signing in later still purges them (guardrail #8).
+  //
+  // The exception is a boot that finds an ACTIVE sign-out marker: the reader
+  // DID sign out, and either no purge has completed yet (pending — the tab
+  // reloaded/closed before the in-tab handler ran or finished, Codex P2 on
+  // #434) or one completed recently and late writes may have followed
+  // (purged, within the grace). Purge, record the signed-out sentinel, and
+  // stamp the completion only AFTER the purge resolves — a boot killed
+  // mid-purge leaves the marker pending and the next one retries.
+  if (currentUid === null) {
+    if (marker === 'pending' || marker === 'purged') {
+      const last = raw === null || raw === '' ? null : raw;
+      if (last !== null) await clearUserCaches(last);
+      try {
+        window.localStorage.setItem(LAST_UID_KEY, '');
+      } catch {
+        // ignore (storage unavailable/denied)
+      }
+      markSignOutPurgeCompleted();
+    } else if (marker === 'reauthed') {
+      // A sign-in ended the episode for the uid-scoped stores; this
+      // signed-out boot is the NEW session's routine drop (offline token
+      // refresh). Keep the stores and the sentinel — only the shared Workbox
+      // caches stay under the grace's sweep (Codex rounds 7-8).
+      await clearWorkboxCaches();
+    }
+    return;
+  }
+
   // First keyed boot (no sentinel): no previous user to purge.
   const last = raw === null ? currentUid : raw === '' ? null : raw;
   if (last !== currentUid) {
     await clearUserCaches(last);
+  } else if (marker === 'pending') {
+    // A PENDING sign-out marker for THIS user — its purge never completed.
+    // Two ways here: a sign-out interrupted before its purge, followed by a
+    // same-user reauth; or ANOTHER still-signed-in tab reloading in the
+    // window between Sign out being tapped and Supabase emitting SIGNED_OUT
+    // (the marker is localStorage, so every tab sees it — Codex P2 on #436,
+    // round 2). Either way a pending marker purges the marked user — reading
+    // it as stale here would let the signing-out tab's own old→null
+    // transition be misread as a transient drop, leaving the departing
+    // user's caches behind despite an explicit sign-out. The purge costs
+    // only a re-warm.
+    await clearUserCaches(currentUid);
   }
   try {
     window.localStorage.setItem(LAST_UID_KEY, currentUid);
   } catch {
     // ignore (storage unavailable/denied)
+  }
+  // Settle the marker for this SIGN-IN:
+  //  - pending → stamp `purged` (its purge just ran above, via the mismatch
+  //    or the same-uid branch). Stamped rather than cleared because this boot
+  //    may not be the sign-out's owner (Codex P2 on #436, round 3): the
+  //    signing-out tab can still write after our purge, and its own
+  //    transition re-purges within the grace.
+  //  - purged/reauthed → sweep the GLOBAL Workbox caches only and mark the
+  //    episode `reauthed` (keeping the ORIGINAL stamp). The full purge
+  //    already ran, and a full re-purge here would wipe the new session's
+  //    uid-scoped stores on every reload within the grace (Codex round 6) —
+  //    but the Workbox runtime caches are not uid-keyed yet, so a request
+  //    from the departed user's dying tab settling AFTER the purge can
+  //    repopulate `readmo-data` with their RLS-scoped response where the
+  //    next user's service worker would serve it (Codex P1, round 7).
+  //    Sweeping just those shared caches on every sign-in/reload until the
+  //    grace ends closes that without touching the new session's own data,
+  //    and the `reauthed` state tells the signed-out paths that a later
+  //    session drop belongs to the NEW session — full-purging on it wiped the
+  //    reauthenticated user's stores (Codex round 8).
+  //  - absent/expired → sweep the leftover key.
+  if (marker === 'pending') {
+    markSignOutPurgeCompleted();
+  } else if (marker === 'purged' || marker === 'reauthed') {
+    await clearWorkboxCaches();
+    markSignOutReauthed();
+  } else {
+    clearExplicitSignOut();
   }
 }

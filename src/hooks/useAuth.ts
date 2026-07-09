@@ -1,6 +1,6 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import { AUTH_STORAGE_KEY, getSupabase, isSupabaseConfigured } from '../lib/supabase/client';
-import { markExplicitSignOut } from '../lib/userCache';
+import { clearExplicitSignOut, markExplicitSignOut } from '../lib/userCache';
 
 // Auth behind one stable shape: `{ user, signIn, signOut }` + a synchronous
 // `getActiveUid()` for boot-time cache keying.
@@ -263,8 +263,22 @@ export function useAuth(): {
     // for an explicit sign-out (or an account switch), not for a session that
     // dropped on its own (a failed token refresh — routine offline).
     markExplicitSignOut();
-    if (configured) void getSupabase().auth.signOut();
-    else setSignedIn(false);
+    if (configured) {
+      void getSupabase()
+        .auth.signOut()
+        .then(({ error }) => {
+          // signOut can fail BEFORE removing the local session (auth-js
+          // returns early on a non-401/403/404 revoke failure — offline, an
+          // auth 5xx). The reader then STAYS signed in, so the pending marker
+          // must not survive to purge their caches on the next boot as if
+          // they'd left (Codex P2 on #436, round 7). Clearing here is the
+          // sign-out's initiator withdrawing its own not-yet-actioned marker.
+          if (error) clearExplicitSignOut();
+        })
+        .catch(() => clearExplicitSignOut());
+    } else {
+      setSignedIn(false);
+    }
   }, [configured]);
 
   return { user, initializing, signIn, signOut };
