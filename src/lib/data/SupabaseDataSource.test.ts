@@ -1273,6 +1273,23 @@ describe('SupabaseDataSource reads', () => {
     }
   });
 
+  it('fails the read when the override lookup errors, so a retry restores renames', async () => {
+    // Regression: the override read's error was swallowed (`result.data ?? []`),
+    // so a transient failure (401 mid-token-refresh, 5xx blip) cached the raw
+    // feed titles for the whole session — feedCache never refetches an id it
+    // already holds, so every rename silently disappeared until a reload.
+    env.fake.store.subscriptions.find((s) => s.feed_id === 'feed-a')!.title_override =
+      'Alpha Renamed';
+    env.fake.failSelectOnce('subscriptions');
+    await expect(env.ds.getFeedItems('feed-a')).rejects.toThrow(/title overrides/);
+    // The failure cached nothing: the retry re-reads and applies the rename.
+    const page = await env.ds.getFeedItems('feed-a');
+    expect(page.items.length).toBeGreaterThan(0);
+    for (const fi of page.items) {
+      expect(fi.feed.title).toBe('Alpha Renamed');
+    }
+  });
+
   it('getHomeItems applies title_override in FeedItem.feed', async () => {
     env.fake.store.subscriptions.find((s) => s.feed_id === 'feed-b')!.title_override = 'Beta Renamed';
     const page = await env.ds.getHomeItems();
