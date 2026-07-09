@@ -906,6 +906,17 @@ export class SupabaseDataSource implements DataSource {
         ),
       ),
     ]);
+    // Fail BEFORE touching the cache: feedCache entries are permanent for the
+    // session (only refresh/delete/rename evict), and `missing`-only fetching
+    // never retries an id it already cached. Caching the raw titles when the
+    // override read failed (a 401 mid-token-refresh, a 5xx blip) would strip
+    // every rename for the rest of the session; throwing lets the caller's
+    // query error/retry machinery rerun the whole lookup instead.
+    for (const result of subBatches) {
+      if (result.error) {
+        throw new Error(`loading title overrides failed: ${result.error.message}`);
+      }
+    }
     for (const row of feedBatches.flat()) this.feedCache.set(row.id, mapFeed(row));
     for (const result of subBatches) {
       for (const sub of (result.data ?? []) as Array<{ feed_id: string; title_override: string | null }>) {
