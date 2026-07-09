@@ -47,8 +47,11 @@ deploy-fulltext: check-link
 	supabase functions deploy fulltext --import-map $(IMPORT_MAP)
 
 # AI article summaries. Browser-invoked with the caller's JWT (verified for the
-# allowlist gate), so deploy WITH jwt verification like fulltext. Needs the
-# GOOGLE_API_KEY secret set (see SETUP.md) to actually generate.
+# allowlist gate), so deploy WITH jwt verification like fulltext. The DB pin
+# trigger (0053) also calls it with the service-role key as bearer — that key is
+# a project-signed JWT, so it passes verification too; no --no-verify-jwt
+# needed. Needs the GOOGLE_API_KEY secret set (see SETUP.md) to actually
+# generate.
 deploy-summary: check-link
 	supabase functions deploy summary --import-map $(IMPORT_MAP)
 

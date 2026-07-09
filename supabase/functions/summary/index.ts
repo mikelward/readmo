@@ -3,14 +3,29 @@
 // POST /functions/v1/summary { itemId }
 // Returns a short AI summary of an article (mirrors newshacker's article
 // summary). The reader asks for this when an ALLOWLISTED user PINS an article —
-// the pin is the trigger (enforced client-side: the reader only calls this for a
-// pinned item) and the allowlist is the boundary (enforced here). SPEC.md
-// "AI article summaries".
+// the pin is the trigger and the allowlist is the boundary (enforced here).
+// SPEC.md "AI article summaries".
+//
+// Two callers, one trigger (the pin):
+//   - The CLIENT (reader pre-warm / on-open / "Generate summary" button), with
+//     the user's JWT.
+//   - The DATABASE: 0053's pin trigger POSTs { itemId, userId, email } with the
+//     service-role bearer the moment a pin commits to item_state, so generation
+//     happens even if the app closes right after pinning. Recognized by
+//     resolveSummaryCaller (_shared/summary.ts): service bearer + explicit
+//     userId; a client passing userId with its own JWT stays on the user path.
+//     pg_net never reads the outcome, so this path answers as soon as the gates
+//     pass and finishes the generation in the background (EdgeRuntime.waitUntil).
 //
 // Trust + access:
-//   - The caller's forwarded JWT scopes the item lookup through RLS (items_select,
-//     0002): a user who can't see the item gets a 404. The service-role client
-//     does the cached write (client item writes are revoked; 0002/0009).
+//   - User path: the caller's forwarded JWT scopes the item lookup through RLS
+//     (items_select, 0002): a user who can't see the item gets a 404. The
+//     service-role client does the cached write (client item writes are revoked;
+//     0002/0009).
+//   - Internal path: the trigger names the pinning user; the allowlist is
+//     checked against THAT identity, and visibility is proven by the pinned
+//     item_state row itself (the same permanent-state grant items_select
+//     honors) — no pin row, no summary (404).
 //   - Summaries are a generation-cost surface (each cache miss is a Jina fetch +
 //     a Gemini call), so — like reading mode and Google News — they're gated on
 //     the DB `allowlist` table (the shared trusted-user list, managed from
@@ -63,6 +78,7 @@ import {
   coalesceSummaryGeneration,
   parseGeminiText,
   pickStoredContent,
+  resolveSummaryCaller,
   stripSummaryPreamble,
 } from '../_shared/summary.ts';
 import type { SummaryLeaseClient, SummaryOutcome } from '../_shared/summary.ts';
@@ -93,8 +109,10 @@ async function handle(req: Request): Promise<Response> {
   }
 
   let itemId: string | undefined;
+  let bodyUserId: unknown;
+  let bodyEmail: unknown;
   try {
-    ({ itemId } = await req.json());
+    ({ itemId, userId: bodyUserId, email: bodyEmail } = await req.json());
   } catch {
     console.warn('summary: rejected request with invalid JSON body');
     return json({ error: 'Invalid JSON body' }, 400);
@@ -116,6 +134,19 @@ async function handle(req: Request): Promise<Response> {
     { auth: { autoRefreshToken: false, persistSession: false } },
   );
 
+  // The DB pin trigger (0053) vs. a normal user call. Internal requires the
+  // service-role bearer AND an explicit userId; anything else is a user call
+  // and the body's identity fields are ignored (never trusted).
+  const caller = resolveSummaryCaller({
+    authHeader,
+    serviceRoleKey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
+    userId: bodyUserId,
+    email: bodyEmail,
+  });
+  if (caller.internal) {
+    console.log(`summary: pin-trigger call for item ${itemId}`);
+  }
+
   // Allowlist gate (same list as reading mode / Google News). Checked BEFORE the
   // item lookup, the cache read, and any Jina/Gemini call, so a non-listed caller
   // never spends the generation budget. An EMPTY list leaves the feature open to
@@ -130,29 +161,76 @@ async function handle(req: Request): Promise<Response> {
     return json({ status: 'unreachable', summary: null });
   }
   if (allowlist.size > 0) {
-    const { data: auth, error: authError } = await userClient.auth.getUser();
-    if (authError || !auth?.user) {
-      // A transient auth lookup failure must not be cached as the terminal
-      // `empty`; report the retryable `unreachable` so an allowlisted caller
-      // retries instead of being stuck with no summary.
-      console.warn('summary: auth lookup failed — retryable unreachable:', authError);
-      return json({ status: 'unreachable', summary: null });
-    }
-    if (!isAllowed({ id: auth.user.id, email: auth.user.email }, allowlist)) {
-      console.log('summary: caller not on the allowlist — no summary');
-      return json({ status: 'empty', summary: null, retryable: true });
+    if (caller.internal) {
+      // The trigger names the pinning user; gate on THAT identity (the DB has
+      // no user JWT to forward). Same silent decline as the user path — the
+      // outcome is discarded by pg_net anyway.
+      if (!isAllowed({ id: caller.userId, email: caller.email }, allowlist)) {
+        console.log('summary: pinning user not on the allowlist — no summary');
+        return json({ status: 'empty', summary: null, retryable: true });
+      }
+    } else {
+      const { data: auth, error: authError } = await userClient.auth.getUser();
+      if (authError || !auth?.user) {
+        // A transient auth lookup failure must not be cached as the terminal
+        // `empty`; report the retryable `unreachable` so an allowlisted caller
+        // retries instead of being stuck with no summary.
+        console.warn('summary: auth lookup failed — retryable unreachable:', authError);
+        return json({ status: 'unreachable', summary: null });
+      }
+      if (!isAllowed({ id: auth.user.id, email: auth.user.email }, allowlist)) {
+        console.log('summary: caller not on the allowlist — no summary');
+        return json({ status: 'empty', summary: null, retryable: true });
+      }
     }
   }
 
-  // RLS-scoped lookup: only resolves if the caller may see this item.
-  const { data: item, error } = await userClient
-    .from('items')
-    .select('id, feed_id, url, title, content_html, full_content_html, ai_summary')
-    .eq('id', itemId)
-    .maybeSingle();
-  if (error) {
-    console.error(`summary: item lookup for ${itemId} failed:`, error);
-    return json({ error: error.message }, 400);
+  // Item lookup. User path: RLS-scoped through the forwarded JWT — only
+  // resolves if the caller may see this item. Internal path: the service role
+  // bypasses RLS, so visibility is proven FIRST by the pinned item_state row
+  // the trigger fired on (the same permanent-state grant items_select honors;
+  // 0002). No pin row — e.g. unpinned again before we ran, or a forged id —
+  // means no read (fail closed, 404 like the user path).
+  const itemColumns =
+    'id, feed_id, url, title, content_html, full_content_html, ai_summary';
+  let item;
+  if (caller.internal) {
+    const { data: pin, error: pinError } = await service
+      .from('item_state')
+      .select('item_id')
+      .eq('user_id', caller.userId)
+      .eq('item_id', itemId)
+      .eq('pinned', true)
+      .maybeSingle();
+    if (pinError) {
+      console.error(`summary: pin lookup for item ${itemId} failed:`, pinError);
+      return json({ status: 'unreachable', summary: null });
+    }
+    if (!pin) {
+      console.warn(`summary: item ${itemId} not pinned by the named user — declining`);
+      return json({ error: 'Item not found' }, 404);
+    }
+    const { data, error } = await service
+      .from('items')
+      .select(itemColumns)
+      .eq('id', itemId)
+      .maybeSingle();
+    if (error) {
+      console.error(`summary: item lookup for ${itemId} failed:`, error);
+      return json({ error: error.message }, 400);
+    }
+    item = data;
+  } else {
+    const { data, error } = await userClient
+      .from('items')
+      .select(itemColumns)
+      .eq('id', itemId)
+      .maybeSingle();
+    if (error) {
+      console.error(`summary: item lookup for ${itemId} failed:`, error);
+      return json({ error: error.message }, 400);
+    }
+    item = data;
   }
   if (!item) {
     console.warn(`summary: item ${itemId} not found or not visible to caller`);
@@ -219,13 +297,38 @@ async function handle(req: Request): Promise<Response> {
   // claimed by the atomic conditional UPDATE below. This is what collapses N
   // simultaneous misses for the same shared item into a single Gemini call.
   const leaseClient = makeLeaseClient(service);
-  const outcome = await coalesceSummaryGeneration({
-    client: leaseClient,
-    itemId,
-    now: () => Date.now(),
-    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-    generate: () => generateAndCache(service, apiKey, item, itemId),
-  });
+  const generateOnce = () =>
+    coalesceSummaryGeneration({
+      client: leaseClient,
+      itemId,
+      now: () => Date.now(),
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      generate: () => generateAndCache(service, apiKey, item, itemId),
+    });
+
+  if (caller.internal) {
+    // The pin trigger's pg_net call is fire-and-forget: nothing reads the
+    // outcome, and pg_net aborts the request at its timeout — well inside the
+    // up-to-~35 s Jina + Gemini work. So answer now (the gates all passed) and
+    // finish the generation in the background; the result lands on
+    // items.ai_summary as usual. Fall back to a synchronous run on a runtime
+    // without waitUntil (the request may then be aborted mid-generation, which
+    // is no worse than the pre-trigger status quo).
+    const work = generateOnce().then(
+      (outcome) =>
+        console.log(`summary: item ${itemId} — pin-triggered generation: ${outcome.status}`),
+      (err) =>
+        console.error(`summary: item ${itemId} — pin-triggered generation failed:`, err),
+    );
+    if (globalThis.EdgeRuntime?.waitUntil) {
+      globalThis.EdgeRuntime.waitUntil(work);
+    } else {
+      await work;
+    }
+    return json({ status: 'accepted', summary: null }, 202);
+  }
+
+  const outcome = await generateOnce();
   // `cached` is internal to the coalescer (drives lease release); keep the wire
   // envelope exactly `{ status, summary, retryable? }` for older clients.
   const { cached: _cached, ...body } = outcome;

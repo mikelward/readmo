@@ -1718,7 +1718,9 @@ negligible and off every critical path. See the External services table in
       allowlist). When on, the summary for a pinned article is pre-warmed so it's
       ready before the reader opens it (see *AI article summaries* /
       `useSummaryPrewarm`); when a family user turns it off, no pin pre-warm
-      fires — the reader still generates on open. See *Spoiler-free sports
+      fires from this device — the reader still generates on open, and the
+      server-side pin trigger (which the toggle does not reach — it's a
+      per-device control) still generates on pin. See *Spoiler-free sports
       headlines* and *AI article summaries*.
 
 11. **Feeds** — `/feeds`: feed management, reached from the drawer's **Feeds**
@@ -2361,12 +2363,23 @@ page's discipline is unchanged.
     generate) — silent, like the rest of the card's soft states. A pin made while
     reading warms the summary via the pre-warm subscriber, so it appears without a
     button too.
-  - **Pin is a prefetch signal (incl. cross-device), generate-once.**
+  - **A pin triggers generation server-side the moment it syncs.** The pin's
+    server write fires the `summary` function **from the database** (the pin
+    trigger; same allowlist gate, checked against the pinning user), so a pinned
+    article's summary generates even when the app closes or loses the network
+    right after the pin — the client pre-warm is best-effort (its in-flight call
+    dies with the page), and this is the guarantee behind it. A pin made offline
+    triggers when it syncs. The trigger skips items that already have a cached
+    summary, and it's a no-op until the operator configures the Vault secrets
+    (SETUP.md §9b). The per-device **Auto generate summaries** toggle governs
+    only the device pre-warm below, not this server-side trigger.
+  - **Pin is also a prefetch signal (incl. cross-device), generate-once.**
     `useSummaryPrewarm` pre-warms the summary for **every pinned item** — pinned
     on this device, synced from another device, or restored on boot — the summary
     sibling of `useOfflineCacheLock`, which already warms each pinned item's
-    reader body + full text the same way. Pinning is both the auto-generate signal
-    on open and the prefetch signal that warms it ahead of time.
+    reader body + full text the same way. Pinning is the auto-generate signal
+    on open, the server-side generation trigger above, and the prefetch signal
+    that warms the device cache ahead of time.
     Both the pre-warm and the reader's on-open `useSummary` share the
     `['summary', id]` React Query key and the result caches on
     `items.ai_summary`, so whichever fires first generates and the rest are plain
