@@ -1,5 +1,9 @@
-import { QueryClient } from '@tanstack/react-query';
-import { configureFeedFreshness, FEED_STALE_MS } from './feedFreshness';
+import { QueryClient, QueryObserver } from '@tanstack/react-query';
+import {
+  configureFeedFreshness,
+  FEED_STALE_MS,
+  rematerializeFeedsOnBoot,
+} from './feedFreshness';
 
 describe('configureFeedFreshness', () => {
   it('is a 6h cadence', () => {
@@ -27,5 +31,45 @@ describe('configureFeedFreshness', () => {
     // (undefined here → falls back to the QueryClient default staleTime/gcTime).
     expect(qc.getQueryDefaults(['capabilities']).staleTime).toBeUndefined();
     expect(qc.getQueryDefaults(['feed-meta', 'feed-a']).staleTime).toBeUndefined();
+  });
+});
+
+describe('rematerializeFeedsOnBoot', () => {
+  it('marks restored feed queries stale and refetches the mounted one', async () => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    configureFeedFreshness(qc);
+    // A restored-from-persistence snapshot: fresh under the 6h TTL, so without
+    // the boot invalidation neither view would fetch on open.
+    qc.setQueryData(['feed', 'home-all'], { pages: [], pageParams: [] });
+    qc.setQueryData(['feed', 'folder:news'], { pages: [], pageParams: [] });
+    qc.setQueryData(['capabilities'], { family: false });
+
+    // The home view is mounted (has an active observer).
+    const fetchHome = vi.fn(() =>
+      Promise.resolve({ pages: [['fresh']], pageParams: [null] }),
+    );
+    const observer = new QueryObserver(qc, {
+      queryKey: ['feed', 'home-all'],
+      queryFn: fetchHome,
+      staleTime: FEED_STALE_MS,
+    });
+    const unsubscribe = observer.subscribe(() => {});
+
+    rematerializeFeedsOnBoot(qc);
+
+    // Both feed views are invalidated; the mounted one refetches now, the
+    // unmounted one on its next mount. Non-feed queries are untouched.
+    await vi.waitFor(() => expect(fetchHome).toHaveBeenCalled());
+    expect(
+      qc.getQueryCache().find({ queryKey: ['feed', 'folder:news'] })?.state
+        .isInvalidated,
+    ).toBe(true);
+    expect(
+      qc.getQueryCache().find({ queryKey: ['capabilities'] })?.state
+        .isInvalidated,
+    ).toBe(false);
+    unsubscribe();
   });
 });

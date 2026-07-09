@@ -37,3 +37,22 @@ export function configureFeedFreshness(queryClient: QueryClient): void {
     gcTime: FEED_STALE_MS,
   });
 }
+
+/**
+ * Re-materialize the feed views once per app boot, after the persisted cache
+ * has restored: every open of the app fetches a fresh article set (SPEC *Feed
+ * views → A stable set of articles*), even when the restored snapshot is
+ * younger than the freshness TTL. The TTL still governs *in-session* refresh
+ * paths (remount, window focus, warm-on-open) so the set never re-materializes
+ * under the reader — but a boot is the reader asking for the news.
+ *
+ * Marks every `['feed', …]` query stale and refetches the active (mounted)
+ * ones; views visited later this session refetch on their first mount. The
+ * cached set keeps rendering underneath (the Refreshing overlay covers the
+ * list), and a FAILED fetch — offline, backend down — keeps the cached data
+ * untouched: React Query retains the previous data on error, so an offline
+ * boot still paints the last successful fetch.
+ */
+export function rematerializeFeedsOnBoot(queryClient: QueryClient): void {
+  void queryClient.invalidateQueries({ queryKey: ['feed'] });
+}
