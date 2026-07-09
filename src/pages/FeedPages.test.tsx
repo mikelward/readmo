@@ -13,6 +13,7 @@ import {
   ITEM_SORT_KEY,
   resetReadingPrefsCacheForTest,
 } from '../hooks/useReadingPrefs';
+import { PER_FEED_FETCH } from '../lib/types';
 
 function renderFeed(source: MockDataSource, feedId: string) {
   return renderWithProviders(
@@ -158,6 +159,22 @@ describe('HomePage (group-by-feed toolbar toggle)', () => {
     expect(screen.getByTestId('group-by-feed-btn')).toHaveAttribute(
       'aria-pressed',
       'true',
+    );
+  });
+
+  it('fetches the grouped view at PER_FEED_FETCH depth in one batched read', async () => {
+    // The grouped home read is ONE request carrying every section's window
+    // plus its ride-along More batches (SPEC: More reveals fetched rows
+    // first) — not a request per feed, and not a bare window + probe.
+    window.localStorage.setItem(GROUP_BY_FEED_KEY, '1');
+    resetReadingPrefsCacheForTest();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const spy = vi.spyOn(source, 'getHomeItems');
+    renderWithProviders(<HomePage />, { source, route: '/' });
+
+    await screen.findAllByTestId('item-row');
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ groupByFeed: true, perFeedLimit: PER_FEED_FETCH }),
     );
   });
 });

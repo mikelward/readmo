@@ -221,6 +221,37 @@ function renderedCountIn(
   return count;
 }
 
+/** Ordered ids of a grouped feed's fetched-but-unshown body rows: in the
+ * feed's `items[]` run, not a load-time pin (pins always render), not locally
+ * dismissed unless pinned (the display filter would drop the revealed row and
+ * waste its slot in the batch), and not yet in the sticky display window.
+ * These are the rows a section "More" reveals instantly — already in hand from
+ * the deep windowed base read (`PER_FEED_FETCH`), so no network request and it
+ * works offline. Empty until the sticky init has seeded `allowed` (a
+ * first-paint race; the server path covers it). */
+function unshownFetchedBodyIds(
+  items: FeedItem[],
+  feedId: FeedId,
+  allowed: ReadonlySet<ItemId> | undefined,
+  basePinned: ReadonlySet<ItemId>,
+  showable: (id: ItemId) => boolean,
+): ItemId[] {
+  if (!allowed) return [];
+  const out: ItemId[] = [];
+  const seen = new Set<ItemId>();
+  for (const fi of items) {
+    if (fi.item.feedId !== feedId) continue;
+    const id = fi.item.id;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    if (basePinned.has(id)) continue;
+    if (allowed.has(id)) continue;
+    if (!showable(id)) continue;
+    out.push(id);
+  }
+  return out;
+}
+
 /** Fetch a single feed's next page, for the group-by-feed per-section "More".
  * Mirrors {@link FetchPage} but scoped to one feed (the page wires it to
  * `getFeedItems(feedId, …)`), so a section can page deeper into its own feed
@@ -262,10 +293,18 @@ interface Props {
    * independent of the other sections and of the (now single-page) base read.
    * Omitted ⇒ no per-section More. */
   fetchFeedPage?: FetchFeedPage;
-  /** The per-feed BODY window size the grouped base read was capped to — how
-   * many un-pinned rows each section opens with (pinned rows are exempt and all
-   * show). Only meaningful alongside {@link Props.fetchFeedPage}. */
+  /** The per-feed BODY window size each grouped section OPENS with — how many
+   * un-pinned rows show before the section's "More" (pinned rows are exempt and
+   * all show). Only meaningful alongside {@link Props.fetchFeedPage}. */
   perFeedLimit?: number;
+  /** The per-feed BODY row count the grouped base read actually FETCHED
+   * (`PER_FEED_FETCH`): the window plus follow-up "More" batches that ride
+   * along in the same response, the last row doubling as the has-more probe.
+   * A section "More" reveals the next `perFeedLimit` rows from this fetched
+   * set instantly (no request), calling {@link Props.fetchFeedPage} only once
+   * it's exhausted. Defaults to `perFeedLimit + 1` (a bare window plus probe)
+   * when omitted. */
+  perFeedFetch?: number;
   /** Multi-feed views (Home, folders) pass this to surface a group-by-feed
    * toggle in the top toolbar. Omitted on single-feed views, where grouping is
    * a no-op. Flipping it re-keys the view (the page folds the pref into
@@ -289,6 +328,7 @@ export function ItemList({
   groupByFeed = false,
   fetchFeedPage,
   perFeedLimit,
+  perFeedFetch,
   onToggleGroupByFeed,
   itemSort = 'newest',
   onToggleSort,
@@ -299,6 +339,11 @@ export function ItemList({
   // grouped home/folder reads), so one flag gates the whole feature.
   const perGroupMore =
     groupByFeed && !!fetchFeedPage && perFeedLimit != null && perFeedLimit > 0;
+  // Body rows the base read fetched per feed: the opening window plus the
+  // ride-along More batches, the last row doubling as the has-more probe.
+  // Legacy shape (no perFeedFetch prop): a bare window plus one probe row.
+  const perFeedFetchBody =
+    perFeedLimit != null ? perFeedFetch ?? perFeedLimit + 1 : null;
   const status = useConnectivityStatus();
   // Offset for the sticky group-by-feed section headers: the combined height of
   // the app header + top toolbar, so a pinned header sits flush under them.
@@ -1163,10 +1208,26 @@ export function ItemList({
     setStayInBodyIds(new Set());
     setPendingFeedMore(new Set());
     feedMoreFetchingRef.current = new Set();
-    seenForBaseRef.current = new Set();
-    basePinnedRef.current = new Set();
     grayedIdsRef.current = new Set();
-  }, [isFetching, error, items]);
+    // Re-baseline pin membership from the fresh page HERE, not by clearing and
+    // leaving it to the render-time loop: the sticky-window init effect below
+    // runs in this same effect flush, and its state updater executes at the top
+    // of the NEXT render — before that render's baseline loop repopulates the
+    // refs. Cleared-only refs would make it count every pin against the body
+    // window, seating `perFeedLimit − pins` articles instead of `perFeedLimit`
+    // (self-healed a commit later by the window-extension branch, but the
+    // repaint must be right the first time).
+    const seen = new Set<ItemId>();
+    const basePinned = new Set<ItemId>();
+    for (const fi of items) {
+      const id = fi.item.id;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      if (ds.stateStore.get(id).pinned) basePinned.add(id);
+    }
+    seenForBaseRef.current = seen;
+    basePinnedRef.current = basePinned;
+  }, [isFetching, error, items, ds]);
 
   // Initialize the sticky display window for any feed seen in `items` that
   // doesn't have one yet. Takes every load-time-pinned id in that feed's run
@@ -1279,47 +1340,50 @@ export function ItemList({
         );
         return;
       }
-      // An exhausted entry (`done: true`) normally blocks further taps, but
-      // a new top item arriving after exhaustion (cross-device pin, polled
-      // RSS item) shows up as "unseen in base window" — handleFeedMore's
-      // first-unseen cursor logic will fetch starting at that row's
-      // position, so it's reachable via tap. Without this, an exhausted
-      // section's More would no-op and the new row would only be revealed
-      // by pull-to-refresh.
+      // FAST PATH: the base read fetched up to `perFeedFetchBody` body rows
+      // per feed but each section opens at `perFeedLimit`, so a tap usually
+      // reveals the next batch from rows already in hand — instant, no
+      // request, works offline. This also covers a row that arrived in the
+      // base window after exhaustion (a polled-in item landed by an Undo
+      // reconcile, a cross-device promotion): it's fetched-but-unshown, so the
+      // tap reveals it here. Only when the fetched run is spent does More page
+      // the server.
       const allowed = displayedByFeed.get(feedId);
-      // Only a BODY row within the window can be "unseen": load-time pins are
-      // window-exempt and rendered unconditionally by mergedRaw's pinned pass,
-      // so they neither need More to reveal them nor advance the window
-      // position.
-      const hasUnseenTop =
-        !!allowed &&
-        (() => {
-          let bodyPos = 0;
-          for (const fi of items) {
-            if (fi.item.feedId !== feedId) continue;
-            if (bodyPos >= perFeedLimit) break;
-            if (basePinnedRef.current.has(fi.item.id)) continue;
-            if (!allowed.has(fi.item.id)) return true;
-            bodyPos += 1;
-          }
-          return false;
-        })();
-      if (existing?.done && !hasUnseenTop) return;
+      const unshown = unshownFetchedBodyIds(
+        items,
+        feedId,
+        allowed,
+        basePinnedRef.current,
+        (id) => {
+          const st = ds.stateStore.get(id);
+          return st.pinned || (!st.done && !st.hidden);
+        },
+      );
+      if (unshown.length > 0) {
+        const batch = unshown.slice(0, perFeedLimit);
+        setDisplayedByFeed((prev) => {
+          const cur = prev.get(feedId);
+          if (!cur) return prev;
+          const next = new Set(cur);
+          for (const id of batch) next.add(id);
+          const map = new Map(prev);
+          map.set(feedId, next);
+          return map;
+        });
+        return;
+      }
+      // Exhausted server cursor and nothing fetched left to reveal.
+      if (existing?.done) return;
       // Cursor selection — recomputed against the current server view on
       // EVERY tap (not just the first), so a cross-device Done/Hide that
       // shrank the feed-items universe doesn't leave the saved nextCursor
-      // pointing past the freshly-filtered row.
-      //
-      // - If the base window contains an id the sticky set hasn't seen
-      //   (a new top item arrived between fetches), cursor = the position
-      //   of that first unseen row. The next page starts at it, so a
-      //   cross-device pin or a polled-in item doesn't get skipped past.
-      // - Otherwise cursor = count of sticky ids the server still carries
-      //   in items[] ∪ extras. That's "how many of the rows I've already
-      //   seen are still in the current view" — exactly the offset for
-      //   the next batch. On a stable view this equals the old nextCursor;
-      //   when the server filtered a row out it shrinks by one (so the
-      //   row that used to follow doesn't get skipped).
+      // pointing past the freshly-filtered row. Cursor = count of displayed
+      // ids the server still carries in items[] ∪ extras — "how many of the
+      // rows I've already seen are still in the current view" — exactly the
+      // offset for the next batch. On a stable view this equals the old
+      // nextCursor; when the server filtered a row out it shrinks by one (so
+      // the row that used to follow doesn't get skipped). (The fast path above
+      // guarantees no fetched-but-unshown rows remain when this runs.)
       let cursor: string | null;
       if (!allowed) {
         // No sticky entry yet (rare — the init effect hasn't run): the window
@@ -1334,91 +1398,61 @@ export function ItemList({
           ? existing.nextCursor
           : String(pinnedCount + perFeedLimit);
       } else {
-        let pos = 0; // offset into the server's pinned-then-body sequence
-        let bodyPos = 0; // body rows considered — the window holds perFeedLimit
-        let firstUnseen = -1;
+        const inView = new Set<ItemId>();
         for (const fi of items) {
           if (fi.item.feedId !== feedId) continue;
-          if (bodyPos >= perFeedLimit) break;
-          // A locally Done/Hidden base row is on its way out of the server's
-          // sequence. Since a mutation no longer refetches, it's still sitting in
-          // items[] — so skip it here rather than counting its slot, exactly as
-          // the extras pass below already does. (Before, the post-mutation
-          // refetch dropped it and items[] was effectively server-filtered.)
-          const st = ds.stateStore.get(fi.item.id);
-          // Pinned rows stay in the server's sequence (exempt from Done/Hidden),
-          // so a pinned+Done row still occupies an offset slot — count it.
-          if (!st.pinned && (st.done || st.hidden)) continue;
-          // A load-time pin occupies a sequence slot but is window-exempt and
-          // always rendered, so it can't be the "unseen" row More must reveal
-          // and doesn't advance the body window either.
-          if (basePinnedRef.current.has(fi.item.id)) {
-            pos += 1;
+          // A window-exempt pin the sticky set never learned (a cross-device
+          // pin arriving on a refetch) is rendered by the pinned pass and
+          // occupies a sequence slot, so it counts toward the offset even
+          // outside `allowed`.
+          if (
+            !allowed.has(fi.item.id) &&
+            !basePinnedRef.current.has(fi.item.id)
+          ) {
             continue;
           }
-          if (!allowed.has(fi.item.id)) {
-            firstUnseen = pos;
-            break;
-          }
-          pos += 1;
-          bodyPos += 1;
+          // A locally Done/Hidden base row is on its way out of the server's
+          // sequence. Since a mutation no longer refetches, it's still sitting
+          // in items[] — so skip it rather than counting its slot. Pinned rows
+          // stay in the server's sequence (exempt from Done/Hidden), so a
+          // pinned+Done row still occupies an offset slot — count it.
+          const st = ds.stateStore.get(fi.item.id);
+          if (!st.pinned && (st.done || st.hidden)) continue; // pinned stays in the server sequence
+          inView.add(fi.item.id);
         }
-        if (firstUnseen >= 0) {
-          cursor = String(firstUnseen);
-        } else {
-          const inView = new Set<ItemId>();
-          for (const fi of items) {
-            if (fi.item.feedId !== feedId) continue;
-            // A window-exempt pin the sticky set never learned (a cross-device
-            // pin arriving on a refetch) is rendered by the pinned pass and
-            // occupies a sequence slot, so it counts toward the offset even
-            // outside `allowed`.
-            if (
-              !allowed.has(fi.item.id) &&
-              !basePinnedRef.current.has(fi.item.id)
-            ) {
-              continue;
-            }
-            // Same as above: a locally-dismissed base row no longer counts toward
-            // the server offset (it's gone from the server's filtered sequence).
+        if (existing) {
+          for (const fi of existing.items) {
+            if (!allowed.has(fi.item.id)) continue;
+            // Skip a cached extra the server has since dropped from this
+            // feed's sequence — Done/Hidden here or on another device. It's no
+            // longer at any server offset, so counting it would push the cursor
+            // past the row that now follows and skip it. (Base rows get the same
+            // treatment in the loop above now that a mutation doesn't refetch —
+            // items[] can carry a locally-dismissed row too.) Absence from
+            // items[] can't tell "filtered" from "beyond the opening window", so
+            // local Done/Hidden is the usable signal; excluding can only SHRINK
+            // the offset, making the worst case a harmless deduped re-fetch
+            // overlap rather than a skip.
             const st = ds.stateStore.get(fi.item.id);
             if (!st.pinned && (st.done || st.hidden)) continue; // pinned stays in the server sequence
             inView.add(fi.item.id);
           }
-          if (existing) {
-            for (const fi of existing.items) {
-              if (!allowed.has(fi.item.id)) continue;
-              // Skip a cached extra the server has since dropped from this
-              // feed's sequence — Done/Hidden here or on another device. It's no
-              // longer at any server offset, so counting it would push the cursor
-              // past the row that now follows and skip it. (Base rows get the same
-              // treatment in the loop above now that a mutation doesn't refetch —
-              // items[] can carry a locally-dismissed row too.) Absence from
-              // items[] can't tell "filtered" from "beyond the opening window", so
-              // local Done/Hidden is the usable signal; excluding can only SHRINK
-              // the offset, making the worst case a harmless deduped re-fetch
-              // overlap rather than a skip.
-              const st = ds.stateStore.get(fi.item.id);
-              if (!st.pinned && (st.done || st.hidden)) continue; // pinned stays in the server sequence
-              inView.add(fi.item.id);
-            }
-          }
-          let recomputed = inView.size;
-          // Cap to the server's last accepted nextCursor. After a fresh-top
-          // page lands (More #1 fetched cursor='0' for the heavy-refetch
-          // case), older extras can still inflate the sticky-overlap count
-          // past where the just-returned page ended; sending that larger
-          // offset would skip the unseen tail of the fresh window. Only
-          // undercut when the recomputed offset is smaller (server view
-          // genuinely shrank via cross-device Done).
-          if (existing && existing.nextCursor !== null) {
-            const accepted = Number.parseInt(existing.nextCursor, 10);
-            if (!Number.isNaN(accepted)) {
-              recomputed = Math.min(recomputed, accepted);
-            }
-          }
-          cursor = String(recomputed);
         }
+        let recomputed = inView.size;
+        // Cap to the server's last accepted nextCursor. After a fresh-top
+        // page lands (More #1 fetched cursor='0' for the heavy-refetch
+        // case), older extras can still inflate the sticky-overlap count
+        // past where the just-returned page ended; sending that larger
+        // offset would skip the unseen tail of the fresh window. Only
+        // undercut when the recomputed offset is smaller (server view
+        // genuinely shrank via cross-device Done).
+        if (existing && existing.nextCursor !== null) {
+          const accepted = Number.parseInt(existing.nextCursor, 10);
+          if (!Number.isNaN(accepted)) {
+            recomputed = Math.min(recomputed, accepted);
+          }
+        }
+        cursor = String(recomputed);
       }
       if (cursor === null) return;
       // Claim the in-flight slot synchronously (before the first await) so a
@@ -1954,16 +1988,15 @@ export function ItemList({
   }, [visibleItems, isFetching, groupByFeed, ds]);
 
   // Which feed sections should show a "More" at their foot, and which are
-  // mid-fetch. A feed has more when it already holds extras that aren't
-  // exhausted, or — before any expansion — when the base read returned MORE
-  // BODY rows than the display window (the overfetched probe row survived),
-  // proving older rows exist. Pins are excluded from the body count: they're
-  // window-exempt (all of them show, 0052), so a pin-heavy section mustn't
-  // read as "has more articles". Using `> perFeedLimit` (not `>=`) is what
-  // keeps an exactly-full feed — count === window, nothing older — from
-  // showing a dead More that fetches an empty page and vanishes (SPEC: a feed
-  // at/under its window shows no More). The total is kept alongside for the
-  // pre-0052 backend fallback in feedsWithMore below.
+  // mid-fetch. A feed has more when the fetched run still holds unshown
+  // showable body rows (the fast path's fuel — a tap reveals them instantly),
+  // when it holds extras that aren't exhausted, or — before any expansion —
+  // when the base read came back at the full fetch depth (the last fetched
+  // row is the surviving has-more probe), proving the server may hold older
+  // rows. Pins are excluded from the body count: they're window-exempt (all
+  // of them show, 0052), so a pin-heavy section mustn't read as "has more
+  // articles". The total is kept alongside for the pre-0052 backend fallback
+  // in feedsWithMore below.
   const baseCountsByFeed = useMemo(() => {
     const m = new Map<FeedId, { total: number; body: number }>();
     if (!perGroupMore) return m;
@@ -1978,71 +2011,81 @@ export function ItemList({
     }
     return m;
   }, [perGroupMore, items]);
-  // Per-feed: does the base window contain at least one id the sticky set
-  // hasn't seen yet? This catches the case where Sweep (or cross-device drift)
-  // has the server returning the next `≤ perFeedLimit` non-Done rows: with the
-  // probe-row signal alone, a feed whose remaining unread is exactly the
-  // window would have no More even though every row in `items` is hidden by
-  // the sticky gate. Tracking unseen-in-window keeps More reachable.
-  const hasUnseenInBaseWindow = useMemo(() => {
+  // Feeds whose fetched run still holds at least one showable body row the
+  // sticky display window hasn't opted into — the rows the section "More"
+  // reveals without a request. Also catches a row that arrived in the base
+  // window after exhaustion (Undo-reconciled poll drift, a cross-device
+  // promotion): with the probe signal alone its section would show no More
+  // even though the row sits in items[] behind the sticky gate. Re-derived on
+  // store changes (`storeVersion`): a local dismiss can consume the last
+  // unshown row, and the button must drop with it.
+  const feedsWithUnshown = useMemo(() => {
+    void storeVersion;
     const s = new Set<FeedId>();
     if (!perGroupMore || perFeedLimit == null) return s;
-    let i = 0;
-    while (i < items.length) {
-      const feedId = items[i].item.feedId;
-      const allowed = displayedByFeed.get(feedId);
-      let bodyPos = 0;
-      while (i < items.length && items[i].item.feedId === feedId) {
-        // Load-time pins are window-exempt and always rendered, so only a
-        // body row can be "unseen" — and pins don't advance the window
-        // position either.
-        if (!basePinnedRef.current.has(items[i].item.id)) {
-          if (
-            bodyPos < perFeedLimit &&
-            allowed &&
-            !allowed.has(items[i].item.id)
-          ) {
-            s.add(feedId);
-          }
-          bodyPos += 1;
-        }
-        i += 1;
-      }
+    const seen = new Set<FeedId>();
+    for (const fi of items) {
+      const feedId = fi.item.feedId;
+      if (seen.has(feedId)) continue;
+      seen.add(feedId);
+      const unshown = unshownFetchedBodyIds(
+        items,
+        feedId,
+        displayedByFeed.get(feedId),
+        basePinnedRef.current,
+        (id) => {
+          const st = ds.stateStore.get(id);
+          return st.pinned || (!st.done && !st.hidden);
+        },
+      );
+      if (unshown.length > 0) s.add(feedId);
     }
     return s;
-  }, [perGroupMore, perFeedLimit, items, displayedByFeed]);
+  }, [perGroupMore, perFeedLimit, items, displayedByFeed, ds, storeVersion]);
   const feedsWithMore = useMemo(() => {
-    if (!perGroupMore || perFeedLimit == null) return undefined;
+    if (!perGroupMore || perFeedLimit == null || perFeedFetchBody == null) {
+      return undefined;
+    }
     const s = new Set<FeedId>();
     for (const [feedId, { total, body }] of baseCountsByFeed) {
+      // Fetched rows still in hand → More reveals them, no request. This also
+      // re-enables an exhausted feed (`ex.done`) that gained a base-window row
+      // since — without it there'd be no path to reveal the new content short
+      // of pull-to-refresh.
+      if (feedsWithUnshown.has(feedId)) {
+        s.add(feedId);
+        continue;
+      }
       const ex = feedExtras.get(feedId);
-      // Re-enable More for an exhausted feed (`ex.done`) when the base window
-      // has unseen rows — typically a polled-in or cross-device-promoted item
-      // arriving after the user paginated all the way through. Without this
-      // there's no path to reveal the new content short of pull-to-refresh.
       if (ex) {
-        if (!ex.done || hasUnseenInBaseWindow.has(feedId)) s.add(feedId);
+        if (!ex.done) s.add(feedId);
       } else if (
-        body > perFeedLimit ||
+        // The base read filled its per-feed fetch window — the last row is the
+        // surviving has-more probe, so the server may hold older rows. A feed
+        // that came back short is fully in hand: once nothing fetched is left
+        // unshown, no More (SPEC: an exhausted feed shows no dead button).
+        body >= perFeedFetchBody ||
         // Pre-0052 backend fallback: the old feed_items caps the WHOLE
-        // section (pins included) at the overfetched perFeedLimit + 1, so on
-        // a pinned section the body probe can never survive and the body
-        // count alone would hide More while articles sit clipped behind the
-        // cap (Codex P1 on #431). A section that came back exactly at that
-        // cap is the old server's has-more probe — honor it so those rows
-        // stay reachable until `make migrate` lands 0052. Against the new
-        // server this only re-adds the dead-button edge the old client
-        // already had (an exhausted pinned section of exactly
-        // perFeedLimit + 1 rows fetches one empty page); an un-pinned
-        // exactly-full section still gets no More (total === perFeedLimit).
-        total === perFeedLimit + 1 ||
-        hasUnseenInBaseWindow.has(feedId)
+        // section (pins included) at the fetch depth, so on a pinned section
+        // the body probe can never survive and the body count alone would
+        // hide More while articles sit clipped behind the cap (Codex P1 on
+        // #431). A section that came back exactly at that cap is the old
+        // server's has-more probe — honor it so those rows stay reachable on
+        // a backend that predates the migration.
+        total === perFeedFetchBody
       ) {
         s.add(feedId);
       }
     }
     return s;
-  }, [perGroupMore, perFeedLimit, baseCountsByFeed, feedExtras, hasUnseenInBaseWindow]);
+  }, [
+    perGroupMore,
+    perFeedLimit,
+    perFeedFetchBody,
+    baseCountsByFeed,
+    feedExtras,
+    feedsWithUnshown,
+  ]);
   // Canonical feed rank from the full base read — used by ItemRows to
   // interleave phantom sections at their proper ordinal position so a swept
   // middle feed doesn't shift to the end of the rendered list.

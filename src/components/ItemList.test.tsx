@@ -5822,21 +5822,129 @@ describe('ItemList', () => {
       expect(container.querySelector('[data-item-id="A-2"]')).not.toBeNull();
     });
 
+    it('More reveals the next batch from the already-fetched rows — no request — until they run out', async () => {
+      // The deep windowed read (PER_FEED_FETCH) carries several More pages'
+      // worth of body rows in the base response. A section More must page
+      // through those already-fetched rows instantly — batch by batch, no
+      // network — and only call fetchFeedPage once the fetched run is spent.
+      const user = userEvent.setup();
+      const { source, mk } = await makeRows();
+      const K = 3;
+      const FETCH = 7; // window (3) + two ride-along batches (3 + 1 = the probe slot)
+      const base = [
+        ...[0, 1, 2, 3, 4, 5, 6].map((n) => mk('A', 'Feed A', n)),
+        mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
+      ];
+      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
+      const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) =>
+        Promise.resolve(
+          cursor === '7'
+            ? { items: [mk('A', 'Feed A', 7)], nextCursor: null }
+            : { items: [], nextCursor: null },
+        ),
+      );
+      renderWithProviders(
+        <ItemList
+          viewKey={`psm-local-${viewKeySeq++}`}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+          groupByFeed
+          fetchFeedPage={fetchFeedPage}
+          perFeedLimit={K}
+          perFeedFetch={FETCH}
+        />,
+        { source },
+      );
+      await screen.findAllByTestId('item-row');
+      const ids = () =>
+        [...document.querySelectorAll('[data-item-id]')].map((el) =>
+          el.getAttribute('data-item-id'),
+        );
+      // Section A opens at the window; the fetched tail stays gated. Short
+      // feed B has no More.
+      expect(ids()).toEqual(['A-0', 'A-1', 'A-2', 'B-0', 'B-1']);
+      const moreBtns = () => screen.queryAllByTestId('group-more');
+      expect(moreBtns()).toHaveLength(1);
+
+      // First tap: the next K fetched rows appear instantly, no request.
+      await user.click(moreBtns()[0]);
+      expect(ids()).toEqual(['A-0', 'A-1', 'A-2', 'A-3', 'A-4', 'A-5', 'B-0', 'B-1']);
+      expect(fetchFeedPage).not.toHaveBeenCalled();
+
+      // Second tap: the last fetched row (the probe slot) appears — still no
+      // request. The read came back at the full fetch depth, so the server
+      // may hold more and the button stays.
+      await user.click(moreBtns()[0]);
+      expect(ids()).toEqual([
+        'A-0', 'A-1', 'A-2', 'A-3', 'A-4', 'A-5', 'A-6', 'B-0', 'B-1',
+      ]);
+      expect(fetchFeedPage).not.toHaveBeenCalled();
+      expect(moreBtns()).toHaveLength(1);
+
+      // Third tap: the fetched run is spent — NOW More pages the server, from
+      // the offset just past everything displayed.
+      await user.click(moreBtns()[0]);
+      await screen.findByText('Feed A 7');
+      expect(fetchFeedPage).toHaveBeenCalledTimes(1);
+      expect(fetchFeedPage).toHaveBeenCalledWith('A', '7');
+    });
+
+    it('a feed fetched short of the fetch depth exhausts locally — More vanishes without ever fetching', async () => {
+      // The feed published fewer rows than PER_FEED_FETCH, so the whole feed
+      // is in hand. More reveals the fetched tail and then disappears — it
+      // must never fire a server fetch that would return an empty page (and
+      // it keeps working offline, since no request is needed).
+      const user = userEvent.setup();
+      const { source, mk } = await makeRows();
+      const K = 3;
+      const FETCH = 7;
+      const base = [0, 1, 2, 3, 4].map((n) => mk('A', 'Feed A', n)); // 5 < 7
+      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
+      const fetchFeedPage = vi.fn(() =>
+        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
+      );
+      renderWithProviders(
+        <ItemList
+          viewKey={`psm-local-short-${viewKeySeq++}`}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+          groupByFeed
+          fetchFeedPage={fetchFeedPage}
+          perFeedLimit={K}
+          perFeedFetch={FETCH}
+        />,
+        { source },
+      );
+      await screen.findAllByTestId('item-row');
+      const ids = () =>
+        [...document.querySelectorAll('[data-item-id]')].map((el) =>
+          el.getAttribute('data-item-id'),
+        );
+      expect(ids()).toEqual(['A-0', 'A-1', 'A-2']);
+
+      // Reveal the fetched tail (2 rows — a partial batch).
+      await user.click(screen.getByTestId('group-more'));
+      expect(ids()).toEqual(['A-0', 'A-1', 'A-2', 'A-3', 'A-4']);
+
+      // Fully in hand: the button is gone and nothing was ever fetched.
+      expect(screen.queryAllByTestId('group-more')).toHaveLength(0);
+      expect(fetchFeedPage).not.toHaveBeenCalled();
+    });
+
     it('grows one feed section inline, leaving the others untouched, until exhausted', async () => {
       const user = userEvent.setup();
       const { source, mk } = await makeRows();
       const K = 3;
-      // Base page: feed A opens at the window (3 rows → may have more), feed B is
-      // short (2 rows → fully shown, no More).
+      // Base page: feed A came back at the full fetch depth (3 rows with
+      // perFeedFetch = 3 → the server may have more), feed B is short (2 rows →
+      // fully shown, no More).
       const base = [
-        // Feed A: window (3) + 1 overfetched has-more probe (A3) → More shows;
-        // the probe is not rendered until expanded. Feed B is short → no More.
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
         mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
-      // First More pages from the window edge (offset 3): the probe (A3) reappears
-      // here as the first appended row, then A4; then A5 exhausts the feed.
+      // First More pages from the fetched edge (offset 3): A3 + A4; then A5
+      // exhausts the feed.
       const aMore: Record<string, { items: FeedItem[]; nextCursor: string | null }> = {
         '3': { items: [mk('A', 'Feed A', 3), mk('A', 'Feed A', 4)], nextCursor: '5' },
         '5': { items: [mk('A', 'Feed A', 5)], nextCursor: null },
@@ -5854,6 +5962,7 @@ describe('ItemList', () => {
           groupByFeed
           fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
+          perFeedFetch={K}
         />,
         { source },
       );
@@ -5964,14 +6073,15 @@ describe('ItemList', () => {
       const user = userEvent.setup();
       const { source, mk } = await makeRows();
       const K = 3;
-      // Feed A: window A0-A2 + overfetch probe A3 → A offers More. B is short.
+      // Feed A came back at the full fetch depth (3 rows, perFeedFetch = 3) →
+      // A offers More. B is short.
       const base = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
         mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
       const aMore: Record<string, { items: FeedItem[]; nextCursor: string | null }> = {
-        // More #1: append the probe A3 + A4; server says the next batch is at 5.
+        // More #1: append A3 + A4; server says the next batch is at 5.
         '3': { items: [mk('A', 'Feed A', 3), mk('A', 'Feed A', 4)], nextCursor: '5' },
         // After A4 is Done server-side, the next unseen row (A5) sits at offset 4.
         '4': { items: [mk('A', 'Feed A', 5)], nextCursor: null },
@@ -5991,6 +6101,7 @@ describe('ItemList', () => {
           groupByFeed
           fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
+          perFeedFetch={K}
         />,
         { source },
       );
@@ -6076,9 +6187,10 @@ describe('ItemList', () => {
       const user = userEvent.setup();
       const { source, mk } = await makeRows();
       const K = 3;
-      // Window (3) + overfetched probe (A3) so the section offers a More.
+      // The feed came back at the full fetch depth (perFeedFetch = 3), so the
+      // section offers a More that pages the server.
       const base = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
       let attempts = 0;
@@ -6096,6 +6208,7 @@ describe('ItemList', () => {
           groupByFeed
           fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
+          perFeedFetch={K}
         />,
         { source },
       );
@@ -6123,7 +6236,7 @@ describe('ItemList', () => {
       const { source, mk } = await makeRows();
       const K = 3;
       const base = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
       // Hold the section fetch open so both taps land while the first is in
@@ -6143,6 +6256,7 @@ describe('ItemList', () => {
           groupByFeed
           fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
+          perFeedFetch={K}
         />,
         { source },
       );
@@ -6175,7 +6289,7 @@ describe('ItemList', () => {
       const { source, mk } = await makeRows();
       const K = 3;
       let basePage: FeedItem[] = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
       const fetchFeedPage = vi.fn(() =>
@@ -6196,6 +6310,7 @@ describe('ItemList', () => {
           groupByFeed
           fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
+          perFeedFetch={K}
         />,
         { source, queryClient },
       );
@@ -6251,7 +6366,7 @@ describe('ItemList', () => {
       const { source, mk } = await makeRows();
       const K = 3;
       let basePage: FeedItem[] = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
         mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
@@ -6276,6 +6391,7 @@ describe('ItemList', () => {
           groupByFeed
           fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
+          perFeedFetch={K}
         />,
         { source, queryClient },
       );
@@ -6287,10 +6403,10 @@ describe('ItemList', () => {
       ).toEqual(['A-0', 'A-1', 'A-2', 'B-0', 'B-1']);
 
       // Overnight drift: brand new items land at the top of A. The refetch
-      // re-materializes the set — the fresh window paints, the probe (A-0)
-      // stays behind the section More.
+      // re-materializes the set — the fresh window paints; older rows stay
+      // behind the section More.
       basePage = [
-        mk('A', 'Feed A', 9), mk('A', 'Feed A', 8), mk('A', 'Feed A', 7), mk('A', 'Feed A', 0),
+        mk('A', 'Feed A', 9), mk('A', 'Feed A', 8), mk('A', 'Feed A', 7),
         mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
       ];
       await act(async () => {
@@ -6454,13 +6570,13 @@ describe('ItemList', () => {
       const K = 3;
       // The first view's base read.
       const baseV1 = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
       ];
       // The second view's base read happens to include one of the OLD
       // More page's ids (A-5). If the sticky update leaks, A-5 would
       // surface without a tap.
       const baseV2 = [
-        mk('A', 'Feed A', 5), mk('A', 'Feed A', 6), mk('A', 'Feed A', 7), mk('A', 'Feed A', 8),
+        mk('A', 'Feed A', 5), mk('A', 'Feed A', 6), mk('A', 'Feed A', 7),
       ];
       let activeBase: FeedItem[] = baseV1;
       const fetchPage = vi.fn(() =>
@@ -6493,6 +6609,7 @@ describe('ItemList', () => {
               groupByFeed
               fetchFeedPage={fetchFeedPage}
               perFeedLimit={K}
+              perFeedFetch={K}
             />
           </>
         );
@@ -6541,7 +6658,7 @@ describe('ItemList', () => {
       const { source, mk } = await makeRows();
       const K = 3;
       let basePage: FeedItem[] = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
       const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) =>
@@ -6563,6 +6680,7 @@ describe('ItemList', () => {
           groupByFeed
           fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
+          perFeedFetch={K}
         />,
         { source, queryClient },
       );
@@ -6578,7 +6696,7 @@ describe('ItemList', () => {
       // Heavy refetch swaps items[] to a wholly fresh top window → the
       // section repaints to it; the old anchors and the extras drop.
       basePage = [
-        mk('A', 'Feed A', 90), mk('A', 'Feed A', 91), mk('A', 'Feed A', 92), mk('A', 'Feed A', 93),
+        mk('A', 'Feed A', 90), mk('A', 'Feed A', 91), mk('A', 'Feed A', 92),
       ];
       await act(async () => {
         await queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
@@ -6601,7 +6719,7 @@ describe('ItemList', () => {
       const { source, mk } = await makeRows();
       const K = 3;
       let basePage: FeedItem[] = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
       const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) => {
@@ -6627,6 +6745,7 @@ describe('ItemList', () => {
           groupByFeed
           fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
+          perFeedFetch={K}
         />,
         { source, queryClient },
       );
@@ -6639,7 +6758,7 @@ describe('ItemList', () => {
       // Heavy refetch shifts items[] to a fresh top window → repaint: the
       // stale expansion is dropped, the fresh window paints.
       basePage = [
-        mk('A', 'Feed A', 90), mk('A', 'Feed A', 91), mk('A', 'Feed A', 92), mk('A', 'Feed A', 93),
+        mk('A', 'Feed A', 90), mk('A', 'Feed A', 91), mk('A', 'Feed A', 92),
       ];
       await act(async () => {
         await queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
@@ -6735,7 +6854,7 @@ describe('ItemList', () => {
       const { source, mk } = await makeRows();
       const K = 3;
       let basePage: FeedItem[] = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
       const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) => {
@@ -6761,6 +6880,7 @@ describe('ItemList', () => {
           groupByFeed
           fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
+          perFeedFetch={K}
         />,
         { source, queryClient },
       );
@@ -6773,7 +6893,7 @@ describe('ItemList', () => {
       // A new top item arrives via a background refresh → the section
       // repaints as the fresh window, new item on top, expansion dropped.
       basePage = [
-        mk('A', 'Feed A', 9), mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
+        mk('A', 'Feed A', 9), mk('A', 'Feed A', 0), mk('A', 'Feed A', 1),
       ];
       await act(async () => {
         await queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
@@ -6786,7 +6906,8 @@ describe('ItemList', () => {
       });
 
       // The exhausted flag was reset with the repaint: More is back (the
-      // probe A-2 survived), and it pages below the fresh window.
+      // fresh read came back at the full fetch depth), and it pages below
+      // the fresh window.
       const aMore = screen
         .getAllByTestId('group-more')
         .find((b) => b.getAttribute('data-feed-more') === 'A');
@@ -6809,7 +6930,7 @@ describe('ItemList', () => {
       const { source, mk } = await makeRows();
       const K = 3;
       const basePage: FeedItem[] = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
       // First More tap returns [A-3, A-4]; second tap, after a server-side
@@ -6835,6 +6956,7 @@ describe('ItemList', () => {
           groupByFeed
           fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
+          perFeedFetch={K}
         />,
         { source, queryClient },
       );
@@ -7125,15 +7247,15 @@ describe('ItemList', () => {
           groupByFeed
           fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
+          perFeedFetch={K}
         />,
         { source, queryClient },
       );
       await act(async () => {
-        // A-0 pinned (window-exempt) + a full K-row body window (A-1..A-3) +
-        // the body probe A-4, so the section carries a live "More".
+        // A-0 pinned (window-exempt) + a full K-row body window (A-1..A-3) at
+        // the full fetch depth, so the section carries a live "More".
         releaseFetchPage!([
           mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
-          mk('A', 'Feed A', 4),
         ]);
         await Promise.resolve();
       });
@@ -7165,13 +7287,12 @@ describe('ItemList', () => {
       await user.click(aMore());
       expect(fetchFeedPage).not.toHaveBeenCalled();
 
-      // Release the refetch with the fresh top page (pin + 4 body → probe
-      // A-6 keeps More alive). The settle re-materializes: fresh window
-      // repaints, the deferred tap is dropped — no fetch fired.
+      // Release the refetch with the fresh top page (pin + 3 body — the full
+      // fetch depth keeps More alive). The settle re-materializes: fresh
+      // window repaints, the deferred tap is dropped — no fetch fired.
       await act(async () => {
         releaseFetchPage!([
           mk('A', 'Feed A', 0), mk('A', 'Feed A', 3), mk('A', 'Feed A', 4), mk('A', 'Feed A', 5),
-          mk('A', 'Feed A', 6),
         ]);
         await Promise.resolve();
       });
@@ -7386,7 +7507,7 @@ describe('ItemList', () => {
           call1Done = true;
           return Promise.resolve({
             items: [
-              mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+              mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
             ],
             nextCursor: '1',
           });
@@ -7395,7 +7516,7 @@ describe('ItemList', () => {
         return new Promise<{ items: FeedItem[]; nextCursor: string | null }>((resolve) => {
           releaseRefetch = () => resolve({
             items: [
-              mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+              mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
             ],
             nextCursor: '1',
           });
@@ -7420,6 +7541,7 @@ describe('ItemList', () => {
           groupByFeed
           fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
+          perFeedFetch={K}
         />,
         { source, queryClient },
       );
@@ -7558,11 +7680,10 @@ describe('ItemList', () => {
       const { source, mk } = await makeRows();
       const K = 3;
       // Only feed A is present, no pins. Sweep marks A-0..A-2 Done; a mutation
-      // no longer refetches, so `items[]` keeps the pre-Sweep window (A-0..A-2 +
-      // the A-3 probe). Every displayed id is now Done and the probe stays gated,
-      // so without the phantom header path the page would collapse to the empty
-      // state.
-      const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3)];
+      // no longer refetches, so `items[]` keeps the pre-Sweep window. Every
+      // displayed id is now Done, so without the phantom header path the page
+      // would collapse to the empty state.
+      const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2)];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
       const fetchFeedPage = vi.fn((_feedId: string, cursor: string | null) =>
         Promise.resolve(
@@ -7583,6 +7704,7 @@ describe('ItemList', () => {
           groupByFeed
           fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
+          perFeedFetch={K}
         />,
         { source, queryClient },
       );
@@ -7682,11 +7804,10 @@ describe('ItemList', () => {
       // (the pinned row stays put; the rest get marked Done).
       source.stateStore.set('A-0', 'pinned', true);
       // A-0 (pinned, window-exempt) at top of A's section + A-1..A-3 (the
-      // K-row body window) + A-4 probe. After Sweep of A-1..A-3, the gated
-      // A-4 must NOT slide up.
+      // K-row body window, at the full fetch depth). After Sweep of A-1..A-3,
+      // nothing may slide up to refill the swept slots.
       const base = [
         mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
-        mk('A', 'Feed A', 4),
         mk('B', 'Feed B', 0), mk('B', 'Feed B', 1),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
@@ -7711,6 +7832,7 @@ describe('ItemList', () => {
           groupByFeed
           fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
+          perFeedFetch={K}
         />,
         { source, queryClient },
       );
@@ -7823,7 +7945,7 @@ describe('ItemList', () => {
       const { source, mk } = await makeRows();
       const K = 3;
       let basePage: FeedItem[] = [
-        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2), mk('A', 'Feed A', 3),
+        mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
       ];
       const fetchPage = vi.fn(() => Promise.resolve({ items: basePage, nextCursor: null }));
       let release: (() => void) | null = null;
@@ -7846,6 +7968,7 @@ describe('ItemList', () => {
           groupByFeed
           fetchFeedPage={fetchFeedPage}
           perFeedLimit={K}
+          perFeedFetch={K}
         />,
         { source, queryClient },
       );
@@ -7858,7 +7981,7 @@ describe('ItemList', () => {
       // A brand new item arrives in the base window mid-flight; the refetch
       // settles and RE-MATERIALIZES the section (fresh window paints).
       basePage = [
-        mk('A', 'Feed A', 9), mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2),
+        mk('A', 'Feed A', 9), mk('A', 'Feed A', 0), mk('A', 'Feed A', 1),
       ];
       await act(async () => {
         await queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
