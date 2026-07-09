@@ -2939,8 +2939,12 @@ export function ItemList({
     return headers;
   }, [groupByFeed, visibleItems]);
 
-  // "Collapse all" / "Expand all" in the top toolbar act on the feeds currently
-  // in view — the distinct feed ids across the loaded pages, in order.
+  // The feeds whose section headers are currently rendered: every feed with a
+  // visible row, plus the phantom (swept-empty) More sections — their headers
+  // are just as much "in view". Drives the toolbar Collapse/Expand-all and the
+  // unread-count badge query; without the phantom ids a swept-empty section
+  // dropped out of the count read and its badge went blank even though the
+  // feed still held unread articles behind its More button.
   const feedIdsInView = useMemo(() => {
     if (!groupByFeed) return [] as FeedId[];
     const seen = new Set<FeedId>();
@@ -2951,8 +2955,14 @@ export function ItemList({
         out.push(fi.item.feedId);
       }
     }
+    for (const p of emptyMoreSections ?? []) {
+      if (!seen.has(p.feedId)) {
+        seen.add(p.feedId);
+        out.push(p.feedId);
+      }
+    }
     return out;
-  }, [groupByFeed, visibleItems]);
+  }, [groupByFeed, visibleItems, emptyMoreSections]);
 
   // Per-feed unread/to-do counts for the section-header badges (group-by-feed
   // only). Keyed under ['feed', …] so the app-wide feed invalidation

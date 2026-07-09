@@ -7797,6 +7797,67 @@ describe('ItemList', () => {
       ).toBeNull();
     });
 
+    it('keeps the unread count badge on the phantom header after sweeping the section empty', async () => {
+      // Regression: sweeping every visible row of a pin-less section blanked
+      // its count badge — the phantom header zeroed the count AND the feed
+      // dropped out of the unread-counts query (it was keyed off visible rows
+      // only) — even though the feed still held unread articles behind its
+      // More button. The badge must keep showing the feed's remaining total.
+      const { source, mk } = await makeRows();
+      const K = 3;
+      const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2)];
+      const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
+      const fetchFeedPage = vi.fn(() =>
+        Promise.resolve({ items: [] as FeedItem[], nextCursor: null }),
+      );
+      // The server holds 5 unread beyond the swept rows (prefetched/deeper
+      // pages), whatever the local triage did.
+      const getCounts = vi.fn(async (ids: string[]) =>
+        Object.fromEntries(ids.map((id) => [id, id === 'A' ? 5 : 0])),
+      );
+      source.getFeedUnreadCounts = getCounts;
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      });
+      const viewKey = `psm-phantom-count-${viewKeySeq++}`;
+      const { container } = renderWithProviders(
+        <ItemList
+          viewKey={viewKey}
+          fetchPage={fetchPage}
+          emptyLabel="x"
+          groupByFeed
+          fetchFeedPage={fetchFeedPage}
+          perFeedLimit={K}
+          perFeedFetch={K}
+        />,
+        { source, queryClient },
+      );
+      await screen.findAllByTestId('item-row');
+      await waitFor(() =>
+        expect(container.querySelector('.item-list__group-count')?.textContent).toBe('5'),
+      );
+
+      // Sweep the whole (pin-less) section.
+      await act(async () => {
+        source.stateStore.hideMany(['A-0', 'A-1', 'A-2'], Date.now());
+      });
+
+      // Rows gone, phantom header + More in their place — badge still counting.
+      await waitFor(() =>
+        expect(container.querySelectorAll('[data-item-id]')).toHaveLength(0),
+      );
+      expect(
+        screen
+          .getAllByTestId('group-more')
+          .find((b) => b.getAttribute('data-feed-more') === 'A'),
+      ).toBeDefined();
+      await waitFor(() =>
+        expect(container.querySelector('.item-list__group-count')?.textContent).toBe('5'),
+      );
+      // The count read still targets the swept feed — its header is in view.
+      expect(getCounts).toHaveBeenLastCalledWith(['A']);
+    });
+
     it('after Sweep, the section does not auto-refill with `perFeedLimit − pinned` server-newer rows; tap More pulls the next page', async () => {
       // Captures the intended Sweep semantics: marking a section's unpinned
       // rows Done clears them from view. A mutation no longer refetches, so

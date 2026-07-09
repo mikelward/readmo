@@ -1314,7 +1314,9 @@ negligible and off every critical path. See the External services table in
        carried three — collapse, Undo, Sweep — before feed navigation was
        added), and each zone still meets the 44×44px floor with ≥8px gaps. The **count badge** shows that feed's unread/to-do total (from
        `getFeedUnreadCounts`; capped `99+`, hidden at 0), so a collapsed feed
-       still shows how much it holds. **Sweep this feed** marks done only that
+       still shows how much it holds — and a **phantom (swept-empty) section
+       keeps its badge** too: sweeping the visible rows must not blank the
+       count while the feed still holds unread articles behind its "More". **Sweep this feed** marks done only that
        feed's **fully-visible, unpinned** rows — the same shielding as the
        toolbar Sweep (off-screen and pinned rows untouched), scoped to the one
        feed — and disables when that feed has nothing sweepable on screen. A
