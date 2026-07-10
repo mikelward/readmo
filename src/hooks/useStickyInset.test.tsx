@@ -114,6 +114,19 @@ describe('useStickyInset', () => {
     expect(lastObserver!.observed).toContain(toolbar);
   });
 
+  it('extends the top inset by a pinned group-by-feed section header and observes it', () => {
+    // Group-by-feed's pinned header occludes rows below the chrome, so the top
+    // inset grows by its height (48): 104 + 48 = 152. The header is observed so
+    // a resize in place re-measures.
+    mountSticky('app-header', 56);
+    mountSticky('list-toolbar', 104);
+    const header = mountSticky('item-list__group-header', 152); // height 48
+    const seen: number[] = [];
+    render(<Probe onMeasure={(n) => seen.push(n)} />);
+    expect(seen.at(-1)).toBe(152);
+    expect(lastObserver!.observed).toContain(header);
+  });
+
   it('re-measures when ResizeObserver fires (toolbar height changed without a window resize)', () => {
     mountSticky('app-header', 56);
     const toolbar = mountSticky('list-toolbar', 104);

@@ -4,8 +4,10 @@
 // toolbar / Sticky pinned just below the header).
 //
 // `StoryList`'s sweep IntersectionObserver shrinks the root's top by
-// this value so that a row visually hidden behind either sticky
-// strip is not counted as "fully visible". When both elements are
+// this value so that a row visually hidden behind the sticky chrome —
+// or, in group-by-feed, behind the pinned section header below it (see
+// the group-header note where it's added) — is not counted as "fully
+// visible". When both chrome elements are
 // stuck at the top, the toolbar's bottom is what matters — it's
 // lower in the viewport than the header. When the toolbar is still
 // in normal flow near scroll=0, its natural bottom is also the right
@@ -32,15 +34,20 @@ export function measureStickyInset(): number {
     const rect = el.getBoundingClientRect();
     if (rect.bottom > bottom) bottom = rect.bottom;
   }
-  // NB: a pinned group-by-feed section header (`position: sticky`, bounded to
-  // its own section — see ItemList.css) also sits in this band and occludes up
-  // to its own height of that feed's topmost row. We deliberately do NOT
-  // subtract it. Only one header is ever pinned, the occluded row belongs to the
-  // *same* feed (so a stray Sweep dismisses that feed's own row, not an
-  // unrelated one), and finding the pinned header would mean a
-  // getBoundingClientRect scan over every loaded section on each scroll frame —
-  // O(sections) layout reads that jank scrolling on large accounts. The bounded,
-  // same-feed occlusion is an accepted trade-off for keeping this O(1).
+  // Group-by-feed pins a section header (`.item-list__group-header`,
+  // `position: sticky`) in the band directly below the chrome; its opaque
+  // background paints over each row as it scrolls up behind it. So a row is
+  // *visually gone* a header-height before its top clears the toolbar. Extend
+  // the inset by that header's height so the visibility boundary — and thus
+  // auto-hide-on-scroll's top-exit trigger — lands at the header's bottom edge,
+  // where the row actually disappears, rather than a header-height higher at the
+  // toolbar. Every header is a fixed height (single-line title, one 44px tap row
+  // — see ItemList.css), so we read ONE header's height with a single
+  // getBoundingClientRect (O(1)); we do NOT scan for the specific pinned one, and
+  // the constant applies to every section's top-exit alike. Absent (ungrouped) →
+  // the chrome-only inset, unchanged.
+  const groupHeader = document.querySelector('.item-list__group-header');
+  if (groupHeader) bottom += groupHeader.getBoundingClientRect().height;
   return Math.max(0, Math.floor(bottom));
 }
 

@@ -82,6 +82,11 @@ export function useStickyInset(): StickyInset {
         '.app-header',
         '.list-toolbar',
         '.list-toolbar--bottom',
+        // Group-by-feed's pinned section header extends the top inset by its
+        // height (see measureStickyInset). Observe it so a header that resizes
+        // in place re-measures; toggling grouping on/off is caught by the `body`
+        // observer below, since it reflows the content height either way.
+        '.item-list__group-header',
       ]) {
         const el = document.querySelector(selector);
         if (el) ro.observe(el);
