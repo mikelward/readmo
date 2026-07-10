@@ -1,30 +1,3 @@
-export function extractDomain(url: string | undefined): string {
-  if (!url) return '';
-  try {
-    const { hostname } = new URL(url);
-    return hostname.replace(/^www\./, '');
-  } catch {
-    return '';
-  }
-}
-
-// Feed item URLs come from whatever the publisher syndicated. In the
-// very unlikely case that a non-http(s) scheme leaks through
-// (`javascript:`, `data:`, `vbscript:`…), inlining that URL into an
-// `href` would let a tap execute script on our origin. Narrow the
-// allowlist to `http:` and `https:` and render the title /
-// Open-original link as plain text otherwise. Relative and malformed
-// URLs throw from `new URL(url)` and are rejected by the catch.
-export function isSafeHttpUrl(url: string | undefined | null): url is string {
-  if (!url) return false;
-  try {
-    const { protocol } = new URL(url);
-    return protocol === 'http:' || protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
-
 // Common second-level labels that sit under a 2-letter ccTLD and behave
 // like a TLD for registration purposes (`bbc.co.uk`, `9news.com.au`,
 // `stuff.co.nz`, `asahi.co.jp`, `naver.or.kr`…). Not a full Public Suffix
@@ -135,39 +108,10 @@ const DAY = 24 * HOUR;
 const MONTH = 30 * DAY;
 const YEAR = 365 * DAY;
 
-export function formatTimeAgo(unixSeconds: number, now: Date = new Date()): string {
-  const nowS = Math.floor(now.getTime() / 1000);
-  let diff = nowS - unixSeconds;
-  if (diff < 0) diff = 0;
-
-  if (diff < MINUTE) return 'just now';
-  if (diff < HOUR) {
-    const m = Math.floor(diff / MINUTE);
-    return `${m}m`;
-  }
-  if (diff < DAY) {
-    const h = Math.floor(diff / HOUR);
-    return `${h}h`;
-  }
-  if (diff < MONTH) {
-    const d = Math.floor(diff / DAY);
-    return `${d}d`;
-  }
-  if (diff < YEAR) {
-    // 30-day months × 365-day year means 360–365 days floors to 12 —
-    // roll that over to "1y" rather than render a nonsensical "12mo".
-    const mo = Math.floor(diff / MONTH);
-    if (mo >= 12) return '1y';
-    return `${mo}mo`;
-  }
-  const y = Math.floor(diff / YEAR);
-  return `${y}y`;
-}
-
 /**
- * Verbose relative time, e.g. `just now`, `2 minutes ago`, `2 days ago`. Unlike
- * `formatTimeAgo`'s compact `2m`/`2d`, this spells out the unit for prose
- * contexts like the About section. Same bucket boundaries as `formatTimeAgo`.
+ * Verbose relative time, e.g. `just now`, `2 minutes ago`, `2 days ago`.
+ * Unlike itemMeta.ts's compact `formatAge` (`2m`/`2d`), this spells out the
+ * unit for prose contexts like the About section.
  */
 export function formatTimeAgoLong(unixSeconds: number, now: Date = new Date()): string {
   const nowS = Math.floor(now.getTime() / 1000);
@@ -189,35 +133,4 @@ export function formatTimeAgoLong(unixSeconds: number, now: Date = new Date()): 
 
 export function pluralize(n: number, singular: string, plural?: string): string {
   return n === 1 ? singular : (plural ?? `${singular}s`);
-}
-
-export interface ItemMetaInput {
-  /** Source feed/site display name (e.g. `"The Verge"`). */
-  source?: string;
-  /** Publication time, epoch milliseconds. */
-  publishedAt?: number;
-  /** Author byline, when the feed supplies one. */
-  author?: string | null;
-}
-
-/**
- * Formats the display-only meta line shown under an item title in both
- * the list row and the reader header: `"{source} · {age} · {author}"`.
- * Each segment is omitted when absent, so a feed with no author renders
- * `"The Verge · 3h"` and a sourceless item just `"3h"`. RSS items carry
- * no points/comments, so — unlike newshacker — there are no engagement
- * segments here.
- */
-export function formatItemMeta(
-  item: ItemMetaInput,
-  now?: Date,
-): string {
-  const parts: string[] = [];
-  if (item.source) parts.push(item.source);
-  if (item.publishedAt != null) {
-    parts.push(formatTimeAgo(Math.floor(item.publishedAt / 1000), now));
-  }
-  const author = item.author?.trim();
-  if (author) parts.push(author);
-  return parts.join(' · ');
 }
