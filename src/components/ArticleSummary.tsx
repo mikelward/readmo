@@ -17,16 +17,20 @@ interface ArticleSummaryProps {
  * AI summary card shown at the top of the reader — below the toolbar, above the
  * article — for an allowlisted user. Generates automatically only for an article
  * pinned before opening; otherwise it offers a "Generate summary" button.
- * Renders nothing when there's nothing to show (off-allowlist, offline with
- * nothing cached, nothing to summarize, or a soft failure), so it stays silent
- * like reading mode. Always mounted by the reader (hook order stays stable); the
- * gating lives in `useSummary`.
+ * Renders nothing when there's nothing to show (off-allowlist, nothing to
+ * summarize, service not configured), so it stays silent like reading mode —
+ * except for the two cases where the user was promised a summary: a transient
+ * failure of a requested generation shows a Retry, and a pinned article opened
+ * offline with nothing cached says so (both ported from newshacker's summary
+ * card). Always mounted by the reader (hook order stays stable); the gating
+ * lives in `useSummary`.
  */
 export function ArticleSummary({ id, online, autoGenerate }: ArticleSummaryProps) {
-  const { summary, loading, canGenerate, generate } = useSummary(id, {
-    online,
-    autoGenerate,
-  });
+  const { summary, loading, canGenerate, generate, failed, retry, offlineWithoutCache } =
+    useSummary(id, {
+      online,
+      autoGenerate,
+    });
 
   if (loading) {
     return (
@@ -39,6 +43,36 @@ export function ArticleSummary({ id, online, autoGenerate }: ArticleSummaryProps
         <span className="article-summary__loading" data-testid="article-summary-loading">
           Summarizing…
         </span>
+      </section>
+    );
+  }
+  if (failed) {
+    return (
+      <section
+        className="article-summary"
+        aria-label="AI summary"
+        data-testid="article-summary-error"
+      >
+        <p className="article-summary__error">Could not summarize.</p>
+        <button
+          type="button"
+          className="article-summary__generate article-summary__retry"
+          data-testid="article-summary-retry"
+          onClick={retry}
+        >
+          Retry
+        </button>
+      </section>
+    );
+  }
+  if (offlineWithoutCache) {
+    return (
+      <section
+        className="article-summary"
+        aria-label="AI summary"
+        data-testid="article-summary-offline"
+      >
+        <p className="article-summary__error">Summary not available offline.</p>
       </section>
     );
   }

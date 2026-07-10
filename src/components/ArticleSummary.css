@@ -70,6 +70,18 @@
   background: var(--rm-bg);
 }
 
+/* Error / offline states: same card chrome, muted single-line text. The Retry
+   button reuses the generate pill's look. */
+.article-summary__error {
+  margin: 0;
+  color: var(--rm-meta);
+  font-size: 0.95rem;
+}
+
+.article-summary__retry {
+  margin-top: 8px;
+}
+
 .article-summary__footer {
   margin: 8px 0 0;
   color: var(--rm-meta);

@@ -2535,10 +2535,15 @@ page's discipline is unchanged.
     (the summary string), `empty` (nothing to summarize, or the silent
     allowlist denial — flagged `retryable` so a later allowlist change
     un-sticks it), `unavailable` (Gemini key unset — `retryable`), `unreachable`
-    (a transient allowlist-read / auth / Gemini failure — `retryable`). In every
-    non-`ok` outcome the reader stays **silent** (no card, no error), exactly
-    like reading mode; `summaryStaleTime` caches `ok`/`empty` forever and keeps
-    the retryable/transient ones stale. Additive `retryable` flag (not a new wire
+    (a transient allowlist-read / auth / Gemini failure — `retryable`). On
+    `empty` and `unavailable` the reader stays **silent** (no card, no error),
+    exactly like reading mode. The two cases where the reader was promised a
+    summary get a card instead of silence (same as newshacker's summary card):
+    a requested generation (pinned auto-run or the button) that settles
+    `unreachable` shows "Could not summarize." with a **Retry**, and a pinned
+    article opened offline with no summary cached shows "Summary not available
+    offline." `summaryStaleTime` caches `ok`/`empty` forever and keeps the
+    retryable/transient ones stale. Additive `retryable` flag (not a new wire
     status) so a service-worker-cached older client still reads the plain status
     (guardrail #11).
   - **Cost & reliability (guardrail #5):** a cache miss makes **two** outbound
@@ -2559,8 +2564,8 @@ page's discipline is unchanged.
     handling; the fetch is off our polite first-party path. Latency: Jina (~1–5 s) +
     Gemini (~1–2 s) on the first open (or pin pre-warm) of an article,
     cache-instant after. Failure
-    modes are all soft (no card): Jina down/blocked → fall back to stored content;
-    Gemini down/unconfigured → no card. The article and reading mode are
+    modes are all soft: Jina down/blocked → fall back to stored content;
+    Gemini unconfigured → no card; Gemini down/timeout → the Retry card above. The article and reading mode are
     unaffected.
 - **Spoiler-free sports headlines (allowlisted).** A sports feed can spoil a
   result in the headline itself ("Man Utd beat Arsenal 3-1"). A "result" here is

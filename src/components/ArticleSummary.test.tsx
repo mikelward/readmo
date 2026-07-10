@@ -115,4 +115,65 @@ describe('ArticleSummary', () => {
     // And no lingering button — a settled soft failure isn't re-offerable here.
     expect(screen.queryByTestId('article-summary-generate')).not.toBeInTheDocument();
   });
+
+  it('shows a Retry card when a requested generation cannot reach the service', async () => {
+    // A transient `unreachable` is the one soft failure the user explicitly
+    // asked for (pinned auto-run or the Generate button), so it must not
+    // vanish silently — the button is already gone by then, leaving no way to
+    // try again.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    let calls = 0;
+    source.getSummary = async (): Promise<SummaryResult> => {
+      calls += 1;
+      return calls === 1
+        ? { status: 'unreachable', summary: null }
+        : { status: 'ok', summary: 'It worked on retry.' };
+    };
+    renderWithProviders(<ArticleSummary id={ITEM_ID} online autoGenerate />, { source });
+
+    const errorCard = await screen.findByTestId('article-summary-error');
+    expect(errorCard).toHaveTextContent('Could not summarize.');
+
+    await userEvent.click(screen.getByTestId('article-summary-retry'));
+    const body = await screen.findByTestId('article-summary-body');
+    expect(body.textContent).toBe('It worked on retry.');
+    expect(calls).toBe(2);
+    expect(screen.queryByTestId('article-summary-error')).not.toBeInTheDocument();
+  });
+
+  it('explains a missing summary on a pinned article opened offline', async () => {
+    // Pinned articles promise a prewarmed summary; offline with nothing cached
+    // the card says so instead of rendering nothing. No fetch is attempted.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    let called = false;
+    source.getSummary = async (): Promise<SummaryResult> => {
+      called = true;
+      return { status: 'ok', summary: 'should not be fetched' };
+    };
+    renderWithProviders(
+      <ArticleSummary id={ITEM_ID} online={false} autoGenerate />,
+      { source },
+    );
+    const offline = await screen.findByTestId('article-summary-offline');
+    expect(offline).toHaveTextContent('Summary not available offline.');
+    expect(called).toBe(false);
+    expect(screen.queryByTestId('article-summary-retry')).not.toBeInTheDocument();
+  });
+
+  it('stays silent when the service is not configured (unavailable)', async () => {
+    // `unavailable` (GOOGLE_API_KEY unset) is an operator condition, not a
+    // user-actionable one — Retry would not help, so the card stays silent by
+    // design, unlike the transient `unreachable`.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    source.getSummary = async (): Promise<SummaryResult> => ({
+      status: 'unavailable',
+      summary: null,
+    });
+    renderWithProviders(<ArticleSummary id={ITEM_ID} online autoGenerate />, { source });
+    await waitFor(() =>
+      expect(screen.queryByTestId('article-summary-loading')).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId('article-summary-error')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('article-summary-body')).not.toBeInTheDocument();
+  });
 });

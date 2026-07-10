@@ -26,6 +26,18 @@ export interface UseSummary {
   /** Kick off generation on demand (the button's onClick). No-op unless online
    * + allowed; enables the query and flips the card into its loading state. */
   generate: () => void;
+  /** True when a requested generation (pinned auto-run or the button) settled
+   * on a transient `unreachable` — the summary service couldn't be reached.
+   * Unlike the other soft failures this one was explicitly asked for, so the
+   * card shows "could not summarize" + Retry instead of vanishing. */
+  failed: boolean;
+  /** Re-run a failed generation (the Retry button's onClick). */
+  retry: () => void;
+  /** True when the reader is offline with no `ok` summary cached for an
+   * article that would auto-generate (pinned before opening — the case where
+   * the prewarm promised a summary). The card explains instead of silently
+   * missing. */
+  offlineWithoutCache: boolean;
 }
 
 /**
@@ -88,11 +100,30 @@ export function useSummary(
   // `allowed` only (NOT `online`), so a summary already on screen survives going
   // offline — there's just nothing new to fetch.
   const data: SummaryResult | undefined = allowed ? query.data : undefined;
-  const loading = enabled && !data && (query.isLoading || query.isFetching);
+  const fetching = query.isLoading || query.isFetching;
+  // Loading covers the first generation AND a Retry after a transient failure
+  // (the stale `unreachable` result is still cached while the refetch is in
+  // flight). A background refetch of an `ok` summary must not flip the card
+  // back to its spinner.
+  const loading =
+    enabled && fetching && (!data || data.status === 'unreachable');
   return {
     summary: data?.status === 'ok' ? data.summary : null,
     loading,
     unavailable: !!data && data.status !== 'ok',
+    // Only `unreachable` earns the error card: it's transient (the service or
+    // network hiccuped on a generation the user asked for). The other soft
+    // failures (`empty`, `unavailable`) stay silent by design — same
+    // philosophy as reading mode.
+    failed: opts.online && !loading && data?.status === 'unreachable',
+    retry: () => {
+      void query.refetch();
+    },
+    // Pinned articles promise a prewarmed summary; when the device is offline
+    // with no `ok` summary cached, say so instead of silently showing nothing.
+    // Unpinned opens never promised one, so they stay silent offline.
+    offlineWithoutCache:
+      allowed && !opts.online && opts.autoGenerate && data?.status !== 'ok',
     // Offer the button when we're allowed + online, weren't asked to
     // auto-generate (not pinned before opening), the user hasn't asked yet, and
     // there's nothing cached or in flight to show. The moment anything caches —
