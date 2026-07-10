@@ -2,10 +2,12 @@ import type { AnimationEventHandler, ReactNode, Ref } from 'react';
 import { Link } from 'react-router-dom';
 import type { FeedId, FeedItem, ItemId } from '../lib/types';
 import { useShareItem } from '../hooks/useShareItem';
-import { useOpenOriginalFeeds } from '../hooks/useOpenOriginalFeeds';
-import { useOpenNewshackerFeeds } from '../hooks/useOpenNewshackerFeeds';
-import { useMarkDoneOnOpenFeeds } from '../hooks/useMarkDoneOnOpenFeeds';
-import { useListLayoutFeeds } from '../hooks/useListLayoutFeeds';
+import {
+  useListLayoutFeeds,
+  useMarkDoneOnOpenFeeds,
+  useOpenNewshackerFeeds,
+  useOpenOriginalFeeds,
+} from '../hooks/useSubscriptionFeeds';
 import {
   useShowRowFavicon,
   useShowGroupFavicon,
