@@ -77,7 +77,7 @@
 
 // @ts-nocheck — runs under Deno, not node/tsc.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { corsHeaders, preflight } from '../_shared/cors.ts';
+import { preflight } from '../_shared/cors.ts';
 import { loadAllowlistFromDb, isAllowed } from '../_shared/allowlist.ts';
 import { looksTokenized, redactUrl } from '../_shared/urlSafety.ts';
 import { assertSafeUrl } from '../_shared/ssrf.ts';
@@ -95,6 +95,7 @@ import {
   resolveInternalCaller,
 } from '../_shared/internalCaller.ts';
 import type { InternalCaller } from '../_shared/internalCaller.ts';
+import { jsonCors as json } from '../_shared/respond.ts';
 
 const MODEL = 'gemini-2.5-flash-lite';
 const GEMINI_ENDPOINT =
@@ -690,11 +691,4 @@ async function generateSummary(
     console.warn('summary: Gemini call failed:', err);
     return null;
   }
-}
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json', ...corsHeaders },
-  });
 }

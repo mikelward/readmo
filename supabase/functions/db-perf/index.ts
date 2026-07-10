@@ -27,13 +27,7 @@ import {
   resolveLimit,
   resolveThresholds,
 } from '../_shared/dbPerf.ts';
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
+import { jsonBare as json } from '../_shared/respond.ts';
 
 Deno.serve(async (req: Request) => {
   try {

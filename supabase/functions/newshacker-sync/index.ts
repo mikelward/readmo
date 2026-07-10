@@ -28,7 +28,8 @@
 
 // @ts-nocheck — runs under Deno, not node/tsc.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { corsHeaders, preflight } from '../_shared/cors.ts';
+import { preflight } from '../_shared/cors.ts';
+import { jsonCors as json } from '../_shared/respond.ts';
 
 const NEWSHACKER_ORIGIN =
   Deno.env.get('NEWSHACKER_ORIGIN') ?? 'https://newshacker.app';
@@ -44,13 +45,6 @@ Deno.serve(async (req: Request) => {
     return json({ error: err instanceof Error ? err.message : String(err) }, 500);
   }
 });
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, 'content-type': 'application/json' },
-  });
-}
 
 /** Keep only well-formed `{ id:int>0, at:number>=0, deleted?:true }` entries,
  * capped. Anything malformed is dropped rather than failing the batch. */

@@ -16,9 +16,10 @@ import { fetchViaJinaHtml } from '../_shared/jina.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
 import { feedsToRefresh } from '../_shared/refreshScope.ts';
-import { corsHeaders, preflight } from '../_shared/cors.ts';
+import { preflight } from '../_shared/cors.ts';
 import { RateLimiter, rateLimitKey } from '../_shared/rateLimit.ts';
 import { CLIENT_BUILD_HEADER, checkClientBuild } from '../_shared/clientVersion.ts';
+import { jsonCors as json } from '../_shared/respond.ts';
 
 const USER_AGENT = 'Readmo/1.0 (+https://readmo.app)';
 // Debounce window: skip a forced refetch if the feed was fetched within this.
@@ -278,11 +279,4 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
     .eq('id', feed.id);
   if (scheduleError) throw new Error(`feed schedule update failed: ${scheduleError.message}`);
   return true;
-}
-
-function json(body: unknown, status = 200, extraHeaders: Record<string, string> = {}): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json', ...corsHeaders, ...extraHeaders },
-  });
 }

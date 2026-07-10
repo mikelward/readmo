@@ -26,6 +26,7 @@ import {
   parseSpoilerResult,
   type SpoilerGeneration,
 } from '../_shared/spoilerTitle.ts';
+import { jsonBare as json } from '../_shared/respond.ts';
 
 const BATCH_SIZE = 25;
 
@@ -278,11 +279,4 @@ async function classifyHeadline(
     console.warn('poll: spoiler Gemini call failed — retry next poll:', err);
     return { status: 'failed' };
   }
-}
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
 }

@@ -73,13 +73,14 @@ import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
 import { robotsCheck } from '../_shared/robots.ts';
 import { looksTokenized, redactUrl } from '../_shared/urlSafety.ts';
-import { corsHeaders, preflight } from '../_shared/cors.ts';
+import { preflight } from '../_shared/cors.ts';
 import { loadAllowlistFromDb, isAllowed } from '../_shared/allowlist.ts';
 import {
   isInternalCallerAllowed,
   resolveInternalCaller,
 } from '../_shared/internalCaller.ts';
 import { looksTruncatedHtml } from '../_shared/summary.ts';
+import { jsonCors as json } from '../_shared/respond.ts';
 
 const JINA_MAX_BYTES = 4 * 1024 * 1024; // 4 MiB
 const FETCH_MAX_BYTES = 8 * 1024 * 1024; // 8 MiB — article pages can be large
@@ -545,11 +546,4 @@ function robotsReason(matchedUserAgent: string | null): string {
   return matchedUserAgent
     ? `disallowed by robots.txt (User-agent: ${matchedUserAgent})`
     : 'disallowed by robots.txt';
-}
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json', ...corsHeaders },
-  });
 }

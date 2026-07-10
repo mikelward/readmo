@@ -43,10 +43,11 @@ import {
 import { parseFeed } from '../_shared/parser.ts';
 import { fetchViaJinaHtml } from '../_shared/jina.ts';
 import { safeFetch, SsrfError } from '../_shared/ssrf.ts';
-import { corsHeaders, preflight } from '../_shared/cors.ts';
+import { preflight } from '../_shared/cors.ts';
 import { redactUrl } from '../_shared/urlSafety.ts';
 import { loadAllowlistFromDb, isAllowed } from '../_shared/allowlist.ts';
 import { isGoogleNewsFeedUrl } from '../_shared/googleNews.ts';
+import { jsonCors as json } from '../_shared/respond.ts';
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return preflight();
@@ -379,11 +380,4 @@ function feedErrorResponse(code: 'auth' | 'not-found' | 'unreachable'): Response
     return json({ error: 'That URL could not be found.', code }, 422);
   }
   return json({ error: "That URL couldn't be reached.", code }, 502);
-}
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json', ...corsHeaders },
-  });
 }
