@@ -28,9 +28,11 @@ import { SignInPage } from './pages/SignInPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AdminPage } from './pages/AdminPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
-import { AdminUserFeedsPage } from './pages/AdminUserFeedsPage';
 import { AdminFeedsPage } from './pages/AdminFeedsPage';
-import { AdminFeedUsersPage } from './pages/AdminFeedUsersPage';
+import {
+  AdminFeedUsersPage,
+  AdminUserFeedsPage,
+} from './pages/AdminDrilldownPages';
 import { AboutPage } from './pages/AboutPage';
 import { LegalPage } from './pages/LegalPage';
 import { DebugPage } from './pages/DebugPage';

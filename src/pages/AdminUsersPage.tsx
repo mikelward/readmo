@@ -6,6 +6,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useCapabilities, CAPABILITIES_QUERY_KEY } from '../hooks/useCapabilities';
 import { useToast } from '../hooks/useToast';
 import { usePageTitle } from '../hooks/useDocumentTitle';
+import { AdminDenied } from './AdminDenied';
 import { ItemRowMenu, type ItemRowMenuItem } from '../components/ItemRowMenu';
 import { usePointerDevice } from '../hooks/usePointerDevice';
 import './AdminPage.css';
@@ -195,19 +196,7 @@ export function AdminUsersPage() {
     }
   }
 
-  if (!admin) {
-    return (
-      <div className="admin">
-        <div className="page-header">
-          <h1 className="page-header__title">Users</h1>
-        </div>
-        <p className="admin__denied">You don’t have access to this page.</p>
-        <p className="admin__back">
-          <Link to="/">&larr; Back to Home</Link>
-        </p>
-      </div>
-    );
-  }
+  if (!admin) return <AdminDenied title="Users" />;
 
   return (
     <div className="admin">

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useCapabilities } from '../hooks/useCapabilities';
 import { usePageTitle } from '../hooks/useDocumentTitle';
+import { AdminDenied } from './AdminDenied';
 import { useToast } from '../hooks/useToast';
 import { usePointerDevice } from '../hooks/usePointerDevice';
 import { ItemRowMenu, type ItemRowMenuItem } from '../components/ItemRowMenu';
@@ -211,19 +212,7 @@ export function AdminFeedsPage() {
       ]
     : [];
 
-  if (!admin) {
-    return (
-      <div className="admin">
-        <div className="page-header">
-          <h1 className="page-header__title">Feed status</h1>
-        </div>
-        <p className="admin__denied">You don’t have access to this page.</p>
-        <p className="admin__back">
-          <Link to="/">&larr; Back to Home</Link>
-        </p>
-      </div>
-    );
-  }
+  if (!admin) return <AdminDenied title="Feed status" />;
 
   return (
     <div className="admin">
