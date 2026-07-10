@@ -11,7 +11,7 @@ import { useShareItem } from '../hooks/useShareItem';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { useFullTextAllowed, useCapabilities, canUseFullText } from '../hooks/useCapabilities';
 import { useHideSportsSpoilers } from '../hooks/useReadingPrefs';
-import { useMarkDoneOnOpenFeeds } from '../hooks/useMarkDoneOnOpenFeeds';
+import { useMarkDoneOnOpenFeeds } from '../hooks/useSubscriptionFeeds';
 import { displayTitle } from '../lib/spoilerHeadline';
 import {
   articleSourceDomain,
