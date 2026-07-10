@@ -244,6 +244,11 @@ export default defineConfig({
       exclude: [
         ...coverageConfigDefaults.exclude,
         'supabase/functions/_shared/ssrf.ts',
+        // Non-source test fixtures (XML/JSON feed samples) that the `_shared/**`
+        // include glob otherwise sweeps in. @vitest/coverage-v8 v4 parses every
+        // included file for its uncovered-file report and errors on non-JS, so
+        // exclude the fixtures rather than let those parse errors spam CI.
+        'supabase/functions/_shared/fixtures/**',
       ],
       reporter: ['text-summary'],
       thresholds: {
