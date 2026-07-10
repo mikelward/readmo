@@ -8168,3 +8168,45 @@ describe('ItemList — Refreshing state', () => {
     });
   });
 });
+
+describe('keyboard dismiss focus flow', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+
+  it('focuses the visible-position next row after the active row is dismissed with d', async () => {
+    // Ported from newshacker: after a keyboard `d`, focus must land on the row
+    // that slid into the vacated slot so j/k flow continues down the list —
+    // not drop to <body>, which would make the next j restart from the top.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderHome(source);
+    const titles = await screen.findAllByTestId('item-title');
+    expect(titles.length).toBeGreaterThanOrEqual(2);
+
+    act(() => titles[0].focus());
+    await userEvent.keyboard('d');
+
+    await waitFor(() => {
+      const remaining = screen.getAllByTestId('item-title');
+      expect(remaining).toHaveLength(titles.length - 1);
+      expect(document.activeElement).toBe(remaining[0]);
+    });
+  });
+
+  it('clamps to the new last row when the dismissed row was last', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderHome(source);
+    const titles = await screen.findAllByTestId('item-title');
+    const last = titles.length - 1;
+
+    act(() => titles[last].focus());
+    await userEvent.keyboard('d');
+
+    await waitFor(() => {
+      const remaining = screen.getAllByTestId('item-title');
+      expect(remaining).toHaveLength(titles.length - 1);
+      expect(document.activeElement).toBe(remaining[remaining.length - 1]);
+    });
+  });
+});
