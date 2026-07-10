@@ -71,7 +71,7 @@
   border-radius: 4px;
   background: var(--rm-bg);
   color: var(--rm-text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--rm-font-mono);
   font-size: 13px;
   text-align: center;
 }

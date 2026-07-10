@@ -5,7 +5,7 @@
   display: block;
   margin-bottom: 6px;
   font-size: 14px;
-  color: var(--rm-text-muted, #6b6b6b);
+  color: var(--rm-meta);
 }
 
 .nh-connect__row {
@@ -19,27 +19,27 @@
   min-width: 0;
   min-height: 44px;
   padding: 0 12px;
-  border: 1px solid var(--rm-border, #d4d4d4);
+  border: 1px solid var(--rm-border);
   border-radius: 8px;
-  background: var(--rm-bg, #fff);
-  color: var(--rm-text, #1a1a1a);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--rm-bg);
+  color: var(--rm-text);
+  font-family: var(--rm-font-mono);
   font-size: 15px;
 }
 
 .nh-connect__input:focus-visible {
-  outline: 2px solid var(--rm-accent, #3a4ec4);
+  outline: 2px solid var(--rm-accent);
   outline-offset: 1px;
 }
 
 .nh-connect__hint {
   margin: 8px 0 0;
   font-size: 13px;
-  color: var(--rm-text-muted, #6b6b6b);
+  color: var(--rm-meta);
 }
 
 .nh-connect__error {
   margin: 8px 0 0;
-  color: var(--rm-danger, #b3261e);
+  color: var(--rm-danger);
   font-size: 14px;
 }

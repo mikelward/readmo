@@ -76,6 +76,9 @@
     Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
   --rm-font: 'Roboto Variable', var(--rm-font-fallback);
 
+  /* Monospace for URLs, build ids, error details, and keyboard shortcuts. */
+  --rm-font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
   color-scheme: light;
 }
 

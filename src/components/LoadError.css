@@ -31,7 +31,7 @@
 
 .load-error__detail-text {
   margin: 4px 0 0;
-  font-family: var(--rm-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-family: var(--rm-font-mono);
   font-size: 0.8rem;
   color: var(--rm-danger);
   word-break: break-word;
