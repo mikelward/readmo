@@ -24,11 +24,13 @@
 .skeleton-user__id,
 .skeleton-user__stats,
 .skeleton-user__about {
+  /* Hairline tokens so the shimmer tracks the theme (the old hard-coded light
+     grays stayed light in dark mode). */
   background: linear-gradient(
     90deg,
-    var(--skeleton-base, #f0f0f0),
-    var(--skeleton-highlight, #e4e4e4),
-    var(--skeleton-base, #f0f0f0)
+    var(--rm-border),
+    var(--rm-border-strong),
+    var(--rm-border)
   );
   background-size: 200% 100%;
   animation: shimmer 1.4s infinite linear;

@@ -85,7 +85,7 @@
 }
 
 .admin__tag--blocked {
-  background: var(--rm-danger, var(--rm-meta));
+  background: var(--rm-danger);
 }
 
 /* A registered-user row carries several actions; let the email line and the
@@ -180,7 +180,7 @@
   /* The button is transparent, so its label uses --rm-danger (the visible red),
      NOT --rm-danger-fg (the on-danger-background contrast color, which is the
      page background in dark mode and would make "Remove" invisible). */
-  color: var(--rm-danger, var(--rm-text));
+  color: var(--rm-danger);
   font-size: 0.85rem;
   cursor: pointer;
 }
