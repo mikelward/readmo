@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { BrandMark, Menu, Search } from './icons';
 import { AppDrawer } from './AppDrawer';
@@ -18,15 +18,20 @@ export function AppHeader() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const status = useConnectivityStatus();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  // Suppressed on /search itself to avoid a button that navigates to the page
+  // you're on (same rule as newshacker).
+  const showSearchButton = pathname !== '/search';
 
   return (
     <>
-      <header className="app-header">
+      <header className="app-header" role="banner">
         <TooltipButton
           type="button"
           className="app-header__icon-btn app-header__edge app-header__edge--left"
           tooltip="Menu"
           aria-label="Open menu"
+          aria-expanded={drawerOpen}
           onClick={() => setDrawerOpen(true)}
         >
           <Menu />
@@ -58,15 +63,17 @@ export function AppHeader() {
             </Link>
           ) : null}
 
-          <TooltipButton
-            type="button"
-            className="app-header__icon-btn"
-            tooltip="Search"
-            aria-label="Search"
-            onClick={() => navigate('/search')}
-          >
-            <Search />
-          </TooltipButton>
+          {showSearchButton ? (
+            <TooltipButton
+              type="button"
+              className="app-header__icon-btn"
+              tooltip="Search"
+              aria-label="Search"
+              onClick={() => navigate('/search')}
+            >
+              <Search />
+            </TooltipButton>
+          ) : null}
         </div>
 
         <div className="app-header__edge app-header__edge--right">

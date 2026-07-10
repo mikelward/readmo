@@ -144,7 +144,8 @@ Everything else about the visual system mirrors newshacker.
 - **App header layout:** three slots in a single sticky row. The drawer
   toggle is pinned to the viewport's left edge and the account chip to the
   viewport's right edge so both stay reachable at any width; the centered
-  inner (brand mark + wordmark, Offline pill, Search) tracks the
+  inner (brand mark + wordmark, Offline pill, Search — hidden on `/search`
+  itself) tracks the
   article column max-width — 720px, widening toward 860px on roomy screens
   (from ≥960px, the same breakpoint that widens `.app-main`) — so it aligns
   with the list below. Because the inner shares the row with the
