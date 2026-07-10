@@ -65,3 +65,53 @@ describe('thumbnail placement contract', () => {
     expect(decl.margin).toBe('0 0 0 12px');
   });
 });
+
+/** Bodies of every `@media (hover: hover)` block, via brace matching — the
+ * flat-rule helper above can't tell nested rules from base ones. */
+function hoverMediaBodies(): string[] {
+  const bodies: string[] = [];
+  const openRe = /@media\s*\(hover:\s*hover\)\s*\{/g;
+  while (openRe.exec(cssNoComments)) {
+    let depth = 1;
+    let i = openRe.lastIndex;
+    while (i < cssNoComments.length && depth > 0) {
+      if (cssNoComments[i] === '{') depth++;
+      if (cssNoComments[i] === '}') depth--;
+      i++;
+    }
+    bodies.push(cssNoComments.slice(openRe.lastIndex, i - 1));
+  }
+  return bodies;
+}
+
+describe('row interaction states (guardrail #2 / newshacker parity)', () => {
+  it('gives the body zone a pressed state, outside the hover media query', () => {
+    // The :active rule must fire on touch, so it cannot live inside
+    // @media (hover: hover) — see the CSS-gotchas section in SPEC/CLAUDE.
+    expect(declarationsFor('.item-row__body:active').background).toBe(
+      'var(--rm-border)',
+    );
+    for (const body of hoverMediaBodies()) {
+      expect(body).not.toContain('.item-row__body:active');
+    }
+  });
+
+  it('tints the whole row on hover, only on devices that can hover', () => {
+    expect(declarationsFor('.item-row:hover').background).toBe('var(--rm-bg)');
+    expect(
+      hoverMediaBodies().some((body) => body.includes('.item-row:hover')),
+    ).toBe(true);
+  });
+
+  it('marks the keyboard-focused row at row width and mutes the inner outline', () => {
+    const marker = declarationsFor(
+      '.item-row:has(.item-row__body:focus-visible)',
+    );
+    expect(marker['box-shadow']).toBe('inset 0 3px 0 var(--rm-accent)');
+    expect(marker.background).toBe('var(--rm-bg)');
+    // The row marker replaces the global 2px outline on the stretched link.
+    expect(declarationsFor('.item-row__body:focus-visible').outline).toBe(
+      'none',
+    );
+  });
+});
