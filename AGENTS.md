@@ -13,7 +13,9 @@ guardrails — read them before opening a PR.
    `npm test`, `npm run lint`, and `npm run typecheck` on every change, and
    `npm run build` when you touch build, routing, or deploy config. Fix a red
    baseline first, on its own commit. 80% coverage floor for `src/lib/` and
-   server handlers.
+   server handlers — enforced in CI by `npm run test:coverage` (aggregate
+   lines per area; the Deno-only Edge entry files and `ssrf.ts` are measured
+   by the `edge` CI job instead, see vite.config.ts).
 
 2. **Fewer, larger tap targets.** At most **3 tap zones per row, two shipped**
    (row-body stretched link + right-side icon button; the middle slot stays
@@ -213,6 +215,7 @@ out the required `make deploy` / `make migrate` in the PR.
 | `npm run build` | `tsc -b` typecheck + `vite build` |
 | `npm run preview` | Serve the production build |
 | `npm test` | `vitest run` (one shot) |
+| `npm run test:coverage` | tests + the 80% coverage floor (what CI runs) |
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run lint` | ESLint over the repo |
 | `npm run typecheck` | `tsc -b --noEmit` |

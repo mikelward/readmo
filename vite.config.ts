@@ -1,5 +1,9 @@
 import { execSync } from 'node:child_process';
-import { configDefaults, defineConfig } from 'vitest/config';
+import {
+  configDefaults,
+  coverageConfigDefaults,
+  defineConfig,
+} from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
@@ -225,5 +229,28 @@ export default defineConfig({
     // `*.deno.test.ts` are Deno-runtime integration tests (real TCP/TLS) run by
     // `deno test` in the `edge` CI job, not Vitest — exclude them here.
     exclude: [...configDefaults.exclude, '**/*.deno.test.ts'],
+    // Enforce guardrail #1's coverage floor (80% for src/lib/ and server
+    // handlers) in CI via `npm run test:coverage`; plain `npm test` skips
+    // instrumentation so the local loop stays fast. Scope notes:
+    // - The Edge Function entry files (supabase/functions/*/index.ts) run on
+    //   Deno, not Vitest — they're covered by `deno check` in the edge CI job
+    //   and keep their logic in _shared/, so only _shared/ is measured here.
+    // - ssrf.ts's integration coverage lives in ssrf.pin.deno.test.ts (real
+    //   TCP/TLS, Deno-only), so its Vitest-visible number understates it;
+    //   excluded rather than letting a misleading 44% drag the area down.
+    coverage: {
+      provider: 'v8',
+      include: ['src/lib/**', 'api/**', 'supabase/functions/_shared/**'],
+      exclude: [
+        ...coverageConfigDefaults.exclude,
+        'supabase/functions/_shared/ssrf.ts',
+      ],
+      reporter: ['text-summary'],
+      thresholds: {
+        'src/lib/**': { lines: 80 },
+        'api/**': { lines: 80 },
+        'supabase/functions/_shared/**': { lines: 80 },
+      },
+    },
   },
 });
