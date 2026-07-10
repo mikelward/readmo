@@ -23,7 +23,7 @@ export interface AuthUser {
 }
 
 // ---------------------------------------------------------------------------
-// Mock path (unconfigured) — unchanged PR1 behaviour.
+// Mock path (unconfigured) — unchanged PR1 behavior.
 // ---------------------------------------------------------------------------
 
 const STORAGE_KEY = 'readmo:mock-signed-in';
