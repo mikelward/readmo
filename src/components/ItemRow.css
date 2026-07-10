@@ -44,12 +44,42 @@
 }
 
 @media (hover: hover) {
+  /* Row-wide hover tint on pointer devices so the whole row (body and
+   * pin-button column alike) signals that it's interactive — same shape as
+   * newshacker's .story-row:hover. The page bg against the card bg is the
+   * same tint pair the pin button's own hover uses. */
+  .item-row:hover {
+    background: var(--rm-bg);
+  }
   .item-row__body:hover {
     text-decoration: none;
   }
   .item-row__body:hover .item-row__title-text {
     color: var(--rm-accent);
   }
+}
+
+/* Pressed state on the body zone (guardrail #2: pressed-state on every zone).
+ * Outside the hover media query so it fires on touch too. */
+.item-row__body:active {
+  background: var(--rm-border);
+}
+
+/* Keyboard-navigated active row (j/k/↑/↓ via useListKeyboardNav): a solid 3px
+ * accent line flush with the row's top edge plus the hover tint, so "this is
+ * the row the keys act on" reads at row width — ported from newshacker's
+ * .story-row focus marker. The shadow lives on the outer .item-row (not the
+ * inner <a>) so it spans the full row. `:has(:focus-visible)` keeps the
+ * indicator out of click-focus territory — mouse clicks never leave it stuck
+ * on a row. The global 2px focus outline is suppressed on the body since the
+ * top bar is doing the same job (an outline around a stretched full-width
+ * link draws an awkward box through the pin column). */
+.item-row:has(.item-row__body:focus-visible) {
+  background: var(--rm-bg);
+  box-shadow: inset 0 3px 0 var(--rm-accent);
+}
+.item-row__body:focus-visible {
+  outline: none;
 }
 
 .item-row__title-text {

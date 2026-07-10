@@ -2819,6 +2819,11 @@ List pages (`/`, `/folder/:name`, `/feed/:feedId`, library views):
 | `d` | Mark done (dismiss) the focused row |
 | `?` | Help overlay · `Esc` close |
 
+The keyboard-focused row is marked at full row width — an accent bar flush
+with the row's top edge plus the row hover tint (same cue as newshacker) —
+instead of the generic focus outline; mouse clicks never leave the marker
+stuck on a row.
+
 Reader page (`/item/:id`):
 
 | Key | Action |
