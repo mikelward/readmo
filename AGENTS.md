@@ -244,6 +244,24 @@ build/routing/deploy.
   the test. A test that passes "most of the time" is broken; rewrite it or
   fix the underlying cause.
 
+## Vercel `api/` gotchas
+
+- **No shared modules for `api/*.ts` — keep helpers inlined, even if they're
+  duplicated across handlers.** Learned on Vercel in newshacker, where both
+  obvious escape hatches failed *only at deploy time* after every local check
+  passed: importing from outside `api/` (the bundler's import tracer includes
+  such files inconsistently) and importing from a `_`-prefixed directory
+  inside `api/` (Vercel treats `_` as "don't route" *and* "don't ship", so the
+  deployed function dies at startup with `ERR_MODULE_NOT_FOUND`). A
+  non-underscore subdirectory would ship, but every file in it would be routed
+  as its own function. The accepted pattern is to copy-paste the helper, add a
+  comment pointing at the siblings, and move on.
+
+  A regression test at `api/imports.test.ts` scans every `api/*.ts` file and
+  fails if it imports from a subdirectory of `api/` or from a parent
+  directory. Delete that test only after actually deploying and verifying a
+  new approach works on a Vercel preview.
+
 ## Safe vs. risky actions
 
 - Safe: edit files, add dependencies, run tests, run the dev server,
