@@ -129,7 +129,7 @@ Everything else about the visual system mirrors newshacker.
   stack). Variable (weight-axis) files where available; Fira Sans ships
   static weights. Stored under `readmo:font` (default `roboto` owns the bare
   `:root` and stores nothing; others set `data-font` on `<html>`), applied
-  before first paint in `main.tsx` alongside theme/palette/text-size. Each
+  before first paint alongside theme/palette/text-size. Each
   `@font-face` only fetches when its family is actually rendered, so a normal
   page loads just the active font; the Settings picker — which previews every
   option in its own face — is the only screen that loads all of them. Font

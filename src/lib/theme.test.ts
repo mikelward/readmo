@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  type Palette,
   FONT_LABELS,
   FONT_SIZE_STORAGE_KEY,
   FONT_STACKS,
@@ -367,5 +370,135 @@ describe('font family', () => {
       // stack, so a failed font load degrades to native rendering.
       expect(FONT_STACKS[key]).toContain('-apple-system');
     }
+  });
+});
+
+describe('index.html theme boot script', () => {
+  // Exercise the real inline script so this suite fails if index.html and
+  // theme.ts drift apart (storage keys, whitelists, or META_THEME_COLORS).
+  // The script only touches localStorage, window.matchMedia, and document, so
+  // it runs against fakes — nothing leaks onto the shared jsdom globals.
+  const extractThemeBoot = (): string => {
+    const html = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8');
+    const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+    const boot = scripts.find(([, body]) => body.includes('readmo:palette'));
+    if (!boot) throw new Error('index.html theme boot script not found');
+    return boot[1];
+  };
+
+  const runBoot = (
+    stored: Record<string, string>,
+    { prefersDark = false, throwingStorage = false } = {},
+  ) => {
+    const attributes = new Map<string, string>();
+    const meta = { content: '' };
+    const fakeDocument = {
+      documentElement: {
+        setAttribute: (name: string, value: string) => {
+          attributes.set(name, value);
+        },
+      },
+      querySelector: (selector: string) =>
+        selector === 'meta[name="theme-color"]' ? meta : null,
+    };
+    const fakeWindow = {
+      matchMedia: (query: string) => ({
+        matches: query === '(prefers-color-scheme: dark)' && prefersDark,
+      }),
+    };
+    const fakeStorage = {
+      getItem: (key: string): string | null => {
+        if (throwingStorage) throw new Error('denied');
+        return key in stored ? stored[key] : null;
+      },
+    };
+    new Function(
+      'localStorage',
+      'window',
+      'document',
+      extractThemeBoot(),
+    )(fakeStorage, fakeWindow, fakeDocument);
+    return { attributes, meta };
+  };
+
+  // The boot script's meta seeding must agree with applyThemeColorMeta (which
+  // owns the tint after React mounts), so derive the expectation from it
+  // instead of duplicating the hex values a third time.
+  const metaColorFor = (resolved: 'light' | 'dark', palette: Palette) => {
+    const el = installMetaThemeColor();
+    applyThemeColorMeta(resolved, palette);
+    const color = el.content;
+    el.remove();
+    return color;
+  };
+
+  it('defaults set no attributes and keep the Ink-light tint', () => {
+    const { attributes, meta } = runBoot({});
+    expect(attributes.size).toBe(0);
+    expect(meta.content).toBe(metaColorFor('light', 'ink'));
+  });
+
+  it('seeds every stored axis before paint', () => {
+    const { attributes, meta } = runBoot({
+      'readmo:theme': 'dark',
+      'readmo:palette': 'grape',
+      'readmo:font': 'fira-sans',
+      'readmo:fontSize': '19',
+    });
+    expect(attributes.get('data-theme')).toBe('dark');
+    expect(attributes.get('data-palette')).toBe('grape');
+    expect(attributes.get('data-font')).toBe('fira-sans');
+    expect(attributes.get('data-font-size')).toBe('19');
+    expect(meta.content).toBe(metaColorFor('dark', 'grape'));
+  });
+
+  it('storage keys match the theme lib constants', () => {
+    const boot = extractThemeBoot();
+    for (const key of [
+      THEME_STORAGE_KEY,
+      PALETTE_STORAGE_KEY,
+      FONT_STORAGE_KEY,
+      FONT_SIZE_STORAGE_KEY,
+    ]) {
+      expect(boot).toContain(`'${key}'`);
+    }
+  });
+
+  it('accepts exactly the values the theme lib accepts', () => {
+    // Non-default values must apply; the default (attribute-less) value and
+    // corrupt values must not — a bogus data-* attribute would activate a
+    // `:root[data-*]` override with no matching tokens.
+    expect(runBoot({ 'readmo:theme': 'light' }).attributes.get('data-theme')).toBe('light');
+    expect(runBoot({ 'readmo:theme': 'solarized' }).attributes.size).toBe(0);
+    expect(runBoot({ 'readmo:palette': 'ink' }).attributes.size).toBe(0);
+    expect(runBoot({ 'readmo:palette': 'mauve' }).attributes.size).toBe(0);
+    for (const font of ['inter', 'public-sans', 'work-sans', 'fira-sans', 'system']) {
+      expect(runBoot({ 'readmo:font': font }).attributes.get('data-font')).toBe(font);
+    }
+    expect(runBoot({ 'readmo:font': 'roboto' }).attributes.size).toBe(0);
+    expect(runBoot({ 'readmo:font': 'comic-sans' }).attributes.size).toBe(0);
+    for (const size of ['14', '15', '17', '18', '19']) {
+      expect(runBoot({ 'readmo:fontSize': size }).attributes.get('data-font-size')).toBe(size);
+    }
+    expect(runBoot({ 'readmo:fontSize': '16' }).attributes.size).toBe(0);
+    expect(runBoot({ 'readmo:fontSize': '99' }).attributes.size).toBe(0);
+  });
+
+  it('resolves a system mode against the OS preference for the tint', () => {
+    expect(runBoot({}, { prefersDark: true }).meta.content).toBe(
+      metaColorFor('dark', 'ink'),
+    );
+    expect(
+      runBoot({ 'readmo:palette': 'grape' }, { prefersDark: true }).meta.content,
+    ).toBe(metaColorFor('dark', 'grape'));
+    // An explicit light override beats the OS dark preference.
+    expect(
+      runBoot({ 'readmo:theme': 'light' }, { prefersDark: true }).meta.content,
+    ).toBe(metaColorFor('light', 'ink'));
+  });
+
+  it('swallows storage failures (privacy mode) and paints the default', () => {
+    const { attributes } = runBoot({}, { throwingStorage: true });
+    expect(attributes.size).toBe(0);
   });
 });

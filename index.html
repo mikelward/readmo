@@ -6,6 +6,14 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- Matches the in-app header bg (`--rm-bg` in global.css) so the mobile
+         browser URL-bar tint and the sticky app header paint the same color.
+         The content is seeded by the theme boot script below and kept in sync
+         by `applyThemeColorMeta` in src/lib/theme.ts. We can't use
+         `media="(prefers-color-scheme: …)"` because the app supports an
+         explicit light/dark override that must take precedence over the OS
+         preference. `content` starts at the Ink-light value so the pre-JS
+         paint is correct for the majority case. -->
     <meta name="theme-color" content="#faf9f5" />
     <meta name="description" content="A mobile-friendly, installable reader for your RSS, Atom, and JSON feeds." />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -50,6 +58,70 @@
           },
           true,
         );
+      })();
+    </script>
+    <!-- Theme boot: apply the stored appearance axes before first paint. The
+         entry module runs long after the HTML + CSS paint, so without this a
+         user on Dark, Grape, a non-default font, or a non-16px size gets a
+         flash of the default look (and a wrong URL-bar tint) on every cold
+         load. Mirrors the getStored*/apply* pairs in src/lib/theme.ts, which
+         own the attributes once React mounts. Whitelists are explicit (not
+         regexes) so a corrupt stored value falls back to the default rather
+         than activating a `:root[data-*]` override with no matching tokens.
+         Defaults (system mode, Ink palette, Roboto, 16px) own the bare
+         `:root` block and need no attribute. -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('readmo:theme');
+          var theme = t === 'dark' || t === 'light' ? t : 'system';
+          if (theme !== 'system') {
+            document.documentElement.setAttribute('data-theme', theme);
+          }
+          var p = localStorage.getItem('readmo:palette');
+          if (p === 'grape') {
+            document.documentElement.setAttribute('data-palette', p);
+          }
+          var f = localStorage.getItem('readmo:font');
+          if (
+            f === 'inter' ||
+            f === 'public-sans' ||
+            f === 'work-sans' ||
+            f === 'fira-sans' ||
+            f === 'system'
+          ) {
+            document.documentElement.setAttribute('data-font', f);
+          }
+          var fs = localStorage.getItem('readmo:fontSize');
+          if (
+            fs === '14' ||
+            fs === '15' ||
+            fs === '17' ||
+            fs === '18' ||
+            fs === '19'
+          ) {
+            document.documentElement.setAttribute('data-font-size', fs);
+          }
+          // Seed <meta name="theme-color"> from the resolved mode + palette so
+          // the browser-chrome tint matches the header on the very first
+          // paint. Values mirror META_THEME_COLORS in src/lib/theme.ts.
+          var resolved = theme;
+          if (resolved === 'system') {
+            resolved =
+              window.matchMedia &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light';
+          }
+          var colors =
+            p === 'grape'
+              ? { light: '#f7f3fb', dark: '#1a141f' }
+              : { light: '#faf9f5', dark: '#14161c' };
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.content = colors[resolved];
+        } catch (e) {
+          /* ignore */
+        }
       })();
     </script>
   </head>
