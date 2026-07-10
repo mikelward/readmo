@@ -5,7 +5,7 @@
      CSS is the only lever). `touch-action: manipulation` kills the
      legacy double-tap-zoom delay and gives us a fast, deterministic
      single-tap; `-webkit-tap-highlight-color: transparent` drops the
-     grey Android tap flash that would briefly tint the button behind
+     gray Android tap flash that would briefly tint the button behind
      the tooltip. */
   touch-action: manipulation;
   -webkit-touch-callout: none;

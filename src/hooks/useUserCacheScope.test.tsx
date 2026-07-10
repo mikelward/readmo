@@ -17,7 +17,7 @@ describe('useUserCacheScope', () => {
   beforeEach(() => {
     window.localStorage.clear();
     window.sessionStorage.clear();
-    // Start signed-in so prevUid initialises to DEMO_UID and transitioning
+    // Start signed-in so prevUid initializes to DEMO_UID and transitioning
     // begins false (reloadApp is mocked so a real reload never resets it).
     window.localStorage.setItem('readmo:mock-signed-in', '1');
     vi.stubGlobal('caches', { delete: vi.fn().mockResolvedValue(true) });

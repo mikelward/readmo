@@ -24,7 +24,7 @@ describe('useOnlineStatus', () => {
     _resetNetworkStatusForTests();
   });
 
-  it('initialises from navigator.onLine', () => {
+  it('initializes from navigator.onLine', () => {
     const { result } = renderHook(() => useOnlineStatus());
     expect(result.current).toBe(true);
   });

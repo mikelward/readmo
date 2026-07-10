@@ -237,7 +237,7 @@ Deno.test({
 });
 
 // A raw TCP server lets us send a hand-crafted response with a malformed
-// Content-Length, which Deno.serve would otherwise normalise.
+// Content-Length, which Deno.serve would otherwise normalize.
 Deno.test({
   name: 'IP-pinned fetch ignores a malformed Content-Length (no tight loop)',
   sanitizeOps: false,
