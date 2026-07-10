@@ -27,6 +27,7 @@ import {
   type SpoilerGeneration,
 } from '../_shared/spoilerTitle.ts';
 import { jsonBare as json } from '../_shared/respond.ts';
+import { rejectNonServiceCaller } from '../_shared/serviceAuth.ts';
 
 const BATCH_SIZE = 25;
 
@@ -82,10 +83,8 @@ async function handle(req: Request): Promise<Response> {
   // service-role key as a Bearer token (see SETUP.md); require it before we
   // ever touch the service client, otherwise any holder of a valid project JWT
   // could trigger service-role polling and hammer publishers / run up cost.
-  if ((req.headers.get('Authorization') ?? '') !== `Bearer ${serviceKey}`) {
-    console.warn('poll: rejected request without the service-role bearer');
-    return json({ error: 'Unauthorized' }, 401);
-  }
+  const denied = rejectNonServiceCaller(req, serviceKey, 'poll');
+  if (denied) return denied;
 
   // Service-role client — the poller writes shared feeds/items and BYPASSES
   // RLS. Disable autoRefreshToken/persistSession so the client doesn't drop

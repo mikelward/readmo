@@ -22,6 +22,7 @@ import {
   resolveSmtpConfig,
 } from '../_shared/signupNotification.ts';
 import { jsonBare as json } from '../_shared/respond.ts';
+import { rejectNonServiceCaller } from '../_shared/serviceAuth.ts';
 
 Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') {
@@ -34,10 +35,8 @@ Deno.serve(async (req: Request) => {
   // holder of a non-service JWT) can't make us send mail. The function is
   // deployed with --no-verify-jwt, so this check IS the gate.
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-  if ((req.headers.get('Authorization') ?? '') !== `Bearer ${serviceKey}`) {
-    console.warn('notify-signup: rejected request without the service-role bearer');
-    return json({ error: 'Unauthorized' }, 401);
-  }
+  const denied = rejectNonServiceCaller(req, serviceKey, 'notify-signup');
+  if (denied) return denied;
 
   const smtp = resolveSmtpConfig(Deno.env.toObject());
   if ('error' in smtp) {

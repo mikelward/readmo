@@ -28,6 +28,7 @@ import {
   resolveThresholds,
 } from '../_shared/dbPerf.ts';
 import { jsonBare as json } from '../_shared/respond.ts';
+import { rejectNonServiceCaller } from '../_shared/serviceAuth.ts';
 
 Deno.serve(async (req: Request) => {
   try {
@@ -53,10 +54,8 @@ async function handle(req: Request): Promise<Response> {
   // Service-role only: the RPC reads pg_stat_activity / pg_stat_statements
   // across all sessions (RLS-exempt), so require the service-role bearer before
   // touching it. Deployed with --no-verify-jwt, so this check IS the gate.
-  if ((req.headers.get('Authorization') ?? '') !== `Bearer ${serviceKey}`) {
-    console.warn('db-perf: rejected request without the service-role bearer');
-    return json({ error: 'Unauthorized' }, 401);
-  }
+  const denied = rejectNonServiceCaller(req, serviceKey, 'db-perf');
+  if (denied) return denied;
 
   const env = Deno.env.toObject();
   const thresholds = resolveThresholds(env);
