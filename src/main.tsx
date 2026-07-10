@@ -129,8 +129,10 @@ const bootUid = getActiveUid();
 // their own JWT instead). Best-effort and fire-and-forget.
 announceUidToServiceWorker(bootUid);
 
-// Apply the stored theme + palette + text size before first paint to avoid a
-// flash.
+// Re-apply the stored appearance axes. The inline boot script in index.html
+// already seeded them before first paint (this module runs long after that
+// paint); re-applying hands ownership to the theme lib and covers dev/test
+// entry paths that render without the real index.html.
 applyTheme(getStoredTheme());
 applyPalette(getStoredPalette());
 applyFontSize(getStoredFontSize());
