@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { usePageTitle } from '../hooks/useDocumentTitle';
 import './LegalPage.css';
 
 /** Effective date shown at the top of the policy. Bump this in the same commit
@@ -11,7 +11,7 @@ const LAST_UPDATED = 'June 28, 2026';
  * from readmo.app), so it must not depend on those files. No auth gate —
  * informational only, no user data. */
 export function LegalPage() {
-  useDocumentTitle('Legal · readmo');
+  usePageTitle('Legal');
 
   return (
     <article className="legal-page">

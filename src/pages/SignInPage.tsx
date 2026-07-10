@@ -1,6 +1,6 @@
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth, type OAuthProvider } from '../hooks/useAuth';
-import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { usePageTitle } from '../hooks/useDocumentTitle';
 import { isSupabaseConfigured } from '../lib/supabase/client';
 import '../components/ItemRow.css';
 import './SignInPage.css';
@@ -27,7 +27,7 @@ export function SignInPage() {
   const { user, signIn } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  useDocumentTitle('Sign in · readmo');
+  usePageTitle('Sign in');
 
   const from = (location.state as FromState | null)?.from;
   const target = from?.pathname

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import type { FeedProbeResult } from '../lib/data/DataSource';
-import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { usePageTitle } from '../hooks/useDocumentTitle';
 import { useDebugScrollJumps, useItemSort } from '../hooks/useReadingPrefs';
 import { useHomeFeed } from '../hooks/useHomeFeed';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
@@ -143,7 +143,7 @@ export function DebugPage() {
           ...(err ? { state: 'down' as StatusBadge } : {}),
         };
       });
-  useDocumentTitle('Debug · readmo');
+  usePageTitle('Debug');
 
   // Live backend reachability, the readmo analog of newshacker's /debug Services
   // line. `null` means unconfigured (mock mode) — the row still shows, with a

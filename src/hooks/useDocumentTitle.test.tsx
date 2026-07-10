@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { renderHook } from '@testing-library/react';
-import { useDocumentTitle } from './useDocumentTitle';
+import { useDocumentTitle, usePageTitle } from './useDocumentTitle';
 
 describe('useDocumentTitle', () => {
   const originalTitle = document.title;
@@ -60,5 +60,28 @@ describe('useDocumentTitle', () => {
     rerender({ t: 'third' });
     unmount();
     expect(document.title).toBe('baseline');
+  });
+});
+
+describe('usePageTitle', () => {
+  const originalTitle = document.title;
+
+  afterEach(() => {
+    document.title = originalTitle;
+  });
+
+  it('appends the lowercase app suffix to the page name', () => {
+    renderHook(() => usePageTitle('Settings'));
+    expect(document.title).toBe('Settings · readmo');
+  });
+
+  it('sets the bare app name when no page name is given', () => {
+    renderHook(() => usePageTitle());
+    expect(document.title).toBe('readmo');
+  });
+
+  it('sets the bare app name while the page name is still loading (null)', () => {
+    renderHook(() => usePageTitle(null));
+    expect(document.title).toBe('readmo');
   });
 });

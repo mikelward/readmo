@@ -1,13 +1,13 @@
 import { Link } from 'react-router-dom';
 import { useCapabilities } from '../hooks/useCapabilities';
-import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { usePageTitle } from '../hooks/useDocumentTitle';
 import './AdminPage.css';
 
 /** Operator console hub. Gated on the `admin` capability; it only links to the
  * management sub-pages (Users, Feeds), each of which re-checks admin and is
  * enforced server-side by its RPCs. */
 export function AdminPage() {
-  useDocumentTitle('Admin · Readmo');
+  usePageTitle('Admin');
   const { admin } = useCapabilities();
 
   if (!admin) {

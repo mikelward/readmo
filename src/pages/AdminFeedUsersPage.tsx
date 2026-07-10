@@ -2,7 +2,7 @@ import { Link, useLocation, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useCapabilities } from '../hooks/useCapabilities';
-import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { usePageTitle } from '../hooks/useDocumentTitle';
 import './AdminPage.css';
 
 /** Admin drill-down: the accounts subscribed to a given feed. Reached from the
@@ -14,7 +14,7 @@ export function AdminFeedUsersPage() {
   const { feedId = '' } = useParams();
   const location = useLocation();
   const feedTitle = (location.state as { feedTitle?: string } | null)?.feedTitle;
-  useDocumentTitle(`${feedTitle ?? 'Feed'} · Subscribers · Readmo`);
+  usePageTitle(`${feedTitle ?? 'Feed'} · Subscribers`);
   const ds = useDataSource();
   const { admin } = useCapabilities();
 
