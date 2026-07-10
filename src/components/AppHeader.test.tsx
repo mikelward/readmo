@@ -60,6 +60,26 @@ describe('AppHeader actions', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/search');
   });
 
+  it('suppresses the Search button on /search itself', () => {
+    // A header button that navigates to the page you're already on is noise —
+    // same rule as newshacker's showSearchButton.
+    renderWithProviders(<AppHeader />, { route: '/search' });
+    expect(screen.queryByRole('button', { name: 'Search' })).not.toBeInTheDocument();
+  });
+
+  it('marks the header as the banner landmark', () => {
+    renderWithProviders(<AppHeader />);
+    expect(screen.getByRole('banner')).toBeInTheDocument();
+  });
+
+  it('reflects the drawer state on the menu toggle via aria-expanded', () => {
+    renderWithProviders(<AppHeader />);
+    const menu = screen.getByRole('button', { name: 'Open menu' });
+    expect(menu).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(menu);
+    expect(menu).toHaveAttribute('aria-expanded', 'true');
+  });
+
   it('no longer shows a Settings gear in the header (it moved to the account menu)', () => {
     renderWithProviders(<AppHeader />);
     expect(screen.queryByRole('button', { name: 'Settings' })).toBeNull();
