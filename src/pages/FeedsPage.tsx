@@ -17,7 +17,7 @@ import {
 } from '../lib/data/DataSource';
 import { expandFeedShorthand } from '../lib/feedShorthand';
 import { ReorderableSubscriptions } from '../components/ReorderableSubscriptions';
-import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { usePageTitle } from '../hooks/useDocumentTitle';
 import { useToast } from '../hooks/useToast';
 import { presentableDetail } from '../lib/loadErrorCopy';
 import type { Feed, FeedId } from '../lib/types';
@@ -165,7 +165,7 @@ export function FeedsPage() {
   const suggestions = feedUrl.trim().length > 0
     ? searchFeeds(feedUrl, POPULAR_FEEDS).slice(0, 8)
     : RECOMMENDED_FEEDS;
-  useDocumentTitle('Feeds · readmo');
+  usePageTitle('Feeds');
 
   const { data: subs = [] } = useQuery({
     queryKey: ['subscriptions'],

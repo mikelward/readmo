@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useCapabilities } from '../hooks/useCapabilities';
-import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { usePageTitle } from '../hooks/useDocumentTitle';
 import { useToast } from '../hooks/useToast';
 import { usePointerDevice } from '../hooks/usePointerDevice';
 import { ItemRowMenu, type ItemRowMenuItem } from '../components/ItemRowMenu';
@@ -29,7 +29,7 @@ type Filter = 'all' | 'unhealthy';
  * response (HTTP code / reason). Gated on the `admin` capability; the backing
  * `admin_list_feeds` RPC re-checks `is_admin()` server-side. */
 export function AdminFeedsPage() {
-  useDocumentTitle('Feed status · Readmo');
+  usePageTitle('Feed status');
   const ds = useDataSource();
   const queryClient = useQueryClient();
   const { showToast } = useToast();

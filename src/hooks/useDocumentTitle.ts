@@ -20,3 +20,12 @@ export function useDocumentTitle(title: string | null | undefined): void {
     };
   }, [title]);
 }
+
+// App-suffixed tab title for route-level pages: `usePageTitle('Settings')`
+// sets "Settings · readmo"; no page name (Home, or data still loading) sets
+// the bare app name. The suffix is composed here — nowhere else — so its
+// wording and casing can't drift per page (the app name is lowercase
+// "readmo", matching index.html's <title>).
+export function usePageTitle(page?: string | null): void {
+  useDocumentTitle(page ? `${page} · readmo` : 'readmo');
+}

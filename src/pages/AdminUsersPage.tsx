@@ -5,7 +5,7 @@ import { useDataSource } from '../lib/data/context';
 import { useAuth } from '../hooks/useAuth';
 import { useCapabilities, CAPABILITIES_QUERY_KEY } from '../hooks/useCapabilities';
 import { useToast } from '../hooks/useToast';
-import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { usePageTitle } from '../hooks/useDocumentTitle';
 import { ItemRowMenu, type ItemRowMenuItem } from '../components/ItemRowMenu';
 import { usePointerDevice } from '../hooks/usePointerDevice';
 import './AdminPage.css';
@@ -20,7 +20,7 @@ const SIGNUPS_KEY = ['admin-signups'] as const;
  * `/admin` hub. Gated on the `admin` capability; every write is also enforced
  * server-side by the RPCs. */
 export function AdminUsersPage() {
-  useDocumentTitle('Users · Readmo');
+  usePageTitle('Users');
   const ds = useDataSource();
   const queryClient = useQueryClient();
   const { showToast } = useToast();

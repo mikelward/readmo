@@ -2,7 +2,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useCapabilities } from '../hooks/useCapabilities';
-import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { usePageTitle } from '../hooks/useDocumentTitle';
 import './AdminPage.css';
 
 /** Admin drill-down: the feeds a given account subscribes to. Reached from the
@@ -12,7 +12,7 @@ import './AdminPage.css';
  * to reach the error state. */
 export function AdminUserFeedsPage() {
   const { email = '' } = useParams();
-  useDocumentTitle(`${email} · Feeds · Readmo`);
+  usePageTitle(`${email} · Feeds`);
   const ds = useDataSource();
   const { admin } = useCapabilities();
 

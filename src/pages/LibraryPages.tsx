@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { useDataSource } from '../lib/data/context';
 import { useStateBucket } from '../hooks/useItemState';
-import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { usePageTitle } from '../hooks/useDocumentTitle';
 import { LibraryItemList } from '../components/LibraryItemList';
 import { ListPage } from '../components/ListPage';
 import {
@@ -33,7 +33,7 @@ function LibraryPage({
 }: LibraryPageProps) {
   const ds = useDataSource();
   const ids = useStateBucket(field);
-  useDocumentTitle(`${title} · readmo`);
+  usePageTitle(title);
 
   return (
     <ListPage

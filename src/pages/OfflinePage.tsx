@@ -5,7 +5,7 @@ import {
   type QueryClient,
 } from '@tanstack/react-query';
 import { useStateBucket } from '../hooks/useItemState';
-import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { usePageTitle } from '../hooks/useDocumentTitle';
 import { useOfflineStorageAvailable } from '../hooks/useOfflineStorageAvailable';
 import { useDataSource } from '../lib/data/context';
 import { ItemRows } from '../components/ItemRows';
@@ -44,7 +44,7 @@ export function OfflinePage() {
   // with site storage blocked it isn't, so nothing the user pins ever persists —
   // say so instead of showing a misleading "nothing saved" empty state.
   const storageAvailable = useOfflineStorageAvailable();
-  useDocumentTitle('Offline · readmo');
+  usePageTitle('Offline');
 
   // Pinned first, then favorited; both buckets are already newest-first.
   const ids = useMemo(

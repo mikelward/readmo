@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { usePageTitle } from '../hooks/useDocumentTitle';
 import { useToast } from '../hooks/useToast';
 import {
   clearDiag,
@@ -24,7 +24,7 @@ const JUMP_HIGHLIGHT_PX = 150;
  * the dismissed article's id/headline — the caller's own content, never server
  * data or another user's). */
 export function ScrollDiagPage() {
-  useDocumentTitle('Scroll diagnostics · readmo');
+  usePageTitle('Scroll diagnostics');
   const { showToast } = useToast();
   // Re-read on Clear. The frozen report (captured at Report-bug time) is what we
   // show; fall back to the live buffer when the page is opened directly.

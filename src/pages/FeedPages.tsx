@@ -2,7 +2,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useHomeFeed } from '../hooks/useHomeFeed';
-import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { usePageTitle } from '../hooks/useDocumentTitle';
 import { useItemSort, useGroupByFeed } from '../hooks/useReadingPrefs';
 import { ItemList } from '../components/ItemList';
 import { HomeEmptyCoach } from '../components/HomeEmptyCoach';
@@ -20,7 +20,7 @@ export function HomePage() {
   const { groupByFeed, setGroupByFeed } = useGroupByFeed();
   const toggleGroupByFeed = () => setGroupByFeed(!groupByFeed);
   const toggleSort = () => setItemSort(itemSort === 'newest' ? 'oldest' : 'newest');
-  useDocumentTitle('readmo');
+  usePageTitle();
 
   // The drawer's ['subscriptions'] query, but forced to re-read on mount
   // (`refetchOnMount: 'always'`, same pattern as FeedPage's feed-meta) so a
@@ -104,7 +104,7 @@ export function FolderPage() {
   const ds = useDataSource();
   const { itemSort, setItemSort } = useItemSort();
   const { groupByFeed, setGroupByFeed } = useGroupByFeed();
-  useDocumentTitle(`${name} · readmo`);
+  usePageTitle(name);
   const prefKey = `${itemSort}:${groupByFeed ? 'grouped' : 'flat'}`;
   return (
     <>
@@ -145,7 +145,7 @@ export function FeedPage() {
     // than waiting out the default 5-minute staleTime from the persisted cache.
     refetchOnMount: 'always',
   });
-  useDocumentTitle(feed ? `${feed.title} · readmo` : 'readmo');
+  usePageTitle(feed?.title);
 
   // Un-park, then refetch the badge's own query plus the drawer's feed-health
   // list (both read a cloned Feed, so they go stale until invalidated).

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
-import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { usePageTitle } from '../hooks/useDocumentTitle';
 import { ItemRows } from '../components/ItemRows';
 import { ListPage } from '../components/ListPage';
 
@@ -10,7 +10,7 @@ import { ListPage } from '../components/ListPage';
 export function SearchPage() {
   const ds = useDataSource();
   const [query, setQuery] = useState('');
-  useDocumentTitle('Search · readmo');
+  usePageTitle('Search');
 
   // Every keystroke is a new query key with no data until its fetch settles.
   // keepPreviousData holds the prior keystroke's results on screen through the

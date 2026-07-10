@@ -16,7 +16,7 @@ import {
 import type { ItemSort } from '../lib/data/DataSource';
 import { useCapabilities, canUseFullText } from '../hooks/useCapabilities';
 import { useAuth } from '../hooks/useAuth';
-import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { usePageTitle } from '../hooks/useDocumentTitle';
 import { ThemeModeControl } from '../components/ThemeModeControl';
 import { TextSizeControl } from '../components/TextSizeControl';
 import { ColorThemeControl } from '../components/ColorThemeControl';
@@ -50,7 +50,7 @@ export function SettingsPage() {
   // already visible (family ⟹ canUseFullText), so this just gates the toggle.
   const summaryToggleVisible = capabilities.family;
   const { user, signOut } = useAuth();
-  useDocumentTitle('Settings · readmo');
+  usePageTitle('Settings');
 
   // Default first (SPEC.md *Bottom action bar*): the relative end-of-list footer
   // is the default; pinning to the viewport foot is the opt-in.
