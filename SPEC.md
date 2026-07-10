@@ -1609,7 +1609,10 @@ negligible and off every critical path. See the External services table in
    - **Auto-hide on scroll** (opt-in, `readmo:hide-on-scroll`, off by default —
      see *Settings → Reading*): when on, each unpinned row you **scroll fully
      off the top** of the viewport is marked Done (you scrolled past it without
-     pinning it). This is **not** the Sweep button: no tap and no selection —
+     pinning it). A row counts as scrolled-off the moment it's **visually gone**:
+     in grouped views that's when it slips behind the **pinned section header**
+     (which has already hidden it), not a header-height later when it clears the
+     toolbar above. This is **not** the Sweep button: no tap and no selection —
      every scrolled-past row is dismissed on its own. It reuses Sweep's
      dismissal and the same pin shield (pinned rows are never auto-hidden), and
      rows still below the fold are never auto-hidden — only ones you've

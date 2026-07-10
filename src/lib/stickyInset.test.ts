@@ -120,15 +120,27 @@ describe('measureStickyInset', () => {
     expect(measureStickyInset()).toBe(0);
   });
 
-  // The pinned group-by-feed section header is deliberately NOT added to the
-  // inset (it's bounded to its own section, occludes only its own feed's top
-  // row, and scanning every section per scroll frame would jank). So a present
-  // header must leave the chrome-only inset unchanged.
-  it('ignores group-by-feed section headers (chrome-only by design)', () => {
+  // The pinned group-by-feed section header sits in the band below the chrome
+  // and paints over rows scrolling up behind it, so a row is visually gone at the
+  // header's bottom edge. The inset extends by the header's height so the
+  // visibility boundary (and auto-hide-on-scroll's top exit) lands there, not a
+  // header-height higher at the toolbar.
+  it('extends the inset by a pinned group-by-feed section header height', () => {
+    makeStickyEl('app-header', 56);
+    makeStickyEl('list-toolbar', 104); // chrome bottom 104
+    makeStickyEl('item-list__group-header', 152); // makeStickyEl height is 48
+    expect(measureStickyInset()).toBe(152); // 104 + 48
+  });
+
+  // The extension is by the header's *height* (a fixed constant), not its
+  // on-screen bottom — so a header scrolled up out of view (negative bottom)
+  // still contributes its full height, keeping the boundary at the pinned
+  // header's bottom regardless of scroll position.
+  it('adds the header height, not its scroll position', () => {
     makeStickyEl('app-header', 56);
     makeStickyEl('list-toolbar', 104);
-    makeStickyEl('item-list__group-header', 152);
-    expect(measureStickyInset()).toBe(104);
+    makeStickyEl('item-list__group-header', -100); // scrolled off; height still 48
+    expect(measureStickyInset()).toBe(152); // 104 + 48, not 104 + (-100)
   });
 });
 

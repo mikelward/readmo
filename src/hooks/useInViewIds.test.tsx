@@ -103,6 +103,18 @@ describe('useInViewIds', () => {
     // NOT — a row genuinely cut off by the screen edge must stay excluded.
     expect(lastInit?.rootMargin).toBe('-102px 0px -0px 0px');
   });
+
+  it('extends the top inset by a pinned group-by-feed section header', () => {
+    // In group-by-feed, the pinned section header paints over rows below the
+    // chrome, so the visibility boundary — and auto-hide-on-scroll's top exit —
+    // is the header's bottom, not the toolbar's. The top inset grows by the
+    // header height (48), then the 2px slack applies: 104 + 48 - 2 = 150.
+    mountSticky('app-header', 56);
+    mountSticky('list-toolbar', 104);
+    mountSticky('item-list__group-header', 152); // height 48
+    render(<Probe />);
+    expect(lastInit?.rootMargin).toBe('-150px 0px -0px 0px');
+  });
 });
 
 // onExitTop fires when a previously-seen row scrolls fully off the *top* — the
