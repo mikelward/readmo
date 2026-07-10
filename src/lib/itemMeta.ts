@@ -16,7 +16,7 @@ export function formatAge(publishedAt: number, now: number = Date.now()): string
   if (wk < 52) return `${wk}w`;
   // Day 364 reaches week 52 (past the week bucket) but floors to year 0 —
   // roll it over to "1y" rather than render a nonsensical "0y" (same rollover
-  // format.ts's formatTimeAgo handles for its month bucket).
+  // format.ts's formatTimeAgoLong applies at its month/year boundary).
   const yr = Math.max(1, Math.floor(day / 365));
   return `${yr}y`;
 }
@@ -50,7 +50,13 @@ export function articleSourceDomain(
   return domain;
 }
 
-/** Only http(s) URLs are safe to hand to window.open / render as links. */
+// Item URLs come from whatever the publisher syndicated. In the very
+// unlikely case that a non-http(s) scheme leaks through (`javascript:`,
+// `data:`, `vbscript:`…), inlining that URL into an `href` or handing it to
+// window.open would let a tap execute script on our origin. Narrow the
+// allowlist to `http:` and `https:` and render the title / Open-original
+// link as plain text otherwise. Relative and malformed URLs throw from
+// `new URL(url)` and are rejected by the catch.
 export function isSafeHttpUrl(url: string | null | undefined): url is string {
   if (!url) return false;
   try {
