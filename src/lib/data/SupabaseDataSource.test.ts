@@ -108,9 +108,16 @@ describe('SupabaseDataSource reads', () => {
   });
 
   it('getLastSyncedAt is null until the first server pull, then a timestamp', async () => {
-    expect(env.ds.getLastSyncedAt()).toBeNull();
-    await env.ds.getHomeItems(); // triggers item_state hydration
-    expect(typeof env.ds.getLastSyncedAt()).toBe('number');
+    // The constructor kicks off a boot hydration (`void ensureHydrated()`), so
+    // the "null" window is the synchronous instant right after construction,
+    // before that pull's microtask resolves. Read it inline here — no await
+    // between construction and the assertion — rather than off the `env` built
+    // in beforeEach, whose boot pull vitest has already flushed by the time the
+    // body runs.
+    const { ds } = setup();
+    expect(ds.getLastSyncedAt()).toBeNull();
+    await ds.getHomeItems(); // awaits the first hydration to completion
+    expect(typeof ds.getLastSyncedAt()).toBe('number');
   });
 
   it('re-serves an item whose Done aged past the 30-day TTL (matching the real feed_items)', async () => {

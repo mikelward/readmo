@@ -17,7 +17,12 @@ beforeEach(() => {
 });
 
 // Tear down the React tree between tests so DOM queries don't leak across
-// cases and timers/listeners from one test don't fire in the next.
+// cases and timers/listeners from one test don't fire in the next. Restore
+// spies too: vitest 4's `vi.spyOn` returns the *existing* mock when the target
+// is already spied (vitest 3 created a fresh spy each call), so without a
+// restore the `window.close` spy installed in beforeEach — re-spied by tests
+// that assert its call count — would accumulate calls across cases.
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
 });
