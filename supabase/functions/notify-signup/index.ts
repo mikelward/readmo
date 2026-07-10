@@ -21,13 +21,7 @@ import {
   resolveRecipient,
   resolveSmtpConfig,
 } from '../_shared/signupNotification.ts';
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
+import { jsonBare as json } from '../_shared/respond.ts';
 
 Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') {
