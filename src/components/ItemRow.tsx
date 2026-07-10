@@ -391,7 +391,25 @@ export function ItemRow({
         case 'd': {
           if (enableSwipe && !pinned) {
             e.preventDefault();
+            // Capture the focused row's index in the document-wide list, then
+            // re-query after the hide commits so we focus whatever moved into
+            // the vacated slot — keyboard flow continues down the list instead
+            // of dropping to <body> (same as newshacker's `d`). The state
+            // store flips `done` synchronously, so the row is gone from
+            // `visibleItems` by the time the frame callback runs.
+            const rows = Array.from(
+              document.querySelectorAll<HTMLElement>('.item-row__body'),
+            );
+            const idx = rows.indexOf(e.currentTarget);
             handleHide();
+            requestAnimationFrame(() => {
+              const next = Array.from(
+                document.querySelectorAll<HTMLElement>('.item-row__body'),
+              );
+              if (next.length === 0) return;
+              const at = idx < 0 ? 0 : Math.min(idx, next.length - 1);
+              next[at]?.focus();
+            });
           }
           break;
         }

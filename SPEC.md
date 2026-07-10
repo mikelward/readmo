@@ -2822,7 +2822,9 @@ List pages (`/`, `/folder/:name`, `/feed/:feedId`, library views):
 The keyboard-focused row is marked at full row width — an accent bar flush
 with the row's top edge plus the row hover tint (same cue as newshacker) —
 instead of the generic focus outline; mouse clicks never leave the marker
-stuck on a row.
+stuck on a row. After a keyboard dismiss (`d`), focus moves to the row that
+slides into the vacated slot (clamped to the new last row), so j/k flow
+continues down the list instead of restarting from the top.
 
 Reader page (`/item/:id`):
 
