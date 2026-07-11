@@ -2362,15 +2362,17 @@ page's discipline is unchanged.
     it opens — no "Summarizing…" placeholder — falling back to the `summary` Edge
     call when the row carries none yet (just-pinned, an old backend, or a
     non-cacheable stub). For a **pinned/favorited** article the summary is
-    **retained offline like the body**: the reader seeds it into `['summary', id]`
-    on open (and the pinned prewarm fetches it), and `useOfflineCacheLock` keeps
-    that entry alive alongside `['item']`/`['fulltext']` so it isn't lost when the
-    feed cache is evicted — an offline open then shows the gist (a **stale gist
-    beats an empty card**). The seed is provisional and **revalidates against the
-    server** the next time the reader is online, so it self-heals after a
-    publisher edit. (A favorite never opened online has nothing retained yet — its
-    gist lands, and is retained, on first open.) An off-allowlist co-subscriber
-    still receives NULL, so the boundary is unchanged for them.
+    **retained offline like the body**: `useOfflineCacheLock` keeps `['summary',
+    id]` alive alongside `['item']`/`['fulltext']`, and it's populated three ways
+    — the reader seeds it on open, the pinned prewarm fetches it, and
+    `useSavedSummarySeed` eagerly copies it from the cached feed row for **every**
+    saved item (so a favorite never opened online keeps its gist too, cache-only,
+    never a generation). So an offline open shows the gist (a **stale gist beats
+    an empty card**) rather than losing it when the feed cache is evicted. The
+    row-sourced seed is provisional and **revalidates against the server** the
+    next time the reader is online, so it self-heals after a publisher edit. An
+    off-allowlist co-subscriber still receives NULL, so the boundary is unchanged
+    for them.
   - **Generation is not automatic on every open — pin before opening, or ask.**
     The reader's `useSummary` auto-generates only when the article was **pinned
     before it opened** (the "I'll read this" signal the pre-warm already acts on,
