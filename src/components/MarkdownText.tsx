@@ -6,12 +6,12 @@ import { Fragment, type ReactElement } from 'react';
 // emits `code` and **bold** spans and, for multi-point articles, **bullet
 // lists** (and we now ask it to — see the summary prompt). Inline emphasis is
 // tokenized within each line; a run of consecutive `-`/`*`/`+` bullet lines
-// becomes a <ul>. Treating the strings as markdown is strictly a superset of
-// treating them as plain text, so this component is safe to use anywhere a
-// summary is rendered.
+// becomes a <ul>, and a run of `>`-prefixed lines becomes a <blockquote>.
+// Treating the strings as markdown is strictly a superset of treating them as
+// plain text, so this component is safe to use anywhere a summary is rendered.
 //
 // Why not `dangerouslySetInnerHTML` + a markdown library: this tokenizer emits
-// known JSX elements (<code>, <strong>, <em>) whose text content is a regex
+// known JSX elements (<code>, <strong>, <em>, <ul>, <blockquote>) whose text is a regex
 // capture group dropped through React's normal `{…}` interpolation. React
 // escapes that text by construction, so the worst-case output is "model included
 // a literal `<script>` between backticks and the user sees the characters
@@ -44,12 +44,15 @@ import { Fragment, type ReactElement } from 'react';
 //   - the guard is the sole line of defense here — there's no "opens on
 //     whitespace" analogue to worry about beyond it.
 //
-// Bullet lists ARE in scope (the prompt asks for a bulleted list when the
-// article makes several distinct points), but everything else block-level is
-// not: headings, ordered lists, blockquotes, and code fences render as their
-// literal text. Also out of scope by design: links (model-supplied URLs are a
-// different trust story). The prompt steers the model to a short paragraph or a
-// flat bullet list, so this coverage is enough.
+// Bullet lists and blockquotes ARE in scope. A run of consecutive `-`/`*`/`+`
+// lines becomes a <ul>; a run of `>`-prefixed lines becomes a <blockquote> (the
+// model reaches for one when a summary leans on a direct quotation from the
+// article). Everything else block-level is not: headings, ordered lists, and
+// code fences render as their literal text. Also out of scope by design: links
+// (model-supplied URLs are a different trust story). The blockquote body is
+// inline-only like every other block — its lines are re-joined and tokenized, so
+// consecutive `>` lines soft-wrap into one quote (the CommonMark behavior) and
+// no emphasis run spans a line break.
 
 // Every alternative is inline-only: the inner class explicitly excludes `\n`, so
 // a stray `**` at the start of one paragraph can't bold every character through
@@ -85,15 +88,34 @@ const WORD = new RegExp(WORD_CHAR, 'u');
 // being mistaken for bullets.
 const BULLET_RE = /^[ \t]*[-*+][ \t]+(.*)$/;
 
+// A blockquote line: optional indent, a `>` marker, an optional single space,
+// then the quoted text (captured). Only ONE leading space is eaten so any
+// further indentation inside the quote is preserved. A run of these collapses
+// into one <blockquote>.
+//
+// The lookahead keeps a line-leading GREATER-THAN COMPARISON literal: `> 50% of
+// respondents`, `>= 50%`, `> $1M`, `> -5%`, `>10 ms` are factual thresholds, and
+// eating the `>` as a quote marker would silently change their meaning, not just
+// their formatting. Rather than denylist every operator/number/currency/sign
+// form, the guard is POSITIVE: a `>` is a quote marker only when the text after
+// it (skipping spaces) OPENS ON PROSE — a Unicode letter or an opening quotation
+// mark — or the line is a bare `>`. Everything else (digits, `=`, `$`, `+`/`-`,
+// …) stays literal. The rare cost is a genuine quotation that opens on a number
+// or exotic punctuation ("> 2023 was…") rendering as literal `>`-text — a
+// faithful, visible miss, which is the safe direction to err.
+const BLOCKQUOTE_RE = /^[ \t]*>(?=[ \t]*(?:[\p{L}"'“‘«]|$))[ \t]?(.*)$/u;
+
 type Block =
   | { type: 'text'; text: string }
-  | { type: 'list'; items: string[] };
+  | { type: 'list'; items: string[] }
+  | { type: 'quote'; lines: string[] };
 
-// Group the raw string into text blocks and bullet-list blocks. Consecutive
-// bullet lines collapse into one list; every other line (including blanks)
-// accumulates into a text block whose lines are rejoined with `\n` — so a string
-// with no bullets round-trips to a single text block byte-for-byte, and the
-// inline tokenizer sees exactly what it always did.
+// Group the raw string into text blocks, bullet-list blocks, and blockquote
+// blocks. Consecutive bullet lines collapse into one list and consecutive `>`
+// lines into one quote; every other line (including blanks) accumulates into a
+// text block whose lines are rejoined with `\n` — so a string with no
+// lists/quotes round-trips to a single text block byte-for-byte, and the inline
+// tokenizer sees exactly what it always did.
 function splitBlocks(text: string): Block[] {
   const blocks: Block[] = [];
   let textLines: string[] = [];
@@ -104,15 +126,23 @@ function splitBlocks(text: string): Block[] {
     }
   };
   for (const line of text.split('\n')) {
-    const match = BULLET_RE.exec(line);
-    if (!match) {
-      textLines.push(line);
+    const bullet = BULLET_RE.exec(line);
+    if (bullet) {
+      flushText();
+      const last = blocks[blocks.length - 1];
+      if (last && last.type === 'list') last.items.push(bullet[1]);
+      else blocks.push({ type: 'list', items: [bullet[1]] });
       continue;
     }
-    flushText();
-    const last = blocks[blocks.length - 1];
-    if (last && last.type === 'list') last.items.push(match[1]);
-    else blocks.push({ type: 'list', items: [match[1]] });
+    const quote = BLOCKQUOTE_RE.exec(line);
+    if (quote) {
+      flushText();
+      const last = blocks[blocks.length - 1];
+      if (last && last.type === 'quote') last.lines.push(quote[1]);
+      else blocks.push({ type: 'quote', lines: [quote[1]] });
+      continue;
+    }
+    textLines.push(line);
   }
   flushText();
   return blocks;
@@ -128,17 +158,25 @@ export function MarkdownText({ text }: { text: string }) {
   }
   return (
     <>
-      {blocks.map((block, i) =>
-        block.type === 'list' ? (
-          <ul key={i} className="markdown-list">
-            {block.items.map((item, j) => (
-              <li key={j}>{tokenize(item)}</li>
-            ))}
-          </ul>
-        ) : (
-          <Fragment key={i}>{tokenize(block.text)}</Fragment>
-        ),
-      )}
+      {blocks.map((block, i) => {
+        if (block.type === 'list') {
+          return (
+            <ul key={i} className="markdown-list">
+              {block.items.map((item, j) => (
+                <li key={j}>{tokenize(item)}</li>
+              ))}
+            </ul>
+          );
+        }
+        if (block.type === 'quote') {
+          return (
+            <blockquote key={i} className="markdown-quote">
+              {tokenize(block.lines.join('\n'))}
+            </blockquote>
+          );
+        }
+        return <Fragment key={i}>{tokenize(block.text)}</Fragment>;
+      })}
     </>
   );
 }
