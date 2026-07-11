@@ -2466,12 +2466,13 @@ page's discipline is unchanged.
     once) any row cached before the strip existed so legacy preambles don't
     render forever. The response is rendered
     with the **`MarkdownText`** component **ported from newshacker**
-    (guardrail #9) — inline `<strong>`/`<em>`/`<code>` plus flat **bullet lists**
-    (`-`/`*`/`+` runs → `<ul>`), all emitted as React elements, never
+    (guardrail #9) — inline `<strong>`/`<em>`/`<code>`, flat **bullet lists**
+    (`-`/`*`/`+` runs → `<ul>`), and **blockquotes** (`>` runs → `<blockquote>`,
+    for a summary that quotes the article), all emitted as React elements, never
     `dangerouslySetInnerHTML`, so there's no markdown-library dependency and no
     XSS surface (the model's text is React-escaped by construction). Other
-    block-level Markdown (headings, ordered/nested lists, blockquotes, code
-    fences) renders as literal text and the prompt steers the model away from it.
+    block-level Markdown (headings, ordered/nested lists, code fences) renders as
+    literal text and the prompt steers the model away from it.
   - **Model:** Google **Gemini `gemini-2.5-flash-lite`** via the
     `generateContent` REST endpoint (fixed Google host; the article is in the
     request body, never a URL), `thinkingBudget: 0` to keep latency low. Needs

@@ -275,6 +275,81 @@ describe('MarkdownText', () => {
     expect(container.innerHTML).toBe('<strong>heads up</strong> everyone');
   });
 
+  it('renders a "> " line as a <blockquote>', () => {
+    const { container } = render(
+      <MarkdownText text="> A single quoted line." />,
+    );
+    expect(container.innerHTML).toBe(
+      '<blockquote class="markdown-quote">A single quoted line.</blockquote>',
+    );
+  });
+
+  it('collapses a run of "> " lines into one blockquote and tokenizes inside', () => {
+    const { container } = render(
+      <MarkdownText text={'> The author calls it **bold**.\n> A second quoted line.'} />,
+    );
+    expect(container.innerHTML).toBe(
+      '<blockquote class="markdown-quote">The author calls it ' +
+        '<strong>bold</strong>.\nA second quoted line.</blockquote>',
+    );
+  });
+
+  it('renders a lead-in paragraph followed by a blockquote', () => {
+    const { container } = render(
+      <MarkdownText text={'The report concludes:\n> Growth will slow.'} />,
+    );
+    expect(container.innerHTML).toBe(
+      'The report concludes:<blockquote class="markdown-quote">' +
+        'Growth will slow.</blockquote>',
+    );
+  });
+
+  it('eats only one space after the "> " marker, preserving further indent', () => {
+    const { container } = render(<MarkdownText text="> 	indented quote" />);
+    expect(container.innerHTML).toBe(
+      '<blockquote class="markdown-quote">\tindented quote</blockquote>',
+    );
+  });
+
+  it('does not treat a mid-sentence ">" as a blockquote', () => {
+    const { container } = render(
+      <MarkdownText text="the value grew to > 50% overall" />,
+    );
+    // `&gt;` is the serialized form of a literal ">" text node — it's rendered as
+    // text, not turned into a blockquote (the marker must open the line).
+    expect(container.innerHTML).toBe('the value grew to &gt; 50% overall');
+  });
+
+  it('keeps a line-leading greater-than comparison literal, not a blockquote', () => {
+    // A `>` opening on a digit, operator, currency, or sign is a comparison /
+    // threshold — eating the `>` would change its meaning. All must stay literal.
+    for (const [input, expected] of [
+      ['> 50% of respondents agreed', '&gt; 50% of respondents agreed'],
+      ['>10 ms latency was measured', '&gt;10 ms latency was measured'],
+      ['>  25 units shipped', '&gt;  25 units shipped'],
+      ['>= 50% of the vote', '&gt;= 50% of the vote'],
+      ['> $1M in revenue', '&gt; $1M in revenue'],
+      ['> -5% year over year', '&gt; -5% year over year'],
+    ] as const) {
+      const { container } = render(<MarkdownText text={input} />);
+      expect(container.innerHTML).toBe(expected);
+    }
+  });
+
+  it('quotes a line that opens on a quotation mark', () => {
+    const { container } = render(<MarkdownText text={'> "The end is near," she said.'} />);
+    expect(container.innerHTML).toBe(
+      '<blockquote class="markdown-quote">"The end is near," she said.</blockquote>',
+    );
+  });
+
+  it('still quotes a line that opens on a non-digit after the marker', () => {
+    const { container } = render(<MarkdownText text="> Growth will slow, they say." />);
+    expect(container.innerHTML).toBe(
+      '<blockquote class="markdown-quote">Growth will slow, they say.</blockquote>',
+    );
+  });
+
   it('renders the full DeepSeek example end to end', () => {
     const { container } = render(
       <MarkdownText
