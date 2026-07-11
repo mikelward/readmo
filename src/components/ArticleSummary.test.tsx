@@ -102,6 +102,165 @@ describe('ArticleSummary', () => {
     expect(called).toBe(false);
   });
 
+  it('seeds the row summary into the retained ["summary", id] cache as a viaRow entry', async () => {
+    // The gist is shown from the row, but it's also durably seeded into
+    // ['summary', id] — the key useOfflineCacheLock retains — so it survives the
+    // GC-able feed cache being evicted. Flagged viaRow (provisional).
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const { queryClient } = renderWithProviders(
+      <ArticleSummary id={ITEM_ID} online autoGenerate cachedSummary="A row gist." />,
+      { source },
+    );
+    await screen.findByTestId('article-summary-body');
+    await waitFor(() =>
+      expect(queryClient.getQueryData(['summary', ITEM_ID])).toEqual({
+        status: 'ok',
+        summary: 'A row gist.',
+        viaRow: true,
+      }),
+    );
+  });
+
+  it('replaces a stale non-ok cached result with the row seed (offline shows the gist, not the failure)', async () => {
+    // A prior transient failure is cached under ['summary', id]. The row is now
+    // delivering a gist, so the seed must overwrite the failure — otherwise a
+    // later offline open would serve "not available" over the gist we're showing.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    queryClient.setQueryData(['summary', ITEM_ID], { status: 'unreachable', summary: null });
+    renderWithProviders(
+      <ArticleSummary id={ITEM_ID} online autoGenerate cachedSummary="The delivered gist." />,
+      { source, queryClient },
+    );
+    await screen.findByTestId('article-summary-body');
+    await waitFor(() =>
+      expect(queryClient.getQueryData(['summary', ITEM_ID])).toEqual({
+        status: 'ok',
+        summary: 'The delivered gist.',
+        viaRow: true,
+      }),
+    );
+  });
+
+  it('does not clobber a real fetched summary with a row seed', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    const real = { status: 'ok', summary: 'The real fetched summary.' };
+    queryClient.setQueryData(['summary', ITEM_ID], real);
+    renderWithProviders(
+      <ArticleSummary id={ITEM_ID} online autoGenerate cachedSummary="A different row gist." />,
+      { source, queryClient },
+    );
+    await screen.findByTestId('article-summary-body');
+    // The settled fetched summary is protected — the seed effect leaves it as-is.
+    await waitFor(() =>
+      expect(queryClient.getQueryData(['summary', ITEM_ID])).toEqual(real),
+    );
+  });
+
+  it('revalidates a viaRow seed on an unpinned (favorite) open and graduates it', async () => {
+    // A favorite (autoGenerate false) whose feed row was GC'd keeps only a viaRow
+    // seed. Opening it online must still re-check the server so a publisher edit
+    // self-heals — the seed shows immediately, then graduates to the fetched one.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    let calls = 0;
+    source.getSummary = async (): Promise<SummaryResult> => {
+      calls += 1;
+      return { status: 'ok', summary: 'Fresh graduated summary.' };
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    queryClient.setQueryData(['summary', ITEM_ID], {
+      status: 'ok',
+      summary: 'Stale seed.',
+      viaRow: true,
+    });
+    renderWithProviders(<ArticleSummary id={ITEM_ID} online autoGenerate={false} />, {
+      source,
+      queryClient,
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('article-summary-body')).toHaveTextContent(
+        'Fresh graduated summary.',
+      ),
+    );
+    expect(calls).toBeGreaterThanOrEqual(1);
+    // Graduated to a durable fetched summary (no longer viaRow).
+    expect(queryClient.getQueryData(['summary', ITEM_ID])).toEqual({
+      status: 'ok',
+      summary: 'Fresh graduated summary.',
+    });
+  });
+
+  it('keeps a viaRow seed when a revalidation transiently fails (stale beats empty)', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    let called = false;
+    source.getSummary = async (): Promise<SummaryResult> => {
+      called = true;
+      return { status: 'unreachable', summary: null };
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    queryClient.setQueryData(['summary', ITEM_ID], {
+      status: 'ok',
+      summary: 'Retained gist.',
+      viaRow: true,
+    });
+    renderWithProviders(<ArticleSummary id={ITEM_ID} online autoGenerate={false} />, {
+      source,
+      queryClient,
+    });
+    expect(await screen.findByTestId('article-summary-body')).toHaveTextContent(
+      'Retained gist.',
+    );
+    await waitFor(() => expect(called).toBe(true));
+    // The transient failure preserved the gist — no error card, still the seed.
+    await waitFor(() =>
+      expect(queryClient.getQueryData(['summary', ITEM_ID])).toEqual({
+        status: 'ok',
+        summary: 'Retained gist.',
+        viaRow: true,
+      }),
+    );
+    expect(screen.queryByTestId('article-summary-error')).not.toBeInTheDocument();
+    expect(screen.getByTestId('article-summary-body')).toHaveTextContent('Retained gist.');
+  });
+
+  it('serves a retained viaRow seed offline when the feed row is gone (stale beats empty)', async () => {
+    // The feed row has been GC'd (no cachedSummary), so useSummary falls to the
+    // query — offline, disabled, but the retained seed is still there. It shows,
+    // with no "not available offline" card and no fetch.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    let called = false;
+    source.getSummary = async (): Promise<SummaryResult> => {
+      called = true;
+      return { status: 'ok', summary: 'fresh' };
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    queryClient.setQueryData(['summary', ITEM_ID], {
+      status: 'ok',
+      summary: 'A retained gist.',
+      viaRow: true,
+    });
+    renderWithProviders(<ArticleSummary id={ITEM_ID} online={false} autoGenerate />, {
+      source,
+      queryClient,
+    });
+    expect(await screen.findByTestId('article-summary-body')).toHaveTextContent(
+      'A retained gist.',
+    );
+    expect(screen.queryByTestId('article-summary-offline')).not.toBeInTheDocument();
+    expect(called).toBe(false);
+  });
+
   it('offers a Generate button (no call) for an unpinned article until clicked', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     let called = false;

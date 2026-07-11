@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useFullTextAllowed } from './useCapabilities';
 import { summaryStaleTime, type SummaryResult } from '../lib/summary';
@@ -68,6 +68,7 @@ export function useSummary(
   opts: { online: boolean; autoGenerate: boolean; initialSummary?: string | null },
 ): UseSummary {
   const ds = useDataSource();
+  const queryClient = useQueryClient();
   const allowed = useFullTextAllowed();
   // A summary already delivered ON the item row (the allowlisted ride-along from
   // `feed_items`, 0058) — show it immediately with no Edge round-trip and no
@@ -87,20 +88,70 @@ export function useSummary(
   const [triggeredId, setTriggeredId] = useState<ItemId | null>(null);
   const triggered = triggeredId === id;
 
+  // A retained viaRow seed (from the reader or the offline lock) is provisional —
+  // enable the query so it REVALIDATES and graduates to a durable fetched summary
+  // even on a saved-but-unpinned open (`autoGenerate` false). Without this a
+  // favorite would show the seed forever without re-checking the server, so a
+  // publisher edit would never self-heal. (Offline the query is still disabled
+  // via `opts.online`, so the seed is served as-is.)
+  const seededViaRow =
+    queryClient.getQueryData<SummaryResult>(summaryQueryKey(id))?.viaRow === true;
   // Never fetch when the row already carries the summary — the query hook still
   // mounts below (stable hook order), it just stays disabled.
   const enabled =
-    !rowSummary && opts.online && allowed && (opts.autoGenerate || triggered);
+    !rowSummary &&
+    opts.online &&
+    allowed &&
+    (opts.autoGenerate || triggered || seededViaRow);
 
   const query = useQuery({
     queryKey: summaryQueryKey(id),
-    queryFn: () => ds.getSummary(id),
+    queryFn: async () => {
+      const result = await ds.getSummary(id);
+      // Don't let a TRANSIENT failure replace a gist we're already showing (a
+      // viaRow seed, or an earlier ok being revalidated) with a "Could not
+      // summarize" card — stale beats empty. A real `ok` graduates the seed; a
+      // terminal `empty`/`unavailable` still passes through (the server
+      // genuinely has nothing, or isn't configured).
+      if (result.status === 'unreachable') {
+        const cur = queryClient.getQueryData<SummaryResult>(summaryQueryKey(id));
+        if (cur?.status === 'ok') return cur;
+      }
+      return result;
+    },
     enabled,
     // Terminal outcomes (ok/empty) are cached forever; a transient
-    // unreachable/unavailable — or a retryable allowlist denial — stays stale so
-    // the next open retries it.
+    // unreachable/unavailable, a retryable allowlist denial, or a provisional
+    // viaRow seed — stays stale so the next open revalidates it.
     staleTime: summaryStaleTime,
   });
+
+  // Durably seed the row summary into `['summary', id]`, the key
+  // `useOfflineCacheLock` retains for pinned/favorited items. The reader displays
+  // the row summary directly (below), but the feed-list cache it comes from isn't
+  // GC-locked — so without this, an offline open after that cache is evicted would
+  // find the body retained but the summary gone. The seed is flagged `viaRow`
+  // (provisional): once the query actually runs — the row is gone, so `rowSummary`
+  // is null and `enabled` can be true — it revalidates and graduates to a durable
+  // fetched summary; offline it's served as the stale-but-present gist. Never
+  // overwrites a real fetched summary (only an absent or prior `viaRow` entry).
+  useEffect(() => {
+    if (!rowSummary) return;
+    const cur = queryClient.getQueryData<SummaryResult>(summaryQueryKey(id));
+    // Protect only a real, SETTLED fetched summary. An absent entry, a prior
+    // viaRow seed, OR a non-ok result (a transient unreachable/unavailable, or a
+    // retryable/terminal empty from an earlier attempt) all get replaced by the
+    // gist we're currently showing — otherwise a later offline open would serve
+    // that stale failure instead of the summary the reader already delivered.
+    const hasRealSummary = cur?.status === 'ok' && !cur.viaRow;
+    if (!hasRealSummary) {
+      queryClient.setQueryData<SummaryResult>(summaryQueryKey(id), {
+        status: 'ok',
+        summary: rowSummary,
+        viaRow: true,
+      });
+    }
+  }, [rowSummary, id, queryClient]);
 
   // Row fast path: the item carries the summary, so show it now — no spinner, no
   // failure/offline states (there was no fetch to fail), no generate button.

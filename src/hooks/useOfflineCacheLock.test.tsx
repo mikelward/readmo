@@ -50,6 +50,40 @@ describe('useOfflineCacheLock', () => {
     expect(qc.getQueryData(['fulltext', 'item-1'])).toBeUndefined();
   });
 
+  it('retains the AI summary for a pinned item (idle observer) and evicts it on unpin', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    source.stateStore.set('item-1', 'pinned', true); // pinned before mount → locked on the first sync
+    // gcTime: 0 so an entry with NO observer is evicted immediately — the summary
+    // survives ONLY because the lock holds an idle observer on ['summary', id].
+    const qc = new QueryClient({ defaultOptions: { queries: { gcTime: 0, retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <DataSourceProvider source={source}>
+          <Harness />
+        </DataSourceProvider>
+      </QueryClientProvider>,
+    );
+    // The lock/warm has established the observers (incl. the summary one).
+    await waitFor(() => expect(qc.getQueryData(['item', 'item-1'])).toBeTruthy());
+
+    // A summary seeded now (the reader's 0058 ride-along) is retained despite
+    // gcTime: 0, because the idle observer keeps ['summary', id] alive.
+    await act(async () => {
+      qc.setQueryData(['summary', 'item-1'], { status: 'ok', summary: 'gist', viaRow: true });
+    });
+    expect(qc.getQueryData(['summary', 'item-1'])).toEqual({
+      status: 'ok',
+      summary: 'gist',
+      viaRow: true,
+    });
+
+    // Unpinning releases the observer and evicts the summary alongside the body.
+    await act(async () => {
+      source.stateStore.set('item-1', 'pinned', false);
+    });
+    await waitFor(() => expect(qc.getQueryData(['summary', 'item-1'])).toBeUndefined());
+  });
+
   it('keeps the cache when an unpinned item is still favorited', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     const qc = setup(source);
