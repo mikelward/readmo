@@ -145,21 +145,6 @@ constraint is documented in more detail.
 
 ## AI summaries
 
-- **Eagerly retain favorites' AI summaries offline (e.g. on app open).** A
-  pinned article's summary is retained offline (the reader seeds `['summary', id]`
-  on open, the prewarm fetches it, and `useOfflineCacheLock` keeps it alive), but
-  a **favorite that's never been opened online** has nothing retained yet — its
-  gist only lands on first open. `useSummaryPrewarm` deliberately skips favorites,
-  and an earlier attempt to seed favorites from the cached feed row inside the
-  offline lock's `warm()` accreted edge cases (content-match vs. a stale feed
-  page, and re-seeding a summary that arrives *after* the body warmed — PR #461,
-  Codex). The clean fix is an eager pass — on app open / feed refresh, seed (or
-  fetch) the summary for every favorited item from the current cached row,
-  content-matched like the reader, so the offline gist is there before the feed
-  cache is GC'd. Probably belongs next to `useSummaryPrewarm` (extend it to the
-  favorite bucket) or a dedicated warmer subscribed to the feed cache. See
-  `useOfflineCacheLock`'s `['summary', id]` observer and `useSummary`'s seed.
-
 - **Speed up the pin-triggered summary: don't serialize it behind the full-text
   download.** The pin trigger's server-side work (`runPinTriggeredWork` in
   `supabase/functions/summary/index.ts`) currently does the full-article
