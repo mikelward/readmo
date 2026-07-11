@@ -2312,8 +2312,10 @@ page's discipline is unchanged.
     entirely** for an off-list user — so an off-list reader shows the feed stub
     with zero Edge calls and the warmer doesn't re-prefetch a bucketed item on
     every state-sync. The client gate is **conservative on an unknown state**:
-    while a signed-in user's capabilities are still loading it holds off the call
-    (rather than treating unknown as open), and the `getCapabilities` mapping
+    it stays closed until capabilities resolve to allowed — a **signed-out
+    caller is never allowlisted** (these are per-account features), and while a
+    signed-in user's capabilities are still loading it holds off the call
+    (rather than treating unknown as open) — and the `getCapabilities` mapping
     only treats a *missing* RPC (PostgREST `PGRST202`, an old backend) as
     "no capabilities" — a transient error is rethrown so React Query retries
     instead of caching an open gate. It all re-warms automatically when
@@ -2344,12 +2346,25 @@ page's discipline is unchanged.
 - **AI article summaries (allowlisted).** A short AI summary (a few
   sentences) of the article, shown **directly below the title/byline, above the
   reading-mode bar and article body** — for an **allowlisted user**. The
-  **`allowlist` table is the only access boundary** (the same trusted-user list
+  **`allowlist` table is the access boundary** (the same trusted-user list
   as reading mode / Google News — summaries are a generation-cost surface, one
-  Gemini call per cache miss). Access is gated solely on the allowlist
-  (`useFullTextAllowed`, the shared gate — it holds off while a signed-in user's
-  capabilities are still loading, so an off-list user fires no Edge call), and the
+  Gemini call per cache miss). Access is gated on the allowlist
+  (`useFullTextAllowed`, the shared gate — it stays **closed until a signed-in
+  user's capabilities resolve to allowed**: a signed-out caller is never
+  allowlisted, and a still-loading/errored gate fires no Edge call), and the
   `summary` Edge Function re-checks the allowlist server-side regardless.
+  - **A cached summary rides the list row for an allowlisted reader — instant,
+    no round-trip.** Once generated, the gist is delivered ON the item
+    in list reads (`feed_items` includes `ai_summary` **only for an allowlisted
+    caller**, NULL for everyone else — the generation cost gate is unchanged,
+    only who receives an already-cached gist), so it lands in the persisted list
+    cache with the pinned article. The reader shows it the instant it opens —
+    no "Summarizing…" placeholder — and offline whenever the list row holding it
+    is still cached, falling back to the `summary` Edge call when the row carries
+    none yet (just-pinned, an old backend, or a non-cacheable stub). (Durable
+    offline retention of the summary, matching the pinned body, is tracked
+    separately — see TODO.) An off-allowlist co-subscriber still receives NULL,
+    so the boundary is unchanged for them.
   - **Generation is not automatic on every open — pin before opening, or ask.**
     The reader's `useSummary` auto-generates only when the article was **pinned
     before it opened** (the "I'll read this" signal the pre-warm already acts on,

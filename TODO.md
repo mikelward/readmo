@@ -143,6 +143,52 @@ constraint is documented in more detail.
   Revisit if a publisher complains, or when we next touch the poller's
   politeness logic (it already honors `Retry-After`/`ttl`).
 
+## AI summaries
+
+- **Make a pinned article's AI summary durably offline, like its body.**
+  `useOfflineCacheLock` keeps `['item', id]` and `['fulltext', id]` alive against
+  GC (idle observers) for pinned/favorited items, but **not** `['summary', id]` —
+  and `getItem`'s `['item', id]` omits `ai_summary`. The summary reaches the
+  reader either from the persisted feed-list row (the 0058 ride-along, scanned by
+  `findCachedFeedItem`) or from `['summary', id]` (warmed by `useSummaryPrewarm`).
+  Neither is GC-locked, so after the feed page unmounts past the GC window an
+  offline open of a saved article can find the body retained but the summary
+  gone. Not a regression (offline summaries were never GC-locked), but it
+  undercuts the "instant + offline" promise. Options: lock `['summary', id]` in
+  `useOfflineCacheLock` for the offline buckets (mirrors item/fulltext; relies on
+  the prewarm to populate it, so an article whose summary came only via the feed
+  row still needs seeding — and seeding an `ok`/forever entry risks masking a
+  later edit's regeneration, see the content-match guard in `ItemPage`), or carry
+  `ai_summary` on the locked `['item', id]` detail (most robust, but `getItem` is
+  a direct read so per-caller gating reopens the leak question 0035/0058
+  deliberately routed around). See PR #460 and `ItemPage.tsx`'s `cachedSummary`.
+
+- **Speed up the pin-triggered summary: don't serialize it behind the full-text
+  download.** The pin trigger's server-side work (`runPinTriggeredWork` in
+  `supabase/functions/summary/index.ts`) currently does the full-article
+  download FIRST and only THEN generates the summary. For a truncated feed the
+  download is a live publisher fetch (≈12–30 s: 12 s direct + 15 s Jina fallback
+  + robots + extraction), so the summary lands tens of seconds after the pin
+  even though the summary itself is a ~5 s Jina+Gemini call. The full body is
+  only the summary's *fallback* when its own Jina fetch fails, so the common
+  path pays that latency for nothing. Options to weigh:
+  - **Run them in parallel.** Kick off the full-text download and the summary
+    generation concurrently; the summary lands in ~one Jina+Gemini pass. Preserve
+    the "Jina down + only a feed stub" fallback with a single retry once the full
+    body lands (re-read the row, regenerate only if the first attempt deferred
+    with a retryable `empty`). Most latency win, keeps the reading-mode fetch
+    split intact.
+  - **Use Jina for both.** The summary already fetches via Jina (markdown); the
+    full-text/reading-mode path deliberately does NOT — it fetches first-party
+    via `safeFetch` and honors robots because it STORES and SERVES the body
+    (copyright posture; see the file-level comment in `summary/index.ts` and
+    `fulltext/index.ts`). Sharing one Jina fetch would be simpler/faster but
+    changes reading mode's provenance to a third-party reader and drops the
+    robots/first-party posture — a real trade, discuss before adopting.
+  - Update SPEC.md *AI article summaries* ("full article first, then the
+    summary") in the same change, since it documents the current ordering and
+    its rationale.
+
 ## Server RPCs
 
 - **Authenticated OPML-export RPC.** `feeds_public` exposes only `site_url`

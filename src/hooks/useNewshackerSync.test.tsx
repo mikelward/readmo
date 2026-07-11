@@ -32,6 +32,7 @@ function hnItem(id: string, hnId: string): FeedItem {
       contentHtml: '',
       summary: null,
       fullContentHtml: null,
+      aiSummary: null,
       enclosures: [],
     } as Item,
     feed: {

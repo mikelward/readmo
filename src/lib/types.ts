@@ -62,6 +62,14 @@ export interface Item {
    * (the feed's own body, which is often a truncated stub). See
    * `lib/fullText.ts` and the `fulltext` Edge Function. */
   fullContentHtml: string | null;
+  /** The cached AI summary (markdown), delivered ON the list row for an
+   * allowlisted caller so the reader shows it instantly and offline without a
+   * separate `summary` Edge call. Null when there's none cached yet, when the
+   * caller isn't allowlisted (the server NULLs it — `feed_items` gates it on
+   * `email_is_allowlisted`, 0058), or against a backend predating the gate (it
+   * NULLs the column for everyone). The reader falls back to the `summary` Edge
+   * call in all those cases, so this is a fast path, not the only path. */
+  aiSummary: string | null;
   enclosures: Enclosure[];
 }
 

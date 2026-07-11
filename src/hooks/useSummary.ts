@@ -65,10 +65,18 @@ export interface UseSummary {
  */
 export function useSummary(
   id: ItemId,
-  opts: { online: boolean; autoGenerate: boolean },
+  opts: { online: boolean; autoGenerate: boolean; initialSummary?: string | null },
 ): UseSummary {
   const ds = useDataSource();
   const allowed = useFullTextAllowed();
+  // A summary already delivered ON the item row (the allowlisted ride-along from
+  // `feed_items`, 0058) — show it immediately with no Edge round-trip and no
+  // spinner, and don't fire the query at all. Gated on `allowed` like every
+  // other display path (a row summary persisted from when the caller WAS
+  // allowlisted must stop showing if they're later de-listed). Null → fall
+  // through to the normal on-demand `getSummary` flow below (just-pinned /
+  // old backend / non-cacheable), so this is a fast path, never the only one.
+  const rowSummary = allowed ? (opts.initialSummary ?? null) : null;
   // The item the user explicitly asked to summarize via the button. Stored as an
   // id (not a boolean + reset effect) so the trigger is keyed to *this* article:
   // `triggered` is derived and becomes false the instant `id` changes, in the
@@ -79,7 +87,10 @@ export function useSummary(
   const [triggeredId, setTriggeredId] = useState<ItemId | null>(null);
   const triggered = triggeredId === id;
 
-  const enabled = opts.online && allowed && (opts.autoGenerate || triggered);
+  // Never fetch when the row already carries the summary — the query hook still
+  // mounts below (stable hook order), it just stays disabled.
+  const enabled =
+    !rowSummary && opts.online && allowed && (opts.autoGenerate || triggered);
 
   const query = useQuery({
     queryKey: summaryQueryKey(id),
@@ -90,6 +101,23 @@ export function useSummary(
     // the next open retries it.
     staleTime: summaryStaleTime,
   });
+
+  // Row fast path: the item carries the summary, so show it now — no spinner, no
+  // failure/offline states (there was no fetch to fail), no generate button.
+  if (rowSummary) {
+    return {
+      summary: rowSummary,
+      loading: false,
+      unavailable: false,
+      canGenerate: false,
+      generate: () => setTriggeredId(id),
+      failed: false,
+      retry: () => {
+        void query.refetch();
+      },
+      offlineWithoutCache: false,
+    };
+  }
 
   // Display gate (separate from the query `enabled`): a summary already cached in
   // React Query must STOP being shown the moment the caller loses access — when
