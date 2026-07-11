@@ -299,34 +299,29 @@ recent — you always see at least its latest handful. Both are knobs
 - **Flat vs. grouped:** in group-by-feed / single-feed views a quiet feed's
   floor items sit at the top of its section; in the flat river they sort to the
   bottom by date (an "older, but here's the latest from quiet feeds" tail).
-- **Per-feed unread count.** `getFeedUnreadCounts(feedIds)` (server RPC
-  `feed_unread_counts`, mirrored in `MockDataSource`) returns, per feed, how many
-  of its **listable** items (the window ∪ floor ∪ pinned set above) are **unread /
-  to-do** — not Done or active Hidden, and either **pinned** or not active
-  **Opened**. A pinned item always counts (a pin is a to-do, read or not); any
-  other item drops out once Opened. It's index-bounded like
-  `feed_items`. **Foundation only for now:** the RPC + client method ship here to
-  back a planned **group-by-feed section-header unread badge** (so a collapsed
-  feed will still show how much it holds unread) — the header *display* lands with
-  the grouped-view pagination work, not in this change. (Server-side count, so on
-  its own it would lag a just-applied local Sweep/Done until the outbox syncs.
-  The badge **display** corrects for this client-side: a row local triage
-  unambiguously took out of the unread set — Done/active-Hidden, not pinned, not
-  Opened — stops counting the moment it's dismissed, and that decrement **holds
-  steady** until the server count reflects the synced write (or an Undo restores
-  the row). The badge never bounces back to the stale count mid-sync — under
-  mark-Done-on-scroll a burst of dismissals counts straight down and stays down.
-  Under mark-Done-on-scroll the count drops **the moment a row scrolls off the
-  top of the screen** — mid-gesture, before the deferred dismissal itself
-  commits at scroll-settle — and lifts again if the row is scrolled back into
-  view before that commit.
-  The correction reads only the *current* local state, never an inferred server
-  state (guessing a pre-sync value could over-count); the one accepted cost is
-  that a pinned-then-read row later marked Done keeps lagging until its write
-  syncs. The mock has no outbox, so its count never lags and the correction is a
-  no-op. Badges also keep their last counts while the set of feeds in view
-  changes — a section swept or scrolled empty mid-scroll must not blank the
-  surviving headers' badges while the counts refetch.)
+- **Per-feed unread count.** The group-by-feed section-header badge shows, per
+  feed, how many of its **listable** items (the window ∪ floor ∪ pinned set above)
+  are **unread / to-do** — not Done or active Hidden, and either **pinned** or not
+  active **Opened** — so a collapsed feed still shows how much it holds. A pinned
+  item always counts (a pin is a to-do, read or not); any other item drops out
+  once Opened. The set is computed server-side (RLS-scoped, index-bounded like the
+  feed list) so the badge and the list agree.
+
+  The badge reflects **local triage immediately**, without waiting for the write
+  to sync: a row you Sweep, mark Done, or (under mark-Done-on-scroll) scroll off
+  the top stops counting the moment you dismiss it — mid-gesture, before the
+  deferred write commits — and lifts again if you scroll it back into view. It
+  never bounces back to a stale value mid-sync: a burst of dismissals counts
+  straight down and stays down. Where the backend can report the unread **item
+  ids** (not just the tally), the badge is **exact** — reconciled against the
+  actual set every render, so there's no sync-lag guesswork; against an older
+  backend that returns only the count it falls back to a conservative,
+  self-healing approximation (a pinned-then-read row later marked Done may lag one
+  sync). Either way the badge reads only the *current* local state, never an
+  inferred pre-sync server value. The mock never lags, so no correction is needed
+  there. Badges keep their last values while the set of feeds in view changes, so
+  a section swept or scrolled empty mid-scroll doesn't blank the surviving
+  headers.
 
 Rationale: readmo has no upstream ranker (unlike newshacker, whose HN
 `top`/`best` lists are already recency-bounded), so an explicit window + floor
@@ -2976,8 +2971,9 @@ uid the page announces to the worker; the fonts cache alone stays shared.
   skeletons. The Supabase client therefore wraps `global.fetch` in `supabaseFetch`,
   which caps **reads** at 8s (just past the SW's ~6s cache-fallback window): GET
   requests on `/rest/v1/` (what the SW mediates, since Workbox runtime caching is
-  GET-only) *plus* the read RPCs (`feed_items` and `feed_unread_counts` — POSTs,
-  but the primary home/folder/feed reads, so they must be bounded too). A hung read aborts → the read
+  GET-only) *plus* the read RPCs (`feed_items`, `feed_unread_counts`, and
+  `feed_unread_ids` — POSTs, but the primary home/folder/feed reads, so they must
+  be bounded too). A hung read aborts → the read
   rejects → React Query shows the offline/retry UI and resumes on reconnect, and
   the memoized hydration clears so the next read retries. The cap is scoped to
   reads only; deliberately left uncapped: **write RPCs/table writes** (POST
@@ -3344,7 +3340,7 @@ uid the page announces to the worker; the fonts cache alone stays shared.
   the retry discipline: a **client-side request circuit breaker** in
   `supabaseFetch` (`src/lib/data/requestCircuitBreaker.ts`) sheds the
   **network-authoritative reads** — the read RPCs (`feed_items`,
-  `feed_unread_counts`) and the NetworkOnly `item_state` hydration GET that
+  `feed_unread_counts`, `feed_unread_ids`) and the NetworkOnly `item_state` hydration GET that
   precedes every feed read — after a burst of consecutive failures, so a *failing*
   loop fails fast instead of pinning the DB, then a single half-open probe recovers
   it. (Any non-2xx from those reads counts as a failure: a stale-backend

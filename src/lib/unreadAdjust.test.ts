@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { UnreadDecrementLedger } from './unreadAdjust';
+import { UnreadDecrementLedger, adjustUnreadIds } from './unreadAdjust';
 import type { FeedId, ItemId, ItemState } from './types';
 
 function st(over: Partial<ItemState> = {}): ItemState {
@@ -282,5 +282,108 @@ describe('UnreadDecrementLedger', () => {
     ledger.noteDismissals(rows, lookup(states), pending);
     ledger.noteDismissals(rows, lookup(states), pending);
     expect(ledger.apply({ f1: 3 })).toEqual({ f1: 2 });
+  });
+});
+
+describe('adjustUnreadIds', () => {
+  it('counts the server ids as-is when local state still agrees', () => {
+    const serverIds = { f1: ['a', 'b', 'c'], f2: ['d'] };
+    expect(
+      adjustUnreadIds(serverIds, ['f1', 'f2'], [], lookup({}), NONE),
+    ).toEqual({ f1: 3, f2: 1 });
+  });
+
+  it('returns 0 for a requested feed the server set omits', () => {
+    expect(adjustUnreadIds({ f1: ['a'] }, ['f1', 'f2'], [], lookup({}), NONE)).toEqual({
+      f1: 1,
+      f2: 0,
+    });
+  });
+
+  it('drops a server id that local triage took out of the unread set', () => {
+    const serverIds = { f1: ['a', 'b', 'c'] };
+    // a→Done, b→active-Hidden, c→Opened (un-pinned): all no longer unread.
+    const states = {
+      a: st({ done: true }),
+      b: st({ hidden: true }),
+      c: st({ opened: true }),
+    };
+    expect(adjustUnreadIds(serverIds, ['f1'], [], lookup(states), NONE)).toEqual({
+      f1: 0,
+    });
+  });
+
+  it('keeps a pinned server id even after it is Opened (a pin always counts)', () => {
+    const states = { a: st({ pinned: true, opened: true }) };
+    expect(
+      adjustUnreadIds({ f1: ['a', 'b'] }, ['f1'], [], lookup(states), NONE),
+    ).toEqual({ f1: 2 });
+  });
+
+  it('adds a locally-pinned loaded row the server set omits, deduping the ones it has', () => {
+    // p is pinned locally but not in the server set (pin not synced / was read);
+    // b is already in the set and also pinned — must not be double-counted.
+    const states = { p: st({ pinned: true }), b: st({ pinned: true }) };
+    const rows = [row('p', 'f1'), row('b', 'f1')];
+    expect(
+      adjustUnreadIds({ f1: ['b', 'c'] }, ['f1'], rows, lookup(states), NONE),
+    ).toEqual({ f1: 3 }); // b, c, and the added p
+  });
+
+  it('does NOT re-add a non-pinned loaded row the server set omits (stale row / pre-sync restore)', () => {
+    // Additions are pins-only. An out-of-window unread item is listable ONLY via
+    // the floor or a pin; the client can verify a pin but not floor membership,
+    // so trusting a non-pinned loaded row would resurrect a STALE one the server
+    // legitimately dropped (e.g. an old item that was listable only via a
+    // since-removed pin). A non-pinned row Undone before its restore syncs is the
+    // accepted flip side: it shows one low for the round-trip, a transient the
+    // ledger has too. Either way the non-pinned 'x' stays out here.
+    const states = { x: st() }; // unpinned, unopened, not done/hidden
+    const rows = [row('x', 'f1')];
+    expect(
+      adjustUnreadIds({ f1: ['a'] }, ['f1'], rows, lookup(states), NONE),
+    ).toEqual({ f1: 1 }); // only the server's 'a'
+  });
+
+  it('does not add a pinned loaded row that is also Done or Hidden', () => {
+    const states = {
+      p: st({ pinned: true, done: true }),
+      q: st({ pinned: true, hidden: true }),
+    };
+    const rows = [row('p', 'f1'), row('q', 'f1')];
+    expect(adjustUnreadIds({ f1: [] }, ['f1'], rows, lookup(states), NONE)).toEqual({
+      f1: 0,
+    });
+  });
+
+  it('ignores loaded rows whose feed is out of view', () => {
+    const states = { p: st({ pinned: true }) };
+    const rows = [row('p', 'f2')]; // f2 not requested
+    expect(adjustUnreadIds({ f1: ['a'] }, ['f1'], rows, lookup(states), NONE)).toEqual(
+      { f1: 1 },
+    );
+  });
+
+  it('provisionally removes a buffered exit-top row before its write commits', () => {
+    // a is still in the server set and still locally unread (write deferred), but
+    // it has scrolled off the top — discount it now.
+    const rows = [row('a', 'f1'), row('b', 'f1')];
+    expect(
+      adjustUnreadIds({ f1: ['a', 'b'] }, ['f1'], rows, lookup({}), new Set(['a'])),
+    ).toEqual({ f1: 1 });
+  });
+
+  it('does not remove a buffered row that is pinned (shielded from the flush)', () => {
+    const states = { a: st({ pinned: true }) };
+    const rows = [row('a', 'f1'), row('b', 'f1')];
+    expect(
+      adjustUnreadIds(
+        { f1: ['a', 'b'] },
+        ['f1'],
+        rows,
+        lookup(states),
+        new Set(['a']),
+      ),
+    ).toEqual({ f1: 2 });
   });
 });

@@ -521,6 +521,56 @@ describe('supabaseFetch', () => {
     ).rejects.toThrow(/circuit open/i);
   });
 
+  it('treats the feed_unread_ids RPC as a bounded read (guarded by the breaker)', async () => {
+    const fetchMock = vi.fn(async () => new Response('err', { status: 500 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    // The exact-badge id-list read is on the same grouped refetch loop as the
+    // count fallback, so it must trip and be shed by the breaker too.
+    for (let i = 0; i < 6; i++) {
+      await supabaseFetch('https://x.supabase.co/rest/v1/rpc/feed_unread_ids', {
+        method: 'POST',
+        body: '{}',
+      });
+    }
+    await expect(
+      supabaseFetch('https://x.supabase.co/rest/v1/rpc/feed_unread_ids', {
+        method: 'POST',
+        body: '{}',
+      }),
+    ).rejects.toThrow(/circuit open/i);
+  });
+
+  it('does not trip the breaker on an expected feed_unread_ids miss (pre-migration 404)', async () => {
+    // Backwards-compat (guardrail #11): a frontend deployed before migration
+    // 0059 probes feed_unread_ids on every grouped page; an old backend answers
+    // 404/PGRST202 and the client falls back to feed_unread_counts. Those
+    // expected misses must NOT consume the breaker budget — otherwise it would
+    // open and shed the count fallback (and feed_items) too.
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input instanceof Request ? input.url : input);
+      return url.includes('feed_unread_ids')
+        ? new Response('{"code":"PGRST202"}', { status: 404 })
+        : new Response('[]', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    // Far more misses than the breaker's failure budget.
+    for (let i = 0; i < 12; i++) {
+      await supabaseFetch('https://x.supabase.co/rest/v1/rpc/feed_unread_ids', {
+        method: 'POST',
+        body: '{}',
+      });
+    }
+    // The circuit stays closed, so the count fallback still reaches the backend.
+    await expect(
+      supabaseFetch('https://x.supabase.co/rest/v1/rpc/feed_unread_counts', {
+        method: 'POST',
+        body: '{}',
+      }),
+    ).resolves.toMatchObject({ status: 200 });
+  });
+
   it('keeps auth (/auth/v1/) reachable even when the data-plane breaker is open', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const ok = String(input instanceof Request ? input.url : input).includes('/auth/v1/');

@@ -276,6 +276,17 @@ export interface DataSource {
    * shows how much it holds, and reusable wherever a per-feed badge is wanted.
    * Bounded by the same window/floor the list is, so it's cheap. */
   getFeedUnreadCounts(feedIds: FeedId[]): Promise<Record<FeedId, number>>;
+  /** Per-feed **unread item ids** — the exact membership of the same
+   * listable-unread set {@link getFeedUnreadCounts} tallies (count = list
+   * length), keyed by feed id (a feed with nothing outstanding maps to `[]`).
+   * With the ids in hand the badge is exact: the client holds the set and
+   * reconciles local triage atomically (a dismissed id drops, a pinned one is
+   * added), instead of approximating the server count's sync lag with the
+   * decrement ledger. Optional and feature-detected: a backend that predates
+   * the `feed_unread_ids` RPC resolves `null`, and the caller falls back to
+   * `getFeedUnreadCounts` + the ledger (guardrail #11). Bounded by the same
+   * window/floor as the list, so it's cheap. */
+  getFeedUnreadIds?(feedIds: FeedId[]): Promise<Record<FeedId, ItemId[]> | null>;
   /** Item ids with a still-unsynced local state write. `getFeedUnreadCounts` is
    * a server-only read that lags local triage by a round-trip, so the per-feed
    * badge discounts the pending Sweep/Done rows it still counts to update

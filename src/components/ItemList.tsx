@@ -23,7 +23,7 @@ import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
 import type { FeedId, FeedItem, ItemId } from '../lib/types';
 import { placeStayInBodyPins } from '../lib/feedOrder';
 import { measureStickyBottomInset, measureTopChromeHeight } from '../lib/stickyInset';
-import { UnreadDecrementLedger } from '../lib/unreadAdjust';
+import { UnreadDecrementLedger, adjustUnreadIds } from '../lib/unreadAdjust';
 import { loadFailureCopy, presentableDetail } from '../lib/loadErrorCopy';
 import { LoadError } from './LoadError';
 import { checkForServiceWorkerUpdate } from '../lib/swUpdate';
@@ -2638,16 +2638,29 @@ export function ItemList({
   // answered after those writes committed, so the moment this response lands
   // the ledger can retire their decrements — and not a render before, which is
   // what keeps the badge from bouncing up between drain and refetch.
+  // Prefer the exact `feed_unread_ids` path (the server returns the unread ID
+  // membership, so the badge is re-derived from current local state with no
+  // approximation); fall back to the server *count* + the decrement ledger when
+  // the backend predates that RPC (getFeedUnreadIds absent or resolving null,
+  // guardrail #11). The two shapes share one query key so the persisted cache
+  // and the app-wide ['feed'] invalidation are unchanged.
   const unreadLedgerRef = useRef(new UnreadDecrementLedger());
-  const { data: unreadCountsFetch } = useQuery({
+  const { data: unreadFetch } = useQuery({
     queryKey: ['feed', 'unread-counts', feedIdsInView.join(',')],
-    queryFn: async () => ({
-      reflected: unreadLedgerRef.current.drainedIds(
-        ds.pendingItemIds?.() ?? EMPTY_ID_SET,
-        new Set(feedIdsInView),
-      ),
-      counts: await ds.getFeedUnreadCounts(feedIdsInView),
-    }),
+    queryFn: async () => {
+      const ids = await ds.getFeedUnreadIds?.(feedIdsInView);
+      if (ids) return { ids };
+      // Count-only backend (or a source without the ids RPC): snapshot which
+      // noted dismissals had already drained when the fetch started, so the
+      // ledger can retire their decrements the moment this response lands.
+      return {
+        reflected: unreadLedgerRef.current.drainedIds(
+          ds.pendingItemIds?.() ?? EMPTY_ID_SET,
+          new Set(feedIdsInView),
+        ),
+        counts: await ds.getFeedUnreadCounts(feedIdsInView),
+      };
+    },
     enabled: groupByFeed && feedIdsInView.length > 0,
     placeholderData: keepPreviousData,
   });
@@ -2670,28 +2683,44 @@ export function ItemList({
   // as hideMany applies); a row scrolled back into view is pruned from the
   // buffer and its decrement lifts. `exitBufferVersion` keys both transitions.
   const adjustedUnreadCounts = useMemo(() => {
-    if (!groupByFeed || !unreadCountsFetch) return undefined;
+    if (!groupByFeed || !unreadFetch) return undefined;
     void storeVersion;
     void exitBufferVersion;
-    const ledger = unreadLedgerRef.current;
     const getState = (id: ItemId) => ds.stateStore.get(id);
-    // Tolerate a persisted cache written by the previous build (guardrail
+
+    // Exact path: the server returned the unread ID membership. Re-derive each
+    // badge from current local state (drop the ids triage removed, keep/add the
+    // pinned ones, discount buffered exit-top rows) — no ledger, no count-lag
+    // approximation. The exit-buffer provisional decrement folds in here too.
+    if ('ids' in unreadFetch && unreadFetch.ids) {
+      return adjustUnreadIds(
+        unreadFetch.ids,
+        feedIdsInView,
+        mergedRaw,
+        getState,
+        bufferedExitTopRef.current,
+      );
+    }
+
+    // Count-only fallback (old backend): reconcile the server count with local
+    // triage through the decrement ledger.
+    const ledger = unreadLedgerRef.current;
+    // Tolerate a persisted cache written by an even older build (guardrail
     // #11): it stored the bare counts map, not {reflected, counts}. On an
     // offline boot right after an upgrade that restored value may be all the
     // badge ever gets — read it as counts with no snapshot rather than
     // blanking every header until a successful refetch.
     const legacyShape =
-      typeof unreadCountsFetch.counts !== 'object' ||
-      unreadCountsFetch.counts === null;
+      typeof unreadFetch.counts !== 'object' || unreadFetch.counts === null;
     const serverCounts = legacyShape
-      ? (unreadCountsFetch as unknown as Record<FeedId, number>)
-      : unreadCountsFetch.counts;
+      ? (unreadFetch as unknown as Record<FeedId, number>)
+      : unreadFetch.counts;
     ledger.noteDismissals(
       mergedRaw,
       getState,
       ds.pendingItemIds?.() ?? EMPTY_ID_SET,
     );
-    ledger.retire(legacyShape ? null : unreadCountsFetch.reflected, getState);
+    ledger.retire(legacyShape ? null : unreadFetch.reflected, getState);
     let counts = ledger.apply(serverCounts);
     const buffered = bufferedExitTopRef.current;
     if (buffered.size > 0) {
@@ -2713,7 +2742,8 @@ export function ItemList({
     return counts;
   }, [
     groupByFeed,
-    unreadCountsFetch,
+    unreadFetch,
+    feedIdsInView,
     mergedRaw,
     ds,
     storeVersion,

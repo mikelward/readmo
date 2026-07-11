@@ -342,6 +342,49 @@ describe('ItemList', () => {
     ).toContain('3 unread');
   });
 
+  it('exact path: re-derives the badge from local state over a stale server id set (no ledger, no pending)', async () => {
+    // The feed_unread_ids path: the server returns the unread ID membership, so
+    // the badge is exact even when that response lags local triage — the client
+    // drops the just-dismissed ids from the (stale) set with no decrement
+    // ledger and without any pendingItemIds bookkeeping.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const page = await source.getHomeItems({ groupByFeed: true, limit: 100 });
+    source.getHomeItems = async () => page;
+    const vergeIds = page.items
+      .filter((fi) => fi.item.feedId === 'feed-verge')
+      .map((fi) => fi.item.id);
+    expect(vergeIds.length).toBe(3);
+    // Freeze the server id set at its pre-triage membership (all unread) — the
+    // real backend would keep returning the dismissed ids until the outbox syncs.
+    const feedIds = [...new Set(page.items.map((fi) => fi.item.feedId))];
+    const frozen = (await source.getFeedUnreadIds!(feedIds))!;
+    source.getFeedUnreadIds = async () => frozen;
+
+    const { container } = renderWithProviders(
+      <ItemList
+        viewKey={`gp-${Math.random()}`}
+        fetchPage={(cursor) =>
+          source.getHomeItems({ cursor, groupByFeed: true, limit: 100 })
+        }
+        emptyLabel="All caught up."
+        groupByFeed
+      />,
+      { source },
+    );
+    await screen.findAllByTestId('item-row');
+    const badge = () =>
+      container.querySelector('.item-list__group-count')?.textContent;
+    await waitFor(() => expect(badge()).toBe('3'));
+
+    // Mark two of Verge's three rows Done locally. The stale server set still
+    // lists all three; the client drops the two done ids, so the badge is exact
+    // at once — 3 − 2 = 1 — without a fresh id fetch.
+    act(() => {
+      vergeIds.slice(0, 2).forEach((id) => source.stateStore.set(id, 'done', true));
+    });
+    await waitFor(() => expect(badge()).toBe('1'));
+  });
+
   it('discounts pending (unsynced) Sweep/Done writes from the badge immediately', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     // Freeze the pre-sweep page + count to simulate the real backend: it keeps
@@ -350,6 +393,9 @@ describe('ItemList', () => {
     // "server", so without this freeze it would never lag.)
     const page = await source.getHomeItems({ groupByFeed: true, limit: 100 });
     source.getHomeItems = async () => page;
+    // Simulate a backend without the feed_unread_ids RPC → the count + ledger
+    // fallback path, which is what this test exercises.
+    source.getFeedUnreadIds = async () => null;
     source.getFeedUnreadCounts = async () => ({ 'feed-verge': 3 });
     const vergeIds = page.items
       .filter((fi) => fi.item.feedId === 'feed-verge')
@@ -400,6 +446,8 @@ describe('ItemList', () => {
     source.getHomeItems = async () => page;
     const pending = new Set<string>();
     source.pendingItemIds = () => new Set(pending);
+    // Old backend without feed_unread_ids → the count + ledger fallback path.
+    source.getFeedUnreadIds = async () => null;
     // Ungated, the "server" still returns the pre-sweep count (the write
     // hasn't landed). After the drain the test gates the refetch open to make
     // the drain→refetch window observable.
@@ -479,6 +527,8 @@ describe('ItemList', () => {
     };
     let gateResolve: (() => void) | null = null;
     let gated = false;
+    // Old backend without feed_unread_ids → the count + ledger fallback path.
+    source.getFeedUnreadIds = async () => null;
     source.getFeedUnreadCounts = async (ids) => {
       if (gated) await new Promise<void>((resolve) => (gateResolve = resolve));
       return Object.fromEntries(ids.map((id) => [id, counts[id] ?? 0]));
@@ -534,7 +584,10 @@ describe('ItemList', () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     const page = await source.getHomeItems({ groupByFeed: true, limit: 100 });
     source.getHomeItems = async () => page;
-    // The refetch never lands — the legacy cached value is the only data.
+    // Old backend without feed_unread_ids → the count-path branch that reads the
+    // legacy persisted shape. The refetch never lands — the legacy cached value
+    // is the only data.
+    source.getFeedUnreadIds = async () => null;
     source.getFeedUnreadCounts = () => new Promise(() => {});
     const feedIds = [...new Set(page.items.map((fi) => fi.item.feedId))];
     const queryClient = new QueryClient({
@@ -576,8 +629,10 @@ describe('ItemList', () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     const page = await source.getHomeItems({ groupByFeed: true, limit: 100 });
     source.getHomeItems = async () => page;
+    // Old backend without feed_unread_ids → the count + ledger fallback path.
     // Freeze the server count at its pre-dismissal value and report every
     // local dismissal as un-synced, like the real backend mid-sync.
+    source.getFeedUnreadIds = async () => null;
     source.getFeedUnreadCounts = async () => ({ 'feed-verge': 3 });
     source.pendingItemIds = () =>
       new Set(
@@ -7563,6 +7618,10 @@ describe('ItemList', () => {
       const getCounts = vi.fn(async (ids: string[]) =>
         Object.fromEntries(ids.map((id) => [id, id === 'A' ? 5 : 0])),
       );
+      // Old backend without feed_unread_ids → the count-path branch. The point
+      // is a server total that exceeds the loaded rows (unread behind More),
+      // which only a bare count (not the exact id set) can express.
+      source.getFeedUnreadIds = async () => null;
       source.getFeedUnreadCounts = getCounts;
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },

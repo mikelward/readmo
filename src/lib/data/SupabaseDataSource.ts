@@ -136,6 +136,13 @@ function isMissingColumnError(err: unknown): boolean {
  * unbounded request that could exceed the request-line/query limit. */
 const ID_LOOKUP_CHUNK = 200;
 
+/** feed_unread_ids returns one row per unread ITEM (not per feed like the count
+ * RPC), so a batch spanning many feeds can approach PostgREST's per-response row
+ * cap (Supabase's default is 1000). Batch fewer feeds than the count path, and
+ * if a batch still comes back AT the cap treat it as possibly TRUNCATED. */
+const UNREAD_ID_FEED_CHUNK = 100;
+const UNREAD_ID_ROW_CAP = 1000;
+
 /** Page size the group-by-feed read asks for, sized so every feed section
  * normally lands in a single response. This is NOT a fetch cap — the client
  * sends no per-feed limit and accepts everything the server returns (the
@@ -1204,6 +1211,40 @@ export class SupabaseDataSource implements DataSource {
       for (const r of rows) counts[r.feed_id] = Number(r.n) || 0;
     }
     return counts;
+  }
+
+  async getFeedUnreadIds(
+    feedIds: FeedId[],
+  ): Promise<Record<FeedId, ItemId[]> | null> {
+    const out: Record<FeedId, ItemId[]> = {};
+    for (const id of feedIds) out[id] = [];
+    if (feedIds.length === 0) return out;
+    // The exact-badge counterpart of getFeedUnreadCounts: one (feed_id, item_id)
+    // row per listable-unread item. Because this returns per-ITEM (not per-feed)
+    // rows, a batch of many feeds can approach the response row cap, and a
+    // truncated response would leave clipped feeds prefilled empty — their
+    // badges reading falsely low. So batch fewer feeds and, if any batch comes
+    // back at the cap (possibly truncated, and there's no way to tell which
+    // feeds were clipped), abandon the exact path for the WHOLE call: return
+    // null so the caller falls back to the always-bounded, one-row-per-feed
+    // count + ledger, which never truncates. A large library thus degrades to
+    // today's approximate badge rather than a silently-wrong exact one.
+    for (const batch of chunk(feedIds, UNREAD_ID_FEED_CHUNK)) {
+      const { data, error } = await this.sb.rpc('feed_unread_ids', {
+        p_feed_ids: batch,
+      });
+      if (error) {
+        // Feature-detect a backend that predates the 0059 RPC (PostgREST
+        // PGRST202) → null, signalling the caller to fall back to the count-only
+        // path + the decrement ledger (guardrail #11). Other errors propagate.
+        if ((error as { code?: string }).code === 'PGRST202') return null;
+        throw error instanceof Error ? error : new Error(String(error));
+      }
+      const rows = (data ?? []) as Array<{ feed_id: string; item_id: string }>;
+      if (rows.length >= UNREAD_ID_ROW_CAP) return null; // possibly truncated
+      for (const r of rows) (out[r.feed_id] ??= []).push(r.item_id);
+    }
+    return out;
   }
 
   /** Item ids whose state write hasn't synced yet (see DataSource). Lets the

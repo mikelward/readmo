@@ -2449,6 +2449,54 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect((await env.ds.getFeedUnreadCounts(['feed-a']))['feed-a']).toBe(2);
   });
 
+  it('getFeedUnreadIds: returns the unread ids per feed, agreeing with the counts', async () => {
+    const env = setup();
+    const ids = await env.ds.getFeedUnreadIds(['feed-a', 'feed-b']);
+    // feed-a: i1 hidden (out), i2 pinned + i6 (in); feed-b: i3 (in), i4 done (out).
+    expect(new Set(ids!['feed-a'])).toEqual(new Set(['i2', 'i6']));
+    expect(ids!['feed-b']).toEqual(['i3']);
+    const counts = await env.ds.getFeedUnreadCounts(['feed-a', 'feed-b']);
+    expect(ids!['feed-a'].length).toBe(counts['feed-a']);
+    expect(ids!['feed-b'].length).toBe(counts['feed-b']);
+  });
+
+  it('getFeedUnreadIds: batches the feed-id list in smaller (per-item-safe) chunks', async () => {
+    const env = setup();
+    // One row per unread ITEM, not per feed, so the batch is 100 feeds (< the
+    // 200 count-path chunk): 250 ids → 3 batches.
+    const idList = Array.from({ length: 250 }, (_, i) => `f${i}`);
+    await env.ds.getFeedUnreadIds(idList);
+    const calls = env.fake.rpcCalls.filter((c) => c.name === 'feed_unread_ids');
+    expect(calls.length).toBe(3);
+  });
+
+  it('getFeedUnreadIds: falls back (null) when a batch comes back at the row cap (possibly truncated)', async () => {
+    const env = setup();
+    const rpc = env.fake.client.rpc.bind(env.fake.client);
+    // Simulate a response clipped at PostgREST's 1000-row cap: we can't tell
+    // which feeds were dropped, so the whole call abandons the exact path.
+    const capped = Array.from({ length: 1000 }, (_, i) => ({
+      feed_id: 'feed-a',
+      item_id: `x${i}`,
+    }));
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) =>
+      name === 'feed_unread_ids'
+        ? Promise.resolve({ data: capped, error: null })
+        : rpc(name, params)) as typeof env.fake.client.rpc;
+    expect(await env.ds.getFeedUnreadIds(['feed-a'])).toBeNull();
+  });
+
+  it('getFeedUnreadIds: returns null against a backend that predates the RPC (PGRST202)', async () => {
+    const env = setup();
+    const rpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) =>
+      name === 'feed_unread_ids'
+        ? Promise.resolve({ data: null, error: { code: 'PGRST202', message: 'no function' } })
+        : rpc(name, params)) as typeof env.fake.client.rpc;
+    // Feature-detect → null, so the caller falls back to the count path (#11).
+    expect(await env.ds.getFeedUnreadIds(['feed-a'])).toBeNull();
+  });
+
   it('reorderSubscriptions reassigns each subscription sort atomically via one RPC', async () => {
     const env = setup();
     await env.ds.reorderSubscriptions(['feed-c', 'feed-a', 'feed-b']);

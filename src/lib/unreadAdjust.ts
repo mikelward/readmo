@@ -14,6 +14,83 @@ export interface ReflectedSnapshot {
   entries: Array<{ id: ItemId; gen: number }>;
 }
 
+/**
+ * Exact per-feed unread badges from the server's unread ID membership plus the
+ * current local state — the `feed_unread_ids` path that supersedes the count +
+ * {@link UnreadDecrementLedger} approximation when the backend supports it.
+ *
+ * A bare *count* can't reveal whether it already reflects a given local write,
+ * so the ledger has to guess the sync lag and lives with documented edge cases.
+ * With the unread ID *set* in hand there's no guessing: re-derive each feed's
+ * badge from what's true right now.
+ *
+ *  - **Keep** a server-unread id only while local state still agrees it's
+ *    unread — drop it the moment local triage marks it Done, active Hidden, or
+ *    Opened-and-not-pinned. This is exact (membership is known), so there's no
+ *    double-subtract and no round-trip lag: a just-swept row leaves the badge
+ *    immediately and stays gone, whether or not the server response predates the
+ *    write.
+ *  - **Add** a loaded row that is locally **pinned** and unread (and not
+ *    Done/Hidden) even when the server set doesn't list it yet — a fresh pin
+ *    always makes the item listable (the pin branch) AND to-do, so it's counted
+ *    at once. The `Set` dedups against ids the server already returned. Only
+ *    pins are added, and deliberately so: additions are *only* ever needed for
+ *    items outside the freshness window (an in-window unread item is already in
+ *    the server set), which are listable solely via the floor or a pin — and the
+ *    client can verify a pin but not floor membership. Trusting any other
+ *    locally-unread loaded row would resurrect STALE ones the server has
+ *    legitimately dropped (an old item that was listable only via a since-removed
+ *    pin, its row lingering in the cache), reading the badge high. The one cost
+ *    is that a NON-pinned row Undone/marked-unread shows the badge one low for
+ *    the sync round-trip until the server set reflects the restore — a transient,
+ *    self-healing undercount identical to the ledger's, and the exact path's win
+ *    is on dismissals (the common case), which it counts down precisely.
+ *  - **Provisionally remove** a row buffered for auto-hide-on-scroll: it has
+ *    scrolled off the top but its dismissal write is deferred until the viewport
+ *    settles, so it's still in the set — discount it now (a pinned row is
+ *    shielded from the flush and stays).
+ *
+ * Pure and stateless (unlike the ledger): every render recomputes from the
+ * current inputs, which is why it needs no generation/instance bookkeeping.
+ */
+export function adjustUnreadIds(
+  serverIds: Readonly<Record<FeedId, readonly ItemId[]>>,
+  feedIds: readonly FeedId[],
+  loadedRows: readonly RawRow[],
+  getState: (id: ItemId) => ItemState,
+  bufferedExitTop: ReadonlySet<ItemId>,
+): Record<FeedId, number> {
+  const wanted = new Set(feedIds);
+  const sets = new Map<FeedId, Set<ItemId>>();
+  for (const f of feedIds) sets.set(f, new Set());
+  const isUnread = (st: ItemState) =>
+    !st.done && !st.hidden && (st.pinned || !st.opened);
+
+  // Server membership, filtered by current local state.
+  for (const f of feedIds) {
+    const set = sets.get(f)!;
+    for (const id of serverIds[f] ?? []) {
+      if (isUnread(getState(id))) set.add(id);
+    }
+  }
+  // Reconcile against the loaded rows: provisionally remove a row buffered for
+  // auto-hide (dismissal write deferred; a pinned row is shielded from the flush
+  // and stays), otherwise add a locally-pinned unread row the server set doesn't
+  // list yet (a fresh pin — the only addition the client can make soundly; see
+  // the doc). Dedups against the server ids.
+  for (const { item } of loadedRows) {
+    if (!wanted.has(item.feedId)) continue;
+    const set = sets.get(item.feedId)!;
+    const st = getState(item.id);
+    if (bufferedExitTop.has(item.id) && !st.pinned) set.delete(item.id);
+    else if (st.pinned && !st.done && !st.hidden) set.add(item.id);
+  }
+
+  const out: Record<FeedId, number> = {};
+  for (const [f, set] of sets) out[f] = set.size;
+  return out;
+}
+
 /** Distinguishes ledger instances created in the same millisecond. */
 let ledgerSeq = 0;
 

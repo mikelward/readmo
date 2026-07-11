@@ -277,6 +277,34 @@ describe('MockDataSource getFeedUnreadCounts', () => {
   });
 });
 
+describe('MockDataSource getFeedUnreadIds', () => {
+  const FEEDS = ['feed-verge', 'feed-nasa', 'feed-css', 'feed-reddit-prog'];
+
+  it('returns each feed’s unread ids, and its count is the list length', async () => {
+    const ds = new MockDataSource(`test-${Math.random()}`);
+    const ids = await ds.getFeedUnreadIds(FEEDS);
+    // Same listable-unread membership the count tallies (all unread by default).
+    expect(new Set(ids!['feed-verge'])).toEqual(new Set(['item-1', 'item-5', 'item-9']));
+    const counts = await ds.getFeedUnreadCounts(FEEDS);
+    for (const f of FEEDS) expect(ids![f].length).toBe(counts[f]);
+  });
+
+  it('omits Opened, Done, and active Hidden ids, keeps a pinned-opened one', async () => {
+    const ds = new MockDataSource(`test-${Math.random()}`);
+    ds.stateStore.set('item-1', 'opened', true); // verge → drops
+    ds.stateStore.set('item-5', 'done', true); // verge → drops
+    ds.stateStore.set('item-9', 'pinned', true); // verge → stays…
+    ds.stateStore.set('item-9', 'opened', true); // …even though opened
+    const ids = await ds.getFeedUnreadIds(['feed-verge']);
+    expect(ids!['feed-verge']).toEqual(['item-9']);
+  });
+
+  it('returns an empty array for a feed with nothing unread', async () => {
+    const ds = new MockDataSource(`test-${Math.random()}`);
+    expect((await ds.getFeedUnreadIds(['feed-park']))!['feed-park']).toEqual([]);
+  });
+});
+
 describe('MockDataSource library + subscriptions', () => {
   it('resolves ids for library views preserving order', async () => {
     const ds = fresh();

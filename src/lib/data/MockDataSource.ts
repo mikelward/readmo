@@ -310,6 +310,19 @@ export class MockDataSource implements DataSource {
   async getFeedUnreadCounts(
     feedIds: FeedId[],
   ): Promise<Record<FeedId, number>> {
+    // The count is just the size of the unread ID set, so derive it from
+    // getFeedUnreadIds and keep the two in lockstep by construction. (The `??`
+    // guards the nullable interface signature — the mock itself never returns
+    // null; a test may stub it so to simulate an old, ids-less backend.)
+    const ids = (await this.getFeedUnreadIds(feedIds)) ?? {};
+    const counts: Record<FeedId, number> = {};
+    for (const id of feedIds) counts[id] = ids[id]?.length ?? 0;
+    return counts;
+  }
+
+  async getFeedUnreadIds(
+    feedIds: FeedId[],
+  ): Promise<Record<FeedId, ItemId[]> | null> {
     const now = Date.now();
     const freshAfter = now - this.homeWindowMs;
     const want = new Set(feedIds);
@@ -327,26 +340,24 @@ export class MockDataSource implements DataSource {
       else byFeed.set(item.feedId, [{ item, st }]);
     }
 
-    const counts: Record<FeedId, number> = {};
-    for (const id of feedIds) counts[id] = 0;
+    const out: Record<FeedId, ItemId[]> = {};
+    for (const id of feedIds) out[id] = [];
     for (const [feedId, arr] of byFeed) {
       // Newest-first so the per-feed floor keeps a sparse feed's latest items.
       arr.sort((a, b) => b.item.publishedAt - a.item.publishedAt);
-      let n = 0;
       arr.forEach(({ item, st }, rank) => {
         // Listable = window ∪ floor ∪ pinned (mirrors orderedFor / feed_items).
         const listable =
           st.pinned || item.publishedAt >= freshAfter || rank < this.feedFloor;
         if (!listable) return;
-        // Among listable items, count the unread/to-do ones: not Done or active
+        // Among listable items, keep the unread/to-do ones: not Done or active
         // Hidden, and either pinned OR not Opened — a pinned item always counts
         // (a pin is a to-do, read or not); others drop out once Opened.
         if (!st.pinned && (st.done || st.hidden)) return; // a pin always counts
-        if (st.pinned || !st.opened) n += 1;
+        if (st.pinned || !st.opened) out[feedId].push(item.id);
       });
-      counts[feedId] = n;
     }
-    return counts;
+    return out;
   }
 
   /** No outbox: the mock's store is authoritative, so `getFeedUnreadCounts`

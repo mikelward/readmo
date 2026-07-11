@@ -106,14 +106,16 @@ function requestMethod(input: RequestInfo | URL, init?: RequestInit): string {
 // like any GET) and so get the read timeout AND the read breaker:
 //   - feed_items — the primary feed read (home/folder/feed); a hung one strands
 //     the view on its skeletons even when item_state is cached.
-//   - feed_unread_counts — the grouped-view per-feed unread counts; a failing
-//     grouped refetch/invalidation loop hits this, so it must be shed by the
-//     breaker too, not just feed_items.
+//   - feed_unread_counts / feed_unread_ids — the grouped-view per-feed unread
+//     badge reads (the count fallback and the exact id-list path); a failing
+//     grouped refetch/invalidation loop hits whichever one the backend serves,
+//     so both must be shed by the breaker too, not just feed_items.
 // Write RPCs (set_item_state, subscribe_to_feed, reorder_subscriptions) are
 // deliberately ABSENT — see isBoundedRead.
 const READ_RPC_PATHS = [
   '/rest/v1/rpc/feed_items',
   '/rest/v1/rpc/feed_unread_counts',
+  '/rest/v1/rpc/feed_unread_ids',
 ];
 
 /**
@@ -145,7 +147,7 @@ function isBoundedRead(input: RequestInfo | URL, init?: RequestInit): boolean {
  * decides whether the backend recovered, so a response that didn't reach the
  * backend would close the circuit on a lie. Two kinds qualify:
  *
- *   1. The read-only RPCs (`feed_items`, `feed_unread_counts`) — POSTs, and the
+ *   1. The read-only RPCs (`feed_items`, `feed_unread_counts`, `feed_unread_ids`) — POSTs, and the
  *      SW's `NetworkFirst` runtime cache is GET-only (`vite.config.ts`), so it
  *      NEVER serves them from cache.
  *   2. The `item_state` hydration GET — served by the SW's **NetworkOnly** route
@@ -183,7 +185,7 @@ function isBreakerScopedRead(input: RequestInfo | URL, init?: RequestInit): bool
  * abort reason without clobbering it.
  */
 // Client-side flood guard for the network-authoritative bounded reads — the read
-// RPCs (feed_items, feed_unread_counts) and the NetworkOnly item_state hydration
+// RPCs (feed_items, feed_unread_counts, feed_unread_ids) and the NetworkOnly item_state hydration
 // GET that precedes every feed read (see isBreakerScopedRead). A failing loop
 // trips the breaker after a burst of failures and is SHED, failing fast instead
 // of pinning Postgres. Healthy bursts (e.g. a large offline warmup) never trip it
@@ -222,6 +224,21 @@ function isAbortError(error: unknown): boolean {
 // 401/403/408/429) count as failures.
 function isHealthyResponse(status: number): boolean {
   return status < 400;
+}
+
+// The one breaker-scoped read whose 4xx is EXPECTED, not a health signal:
+// `feed_unread_ids` is an optional, feature-detected RPC (0059). A frontend
+// deployed before that migration probes it on every grouped page and a
+// pre-migration backend answers 404/PGRST202 — which the client maps to a
+// clean fallback to `feed_unread_counts`. Counting those expected misses as
+// breaker failures would, after a few badge refetches, open the circuit and
+// start shedding `feed_unread_counts`/`feed_items` too — breaking the very
+// fallback (guardrail #11) until the manual migrate lands. So treat a 404 on
+// this exact RPC path as NEUTRAL (settleCanceled — neither trips nor closes the
+// breaker), while a real 5xx there still counts. Only this path: a 404 on
+// feed_items/feed_unread_counts is a genuinely broken backend and must count.
+function isExpectedRpcMiss(input: RequestInfo | URL, status: number): boolean {
+  return status === 404 && requestUrl(input).includes('/rest/v1/rpc/feed_unread_ids');
 }
 
 function boundedReadFetch(
@@ -303,7 +320,15 @@ export function supabaseFetch(
   }
   return boundedReadFetch(input, init).then(
     (res) => {
-      requestBreaker.settle(ticket, isHealthyResponse(res.status));
+      // An expected feature-detection miss (a pre-migration 404 on the optional
+      // feed_unread_ids RPC) is neutral, like a caller cancel — it neither
+      // consumes the failure budget nor closes a half-open probe. See
+      // isExpectedRpcMiss.
+      if (isExpectedRpcMiss(input, res.status)) {
+        requestBreaker.settleCanceled(ticket);
+      } else {
+        requestBreaker.settle(ticket, isHealthyResponse(res.status));
+      }
       return res;
     },
     (err) => {
