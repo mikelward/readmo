@@ -158,6 +158,14 @@ describe('mapItem', () => {
     expect(mapItem(row).spoilerFreeTitle).toBeNull();
     expect(mapItem({ ...row, spoiler_free_title: null }).spoilerFreeTitle).toBeNull();
   });
+
+  it('maps ai_summary (the allowlisted list-row ride-along), defaulting to null', () => {
+    expect(mapItem({ ...row, ai_summary: 'A cached gist.' }).aiSummary).toBe('A cached gist.');
+    // Direct ITEM_COLS reads omit it, an off-allowlist caller / an old backend
+    // gets it NULLed — all map to null, and the reader falls back to `getSummary`.
+    expect(mapItem(row).aiSummary).toBeNull();
+    expect(mapItem({ ...row, ai_summary: null }).aiSummary).toBeNull();
+  });
 });
 
 describe('mapItemState', () => {

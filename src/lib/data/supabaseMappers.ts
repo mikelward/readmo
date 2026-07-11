@@ -113,6 +113,13 @@ export interface ItemRow {
   content_html: string | null;
   summary: string | null;
   full_content_html?: string | null;
+  /** Optional: the cached AI summary. Rides the `feed_items` RPC (list rows) for
+   * an allowlisted caller (server-gated on `email_is_allowlisted`, 0058) and is
+   * NULLed for everyone else; the ITEM_COLS direct reads (library/search/reader)
+   * omit it (so a direct read never carries it), and it's absent against a
+   * backend predating the column. Defaults to null in {@link mapItem}; the
+   * reader falls back to the `summary` Edge call whenever it's null. */
+  ai_summary?: string | null;
   enclosures: unknown;
   content_hash: string | null;
   created_at: string | null;
@@ -222,6 +229,7 @@ export function mapItem(row: ItemRow): Item {
     contentHtml: row.content_html ?? '',
     summary: row.summary ?? null,
     fullContentHtml: row.full_content_html ?? null,
+    aiSummary: row.ai_summary ?? null,
     enclosures: mapEnclosures(row.enclosures),
   };
 }

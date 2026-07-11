@@ -1,12 +1,34 @@
 import { describe, expect, it } from 'vitest';
+import type { ReactElement } from 'react';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { renderWithProviders } from '../test/renderWithProviders';
+import { QueryClient } from '@tanstack/react-query';
+import { renderWithProviders as baseRender } from '../test/renderWithProviders';
 import { ArticleSummary } from './ArticleSummary';
 import { MockDataSource } from '../lib/data/MockDataSource';
+import { CAPABILITIES_QUERY_KEY } from '../hooks/useCapabilities';
 import type { SummaryResult } from '../lib/summary';
+import type { Capabilities } from '../lib/data/DataSource';
 
 const ITEM_ID = 'item-1';
+
+// useFullTextAllowed is closed until capabilities RESOLVE to allowed (a
+// signed-out caller is never allowlisted), so seed a disarmed (open-to-all)
+// capability set — the summary card only shows for an allowed caller. Shadows
+// the shared helper so every render below runs on the allowed path.
+const ALLOWED_CAPS: Capabilities = { family: false, admin: false, allowlistArmed: false };
+function renderWithProviders(
+  ui: ReactElement,
+  opts: { route?: string; source?: MockDataSource; queryClient?: QueryClient } = {},
+) {
+  const queryClient =
+    opts.queryClient ??
+    new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  if (queryClient.getQueryData(CAPABILITIES_QUERY_KEY) === undefined) {
+    queryClient.setQueryData(CAPABILITIES_QUERY_KEY, ALLOWED_CAPS);
+  }
+  return baseRender(ui, { ...opts, queryClient });
+}
 
 describe('ArticleSummary', () => {
   it('auto-generates for an article pinned before opening', async () => {
@@ -28,6 +50,56 @@ describe('ArticleSummary', () => {
     expect(items).toHaveLength(2);
     expect(items[0].textContent).toBe('First point');
     expect(items[1].textContent).toBe('Second point');
+  });
+
+  it('renders a summary delivered on the item row instantly — no fetch, no spinner', async () => {
+    // The allowlisted ride-along (feed_items, 0058): the gist arrives ON the
+    // item, so the reader shows it immediately without the `summary` Edge call
+    // or the "Summarizing…" placeholder.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    let called = false;
+    source.getSummary = async (): Promise<SummaryResult> => {
+      called = true;
+      return { status: 'ok', summary: 'should not be fetched' };
+    };
+    renderWithProviders(
+      <ArticleSummary
+        id={ITEM_ID}
+        online
+        autoGenerate
+        cachedSummary="A cached gist from the row."
+      />,
+      { source },
+    );
+    const body = await screen.findByTestId('article-summary-body');
+    expect(body.textContent).toBe('A cached gist from the row.');
+    expect(screen.getByText('Summary by Gemini')).toBeInTheDocument();
+    expect(called).toBe(false);
+    expect(screen.queryByTestId('article-summary-loading')).not.toBeInTheDocument();
+  });
+
+  it('shows the row summary even offline (it is bundled with the pinned item)', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    let called = false;
+    source.getSummary = async (): Promise<SummaryResult> => {
+      called = true;
+      return { status: 'ok', summary: 'x' };
+    };
+    renderWithProviders(
+      <ArticleSummary
+        id={ITEM_ID}
+        online={false}
+        autoGenerate
+        cachedSummary="An offline gist."
+      />,
+      { source },
+    );
+    expect(await screen.findByTestId('article-summary-body')).toHaveTextContent(
+      'An offline gist.',
+    );
+    // Not the "not available offline" card — we HAVE it — and no fetch.
+    expect(screen.queryByTestId('article-summary-offline')).not.toBeInTheDocument();
+    expect(called).toBe(false);
   });
 
   it('offers a Generate button (no call) for an unpinned article until clicked', async () => {

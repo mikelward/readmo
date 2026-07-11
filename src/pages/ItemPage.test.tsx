@@ -4,16 +4,47 @@ import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-rou
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { IsRestoringProvider, QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { renderWithProviders } from '../test/renderWithProviders';
+import type { ReactElement } from 'react';
+import { renderWithProviders as baseRender } from '../test/renderWithProviders';
 import { ToastProvider } from '../components/Toast';
 import { FeedBarProvider } from '../components/FeedBarContext';
 import { DataSourceProvider } from '../lib/data/context';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import { _resetNetworkStatusForTests, trackedFetch } from '../lib/networkStatus';
+import { CAPABILITIES_QUERY_KEY } from '../hooks/useCapabilities';
 import type { Feed, FeedItem, Item, ItemId } from '../lib/types';
+import type { Capabilities } from '../lib/data/DataSource';
 import type { FullTextResult } from '../lib/fullText';
+import type { SummaryResult } from '../lib/summary';
 import { ItemPage } from './ItemPage';
 import { recallHackerNewsItemId } from '../lib/newshackerItemIds';
+
+// Full text + AI summaries gate on useFullTextAllowed, which is now closed until
+// capabilities RESOLVE to allowed (a signed-out caller is never allowlisted).
+// Seed a disarmed (open-to-all) capability set so the reader exercises the
+// allowed path, as these tests did when signed-out defaulted open.
+const ALLOWED_CAPS: Capabilities = { family: false, admin: false, allowlistArmed: false };
+function seedAllowed(qc: QueryClient): QueryClient {
+  // Non-clobbering: a test that seeds its OWN capabilities (e.g. an armed,
+  // off-allowlist caller) keeps them; only an unseeded client gets the allowed
+  // default.
+  if (qc.getQueryData(CAPABILITIES_QUERY_KEY) === undefined) {
+    qc.setQueryData(CAPABILITIES_QUERY_KEY, ALLOWED_CAPS);
+  }
+  return qc;
+}
+// Shadow the shared helper so every render seeds the allowed capability set on
+// whatever query client it ends up using.
+function renderWithProviders(
+  ui: ReactElement,
+  opts: { route?: string; source?: MockDataSource; queryClient?: QueryClient } = {},
+) {
+  const queryClient =
+    opts.queryClient ??
+    new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  seedAllowed(queryClient);
+  return baseRender(ui, { ...opts, queryClient });
+}
 
 function renderReader(
   source: MockDataSource,
@@ -40,11 +71,12 @@ function renderReaderWithHistory(
   source: MockDataSource,
   { entries, queryClient: passedClient }: { entries: string[]; queryClient?: QueryClient },
 ) {
-  const queryClient =
+  const queryClient = seedAllowed(
     passedClient ??
-    new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: 0 } },
-    });
+      new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      }),
+  );
   return render(
     <QueryClientProvider client={queryClient}>
       <DataSourceProvider source={source}>
@@ -127,6 +159,7 @@ describe('ItemPage (reader)', () => {
             contentHtml: '<p>body</p>',
             summary: null,
             fullContentHtml: null,
+            aiSummary: null,
             enclosures: [],
           } as Item,
           feed: {
@@ -167,9 +200,11 @@ describe('ItemPage (reader)', () => {
       );
     }
 
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: 0 } },
-    });
+    const queryClient = seedAllowed(
+      new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      }),
+    );
     render(
       <QueryClientProvider client={queryClient}>
         <DataSourceProvider source={source}>
@@ -196,6 +231,84 @@ describe('ItemPage (reader)', () => {
     await userEvent.click(screen.getByTestId('go-item-2'));
     expect(await screen.findByTestId('article-summary-generate')).toBeInTheDocument();
     expect(calledFor).not.toContain('item-2');
+  });
+
+  it('shows the list-row summary instantly when its content still matches the fresh item', async () => {
+    const queryClient = seedAllowed(
+      new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } }),
+    );
+    const seed = new MockDataSource(`test-${Math.random()}`);
+    const base = (await seed.getItem('item-1'))!;
+    // The persisted list row carries a cached summary for content that still
+    // matches what the fresh getItem returns (same body/title).
+    queryClient.setQueryData(['feed', 'home'], {
+      pages: [{ items: [{ ...base, item: { ...base.item, aiSummary: 'Cached row gist.' } }] }],
+      pageParams: [null],
+    });
+
+    const source = new MockDataSource(`test-${Math.random()}`);
+    source.stateStore.set('item-1', 'pinned', true); // pinned → would auto-generate
+    const spy = vi.spyOn(source, 'getSummary');
+    renderReader(source, 'item-1', queryClient);
+
+    // Rendered from the row, instantly, with no `summary` Edge call.
+    expect(await screen.findByTestId('article-summary-body')).toHaveTextContent(
+      'Cached row gist.',
+    );
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('drops a stale list-row summary whose content no longer matches the fresh item, and regenerates', async () => {
+    const queryClient = seedAllowed(
+      new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } }),
+    );
+    const seed = new MockDataSource(`test-${Math.random()}`);
+    const base = (await seed.getItem('item-1'))!;
+    // The persisted list row still holds a summary of the OLD body.
+    queryClient.setQueryData(['feed', 'home'], {
+      pages: [
+        {
+          items: [
+            {
+              ...base,
+              item: {
+                ...base.item,
+                contentHtml: '<p>the old body</p>',
+                aiSummary: 'Stale gist of the old body.',
+              },
+            },
+          ],
+        },
+      ],
+      pageParams: [null],
+    });
+
+    // A publisher edit: the fresh detail read returns NEW content (and, like all
+    // getItem reads, no ai_summary — the server nulled items.ai_summary on edit).
+    class EditedSource extends MockDataSource {
+      async getItem(id: string): Promise<FeedItem | null> {
+        const fi = await super.getItem(id);
+        if (fi) fi.item = { ...fi.item, contentHtml: '<p>the fresh body</p>', aiSummary: null };
+        return fi;
+      }
+      async getSummary(): Promise<SummaryResult> {
+        return { status: 'ok', summary: 'Fresh gist of the new body.' };
+      }
+    }
+    const source = new EditedSource(`test-${Math.random()}`);
+    source.stateStore.set('item-1', 'pinned', true); // pinned → auto-generate
+    const spy = vi.spyOn(source, 'getSummary');
+    renderReader(source, 'item-1', queryClient);
+
+    // The stale gist must NOT survive: once the fresh read lands, the content
+    // mismatch drops it and useSummary regenerates.
+    await waitFor(() =>
+      expect(screen.getByTestId('article-summary-body')).toHaveTextContent(
+        'Fresh gist of the new body.',
+      ),
+    );
+    expect(screen.queryByText(/Stale gist/)).not.toBeInTheDocument();
+    expect(spy).toHaveBeenCalledWith('item-1');
   });
 
   it('renders the article and marks it opened on view', async () => {
