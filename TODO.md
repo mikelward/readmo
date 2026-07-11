@@ -145,23 +145,20 @@ constraint is documented in more detail.
 
 ## AI summaries
 
-- **Make a pinned article's AI summary durably offline, like its body.**
-  `useOfflineCacheLock` keeps `['item', id]` and `['fulltext', id]` alive against
-  GC (idle observers) for pinned/favorited items, but **not** `['summary', id]` —
-  and `getItem`'s `['item', id]` omits `ai_summary`. The summary reaches the
-  reader either from the persisted feed-list row (the 0058 ride-along, scanned by
-  `findCachedFeedItem`) or from `['summary', id]` (warmed by `useSummaryPrewarm`).
-  Neither is GC-locked, so after the feed page unmounts past the GC window an
-  offline open of a saved article can find the body retained but the summary
-  gone. Not a regression (offline summaries were never GC-locked), but it
-  undercuts the "instant + offline" promise. Options: lock `['summary', id]` in
-  `useOfflineCacheLock` for the offline buckets (mirrors item/fulltext; relies on
-  the prewarm to populate it, so an article whose summary came only via the feed
-  row still needs seeding — and seeding an `ok`/forever entry risks masking a
-  later edit's regeneration, see the content-match guard in `ItemPage`), or carry
-  `ai_summary` on the locked `['item', id]` detail (most robust, but `getItem` is
-  a direct read so per-caller gating reopens the leak question 0035/0058
-  deliberately routed around). See PR #460 and `ItemPage.tsx`'s `cachedSummary`.
+- **Eagerly retain favorites' AI summaries offline (e.g. on app open).** A
+  pinned article's summary is retained offline (the reader seeds `['summary', id]`
+  on open, the prewarm fetches it, and `useOfflineCacheLock` keeps it alive), but
+  a **favorite that's never been opened online** has nothing retained yet — its
+  gist only lands on first open. `useSummaryPrewarm` deliberately skips favorites,
+  and an earlier attempt to seed favorites from the cached feed row inside the
+  offline lock's `warm()` accreted edge cases (content-match vs. a stale feed
+  page, and re-seeding a summary that arrives *after* the body warmed — PR #461,
+  Codex). The clean fix is an eager pass — on app open / feed refresh, seed (or
+  fetch) the summary for every favorited item from the current cached row,
+  content-matched like the reader, so the offline gist is there before the feed
+  cache is GC'd. Probably belongs next to `useSummaryPrewarm` (extend it to the
+  favorite bucket) or a dedicated warmer subscribed to the feed cache. See
+  `useOfflineCacheLock`'s `['summary', id]` observer and `useSummary`'s seed.
 
 - **Speed up the pin-triggered summary: don't serialize it behind the full-text
   download.** The pin trigger's server-side work (`runPinTriggeredWork` in

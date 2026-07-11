@@ -2354,17 +2354,23 @@ page's discipline is unchanged.
   allowlisted, and a still-loading/errored gate fires no Edge call), and the
   `summary` Edge Function re-checks the allowlist server-side regardless.
   - **A cached summary rides the list row for an allowlisted reader — instant,
-    no round-trip.** Once generated, the gist is delivered ON the item
-    in list reads (`feed_items` includes `ai_summary` **only for an allowlisted
-    caller**, NULL for everyone else — the generation cost gate is unchanged,
-    only who receives an already-cached gist), so it lands in the persisted list
-    cache with the pinned article. The reader shows it the instant it opens —
-    no "Summarizing…" placeholder — and offline whenever the list row holding it
-    is still cached, falling back to the `summary` Edge call when the row carries
-    none yet (just-pinned, an old backend, or a non-cacheable stub). (Durable
-    offline retention of the summary, matching the pinned body, is tracked
-    separately — see TODO.) An off-allowlist co-subscriber still receives NULL,
-    so the boundary is unchanged for them.
+    no round-trip, and durable offline.** Once generated, the gist is delivered
+    ON the item in list reads (`feed_items` includes `ai_summary` **only for an
+    allowlisted caller**, NULL for everyone else — the generation cost gate is
+    unchanged, only who receives an already-cached gist), so it lands in the
+    persisted list cache with the pinned article. The reader shows it the instant
+    it opens — no "Summarizing…" placeholder — falling back to the `summary` Edge
+    call when the row carries none yet (just-pinned, an old backend, or a
+    non-cacheable stub). For a **pinned/favorited** article the summary is
+    **retained offline like the body**: the reader seeds it into `['summary', id]`
+    on open (and the pinned prewarm fetches it), and `useOfflineCacheLock` keeps
+    that entry alive alongside `['item']`/`['fulltext']` so it isn't lost when the
+    feed cache is evicted — an offline open then shows the gist (a **stale gist
+    beats an empty card**). The seed is provisional and **revalidates against the
+    server** the next time the reader is online, so it self-heals after a
+    publisher edit. (A favorite never opened online has nothing retained yet — its
+    gist lands, and is retained, on first open.) An off-allowlist co-subscriber
+    still receives NULL, so the boundary is unchanged for them.
   - **Generation is not automatic on every open — pin before opening, or ask.**
     The reader's `useSummary` auto-generates only when the article was **pinned
     before it opened** (the "I'll read this" signal the pre-warm already acts on,
