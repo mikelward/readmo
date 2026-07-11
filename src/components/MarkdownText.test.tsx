@@ -40,6 +40,44 @@ describe('MarkdownText', () => {
     expect(container.innerHTML).toBe('the variable <em>x</em> here');
   });
 
+  it('italicizes a multi-word work title with asterisks', () => {
+    const { container } = render(
+      <MarkdownText text="Homer's *The Odyssey* is an epic poem." />,
+    );
+    expect(container.innerHTML).toBe(
+      "Homer's <em>The Odyssey</em> is an epic poem.",
+    );
+  });
+
+  it('renders _underscore_ italic as <em>', () => {
+    const { container } = render(
+      <MarkdownText text="This is _kind of_ a big deal." />,
+    );
+    expect(container.innerHTML).toBe('This is <em>kind of</em> a big deal.');
+  });
+
+  it('italicizes a multi-word work title with underscores', () => {
+    // The reported bug: Gemini emits `_The Odyssey_` and it must render italic,
+    // not leak literal underscores.
+    const { container } = render(
+      <MarkdownText text="Homer's _The Odyssey_ is an epic poem." />,
+    );
+    expect(container.innerHTML).toBe(
+      "Homer's <em>The Odyssey</em> is an epic poem.",
+    );
+  });
+
+  it('leaves a __dunder__ identifier literal', () => {
+    // `_init_` is the only span the tokenizer could match inside `__init__`, and
+    // its outer neighbor is another `_` (a word char), so the guard rejects it.
+    const { container } = render(
+      <MarkdownText text="Python calls it __init__ for constructors." />,
+    );
+    expect(container.innerHTML).toBe(
+      'Python calls it __init__ for constructors.',
+    );
+  });
+
   it('keeps **bold** as <strong> rather than treating the inner * as italic', () => {
     const { container } = render(
       <MarkdownText text="This is **important** stuff." />,
@@ -130,6 +168,24 @@ describe('MarkdownText', () => {
       <MarkdownText text="The base_url and api_key fields." />,
     );
     expect(container.innerHTML).toBe('The base_url and api_key fields.');
+  });
+
+  it('renders inline markdown between two rejected snake_case identifiers', () => {
+    // A rejected underscore span must not swallow the real **bold** sitting
+    // between two snake_case identifiers on the same line.
+    const { container } = render(
+      <MarkdownText text="base_url to **value** and api_key" />,
+    );
+    expect(container.innerHTML).toBe(
+      'base_url to <strong>value</strong> and api_key',
+    );
+  });
+
+  it('renders inline code between two rejected asterisk identifiers', () => {
+    const { container } = render(
+      <MarkdownText text="foo*bar `code` baz*qux" />,
+    );
+    expect(container.innerHTML).toBe('foo*bar <code>code</code> baz*qux');
   });
 
   it('escapes HTML in user-supplied text — no tag injection', () => {

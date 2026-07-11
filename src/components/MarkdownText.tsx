@@ -28,15 +28,28 @@ import { Fragment, type ReactElement } from 'react';
 //     below), so compact formulas/identifiers like `2*3*4` or `foo*bar*baz` stay
 //     literal instead of italicizing their middle term.
 // The word classes use Unicode property escapes so accented / non-Latin emphasis
-// (`*café*`, `*日本語*`) still italicizes. Underscore italic (`_x_`) is out of
-// scope — it collides with `snake_case` identifiers.
+// (`*café*`, `*日本語*`) still italicizes.
+//
+// Underscore italic (`_x_`) is handled too: Gemini reaches for `_The Odyssey_`
+// as readily as `*The Odyssey*` when italicizing a work title, and a stray `_`
+// on either side of a phrase reads as noise just like a stray `*`. The same
+// outer-boundary guard applies, and it's what keeps `snake_case` identifiers
+// (`base_url`, `api_key`) literal: their `_` is hugged by word characters on the
+// outside, so it never counts as a delimiter. Two things differ from the `*`
+// case, both to protect identifiers, because `_` is itself a word character:
+//   - the content edges use a NARROWER class (letters/digits, but NOT `_`), so a
+//     leading/trailing-underscore identifier like `__init__` has no clean
+//     `_word_` span to match — its only candidate (`_init_`) is then rejected by
+//     the outer-boundary guard anyway (its neighbor is another `_`);
+//   - the guard is the sole line of defense here — there's no "opens on
+//     whitespace" analogue to worry about beyond it.
 //
 // Bullet lists ARE in scope (the prompt asks for a bulleted list when the
 // article makes several distinct points), but everything else block-level is
 // not: headings, ordered lists, blockquotes, and code fences render as their
-// literal text. Also out of scope by design: underscore italic (see above) and
-// links (model-supplied URLs are a different trust story). The prompt steers the
-// model to a short paragraph or a flat bullet list, so this coverage is enough.
+// literal text. Also out of scope by design: links (model-supplied URLs are a
+// different trust story). The prompt steers the model to a short paragraph or a
+// flat bullet list, so this coverage is enough.
 
 // Every alternative is inline-only: the inner class explicitly excludes `\n`, so
 // a stray `**` at the start of one paragraph can't bold every character through
@@ -53,9 +66,16 @@ const WORD_CHAR = '[\\p{L}\\p{N}_]';
 // a mobile-facing app with no transpile step that would rewrite it — a bad
 // lookbehind doesn't fail one match, it stops the module from loading.
 const ITALIC = `\\*(${WORD_CHAR}(?:[^*\\n]*${WORD_CHAR})?)\\*`;
-const TOKEN_RE = new RegExp(`${CODE}|${BOLD}|${ITALIC}`, 'gu');
+// Underscore italic. Same shape as ITALIC but delimited by `_` and with the
+// content edges restricted to a letter/digit (NO `_`) — see WORD_EDGE. That
+// narrower edge, plus the shared outer-boundary guard, is what stops
+// `snake_case`/`__dunder__` identifiers from italicizing while `_The Odyssey_`
+// still does.
+const WORD_EDGE = '[\\p{L}\\p{N}]';
+const ITALIC_U = `_(${WORD_EDGE}(?:[^_\\n]*${WORD_EDGE})?)_`;
+const TOKEN_RE = new RegExp(`${CODE}|${BOLD}|${ITALIC}|${ITALIC_U}`, 'gu');
 
-// A `*` is an emphasis delimiter only when its outer neighbor is a boundary
+// A `*`/`_` is an emphasis delimiter only when its outer neighbor is a boundary
 // (string edge, whitespace, or punctuation) rather than a word character.
 const WORD = new RegExp(WORD_CHAR, 'u');
 
@@ -127,23 +147,37 @@ function tokenize(text: string): (string | ReactElement)[] {
   const out: (string | ReactElement)[] = [];
   let cursor = 0;
   let key = 0;
-  for (const m of text.matchAll(TOKEN_RE)) {
-    const start = m.index ?? 0;
+  // Driven with exec (not matchAll) so a boundary-rejected emphasis span can
+  // REWIND rather than consume: an italic run's content class (`[^*\n]` / `[^_\n]`)
+  // spans other markdown, so `base_url to **value** and api_key` first matches
+  // `_url to **value** and api_`. That span is rejected by the guard below, but
+  // if we advanced past all of it the inner `**value**` would render literally.
+  // Instead we push nothing, leave `cursor` put (so the opening delimiter stays
+  // in the pending literal run), and set lastIndex to just past that delimiter so
+  // the inner text — including any real bold/code/emphasis — is re-scanned.
+  TOKEN_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = TOKEN_RE.exec(text)) !== null) {
+    const start = m.index;
+    if (m[3] !== undefined || m[4] !== undefined) {
+      // Italic — asterisk (m[3]) or underscore (m[4]); same outer-boundary guard.
+      const before = start > 0 ? text[start - 1] : '';
+      const after = text[start + m[0].length] ?? '';
+      if (WORD.test(before) || WORD.test(after)) {
+        // A delimiter hugged by a word character on the outside is a literal
+        // operator/identifier char (`2*3*4`, `base_url`), not emphasis. Rewind
+        // past the opening delimiter and keep scanning the interior.
+        TOKEN_RE.lastIndex = start + 1;
+        continue;
+      }
+    }
     if (start > cursor) out.push(text.slice(cursor, start));
     if (m[1] !== undefined) {
       out.push(<code key={key++}>{m[1]}</code>);
     } else if (m[2] !== undefined) {
       out.push(<strong key={key++}>{m[2]}</strong>);
-    } else if (m[3] !== undefined) {
-      const before = start > 0 ? text[start - 1] : '';
-      const after = text[start + m[0].length] ?? '';
-      if (WORD.test(before) || WORD.test(after)) {
-        // A `*` hugged by a word character on the outside is a literal
-        // operator/identifier char (`2*3*4`), not an emphasis delimiter.
-        out.push(m[0]);
-      } else {
-        out.push(<em key={key++}>{m[3]}</em>);
-      }
+    } else {
+      out.push(<em key={key++}>{m[3] ?? m[4]}</em>);
     }
     cursor = start + m[0].length;
   }
