@@ -803,12 +803,33 @@ export function ItemList({
     if (droppedGray) bumpViewportVersion();
   }, []);
 
-  const { inViewIds, getRowRef } = useInViewIds({
+  const {
+    inViewIds,
+    getRowRef,
+    resync: resyncInView,
+  } = useInViewIds({
     onExitTop: hideOnScroll ? handleExitTop : undefined,
     onReenter: hideOnScroll ? handleReenter : undefined,
     onViewportEnter: handleViewportEnter,
     onViewportExit: handleViewportExit,
   });
+  // Latest resync in a ref so a rAF scheduled from a sweep always calls the
+  // current one without widening callback dependencies.
+  const resyncInViewRef = useRef(resyncInView);
+  resyncInViewRef.current = resyncInView;
+  // Recompute viewport visibility one frame after a sweep removes its rows: the
+  // survivors reflow upward and a row that was clipped at the viewport edge can
+  // become fully visible with no scroll/resize to prompt the IntersectionObserver
+  // (whose post-mutation delivery can lag on real devices). rAF lands after the
+  // removal paints; reading rects inside resync forces layout, so it sees the
+  // settled positions. Idempotent and cheap, so a second scheduled pass is safe.
+  const scheduleSweepResync = useCallback(() => {
+    if (typeof requestAnimationFrame !== 'function') {
+      resyncInViewRef.current();
+      return;
+    }
+    requestAnimationFrame(() => resyncInViewRef.current());
+  }, []);
 
   // Ids restored by the most recent Undo, awaiting a scroll-into-view once they
   // re-render. After undoing an auto-hide-on-scroll burst the restored rows
@@ -2444,7 +2465,8 @@ export function ItemList({
       return next;
     });
     beginSweepCooldown();
-  }, [ds, beginSweepCooldown, lockBodyHeight]);
+    scheduleSweepResync();
+  }, [ds, beginSweepCooldown, lockBodyHeight, scheduleSweepResync]);
 
   // If the list unmounts (route change, etc.) while a sweep is still
   // animating, commit the hide synchronously so the user's tap isn't dropped.
@@ -2511,6 +2533,7 @@ export function ItemList({
         // Sweep consolidates: in-body pins snap into the top block (SPEC.md).
         setStayInBodyIds(new Set());
         beginSweepCooldown();
+        scheduleSweepResync();
         return;
       }
       sweepPendingIdsRef.current = batch;
@@ -2524,7 +2547,7 @@ export function ItemList({
         SWEEP_ANIMATION_MS * 2,
       );
     },
-    [ds, commitSweep, beginSweepCooldown, lockBodyHeight],
+    [ds, commitSweep, beginSweepCooldown, lockBodyHeight, scheduleSweepResync],
   );
 
   const handleSweep = useCallback(

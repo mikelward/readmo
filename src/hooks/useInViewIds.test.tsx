@@ -118,6 +118,136 @@ describe('useInViewIds', () => {
   });
 });
 
+// resync recomputes inViewIds synchronously from live geometry, bypassing the
+// IntersectionObserver callback. Sweep calls it after removing swept rows: a
+// survivor that reflows into full view can be missed by the observer (its
+// post-mutation delivery lags or is coalesced on real devices), leaving its
+// Sweep broom disabled over a fully-visible row. The recompute must use the same
+// root the observer does — the viewport minus the sticky insets, each already
+// pulled in by the same SWEEP_EDGE_SLACK_PX (2) tolerance — and the same 0.999
+// cutoff.
+describe('useInViewIds resync', () => {
+  beforeEach(() => {
+    // An inert observer that never fires, so inViewIds can only change via resync.
+    class InertIO {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+      takeRecords(): IntersectionObserverEntry[] {
+        return [];
+      }
+    }
+    vi.stubGlobal('IntersectionObserver', InertIO);
+    Object.defineProperty(window, 'innerHeight', {
+      value: 768,
+      configurable: true,
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    document.body.innerHTML = '';
+  });
+
+  // Surface the hook's state through the DOM (rather than reassigning an outer
+  // variable from inside the component, which react-hooks/globals forbids): the
+  // in-view set renders as text and a button invokes resync.
+  function ResyncRows({ rows }: { rows: string[] }) {
+    const { inViewIds, getRowRef, resync } = useInViewIds();
+    return (
+      <div>
+        <span data-testid="inview">{[...inViewIds].join(',')}</span>
+        <button data-testid="resync" type="button" onClick={resync}>
+          resync
+        </button>
+        <ul>
+          {rows.map((id) => (
+            <li key={id} data-item-id={id} ref={getRowRef(id)} />
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  function inViewText(): string {
+    return (
+      document.querySelector('[data-testid="inview"]')?.textContent ?? ''
+    );
+  }
+
+  function fireResync(): void {
+    act(() => {
+      (
+        document.querySelector('[data-testid="resync"]') as HTMLButtonElement
+      ).click();
+    });
+  }
+
+  function setRect(id: string, top: number, height: number): void {
+    const el = document.querySelector(`[data-item-id="${id}"]`) as HTMLElement;
+    Object.defineProperty(el, 'getBoundingClientRect', {
+      configurable: true,
+      value: () =>
+        ({
+          top,
+          bottom: top + height,
+          height,
+          left: 0,
+          right: 0,
+          width: 0,
+          x: 0,
+          y: top,
+          toJSON() {
+            return {};
+          },
+        }) as DOMRect,
+    });
+  }
+
+  it('adds a fully-visible row the observer never reported', () => {
+    // Top chrome bottom = 104; with the 2px slack the root spans [102, 768].
+    mountSticky('app-header', 56);
+    mountSticky('list-toolbar', 104);
+    render(<ResyncRows rows={['a', 'b']} />);
+    setRect('a', 200, 60); // fully inside the root → ratio 1
+    setRect('b', 740, 60); // clipped at the foot (overlap 28/60) → ratio < 0.999
+
+    // The inert observer never fired, so nothing is in view yet.
+    expect(inViewText()).toBe('');
+
+    fireResync();
+
+    // Only the fully-visible row is added — no observer callback involved.
+    expect(inViewText()).toBe('a');
+  });
+
+  it('drops a row that resync finds no longer fully visible', () => {
+    mountSticky('app-header', 56);
+    mountSticky('list-toolbar', 104);
+    render(<ResyncRows rows={['a']} />);
+    setRect('a', 200, 60);
+    fireResync();
+    expect(inViewText()).toBe('a');
+
+    // The row scrolls partly behind the top chrome (top above the root's 102).
+    setRect('a', 74, 60); // overlap 32/60 → ratio 0.53
+    fireResync();
+    expect(inViewText()).toBe('');
+  });
+
+  it('honors the bottom sticky inset when recomputing', () => {
+    mountSticky('app-header', 56);
+    mountSticky('list-toolbar', 104);
+    mountSticky('list-toolbar list-toolbar--bottom', 768); // pinned, height 48
+    render(<ResyncRows rows={['a']} />);
+    // Would be fully visible against a bare viewport, but its foot sits behind
+    // the pinned bottom toolbar (root foot = 768 − (48 − 2 slack) = 722).
+    setRect('a', 690, 50); // bottom 740 > 722 → clipped
+    fireResync();
+    expect(inViewText()).toBe('');
+  });
+});
+
 // onExitTop fires when a previously-seen row scrolls fully off the *top* — the
 // signal that drives auto-hide-on-scroll. The detection lives in the observer
 // callback, so the harness captures it and replays entries with the geometry a
