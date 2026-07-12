@@ -409,3 +409,17 @@
   gap: 10px;
   background: var(--rm-bg);
 }
+
+/* Blank scroll-space at the true end of a feed, rendered only when auto-hide-on-
+   scroll is on (see ItemList). Auto-hide marks a row Done as it scrolls off the
+   TOP, but the last screenful can never leave the top edge — nothing sits below
+   it to scroll into — so those rows are stranded unmarkable-by-scroll. One
+   viewport of empty tail gives them the room to be pushed up past the top
+   chrome, in either bottom-bar position: below the in-flow relative bar, or
+   above the sticky pinned bar (which stays put). The overshoot beyond the exact
+   need is unreachable blank the reader scrolls back out of, not a visible gap.
+   dvh tracks the mobile dynamic-toolbar viewport; vh is the fallback. */
+.item-list__scroll-space {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
