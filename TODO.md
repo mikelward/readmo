@@ -10,29 +10,9 @@ constraint is documented in more detail.
   [Background Sync API](https://developer.mozilla.org/en-US/docs/Web/API/Background_Synchronization_API)
   would let the service worker flush the outbox in the background — even when
   the tab is closed — on browsers that support it (Chrome/Android, not Safari).
-  Worth considering once the outbox is reliable (idempotency keys done);
-  deferred until then.
-
-## Sync / write path
-
-- **Idempotency keys for exactly-once outbox delivery.** The item-state outbox
-  is currently at-least-once: a `set_item_state` write can commit on the server
-  while the client crashes or loses the response before recording the returned
-  `version`. On replay the optimistic-concurrency check (`0007`) sees the row
-  already advanced and rejects with `40001`, so that write — and any same-item
-  follow-up queued behind it — reconciles away. State stays *consistent* with
-  what committed; at most one triage toggle in that crash-during-ack window is
-  dropped. The complete fix is a per-write idempotency token the server dedups
-  on (a replay of a committed write returns success + the new version, letting
-  the outbox advance the successor's base). A client-only dependency hack can't
-  close it — the predecessor's own replay conflicts without server dedup. Needs
-  its own migration + token plumbing through the write path. See SPEC.md §Sync
-  and PR #14 (Codex thread on `src/lib/data/itemStateOutbox.ts`).
-
-- **Per-field version conflict (refinement).** The `0007` version check is
-  row-level, so two devices editing the *same item* conflict even on independent
-  flags (the loser re-reconciles). Per-field versioning would let independent
-  edits both land. Conservative-but-safe today. See SPEC.md §Sync.
+  The outbox already delivers reliably (per-field LWW makes a crash/lost-ack
+  replay idempotent — see SPEC.md §Sync), so this is gated only on browser
+  support and priority.
 
 ## Storage / dedup
 
