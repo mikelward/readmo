@@ -2474,6 +2474,55 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(added.subscription.sort).toBe(3);
   });
 
+  it('subscribe maps the feed-cap SQLSTATE (53400) to AddFeedError("feed-limit")', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'subscribe_to_feed') {
+        return Promise.resolve({
+          data: null,
+          error: { code: '53400', message: 'subscription limit reached (max 100 feeds)' },
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+
+    await expect(env.ds.subscribe('https://new.example.com/feed')).rejects.toMatchObject({
+      name: 'AddFeedError',
+      kind: 'feed-limit',
+    });
+  });
+
+  it('importOpml stops early once the account hits the feed cap (skips the rest)', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      // First new feed subscribes; every later one is rejected at the cap.
+      if (name === 'subscribe_to_feed' && params?.p_url !== 'https://one.example.com/feed') {
+        return Promise.resolve({
+          data: null,
+          error: { code: '53400', message: 'subscription limit reached (max 100 feeds)' },
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+
+    const xml = `<opml><body>
+      <outline type="rss" xmlUrl="https://one.example.com/feed" />
+      <outline type="rss" xmlUrl="https://two.example.com/feed" />
+      <outline type="rss" xmlUrl="https://three.example.com/feed" />
+    </body></opml>`;
+    const result = await env.ds.importOpml(xml);
+    // one → added; two hits the cap and breaks; two + three counted as skipped.
+    expect(result).toEqual({ added: 1, skipped: 2 });
+    // The doomed third subscribe was never attempted (loop broke at the cap).
+    expect(
+      env.fake.rpcCalls.some(
+        (c) => c.name === 'subscribe_to_feed' && c.params?.p_url === 'https://three.example.com/feed',
+      ),
+    ).toBe(false);
+  });
+
   it('subscribe routes through subscribe_to_feed and triggers an immediate refresh', async () => {
     const env = setup();
     const feed = await env.ds.subscribe('https://new.example.com/feed', 'Tech');
