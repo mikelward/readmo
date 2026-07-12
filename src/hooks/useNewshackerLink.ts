@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { NEWSHACKER_LINK_QUERY_KEY } from './useNewshackerSync';
+import { clearAllReverseSyncPending } from '../lib/newshackerReverseSyncPending';
 
 /**
  * The newshacker link for the signed-in account — used by the Settings
@@ -40,6 +41,9 @@ export function useNewshackerLink() {
 
   const disconnect = useCallback(async (): Promise<void> => {
     await ds.clearNewshackerLink?.();
+    // No pull will run once unlinked, so drop any open-on-newshacker "syncing"
+    // markers — otherwise a spinner would sit until the failsafe.
+    clearAllReverseSyncPending();
     await client.invalidateQueries({ queryKey: NEWSHACKER_LINK_QUERY_KEY });
   }, [ds, client]);
 

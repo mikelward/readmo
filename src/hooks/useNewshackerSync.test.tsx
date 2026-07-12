@@ -125,6 +125,31 @@ describe('useNewshackerSync', () => {
     expect(fake.pullNewshackerState).not.toHaveBeenCalled();
   });
 
+  it('re-pulls on tab focus when linked', async () => {
+    const fake = makeFakeSource([hnItem('a', '12345')]);
+    mount(fake.source, true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.pullNewshackerState).toHaveBeenCalledTimes(1); // mount
+
+    window.dispatchEvent(new Event('focus'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.pullNewshackerState).toHaveBeenCalledTimes(2); // returned to tab
+  });
+
+  it('coalesces the focus + visibilitychange double-fire into one pull', async () => {
+    const fake = makeFakeSource([hnItem('a', '12345')]);
+    mount(fake.source, true);
+    await vi.advanceTimersByTimeAsync(0); // mount pull settles
+    expect(fake.pullNewshackerState).toHaveBeenCalledTimes(1);
+
+    // A single tab return can dispatch BOTH events back-to-back; the in-flight
+    // guard must collapse them to one pull, not two.
+    window.dispatchEvent(new Event('focus'));
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.pullNewshackerState).toHaveBeenCalledTimes(2);
+  });
+
   it('mirrors a pinned HN item after the debounce', async () => {
     const fake = makeFakeSource([hnItem('a', '777')]);
     mount(fake.source, true);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import type { FeedItem, ListLayout } from '../lib/types';
 import {
   articleSourceDomain,
@@ -26,6 +27,9 @@ import {
   newshackerUrlForItem,
 } from '../lib/newshacker';
 import { suppressNextDoneMirror } from '../lib/newshackerMirrorSuppress';
+import { markReverseSyncPending } from '../lib/newshackerReverseSyncPending';
+import { useReverseSyncPending } from '../hooks/useReverseSyncPending';
+import { NEWSHACKER_LINK_QUERY_KEY } from '../hooks/useNewshackerSync';
 import { rememberHackerNewsItemId } from '../lib/newshackerItemIds';
 import './ItemRow.css';
 
@@ -107,6 +111,10 @@ export function ItemRow({
   const pinned = state.pinned;
   const opened = state.opened;
   const done = state.done;
+  // Awaiting reverse-sync resolution after an open-on-newshacker handoff — the
+  // right slot shows a spinner instead of the Pin button until the next pull
+  // resolves this card (then struck if done, else the opened fade).
+  const syncing = useReverseSyncPending(item.id);
 
   // Spoiler-free headline: for allowlisted callers with the setting on, show the
   // server-cached rewrite of a sports-result headline instead of the original
@@ -192,6 +200,7 @@ export function ItemRow({
   const pointerDevice = usePointerDevice();
   const wide = useWideViewport();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const handleHide = useCallback(() => hide(), [hide]);
   const handlePin = useCallback(() => set('pinned', true), [set]);
@@ -221,8 +230,36 @@ export function ItemRow({
       // See src/lib/newshackerMirrorSuppress.ts.
       if (externalIsNewshacker) suppressNextDoneMirror(item.id);
       set('done', true);
+    } else if (externalIsNewshacker) {
+      // Opening on newshacker WITHOUT mark-done-on-open: the outcome is unknown
+      // until we pull newshacker's Done list back, so flag the card as awaiting
+      // reverse sync. On return it shows a "syncing" spinner in the right slot
+      // until the next pull resolves it — struck (you marked it done there) or
+      // just the opened fade. Persisted across the same-tab hop (sessionStorage);
+      // see src/lib/newshackerReverseSyncPending.ts. (When mark-done-on-open is
+      // on, the item is already Done above and grays in place, so no spinner.)
+      //
+      // Only when the account is LINKED, though — an unlinked account never runs
+      // the reverse pull, so a marker would strand the spinner (replacing the Pin
+      // button) until the failsafe. Read the shared link status from the cache at
+      // click time (no per-row query observer).
+      const link = queryClient.getQueryData(NEWSHACKER_LINK_QUERY_KEY) as
+        | { linked?: boolean }
+        | undefined;
+      if (link?.linked) markReverseSyncPending(item.id);
     }
-  }, [set, markDoneOnOpen, externalIsNewshacker, item.id]);
+  }, [set, markDoneOnOpen, externalIsNewshacker, item.id, queryClient]);
+  // The `o` keyboard shortcut always opens the ORIGINAL article (item.url) in a
+  // new tab, regardless of the feed's open mode — so it must NOT apply the
+  // newshacker-handoff side effects markOpenedExternal does for an
+  // open-on-newshacker row body (mirror suppression, and the reverse-sync
+  // "pending" spinner). It just marks Opened, and Done when the feed opts into
+  // mark-done-on-open — which mirrors that Done normally, since you dismissed the
+  // item by opening its source, not by handing off to newshacker.
+  const markOpenedOriginal = useCallback(() => {
+    set('opened', true);
+    if (markDoneOnOpen) set('done', true);
+  }, [set, markDoneOnOpen]);
   // On an external-open row the body itself goes to the source/newshacker target,
   // so the dedicated row button is the one remaining path to the in-app reader:
   // it navigates to the reader and marks the item opened (same as a reader-mode
@@ -377,8 +414,9 @@ export function ItemRow({
         case 'o': {
           if (isSafeHttpUrl(item.url)) {
             e.preventDefault();
-            // `o` opens the original, so it honors "mark done when opening" too.
-            markOpenedExternal();
+            // `o` opens the ORIGINAL, so it honors "mark done when opening" but
+            // never the newshacker-handoff side effects (see markOpenedOriginal).
+            markOpenedOriginal();
             window.open(item.url, '_blank', 'noopener,noreferrer');
           }
           break;
@@ -419,7 +457,7 @@ export function ItemRow({
       menuItems.length,
       openMenu,
       item.url,
-      markOpenedExternal,
+      markOpenedOriginal,
       handleTogglePin,
       enableSwipe,
       pinned,
@@ -659,6 +697,19 @@ export function ItemRow({
           >
             <span className="pin-btn__icon">{rightAction.icon}</span>
           </TooltipButton>
+        ) : syncing ? (
+          // Awaiting reverse-sync resolution after an open-on-newshacker handoff:
+          // a non-interactive spinner occupying the Pin slot (same footprint, so
+          // no layout shift) until the next pull resolves this card. No tap zone
+          // is added — it replaces the button, it doesn't sit beside it.
+          <span
+            className="pin-btn pin-btn--syncing"
+            role="status"
+            aria-label="Syncing with newshacker"
+            data-testid="row-syncing"
+          >
+            <span className="pin-btn__spinner" aria-hidden="true" />
+          </span>
         ) : (
           <TooltipButton
             type="button"

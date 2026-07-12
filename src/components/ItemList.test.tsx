@@ -18,6 +18,7 @@ import {
   COLLAPSED_FEEDS_KEY,
   resetCollapsedFeedsCacheForTest,
 } from '../hooks/useCollapsedFeeds';
+import { NEWSHACKER_LINK_QUERY_KEY } from '../hooks/useNewshackerSync';
 import {
   installIntersectionObserverMock,
   setVisibilityForTest,
@@ -6060,6 +6061,104 @@ describe('ItemList', () => {
         'aria-pressed',
         'true',
       );
+    });
+
+    /** Drive a real pull-to-refresh gesture on the PTR container. */
+    async function pullToRefresh() {
+      if (typeof (globalThis as unknown as { PointerEvent?: unknown }).PointerEvent === 'undefined') {
+        class PE extends MouseEvent {
+          pointerId: number;
+          pointerType: string;
+          constructor(type: string, params: PointerEventInit = {}) {
+            super(type, params);
+            this.pointerId = params.pointerId ?? 0;
+            this.pointerType = params.pointerType ?? '';
+          }
+        }
+        (globalThis as unknown as { PointerEvent: unknown }).PointerEvent = PE;
+      }
+      if (!(Element.prototype as unknown as { setPointerCapture?: unknown }).setPointerCapture) {
+        (Element.prototype as unknown as { setPointerCapture: () => void }).setPointerCapture =
+          () => {};
+      }
+      const ptr = document.querySelector('[data-testid="pull-to-refresh"]') as HTMLElement;
+      await act(async () => {
+        fireEvent.pointerDown(ptr, { pointerId: 1, clientX: 100, clientY: 0, pointerType: 'touch', button: 0 });
+        fireEvent.pointerMove(ptr, { pointerId: 1, clientX: 100, clientY: 24 });
+        fireEvent.pointerMove(ptr, { pointerId: 1, clientX: 100, clientY: 170 });
+        fireEvent.pointerUp(ptr, { pointerId: 1, clientX: 100, clientY: 170 });
+      });
+    }
+
+    it('pulls newshacker Done/Pinned state on pull-to-refresh when linked', async () => {
+      const { source, mk } = await makeRows();
+      const pullSpy = vi.spyOn(source, 'pullNewshackerState');
+      const fetchPage = vi.fn(() =>
+        Promise.resolve({ items: [mk('A', 'Feed A', 1)], nextCursor: null }),
+      );
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      });
+      queryClient.setQueryData(NEWSHACKER_LINK_QUERY_KEY, { linked: true, supported: true });
+      renderWithProviders(
+        <ItemList viewKey={`ns-ptr-${viewKeySeq++}`} fetchPage={fetchPage} emptyLabel="x" />,
+        { source, queryClient },
+      );
+      await screen.findAllByTestId('item-row');
+
+      await pullToRefresh();
+
+      await waitFor(() => expect(pullSpy).toHaveBeenCalledTimes(1));
+    });
+
+    it('does not pull newshacker state on pull-to-refresh when the account is unlinked', async () => {
+      const { source, mk } = await makeRows();
+      const pullSpy = vi.spyOn(source, 'pullNewshackerState');
+      const fetchPage = vi.fn(() =>
+        Promise.resolve({ items: [mk('A', 'Feed A', 1)], nextCursor: null }),
+      );
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      });
+      queryClient.setQueryData(NEWSHACKER_LINK_QUERY_KEY, { linked: false, supported: true });
+      renderWithProviders(
+        <ItemList viewKey={`ns-ptr-off-${viewKeySeq++}`} fetchPage={fetchPage} emptyLabel="x" />,
+        { source, queryClient },
+      );
+      await screen.findAllByTestId('item-row');
+
+      await pullToRefresh();
+      // The PTR still ran its own refetch; only the newshacker pull is skipped.
+      await waitFor(() => expect(fetchPage.mock.calls.length).toBeGreaterThan(1));
+      expect(pullSpy).not.toHaveBeenCalled();
+    });
+
+    it('still runs the reverse newshacker pull on PTR when the server refresh fails', async () => {
+      // allSettled, not all: a rejected ds.refresh() must not abort before the
+      // reverse pull applies + hydrates (else out-of-window pins miss the fresh page).
+      const { source, mk } = await makeRows();
+      vi.spyOn(source, 'refresh').mockRejectedValue(
+        Object.assign(new Error('rate limited'), { status: 429 }),
+      );
+      const pullSpy = vi.spyOn(source, 'pullNewshackerState');
+      const fetchPage = vi.fn(() =>
+        Promise.resolve({ items: [mk('A', 'Feed A', 1)], nextCursor: null }),
+      );
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+      });
+      queryClient.setQueryData(NEWSHACKER_LINK_QUERY_KEY, { linked: true, supported: true });
+      renderWithProviders(
+        <ItemList viewKey={`ns-ptr-pollfail-${viewKeySeq++}`} fetchPage={fetchPage} emptyLabel="x" />,
+        { source, queryClient },
+      );
+      await screen.findAllByTestId('item-row');
+
+      await pullToRefresh();
+
+      await waitFor(() => expect(pullSpy).toHaveBeenCalledTimes(1));
+      // PTR still refetches despite the failed poll.
+      await waitFor(() => expect(fetchPage.mock.calls.length).toBeGreaterThan(1));
     });
 
     it('pull-to-refresh still refetches and repaints when the server-side poll fails (rate limit / offline)', async () => {

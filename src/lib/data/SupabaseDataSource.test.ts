@@ -1090,6 +1090,43 @@ describe('SupabaseDataSource reads', () => {
     expect(resyncReads).toBe(2);
   });
 
+  it('resyncState(force) chains a fresh read past an in-flight one', async () => {
+    // The reverse newshacker pull applies changes server-side then resyncs, but a
+    // focus resync (useStateSync) can already be in flight, reading item_state
+    // BEFORE the pull's write. A plain coalesced call would clear without
+    // re-reading; force must run a guaranteed-fresh read so the write is seen.
+    const env = setup();
+    await env.ds.getItemsByIds([]); // boot hydrate (real fake)
+
+    let reads = 0;
+    let releaseFirst!: () => void;
+    let firstStartedResolve!: () => void;
+    const firstStarted = new Promise<void>((r) => (firstStartedResolve = r));
+    const realFrom = env.fake.client.from.bind(env.fake.client);
+    env.fake.client.from = ((table: string) => {
+      if (table !== 'item_state') return realFrom(table);
+      reads++;
+      if (reads === 1) {
+        const p = new Promise((res) => {
+          releaseFirst = () => res({ data: [], count: null, error: null });
+        });
+        firstStartedResolve();
+        return itemStateReadStub(() => p) as ReturnType<typeof realFrom>;
+      }
+      return itemStateReadStub(() => ({ data: [], count: null, error: null })) as ReturnType<
+        typeof realFrom
+      >;
+    }) as typeof env.fake.client.from;
+
+    const a = env.ds.resyncState(); // read #1 (held open)
+    await firstStarted;
+    const b = env.ds.resyncState(true); // force → must NOT coalesce onto read #1
+    releaseFirst(); // read #1 completes
+    await Promise.all([a, b]);
+    // force forced a second, fresh read after the in-flight one.
+    expect(reads).toBe(2);
+  });
+
   it('an offline item_state read keeps the persisted store, not drops it', async () => {
     // item_state is read NetworkOnly (no cache fallback), so offline the read
     // fails rather than serving a stale cached snapshot. The store must keep its

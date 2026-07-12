@@ -8,6 +8,7 @@ import {
   peekSignOutMarker,
 } from '../lib/userCache';
 import { reloadApp } from '../lib/reload';
+import { clearAllReverseSyncPending } from '../lib/newshackerReverseSyncPending';
 
 /**
  * Per-user cache scoping (AGENTS guardrail #8). Returns `true` while an auth
@@ -60,6 +61,14 @@ export function useUserCacheScope(): boolean {
     // Empty the in-memory cache, then reload so the new session boots with
     // correctly-scoped keys (and the boot reconcile migrates/purges as needed).
     queryClient.clear();
+    // The reverse-sync "pending" markers (sessionStorage, unscoped) aren't part
+    // of the uid-keyed userCache surfaces, so purge them here whenever a real
+    // user departs — otherwise the previous user's open-on-newshacker syncing
+    // spinner could show on the next user's matching shared item id (item ids are
+    // shared across accounts). Same gate as the persisted purge below.
+    if (departing !== null && (uid !== null || explicit)) {
+      clearAllReverseSyncPending();
+    }
     // Only purge a real departing USER's persisted scope, and only when they
     // actually left (explicit sign-out, or replaced by another uid). The
     // anonymous (null) scope holds no other user's private data, and on an

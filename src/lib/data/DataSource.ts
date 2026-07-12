@@ -354,8 +354,13 @@ export interface DataSource {
    * (see `useStateSync`); the store emits on any change, which the feed-
    * invalidation hook turns into a refetch and the library pages read directly.
    * Implementations coalesce overlapping calls. The mock no-ops it (its store is
-   * the local source of truth — there's no server to reconcile against). */
-  resyncState(): Promise<void>;
+   * the local source of truth — there's no server to reconcile against).
+   *
+   * Pass `force: true` when the caller has just applied server-side changes it
+   * MUST see reflected (the newshacker reverse pull): a plain call may coalesce
+   * onto an in-flight read that started *before* the write, so `force` chains a
+   * guaranteed-fresh read after any in-flight one instead. */
+  resyncState(force?: boolean): Promise<void>;
   /** Epoch ms of the last successful server `item_state` pull (boot hydration or
    * a cross-device resync), or null if none has completed this session. Surfaced
    * on `/debug` as "Last sync". Optional: sources with no server to reconcile
