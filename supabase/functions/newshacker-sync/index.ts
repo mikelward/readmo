@@ -1,6 +1,6 @@
-// Readmo → newshacker Done/Pinned mirror — Edge Function.
+// Readmo ↔ newshacker Done/Pinned sync — Edge Function.
 //
-// POST /functions/v1/newshacker-sync
+// POST /functions/v1/newshacker-sync   (push: Readmo → newshacker)
 //   { entries: [{ id, at, deleted? }],   // Done list (legacy key name, kept so
 //     pinned:  [{ id, at, deleted? }] }   // an older client still mirrors Done)
 // Forwards a batch of the caller's Done and Pinned transitions for Hacker News
@@ -8,6 +8,17 @@
 // also updates newshacker's matching list (SPEC.md "Mirror dismissals and pins to
 // newshacker"). `id` is the numeric HN item id (derived client-side, see
 // src/lib/newshacker.ts); `deleted` is a tombstone for an un-dismiss / unpin.
+//
+// GET /functions/v1/newshacker-sync    (pull: newshacker → Readmo, Done only)
+//   → { linked, applied }
+// Fetches newshacker's own Done list (GET /api/sync with the same bearer token)
+// and applies it to the caller's item_state via the `apply_newshacker_dones`
+// RPC (0062), mapping each HN id back to a Readmo item the user subscribes to.
+// This is the reverse half of the mirror — e.g. once you open a story on
+// newshacker and mark it Done there, it flows back and dismisses it in Readmo.
+// The RPC runs as the CALLER (userClient, so auth.uid() is the account and RLS
+// applies), not the service role. `applied` is the number of item_state writes
+// issued (0 when nothing mapped); the client re-hydrates when it's > 0.
 //
 // Trust + access:
 //   - The caller's JWT identifies the user (userClient.auth.getUser()).
@@ -22,20 +33,25 @@
 //     deliberately does NOT route through the generic SSRF helper, which would
 //     strip the credential we intend to forward.
 //
-// Soft by design: any failure returns a 200 envelope ({ linked, ok }) — the
-// mirror is best-effort and never blocks or surfaces an error in the reader. The
-// local Done state is authoritative regardless.
+// Soft by design: any failure returns a 200 envelope ({ linked, ok/applied }) —
+// the sync is best-effort and never blocks or surfaces an error in the reader.
+// The local Done state is authoritative regardless.
 
 // @ts-nocheck — runs under Deno, not node/tsc.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { preflight } from '../_shared/cors.ts';
 import { jsonCors as json } from '../_shared/respond.ts';
+import { extractDoneEntries } from '../_shared/newshackerPull.ts';
 
 const NEWSHACKER_ORIGIN =
   Deno.env.get('NEWSHACKER_ORIGIN') ?? 'https://newshacker.app';
 const NEWSHACKER_SYNC_URL = `${NEWSHACKER_ORIGIN}/api/sync`;
 const SYNC_TIMEOUT_MS = 10_000;
 const MAX_ENTRIES = 500;
+// Cap the reverse pull: newshacker's Done list can hold up to 10k entries, but
+// only recent ones map to items still inside Readmo's freshness window.
+// extractDoneEntries keeps the newest `PULL_MAX`.
+const PULL_MAX = 1000;
 
 Deno.serve(async (req: Request) => {
   try {
@@ -66,7 +82,9 @@ function normalizeEntries(value: unknown): Array<{ id: number; at: number; delet
 
 async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return preflight();
-  if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
+  if (req.method !== 'POST' && req.method !== 'GET') {
+    return json({ error: 'GET or POST only' }, 405);
+  }
 
   const authHeader = req.headers.get('Authorization') ?? '';
   const userClient = createClient(
@@ -83,6 +101,26 @@ async function handle(req: Request): Promise<Response> {
   const { data: auth, error: authError } = await userClient.auth.getUser();
   if (authError || !auth?.user) return json({ error: 'Not authenticated' }, 401);
 
+  // Read the caller's token once (service role bypasses the deny-all RLS on the
+  // link). Both directions need it; if the user hasn't linked, neither runs.
+  const { data: link, error: linkError } = await service
+    .from('newshacker_link')
+    .select('token')
+    .eq('user_id', auth.user.id)
+    .maybeSingle();
+  if (linkError) {
+    console.error('newshacker-sync: link read failed:', linkError.message);
+    return json({ linked: null, ok: false });
+  }
+  const token = link?.token as string | undefined;
+
+  return req.method === 'GET'
+    ? await handlePull(userClient, token)
+    : await handlePush(req, token);
+}
+
+/** POST: forward the caller's Done/Pinned transitions to newshacker. */
+async function handlePush(req: Request, token: string | undefined): Promise<Response> {
   let body: unknown;
   try {
     body = await req.json();
@@ -95,18 +133,7 @@ async function handle(req: Request): Promise<Response> {
   if (done.length === 0 && pinned.length === 0) {
     return json({ linked: null, ok: true });
   }
-
-  // Read the caller's token (service role bypasses the deny-all RLS on the link).
-  const { data: link, error: linkError } = await service
-    .from('newshacker_link')
-    .select('token')
-    .eq('user_id', auth.user.id)
-    .maybeSingle();
-  if (linkError) {
-    console.error('newshacker-sync: link read failed:', linkError.message);
-    return json({ linked: null, ok: false });
-  }
-  if (!link?.token) return json({ linked: false, ok: true });
+  if (!token) return json({ linked: false, ok: true });
 
   // Forward to newshacker's /api/sync bearer branch (done + pinned lists).
   const controller = new AbortController();
@@ -116,7 +143,7 @@ async function handle(req: Request): Promise<Response> {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        Authorization: `Bearer ${link.token}`,
+        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({ done, pinned }),
       signal: controller.signal,
@@ -128,4 +155,43 @@ async function handle(req: Request): Promise<Response> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** GET: pull newshacker's own Done list and apply it to the caller's
+ * item_state (reverse sync). Runs the RPC as the caller (userClient) so
+ * auth.uid() is the account and RLS applies. Best-effort throughout. */
+async function handlePull(
+  userClient: ReturnType<typeof createClient>,
+  token: string | undefined,
+): Promise<Response> {
+  if (!token) return json({ linked: false, applied: 0 });
+
+  // Fetch newshacker's full sync state via its bearer branch, then keep Done.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SYNC_TIMEOUT_MS);
+  let entries: ReturnType<typeof extractDoneEntries>;
+  try {
+    const res = await fetch(NEWSHACKER_SYNC_URL, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    });
+    if (!res.ok) return json({ linked: true, applied: 0 });
+    entries = extractDoneEntries(await res.json(), PULL_MAX);
+  } catch (err) {
+    console.error('newshacker-sync: pull fetch failed:', err instanceof Error ? err.message : err);
+    return json({ linked: true, applied: 0 });
+  } finally {
+    clearTimeout(timer);
+  }
+  if (entries.length === 0) return json({ linked: true, applied: 0 });
+
+  const { data, error } = await userClient.rpc('apply_newshacker_dones', {
+    p_entries: entries,
+  });
+  if (error) {
+    console.error('newshacker-sync: apply failed:', error.message);
+    return json({ linked: true, applied: 0 });
+  }
+  return json({ linked: true, applied: typeof data === 'number' ? data : 0 });
 }

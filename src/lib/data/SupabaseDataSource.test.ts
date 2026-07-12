@@ -1451,6 +1451,38 @@ describe('SupabaseDataSource dispatch + writes', () => {
     ).rejects.toMatchObject({ name: 'AddFeedError', kind: 'blocked' });
   });
 
+  it('pullNewshackerDone invokes the GET branch and re-hydrates when dones applied', async () => {
+    const env = setup();
+    env.fake.invokeResult.current = { data: { linked: true, applied: 2 }, error: null };
+    const resync = vi.spyOn(env.ds, 'resyncState').mockResolvedValue();
+    const res = await env.ds.pullNewshackerDone();
+    expect(res).toEqual({ linked: true, applied: 2 });
+    expect(env.fake.invokeCalls).toContainEqual({
+      name: 'newshacker-sync',
+      body: undefined,
+      method: 'GET',
+    });
+    expect(resync).toHaveBeenCalledTimes(1);
+  });
+
+  it('pullNewshackerDone does not re-hydrate when nothing was applied', async () => {
+    const env = setup();
+    env.fake.invokeResult.current = { data: { linked: true, applied: 0 }, error: null };
+    const resync = vi.spyOn(env.ds, 'resyncState').mockResolvedValue();
+    const res = await env.ds.pullNewshackerDone();
+    expect(res).toEqual({ linked: true, applied: 0 });
+    expect(resync).not.toHaveBeenCalled();
+  });
+
+  it('pullNewshackerDone reports unlinked on a function error and skips re-hydrate', async () => {
+    const env = setup();
+    env.fake.invokeResult.current = { data: null, error: { message: 'boom' } };
+    const resync = vi.spyOn(env.ds, 'resyncState').mockResolvedValue();
+    const res = await env.ds.pullNewshackerDone();
+    expect(res).toEqual({ linked: false, applied: 0 });
+    expect(resync).not.toHaveBeenCalled();
+  });
+
   it('getCapabilities rethrows an error instead of caching all-false', async () => {
     // An error must NOT be swallowed into a permissive all-false: that would pin
     // "gate open" for the 5-min staleTime and let an off-list user issue fulltext
