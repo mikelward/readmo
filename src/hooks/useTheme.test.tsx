@@ -14,29 +14,28 @@ import {
 function mockMatchMedia(initialMatches: boolean) {
   const listeners = new Set<(event: MediaQueryListEvent) => void>();
   let matches = initialMatches;
-  const spy = vi
-    .spyOn(window, 'matchMedia')
-    .mockImplementation(
-      (query: string) =>
-        ({
-          get matches() {
-            return matches;
-          },
-          media: query,
-          addEventListener: (
-            _type: string,
-            listener: (event: MediaQueryListEvent) => void,
-          ) => listeners.add(listener),
-          removeEventListener: (
-            _type: string,
-            listener: (event: MediaQueryListEvent) => void,
-          ) => listeners.delete(listener),
-          addListener: vi.fn(),
-          removeListener: vi.fn(),
-          dispatchEvent: vi.fn(),
-          onchange: null,
-        }) as unknown as MediaQueryList,
-    );
+  // jsdom doesn't implement matchMedia, so there's no function for `vi.spyOn`
+  // to replace (vitest 4 throws on spying a non-function). Assign the stub
+  // directly; the afterEach below deletes it to restore jsdom's default.
+  window.matchMedia = ((query: string) =>
+    ({
+      get matches() {
+        return matches;
+      },
+      media: query,
+      addEventListener: (
+        _type: string,
+        listener: (event: MediaQueryListEvent) => void,
+      ) => listeners.add(listener),
+      removeEventListener: (
+        _type: string,
+        listener: (event: MediaQueryListEvent) => void,
+      ) => listeners.delete(listener),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+      onchange: null,
+    }) as unknown as MediaQueryList) as typeof window.matchMedia;
   function fire(nextMatches: boolean) {
     matches = nextMatches;
     const event = {
@@ -45,7 +44,7 @@ function mockMatchMedia(initialMatches: boolean) {
     } as MediaQueryListEvent;
     for (const listener of listeners) listener(event);
   }
-  return { spy, fire };
+  return { fire };
 }
 
 function installMetaThemeColor(initial = ''): HTMLMetaElement {
@@ -78,6 +77,7 @@ describe('useTheme', () => {
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.remove();
     vi.restoreAllMocks();
+    delete (window as { matchMedia?: unknown }).matchMedia;
   });
 
   it('returns the stored theme and persists changes', () => {

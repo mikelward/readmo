@@ -41,6 +41,13 @@ export function isPermanentWriteError(error: unknown): boolean {
   return typeof code === 'string' && PERMANENT_WRITE_CODES.has(code);
 }
 
+/** SQLSTATE `subscribe_to_feed` raises when the caller is at the per-account
+ * feed cap (configuration_limit_exceeded; see migration 0059). The client maps
+ * it to a typed AddFeedError('feed-limit') so the UI shows the "limit reached"
+ * copy. An older backend predating 0059 never raises it, so the mapping is a
+ * no-op there (guardrail #11). */
+export const FEED_LIMIT_CODE = '53400';
+
 /** An Error carrying the HTTP `status` + PostgREST `code` of a failed request. */
 export type RequestError = Error & { status?: number; code?: string };
 
@@ -80,9 +87,8 @@ export interface FeedPublicRow {
   id: string;
   site_url: string | null;
   title: string | null;
-  /** Optional: absent when read from a backend predating the `favicon_url`
-   * column + `feeds_public` projection (0036). Defaults to null in
-   * {@link mapFeed} so an older backend just yields no favicon. */
+  /** Null when the feed advertises no icon; optional so a malformed row still
+   * maps (defaults to null in {@link mapFeed}). */
   favicon_url?: string | null;
   last_fetched_at: string | null;
   next_fetch_at: string | null;
@@ -97,22 +103,24 @@ export interface ItemRow {
   feed_id: string;
   guid: string;
   url: string | null;
-  /** Optional: the `feed_items` RPC returns the whole item row (so list views
-   * carry it), but the ITEM_COLS direct reads (library/search/reader) omit it.
-   * Absent against a backend predating the `comments_url` column (0033).
-   * Defaults to null in {@link mapItem}. */
   comments_url?: string | null;
   title: string | null;
-  /** Optional: the spoiler-free rewrite of `title`. Rides the `feed_items` RPC
-   * (list rows) and the ITEM_COLS direct reads, but is absent against a backend
-   * predating the `spoiler_free_title` column (0045) — defaults to null in
-   * {@link mapItem}. */
+  /** The spoiler-free rewrite of `title`, or null when the item has none. Rides
+   * both the `feed_items` RPC (list rows) and the ITEM_COLS direct reads;
+   * optional so a malformed row still maps (defaults to null in {@link mapItem}). */
   spoiler_free_title?: string | null;
   author: string | null;
   published_at: string | null;
   content_html: string | null;
   summary: string | null;
   full_content_html?: string | null;
+  /** Optional: the cached AI summary. Rides the `feed_items` RPC (list rows) for
+   * an allowlisted caller (server-gated on `email_is_allowlisted`, 0058) and is
+   * NULLed for everyone else; the ITEM_COLS direct reads (library/search/reader)
+   * omit it (so a direct read never carries it), and it's absent against a
+   * backend predating the column. Defaults to null in {@link mapItem}; the
+   * reader falls back to the `summary` Edge call whenever it's null. */
+  ai_summary?: string | null;
   enclosures: unknown;
   content_hash: string | null;
   created_at: string | null;
@@ -138,22 +146,13 @@ export interface SubscriptionRow {
   folder: string | null;
   title_override: string | null;
   muted: boolean;
-  /** Optional: absent when read from a backend not yet migrated with the
-   * `open_original` column (loadSubscriptions falls back to the legacy
-   * columns). Defaults to false in {@link mapSubscription}. */
+  // Optional so a malformed row still maps; each defaults to its neutral value
+  // in {@link mapSubscription}.
   open_original?: boolean;
-  /** Optional: absent when read from a backend not yet migrated with the
-   * `open_newshacker` column (0034) — loadSubscriptions falls back to the
-   * pre-0034 column set. Defaults to false in {@link mapSubscription}. */
   open_newshacker?: boolean;
-  /** Optional: absent when read from a backend not yet migrated with the
-   * `mark_done_on_open` column (0037) — loadSubscriptions falls back to the
-   * pre-0037 column set. Defaults to false in {@link mapSubscription}. */
   mark_done_on_open?: boolean;
-  /** Optional: absent when read from a backend not yet migrated with the
-   * `list_layout` column (0051) — loadSubscriptions falls back to the pre-0051
-   * column set. A per-feed card-style override; null (or an unrecognized value)
-   * maps to null in {@link mapSubscription} = "use the app-wide setting". */
+  /** A per-feed card-style override; null (or an unrecognized value) maps to null
+   * in {@link mapSubscription} = "use the app-wide setting". */
   list_layout?: string | null;
   sort: number;
 }
@@ -175,7 +174,7 @@ function mapListLayout(raw: string | null | undefined): ListLayout | null {
  * `feeds_public` row → `Feed`. The display `url` is sourced from `site_url` —
  * never a fetch URL, which the view doesn't even expose (a per-user token could
  * ride in it; see types.ts `Feed.url` and 0002_rls.sql). `faviconUrl` comes
- * from the view's `favicon_url` (0036); it's null against a pre-0036 backend.
+ * from the view's `favicon_url` (0036); null when the feed advertises no icon.
  */
 export function mapFeed(row: FeedPublicRow): Feed {
   return {
@@ -222,6 +221,7 @@ export function mapItem(row: ItemRow): Item {
     contentHtml: row.content_html ?? '',
     summary: row.summary ?? null,
     fullContentHtml: row.full_content_html ?? null,
+    aiSummary: row.ai_summary ?? null,
     enclosures: mapEnclosures(row.enclosures),
   };
 }

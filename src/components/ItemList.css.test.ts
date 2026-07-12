@@ -104,6 +104,18 @@ describe('group-by-feed section header positioning contract', () => {
     );
   });
 
+  it('sizes the auto-hide scroll-space to a full viewport so the last row can clear the top', () => {
+    // The blank tail must be tall enough to scroll the final screenful of rows
+    // up past the top chrome (otherwise auto-hide-on-scroll can never reach
+    // them). One viewport clears the last row in either bottom-bar position;
+    // dvh tracks the mobile dynamic-toolbar viewport with vh as the fallback.
+    const decls = declarationsFor('.item-list__scroll-space');
+    // declarationsFor collapses duplicate props to the last-wins value (the
+    // cascade), so assert the dvh winner is present in the raw sheet too.
+    expect(decls['min-height']).toBe('100dvh');
+    expect(cssNoComments).toContain('min-height: 100vh');
+  });
+
   it('bounds the sticky header to its own section container', () => {
     // The section <li> is the header's sticky containing block, so only the
     // current feed's header is ever pinned (earlier ones are pushed out, not

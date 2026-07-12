@@ -53,6 +53,7 @@ const FEED_ITEM: FeedItem = {
     contentHtml: '<p>Body</p>',
     summary: null,
     fullContentHtml: null,
+    aiSummary: null,
     enclosures: [],
   },
   feed: {

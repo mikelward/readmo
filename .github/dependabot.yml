@@ -4,6 +4,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    assignees:
+      - "mikelward"
     open-pull-requests-limit: 5
     cooldown:
       default-days: 7
@@ -51,3 +53,5 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    assignees:
+      - "mikelward"

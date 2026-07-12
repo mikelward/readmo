@@ -108,9 +108,16 @@ describe('SupabaseDataSource reads', () => {
   });
 
   it('getLastSyncedAt is null until the first server pull, then a timestamp', async () => {
-    expect(env.ds.getLastSyncedAt()).toBeNull();
-    await env.ds.getHomeItems(); // triggers item_state hydration
-    expect(typeof env.ds.getLastSyncedAt()).toBe('number');
+    // The constructor kicks off a boot hydration (`void ensureHydrated()`), so
+    // the "null" window is the synchronous instant right after construction,
+    // before that pull's microtask resolves. Read it inline here — no await
+    // between construction and the assertion — rather than off the `env` built
+    // in beforeEach, whose boot pull vitest has already flushed by the time the
+    // body runs.
+    const { ds } = setup();
+    expect(ds.getLastSyncedAt()).toBeNull();
+    await ds.getHomeItems(); // awaits the first hydration to completion
+    expect(typeof ds.getLastSyncedAt()).toBe('number');
   });
 
   it('re-serves an item whose Done aged past the 30-day TTL (matching the real feed_items)', async () => {
@@ -255,18 +262,6 @@ describe('SupabaseDataSource reads', () => {
     const fi = await ds.getItem('i-hn');
     expect(fake.lastSelectCols('items')).toContain('comments_url');
     expect(fi?.item.commentsUrl).toBe('https://news.ycombinator.com/item?id=42662903');
-  });
-
-  it('falls back to the legacy item columns when comments_url is missing (pre-0033 backend)', async () => {
-    const env = setup();
-    // Model a backend predating migration 0033: any select naming comments_url
-    // 400s with undefined_column (42703), so the read drops that column and
-    // retries with the legacy set rather than failing every item read.
-    env.fake.failSelectWhenColumns('items', 'comments_url', { code: '42703' });
-    const fi = await env.ds.getItem('i3');
-    expect(fi?.item.title).toBe('Beta three');
-    expect(fi?.item.commentsUrl).toBeNull();
-    expect(env.fake.lastSelectCols('items')).not.toContain('comments_url');
   });
 
   it('getItemsByIds chunks a large id list (no unbounded IN)', async () => {
@@ -1456,24 +1451,10 @@ describe('SupabaseDataSource dispatch + writes', () => {
     ).rejects.toMatchObject({ name: 'AddFeedError', kind: 'blocked' });
   });
 
-  it('getCapabilities feature-detects a backend without the RPC → all-false', async () => {
-    // The fake returns a PGRST202 ("unknown rpc") error for get_capabilities (an
-    // old backend that predates the migration). getCapabilities must fall back to
-    // no capabilities rather than throwing, so an old backend behaves like
-    // today — no chip, no /admin (guardrail #11).
-    const env = setup();
-    expect(await env.ds.getCapabilities()).toEqual({
-      family: false,
-      admin: false,
-      allowlistArmed: false,
-    });
-  });
-
-  it('getCapabilities rethrows a transient error instead of caching all-false', async () => {
-    // A non-PGRST202 error (network blip / 5xx) must NOT be swallowed into a
-    // permissive all-false: that would pin "gate open" for the 5-min staleTime
-    // and let an off-list user issue fulltext calls. Rethrow so React Query
-    // retries and keeps the prior value.
+  it('getCapabilities rethrows an error instead of caching all-false', async () => {
+    // An error must NOT be swallowed into a permissive all-false: that would pin
+    // "gate open" for the 5-min staleTime and let an off-list user issue fulltext
+    // calls. Rethrow so React Query retries and keeps the prior value.
     const env = setup();
     const realRpc = env.fake.client.rpc.bind(env.fake.client);
     env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
@@ -1488,10 +1469,9 @@ describe('SupabaseDataSource dispatch + writes', () => {
     await expect(env.ds.getCapabilities()).rejects.toThrow('service unavailable');
   });
 
-  it('getCapabilities maps can_manage_users, and reads false on a pre-0030 backend', async () => {
+  it('getCapabilities maps can_manage_users, defaulting a missing flag to false', async () => {
     const env = setup();
     const realRpc = env.fake.client.rpc.bind(env.fake.client);
-    // A 0030 backend returns the flag.
     env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
       if (name === 'get_capabilities') {
         return Promise.resolve({
@@ -1503,8 +1483,8 @@ describe('SupabaseDataSource dispatch + writes', () => {
     }) as typeof env.fake.client.rpc;
     expect(await env.ds.getCapabilities()).toMatchObject({ admin: true, canManageUsers: true });
 
-    // A pre-0030 backend's get_capabilities omits the column → false, so /admin
-    // hides the block/delete/sign-up controls whose RPCs aren't deployed yet.
+    // A row that omits the flag → false, so /admin hides the block/delete/sign-up
+    // controls rather than rendering a bogus permissive state.
     env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
       if (name === 'get_capabilities') {
         return Promise.resolve({
@@ -1517,10 +1497,9 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(await env.ds.getCapabilities()).toMatchObject({ admin: true, canManageUsers: false });
   });
 
-  it('listUsers maps rows and feature-detects a backend without the RPC', async () => {
+  it('listUsers maps rows, defaulting a missing blocked flag to false', async () => {
     const env = setup();
     const realRpc = env.fake.client.rpc.bind(env.fake.client);
-    // First: a backend that has the RPC → mapped rows.
     env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
       if (name === 'list_users') {
         return Promise.resolve({
@@ -1534,7 +1513,7 @@ describe('SupabaseDataSource dispatch + writes', () => {
               blocked: true,
             },
             {
-              // No `blocked` field — an old backend (pre-0030) → maps to false.
+              // No `blocked` field on this row → maps to false.
               email: 'b@example.com',
               created_at: '2024-02-01T00:00:00Z',
               last_sign_in_at: null,
@@ -1565,21 +1544,9 @@ describe('SupabaseDataSource dispatch + writes', () => {
         blocked: false,
       },
     ]);
-
-    // Then: an old backend without the RPC (PGRST202) → empty list, no throw.
-    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
-      if (name === 'list_users') {
-        return Promise.resolve({
-          data: null,
-          error: { code: 'PGRST202', message: 'unknown function' },
-        });
-      }
-      return realRpc(name, params);
-    }) as typeof env.fake.client.rpc;
-    expect(await env.ds.listUsers()).toEqual([]);
   });
 
-  it('listFeedStatuses maps rows and feature-detects a backend without the RPC', async () => {
+  it('listFeedStatuses maps rows', async () => {
     const env = setup();
     const realRpc = env.fake.client.rpc.bind(env.fake.client);
     env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
@@ -1671,26 +1638,14 @@ describe('SupabaseDataSource dispatch + writes', () => {
         sample: null,
       },
     ]);
-
-    // An old backend without the RPC (PGRST202) → empty list, no throw.
-    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
-      if (name === 'admin_list_feeds') {
-        return Promise.resolve({
-          data: null,
-          error: { code: 'PGRST202', message: 'unknown function' },
-        });
-      }
-      return realRpc(name, params);
-    }) as typeof env.fake.client.rpc;
-    expect(await env.ds.listFeedStatuses()).toEqual([]);
   });
 
-  it('listFeedStatuses reports an absent subscriber_count as unknown (null), not 0', async () => {
+  it('listFeedStatuses reports a malformed subscriber_count as unknown (null), not 0', async () => {
     const env = setup();
     const realRpc = env.fake.client.rpc.bind(env.fake.client);
     env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
       if (name === 'admin_list_feeds') {
-        // A backend that predates migration 0041 → rows omit subscriber_count.
+        // A malformed row omitting subscriber_count / paused.
         return Promise.resolve({
           data: [{ id: 'feed-1', title: 'A Feed', error_count: 0 }],
           error: null,
@@ -1700,8 +1655,8 @@ describe('SupabaseDataSource dispatch + writes', () => {
     }) as typeof env.fake.client.rpc;
     const [feed] = await env.ds.listFeedStatuses();
     expect(feed.subscriberCount).toBeNull();
-    // Same rollout window: an absent `paused` maps to null ("pausing not
-    // supported yet"), not a false that would offer a Pause with no RPC.
+    // A malformed `paused` maps to null ("unknown"), not a false that would
+    // render a bogus Pause control.
     expect(feed.paused).toBeNull();
   });
 
@@ -1781,24 +1736,15 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(captured).toEqual({ p_email: 'spammer@example.com', p_blocked: true });
   });
 
-  it('getSignupsEnabled returns the flag, and feature-detects an old backend → true', async () => {
+  it('getSignupsEnabled returns the flag', async () => {
     const env = setup();
     const realRpc = env.fake.client.rpc.bind(env.fake.client);
-    // Backend has the RPC and reports sign-ups OFF.
+    // Backend reports sign-ups OFF.
     env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
       if (name === 'get_signups_enabled') return Promise.resolve({ data: false, error: null });
       return realRpc(name, params);
     }) as typeof env.fake.client.rpc;
     expect(await env.ds.getSignupsEnabled()).toBe(false);
-
-    // Old backend without the RPC (PGRST202) → defaults to open (true), no throw.
-    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
-      if (name === 'get_signups_enabled') {
-        return Promise.resolve({ data: null, error: { code: 'PGRST202', message: 'unknown function' } });
-      }
-      return realRpc(name, params);
-    }) as typeof env.fake.client.rpc;
-    expect(await env.ds.getSignupsEnabled()).toBe(true);
   });
 
   it('setSignupsEnabled calls set_signups_enabled with the flag', async () => {
@@ -2010,39 +1956,6 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(subs.find((s) => s.subscription.feedId === 'feed-a')!.subscription.openOriginal).toBe(false);
   });
 
-  it('getSubscriptions falls back to the legacy columns when open_original is missing (pre-0027 backend)', async () => {
-    const env = setup();
-    // Optimistic before any read has proven the column absent.
-    expect(env.ds.supportsOpenOriginal()).toBe(true);
-    expect(env.ds.supportsOpenNewshacker()).toBe(true);
-    // Model a pre-0027 backend: any select naming open_original errors with
-    // undefined_column (42703), so both the full and the no-newshacker tiers
-    // fail and the read drops to the legacy column set.
-    env.fake.failSelectWhenColumns('subscriptions', 'open_original', { code: '42703' });
-    const subs = await env.ds.getSubscriptions();
-    expect(subs.length).toBeGreaterThan(0);
-    expect(subs.every((s) => s.subscription.openOriginal === false)).toBe(true);
-    expect(subs.every((s) => s.subscription.openNewshacker === false)).toBe(true);
-    // The fallback marks both features unsupported so the UI hides the controls.
-    expect(env.ds.supportsOpenOriginal()).toBe(false);
-    expect(env.ds.supportsOpenNewshacker()).toBe(false);
-  });
-
-  it('getSubscriptions falls back to the pre-0034 columns when only open_newshacker is missing', async () => {
-    const env = setup();
-    expect(env.ds.supportsOpenNewshacker()).toBe(true);
-    // Model a backend with 0027 but not 0034: only a projection naming
-    // open_newshacker errors, so the read drops just that column and keeps
-    // open_original.
-    env.fake.failSelectWhenColumns('subscriptions', 'open_newshacker', { code: '42703' });
-    const subs = await env.ds.getSubscriptions();
-    expect(subs.length).toBeGreaterThan(0);
-    expect(subs.every((s) => s.subscription.openNewshacker === false)).toBe(true);
-    // open_original is still supported; only the newshacker option hides.
-    expect(env.ds.supportsOpenOriginal()).toBe(true);
-    expect(env.ds.supportsOpenNewshacker()).toBe(false);
-  });
-
   it('setOpenMode writes both open-mode columns atomically and reads back', async () => {
     const env = setup();
     const subB = async () =>
@@ -2065,59 +1978,6 @@ describe('SupabaseDataSource dispatch + writes', () => {
     )!.subscription;
     expect(a.openOriginal).toBe(false);
     expect(a.openNewshacker).toBe(false);
-  });
-
-  it('setOpenMode tolerates a pre-0034 backend: retries without open_newshacker', async () => {
-    const env = setup();
-    // The combined write naming open_newshacker 400s on a pre-0034 backend; the
-    // data source retries with just open_original so reader/original still
-    // persist, and records the column absent so the option hides.
-    env.fake.failUpdateOnce('subscriptions', { code: 'PGRST204' });
-    await expect(env.ds.setOpenMode('feed-b', 'original')).resolves.toBeUndefined();
-    expect(env.ds.supportsOpenNewshacker()).toBe(false);
-    const b = (await env.ds.getSubscriptions()).find(
-      (s) => s.subscription.feedId === 'feed-b',
-    )!.subscription;
-    // The open_original half of the intent still landed via the retry.
-    expect(b.openOriginal).toBe(true);
-  });
-
-  it('setOpenMode on a pre-0034 backend does not clobber open_original for a newshacker pick', async () => {
-    const env = setup();
-    const subB = async () =>
-      (await env.ds.getSubscriptions()).find(
-        (s) => s.subscription.feedId === 'feed-b',
-      )!.subscription;
-    // Feed starts in "open original".
-    await env.ds.setOpenMode('feed-b', 'original');
-    expect((await subB()).openOriginal).toBe(true);
-    // The option is still showing (optimistic stale cache), but the backend
-    // lacks open_newshacker: the write 400s. We can't honor newshacker, so the
-    // existing open_original preference must be left intact — NOT cleared.
-    env.fake.failUpdateOnce('subscriptions', { code: 'PGRST204' });
-    await expect(env.ds.setOpenMode('feed-b', 'newshacker')).resolves.toBeUndefined();
-    expect(env.ds.supportsOpenNewshacker()).toBe(false);
-    expect((await subB()).openOriginal).toBe(true);
-    expect((await subB()).openNewshacker).toBe(false);
-  });
-
-  it('reports open-original support after a normal subscriptions read', async () => {
-    const env = setup();
-    await env.ds.getSubscriptions();
-    expect(env.ds.supportsOpenOriginal()).toBe(true);
-  });
-
-  it('setOpenOriginal no-ops (no throw) and marks support false when the column is missing', async () => {
-    const env = setup();
-    // A PATCH body naming a column absent from the schema cache returns
-    // PostgREST's own PGRST204 (not the SELECT-path 42703), so the tolerant
-    // write must recognize it. Model that pre-0027 / stale-schema rejection.
-    env.fake.failUpdateOnce('subscriptions', { code: 'PGRST204' });
-    // Must not reject — the client can't *require* the unshipped migration, even
-    // if the control was shown from a cache-served render before a live probe.
-    await expect(env.ds.setOpenOriginal('feed-a', true)).resolves.toBeUndefined();
-    // Capability now reads false, so the Feeds page hides the control next render.
-    expect(env.ds.supportsOpenOriginal()).toBe(false);
   });
 
   it('setOpenOriginal still throws on a genuine (non-missing-column) write error', async () => {
@@ -2146,31 +2006,6 @@ describe('SupabaseDataSource dispatch + writes', () => {
     ).toBe(false);
   });
 
-  it('getSubscriptions falls back to the pre-0037 columns when only mark_done_on_open is missing', async () => {
-    const env = setup();
-    expect(env.ds.supportsMarkDoneOnOpen()).toBe(true);
-    // Model a backend with 0027/0034 but not 0037: only a projection naming
-    // mark_done_on_open errors, so the read drops just that column and keeps the
-    // open-mode columns.
-    env.fake.failSelectWhenColumns('subscriptions', 'mark_done_on_open', {
-      code: '42703',
-    });
-    const subs = await env.ds.getSubscriptions();
-    expect(subs.length).toBeGreaterThan(0);
-    expect(subs.every((s) => s.subscription.markDoneOnOpen === false)).toBe(true);
-    // The open-mode columns are still supported; only the mark-done control hides.
-    expect(env.ds.supportsMarkDoneOnOpen()).toBe(false);
-    expect(env.ds.supportsOpenOriginal()).toBe(true);
-    expect(env.ds.supportsOpenNewshacker()).toBe(true);
-  });
-
-  it('setMarkDoneOnOpen no-ops (no throw) and marks support false when the column is missing', async () => {
-    const env = setup();
-    env.fake.failUpdateOnce('subscriptions', { code: 'PGRST204' });
-    await expect(env.ds.setMarkDoneOnOpen('feed-a', true)).resolves.toBeUndefined();
-    expect(env.ds.supportsMarkDoneOnOpen()).toBe(false);
-  });
-
   it('setMarkDoneOnOpen still throws on a genuine (non-missing-column) write error', async () => {
     const env = setup();
     env.fake.failUpdateOnce('subscriptions', { code: '500', message: 'boom' });
@@ -2194,31 +2029,6 @@ describe('SupabaseDataSource dispatch + writes', () => {
     // Passing null clears the override.
     await env.ds.setSubscriptionListLayout('feed-b', null);
     expect((await subB()).listLayout).toBe(null);
-  });
-
-  it('getSubscriptions falls back to the pre-0051 columns when only list_layout is missing', async () => {
-    const env = setup();
-    expect(env.ds.supportsSubscriptionListLayout()).toBe(true);
-    // Model a backend with 0027/0034/0037 but not 0051: only a projection naming
-    // list_layout errors, so the read drops just that column and keeps the rest.
-    env.fake.failSelectWhenColumns('subscriptions', 'list_layout', { code: '42703' });
-    const subs = await env.ds.getSubscriptions();
-    expect(subs.length).toBeGreaterThan(0);
-    expect(subs.every((s) => s.subscription.listLayout === null)).toBe(true);
-    // Only the card-style control hides; the older preferences stay supported.
-    expect(env.ds.supportsSubscriptionListLayout()).toBe(false);
-    expect(env.ds.supportsMarkDoneOnOpen()).toBe(true);
-    expect(env.ds.supportsOpenOriginal()).toBe(true);
-    expect(env.ds.supportsOpenNewshacker()).toBe(true);
-  });
-
-  it('setSubscriptionListLayout no-ops (no throw) and marks support false when the column is missing', async () => {
-    const env = setup();
-    env.fake.failUpdateOnce('subscriptions', { code: 'PGRST204' });
-    await expect(
-      env.ds.setSubscriptionListLayout('feed-a', 'excerpt'),
-    ).resolves.toBeUndefined();
-    expect(env.ds.supportsSubscriptionListLayout()).toBe(false);
   });
 
   it('setSubscriptionListLayout still throws on a genuine (non-missing-column) write error', async () => {
@@ -2467,6 +2277,55 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(added.subscription.sort).toBe(3);
   });
 
+  it('subscribe maps the feed-cap SQLSTATE (53400) to AddFeedError("feed-limit")', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'subscribe_to_feed') {
+        return Promise.resolve({
+          data: null,
+          error: { code: '53400', message: 'subscription limit reached (max 100 feeds)' },
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+
+    await expect(env.ds.subscribe('https://new.example.com/feed')).rejects.toMatchObject({
+      name: 'AddFeedError',
+      kind: 'feed-limit',
+    });
+  });
+
+  it('importOpml stops early once the account hits the feed cap (skips the rest)', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      // First new feed subscribes; every later one is rejected at the cap.
+      if (name === 'subscribe_to_feed' && params?.p_url !== 'https://one.example.com/feed') {
+        return Promise.resolve({
+          data: null,
+          error: { code: '53400', message: 'subscription limit reached (max 100 feeds)' },
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+
+    const xml = `<opml><body>
+      <outline type="rss" xmlUrl="https://one.example.com/feed" />
+      <outline type="rss" xmlUrl="https://two.example.com/feed" />
+      <outline type="rss" xmlUrl="https://three.example.com/feed" />
+    </body></opml>`;
+    const result = await env.ds.importOpml(xml);
+    // one → added; two hits the cap and breaks; two + three counted as skipped.
+    expect(result).toEqual({ added: 1, skipped: 2 });
+    // The doomed third subscribe was never attempted (loop broke at the cap).
+    expect(
+      env.fake.rpcCalls.some(
+        (c) => c.name === 'subscribe_to_feed' && c.params?.p_url === 'https://three.example.com/feed',
+      ),
+    ).toBe(false);
+  });
+
   it('subscribe routes through subscribe_to_feed and triggers an immediate refresh', async () => {
     const env = setup();
     const feed = await env.ds.subscribe('https://new.example.com/feed', 'Tech');
@@ -2642,5 +2501,54 @@ describe('SupabaseDataSource — empty-feed caught-up confirmation', () => {
     const page = await ds.getHomeItems();
     expect(page.items.length).toBeGreaterThan(0);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('exportOpml emits the real feed URL from export_subscriptions (not the homepage)', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'export_subscriptions') {
+        return Promise.resolve({
+          data: [
+            { feed_url: 'https://a.example.com/feed.xml', site_url: 'https://a.example.com', title: 'Alpha Blog' },
+            { feed_url: 'https://b.example.com/rss?a=1&b=2', site_url: null, title: null },
+          ],
+          error: null,
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+
+    const xml = await env.ds.exportOpml();
+    // The RSS endpoint, not the site homepage, is what an importer subscribes to.
+    expect(xml).toContain('xmlUrl="https://a.example.com/feed.xml"');
+    expect(xml).toContain('htmlUrl="https://a.example.com"');
+    // A null title falls back to "Untitled feed"; the & in the URL is escaped.
+    expect(xml).toContain('xmlUrl="https://b.example.com/rss?a=1&amp;b=2"');
+    expect(xml).toContain('text="Untitled feed"');
+    expect(xml).toContain('<dateCreated>');
+  });
+
+  it('exportOpml falls back to the homepage URL against a backend without the RPC (PGRST202)', async () => {
+    // The default fake returns PGRST202 for any unknown RPC, so export_subscriptions
+    // is "not deployed" — the client must still produce a document, using the only
+    // URL it can see (the display-safe site_url), rather than throwing.
+    const { ds } = setup();
+    const xml = await ds.exportOpml();
+    expect(xml).toContain('xmlUrl="https://a.example.com"'); // site_url, the fallback
+    expect(xml).toContain('title="Alpha Blog"');
+    expect(xml).not.toContain('/feed.xml');
+  });
+
+  it('exportOpml rethrows a non-PGRST202 RPC error instead of masking it', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'export_subscriptions') {
+        return Promise.resolve({ data: null, error: { code: '503', message: 'service unavailable' } });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    await expect(env.ds.exportOpml()).rejects.toThrow('service unavailable');
   });
 });

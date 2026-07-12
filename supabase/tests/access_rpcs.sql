@@ -237,10 +237,10 @@ begin
   raise notice 'PASS T11: presenting the tokenized URL grants access';
 end $$;
 
--- ===== Test 12: compat shim (0024) — an old-shape write resolves and applies ==
--- A pre-LWW cached client sends the flag plus a (now-ignored) p_base_version and
--- NO per-field timestamp. The shim must accept the base param and stamp now() so
--- the write actually lands, instead of 404ing or silently losing LWW.
+-- ===== Test 12: a flag written with no per-field timestamp applies and stamps now() ==
+-- The write path defaults a missing p_<f>_at to now(), so a flag arriving without
+-- its timestamp still lands (and gets a non-null LWW clock) instead of storing a
+-- null pinned_at that would break future LWW comparisons.
 do $$
 declare n int;
 begin
@@ -249,13 +249,13 @@ begin
   -- User 1 still holds permanent state on item E (from T5/T9), so it's visible.
   perform public.set_item_state(
     'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
-    p_pinned => true, p_base_version => 7   -- old shape: base version, no p_pinned_at
+    p_pinned => true   -- flag only, no p_pinned_at
   );
   select count(*) into n from public.item_state
     where item_id='eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
       and pinned and pinned_at is not null;   -- applied AND stamped now(), not null
-  if n <> 1 then raise exception 'FAIL T12: old-shape write did not apply / stamp now()'; end if;
-  raise notice 'PASS T12: compat shim applies an old-shape (base-version, no *_at) write';
+  if n <> 1 then raise exception 'FAIL T12: no-*_at write did not apply / stamp now()'; end if;
+  raise notice 'PASS T12: a flag with no *_at applies and stamps now()';
 end $$;
 
 -- ===== Test 13: feed_items scrubs ai_summary from list payloads (0035) =======

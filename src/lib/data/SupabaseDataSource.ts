@@ -22,7 +22,8 @@ import { confirmBackendReachable } from '../networkStatus';
 import { OUTBOX_SUFFIX } from '../userCache';
 import { isGoogleNewsFeedUrl } from '../googleNews';
 import { ItemStateStore, localStoragePersistence } from './itemState';
-import { escapeXml, decodeXmlEntities } from './xmlEntities';
+import { decodeXmlEntities } from './xmlEntities';
+import { buildOpml } from './opml';
 import {
   ItemStateOutbox,
   localStorageOutboxPersistence,
@@ -59,33 +60,15 @@ import {
   isPermanentWriteError,
   toRequestError,
   PARKED_ERROR_THRESHOLD,
+  FEED_LIMIT_CODE,
 } from './supabaseMappers';
 
 /** The display-safe columns of `feeds_public` (and of `feeds` for clients —
  * never the fetch URLs). */
 const FEED_COLS =
   'id, site_url, title, favicon_url, last_fetched_at, next_fetch_at, fetch_interval_s, error_count, last_error, created_at';
-// Pre-0036 backend (no `favicon_url` on the view): feed reads step down to this
-// column set on an undefined-column error so the favicon just doesn't show,
-// rather than 400-ing every feed read against an older backend (guardrail #11).
-// See selectFeedRows.
-const FEED_COLS_LEGACY =
-  'id, site_url, title, last_fetched_at, next_fetch_at, fetch_interval_s, error_count, last_error, created_at';
 const ITEM_COLS =
   'id, feed_id, guid, url, comments_url, title, spoiler_free_title, author, published_at, content_html, summary, enclosures, content_hash, created_at';
-// Pre-0045 backend (no `spoiler_free_title`): item reads step down to this set on
-// an undefined-column error so a sports headline just shows its original form
-// rather than 400-ing every item read (guardrail #11). Unlike the gated
-// full-text/summary columns, spoiler_free_title IS read by the client (it's a
-// list feature, not allowlist-gated at the DB); the allowlist only gates who
-// SEES the rewrite, client-side. See selectItemRows.
-const ITEM_COLS_NO_SPOILER =
-  'id, feed_id, guid, url, comments_url, title, author, published_at, content_html, summary, enclosures, content_hash, created_at';
-// Pre-0033 backend (no `comments_url`): item reads step down further so the
-// reader's Comments button degrades to "no button" rather than 400-ing every
-// item read (guardrail #11). See selectItemRows.
-const ITEM_COLS_LEGACY =
-  'id, feed_id, guid, url, title, author, published_at, content_html, summary, enclosures, content_hash, created_at';
 // No client read selects the cached full-article body (`full_content_html`) or
 // its `full_content_via_fallback` provenance flag. Both are gated on the
 // trusted-user allowlist and served ONLY through the `fulltext` Edge Function,
@@ -100,36 +83,8 @@ const ITEM_COLS_LEGACY =
 // read can't reach it either is folded into the DB-backed allowlist follow-up.
 const ITEM_STATE_COLS =
   'item_id, pinned, pinned_at, favorite, favorite_at, done, done_at, hidden, hidden_at, opened, opened_at';
-// `open_original` (0027), `open_newshacker` (0034), `mark_done_on_open` (0037),
-// and `list_layout` (0051) are selected optionally: a client can reach a backend
-// not yet migrated with any of them, so loadSubscriptions steps down through
-// these column sets on an undefined-column error (guardrail #11): full → pre-0051
-// → pre-0037 → pre-0034 → pre-0027 (legacy).
 const SUBSCRIPTION_COLS =
   'feed_id, folder, title_override, muted, open_original, open_newshacker, mark_done_on_open, list_layout, sort';
-const SUBSCRIPTION_COLS_NO_LIST_LAYOUT =
-  'feed_id, folder, title_override, muted, open_original, open_newshacker, mark_done_on_open, sort';
-const SUBSCRIPTION_COLS_NO_MARK_DONE =
-  'feed_id, folder, title_override, muted, open_original, open_newshacker, sort';
-const SUBSCRIPTION_COLS_NO_NEWSHACKER =
-  'feed_id, folder, title_override, muted, open_original, sort';
-const SUBSCRIPTION_COLS_LEGACY = 'feed_id, folder, title_override, muted, sort';
-
-/** Whether an error means "this column doesn't exist on the backend yet" — the
- * signal for the pre-0027 fallback (loadSubscriptions) and the tolerant write
- * (setOpenOriginal). Two codes cover it because PostgREST reports a missing
- * column differently per verb:
- *   - SELECT naming an unknown column → Postgres SQLSTATE `42703`
- *     (undefined_column), surfaced verbatim.
- *   - PATCH/POST body mentioning a column not in the schema cache → PostgREST's
- *     own `PGRST204` (HTTP 400) — what an `update({ open_original })` or
- *     `update({ open_newshacker })` hits against a pre-0027/pre-0034 (or
- *     stale-schema) backend.
- * See https://docs.postgrest.org/en/v12/references/errors.html */
-function isMissingColumnError(err: unknown): boolean {
-  const code = (err as { code?: unknown } | null)?.code;
-  return code === '42703' || code === 'PGRST204';
-}
 
 /** Max ids per `in (…)` lookup, so a large library bucket (Done/Hidden/Favorite
  * with hundreds/thousands of ids) is fetched in bounded batches rather than one
@@ -255,9 +210,9 @@ async function classifyFunctionError(error: unknown): Promise<AddFeedError> {
  *
  * Triage writes flow through the durable offline outbox ({@link ItemStateOutbox})
  * to `set_item_state`, which resolves cross-device conflicts by per-field
- * last-write-wins on each field's action timestamp (see SPEC *Sync*). Still
- * deferred: an authenticated OPML *export* RPC (the client can't emit server-only
- * fetch URLs).
+ * last-write-wins on each field's action timestamp (see SPEC *Sync*). OPML
+ * *export* goes through the `export_subscriptions` RPC (0061), which returns the
+ * caller's real feed fetch URLs so the file is re-importable elsewhere.
  *
  * Pagination is offset-based behind an opaque numeric cursor (mirroring the
  * mock); each page is the bounded slice of the combined pinned-then-body
@@ -285,37 +240,6 @@ export class SupabaseDataSource implements DataSource {
   private readonly sb: SupabaseClient;
   private readonly feedCache = new Map<FeedId, Feed>();
   private hydration: Promise<void> | null = null;
-  // Capability flag for the `subscriptions.open_original` column (0027). Starts
-  // optimistic (true) and flips false the first time loadSubscriptions has to
-  // fall back to the legacy column set — i.e. the backend predates the migration.
-  // The Feeds page reads it (supportsOpenOriginal) to hide the "Open original"
-  // control until the column ships, so the new client never offers a write the
-  // old backend would reject (guardrail #11).
-  private openOriginalColumn = true;
-  // Capability flag for the `subscriptions.open_newshacker` column (0034), the
-  // sibling of openOriginalColumn. Starts optimistic and flips false the first
-  // time loadSubscriptions has to step down to the pre-0034 column set — i.e. the
-  // backend predates the migration. The Feeds page reads it
-  // (supportsOpenNewshacker) to hide the "open on newshacker" option until the
-  // column ships, so the new client never offers a write the old backend would
-  // reject (guardrail #11).
-  private openNewshackerColumn = true;
-  // Capability flag for the `subscriptions.mark_done_on_open` column (0037), the
-  // newest of the open-preference columns. Starts optimistic and flips false the
-  // first time loadSubscriptions has to step down to the pre-0037 column set —
-  // i.e. the backend predates the migration. The Feeds page reads it
-  // (supportsMarkDoneOnOpen) to hide the "Mark done when opening" control until
-  // the column ships, so the new client never offers a write the old backend
-  // would reject (guardrail #11).
-  private markDoneOnOpenColumn = true;
-  // Capability flag for the `subscriptions.list_layout` column (0051), the newest
-  // subscription-preference column. Starts optimistic and flips false the first
-  // time loadSubscriptions has to step down to the pre-0051 column set — i.e. the
-  // backend predates the migration. The Feeds page reads it
-  // (supportsSubscriptionListLayout) to hide the per-feed "Card style" control
-  // until the column ships, so the new client never offers a write the old
-  // backend would reject (guardrail #11).
-  private listLayoutColumn = true;
   // Set by the write path when an LWW write lost (the server returned a row that
   // didn't take our value). Consumed by onDrained — *after* the drain clears the
   // entry — to re-pull server truth, so the re-hydrate's pending overlay no longer
@@ -497,52 +421,26 @@ export class SupabaseDataSource implements DataSource {
     return res.data as T;
   }
 
-  /** Run an `items` read with the full ITEM_COLS, stepping down through the
-   * pre-0045 (no `spoiler_free_title`) and pre-0033 (no `comments_url`) column
-   * sets on an undefined-column error when the backend hasn't got a column yet —
-   * so a new client degrades gracefully (original headline / no Comments button)
-   * instead of 400-ing every item read against an older backend (guardrail #11).
-   * `build(cols)` returns the PostgREST query for a given column projection. */
+  /** Run an `items` read with the full ITEM_COLS. `build(cols)` returns the
+   * PostgREST query for the column projection; a runtime column string makes
+   * PostgREST infer GenericStringError for the row, so unwrap<T> casts back to
+   * the mapped ItemRow shape. */
   private async selectItemRows<T>(
     build: (cols: string) => PromiseLike<{ data: unknown; error: unknown; status?: number }>,
   ): Promise<T> {
-    // A runtime column string makes PostgREST infer GenericStringError for the
-    // row; unwrap<T> casts back to the mapped ItemRow shape (as the explicit
-    // unwrap<ItemRow[]> calls these reads used to).
-    const run = async (cols: string) =>
-      this.unwrap<T>(
-        (await build(cols)) as { data: T | null; error: unknown; status?: number },
-      );
-    try {
-      return await run(ITEM_COLS);
-    } catch (err) {
-      if (!isMissingColumnError(err)) throw err;
-      try {
-        return await run(ITEM_COLS_NO_SPOILER);
-      } catch (err2) {
-        if (!isMissingColumnError(err2)) throw err2;
-        return await run(ITEM_COLS_LEGACY);
-      }
-    }
+    return this.unwrap<T>(
+      (await build(ITEM_COLS)) as { data: T | null; error: unknown; status?: number },
+    );
   }
 
-  /** Run a `feeds_public` read with the full FEED_COLS, retrying once with the
-   * pre-0036 legacy set (no `favicon_url`) on an undefined-column error — so a
-   * new client just shows no favicon against an older backend instead of
-   * 400-ing every feed read (guardrail #11). Mirrors {@link selectItemRows}. */
+  /** Run a `feeds_public` read with the full FEED_COLS. Mirrors
+   * {@link selectItemRows}. */
   private async selectFeedRows<T>(
     build: (cols: string) => PromiseLike<{ data: unknown; error: unknown; status?: number }>,
   ): Promise<T> {
-    const run = async (cols: string) =>
-      this.unwrap<T>(
-        (await build(cols)) as { data: T | null; error: unknown; status?: number },
-      );
-    try {
-      return await run(FEED_COLS);
-    } catch (err) {
-      if (!isMissingColumnError(err)) throw err;
-      return await run(FEED_COLS_LEGACY);
-    }
+    return this.unwrap<T>(
+      (await build(FEED_COLS)) as { data: T | null; error: unknown; status?: number },
+    );
   }
 
   /**
@@ -945,62 +843,9 @@ export class SupabaseDataSource implements DataSource {
     // No per-instance memo: React Query owns subscription-list caching at the
     // hook layer, so a `['subscriptions']` invalidation (after subscribe/unsub/
     // mute, or to pick up another device's change) must re-hit Supabase here.
-    const res = await this.sb.from('subscriptions').select(SUBSCRIPTION_COLS);
-    // Step down through the column sets when the backend predates a migration —
-    // 0051 (`list_layout`), 0037 (`mark_done_on_open`), 0034 (`open_newshacker`),
-    // then 0027 (`open_original`) — so a new client can still read the
-    // subscription list against an un-migrated backend. mapSubscription defaults a
-    // missing field to its neutral value, and we record which columns are absent
-    // so the UI hides the write-triggering controls until they ship (guardrail
-    // #11).
-    let subRows: SubscriptionRow[];
-    if (!isMissingColumnError(res.error)) {
-      this.openOriginalColumn = true;
-      this.openNewshackerColumn = true;
-      this.markDoneOnOpenColumn = true;
-      this.listLayoutColumn = true;
-      subRows = this.unwrap<SubscriptionRow[]>(res);
-    } else {
-      // The full select failed on an unknown column. `list_layout` (0051) is the
-      // newest, so drop it first and retry; step down further if the backend
-      // predates the earlier migrations too. Each level records which column is
-      // absent so the UI hides its write-triggering control (guardrail #11).
-      this.listLayoutColumn = false;
-      const resL = await this.sb
-        .from('subscriptions')
-        .select(SUBSCRIPTION_COLS_NO_LIST_LAYOUT);
-      if (!isMissingColumnError(resL.error)) {
-        this.openOriginalColumn = true;
-        this.openNewshackerColumn = true;
-        this.markDoneOnOpenColumn = true;
-        subRows = this.unwrap<SubscriptionRow[]>(resL);
-      } else {
-        // Older still: `mark_done_on_open` (0037) is absent too.
-        this.markDoneOnOpenColumn = false;
-        const resU = await this.sb
-          .from('subscriptions')
-          .select(SUBSCRIPTION_COLS_NO_MARK_DONE);
-        if (!isMissingColumnError(resU.error)) {
-          this.openOriginalColumn = true;
-          this.openNewshackerColumn = true;
-          subRows = this.unwrap<SubscriptionRow[]>(resU);
-        } else {
-          this.openNewshackerColumn = false;
-          const res2 = await this.sb
-            .from('subscriptions')
-            .select(SUBSCRIPTION_COLS_NO_NEWSHACKER);
-          if (!isMissingColumnError(res2.error)) {
-            this.openOriginalColumn = true;
-            subRows = this.unwrap<SubscriptionRow[]>(res2);
-          } else {
-            this.openOriginalColumn = false;
-            subRows = this.unwrap<SubscriptionRow[]>(
-              await this.sb.from('subscriptions').select(SUBSCRIPTION_COLS_LEGACY),
-            );
-          }
-        }
-      }
-    }
+    const subRows = this.unwrap<SubscriptionRow[]>(
+      await this.sb.from('subscriptions').select(SUBSCRIPTION_COLS),
+    );
     await this.ensureFeeds(subRows.map((s) => s.feed_id));
     const out: Array<{ subscription: Subscription; feed: Feed }> = [];
     for (const row of subRows) {
@@ -1466,20 +1311,31 @@ export class SupabaseDataSource implements DataSource {
    * shared feed, subscribes auth.uid(), and returns the feeds_public row. Does
    * NOT trigger a fetch — callers that want the immediate poll do it.
    *
-   * TODO(feed-cap): cap the number of feeds a user may subscribe to. Enforce it
-   * server-side in the `subscribe_to_feed` RPC (count the caller's subscriptions
-   * and reject past the limit) so it can't be bypassed, and surface a clear
-   * "subscription limit reached" error here. Beyond abuse/cost, the cap bounds
-   * the grouped feed read: the group-by-feed view returns up to K items per feed
-   * in one response, so a hard feed cap keeps that under the PostgREST row cap
-   * (and the OPML import path must respect it too). */
+   * The RPC caps the account at 100 feeds server-side (0059; idempotent
+   * re-subscribes exempt) — bounding abuse/cost and keeping the group-by-feed
+   * read's opening page under the PostgREST 1000-row cap (100 × PER_FEED_WINDOW).
+   * A subscribe past the cap comes back as SQLSTATE 53400, mapped below to a
+   * typed AddFeedError('feed-limit') so both the Add-a-feed UI and importOpml
+   * see the limit. Older backends predating 0059 never raise it. */
   private async subscribeOnly(feedUrl: string, folder?: string | null): Promise<Feed> {
-    const rows = this.unwrap<FeedPublicRow[]>(
-      await this.sb.rpc('subscribe_to_feed', {
-        p_url: feedUrl,
-        p_folder: folder ?? null,
-      }),
-    );
+    let rows: FeedPublicRow[];
+    try {
+      rows = this.unwrap<FeedPublicRow[]>(
+        await this.sb.rpc('subscribe_to_feed', {
+          p_url: feedUrl,
+          p_folder: folder ?? null,
+        }),
+      );
+    } catch (err) {
+      // The server rejects a subscribe past the per-account feed cap with
+      // SQLSTATE 53400 (see migration 0059). Map it to a typed AddFeedError so
+      // the UI shows the "feed limit reached" copy instead of a generic failure,
+      // and importOpml can stop early. Any other error propagates unchanged.
+      if ((err as { code?: unknown } | null)?.code === FEED_LIMIT_CODE) {
+        throw new AddFeedError('feed-limit', err instanceof Error ? err.message : undefined);
+      }
+      throw err;
+    }
     const row = Array.isArray(rows) ? rows[0] : (rows as FeedPublicRow | null);
     if (!row) throw new Error('subscribe_to_feed returned no feed');
     const feed = mapFeed(row);
@@ -1516,14 +1372,6 @@ export class SupabaseDataSource implements DataSource {
     if (error) throw error instanceof Error ? error : new Error(String(error));
   }
 
-  supportsOpenOriginal(): boolean {
-    // False only once a subscriptions read has proven the column absent (an
-    // un-migrated backend). Optimistic until then; the Feeds page reads this
-    // after the subscriptions query settles, so by the time the rows render the
-    // value is known.
-    return this.openOriginalColumn;
-  }
-
   async setOpenOriginal(feedId: FeedId, openOriginal: boolean): Promise<void> {
     // RLS + the column-scoped UPDATE grant (0027) confine this to the caller's
     // own row and the single display column.
@@ -1531,34 +1379,13 @@ export class SupabaseDataSource implements DataSource {
       .from('subscriptions')
       .update({ open_original: openOriginal })
       .eq('feed_id', feedId);
-    if (!error) return;
-    // Against a backend that predates 0027 the column doesn't exist. The Feeds
-    // page hides the control via supportsOpenOriginal(), but that flag is only
-    // proven after a live subscriptions read — a render served entirely from the
-    // persisted query cache could still surface the control. So tolerate the
-    // undefined-column write here too: record the column as absent (so the
-    // control hides on the next render) and no-op rather than hard-reject. The
-    // client must never *require* the unshipped migration (guardrail #11).
-    if (isMissingColumnError(error)) {
-      this.openOriginalColumn = false;
-      return;
-    }
-    throw error instanceof Error ? error : new Error(String(error));
-  }
-
-  supportsOpenNewshacker(): boolean {
-    // False only once a subscriptions read has proven the column absent (a
-    // pre-0034 backend). Optimistic until then; the Feeds page reads this after
-    // the subscriptions query settles, so by the time the rows render the value
-    // is known. Mirrors supportsOpenOriginal.
-    return this.openNewshackerColumn;
+    if (error) throw error instanceof Error ? error : new Error(String(error));
   }
 
   async setOpenMode(feedId: FeedId, mode: OpenMode): Promise<void> {
     // Write BOTH display booleans in a single PATCH so the two flags flip
     // together — a feed is never left with open_original AND open_newshacker both
-    // true (which an old client that only knows open_original would misread).
-    // RLS + the column-scoped UPDATE grants (0027/0034) confine this to the
+    // true. RLS + the column-scoped UPDATE grants (0027/0034) confine this to the
     // caller's own row and these two columns.
     const { error } = await this.sb
       .from('subscriptions')
@@ -1567,42 +1394,7 @@ export class SupabaseDataSource implements DataSource {
         open_newshacker: mode === 'newshacker',
       })
       .eq('feed_id', feedId);
-    if (!error) return;
-    // Against a backend predating 0034 the open_newshacker column doesn't exist,
-    // so naming it in the body 400s (PGRST204). Record the column absent so the
-    // option hides on the next render, then:
-    //   - reader/original: retry writing just open_original so the reachable
-    //     modes still persist.
-    //   - newshacker: we CAN'T honor the request, and the option only appeared
-    //     because supportsOpenNewshacker() was still optimistic against a stale
-    //     persisted cache. Writing open_original:false here would silently CLEAR
-    //     an existing "open original" preference and drop the feed to the reader.
-    //     Leave the row unchanged instead (the next live read hides the option).
-    // The client must never *require* the unshipped migration (guardrail #11).
-    if (isMissingColumnError(error)) {
-      this.openNewshackerColumn = false;
-      if (mode === 'newshacker') return;
-      const { error: e2 } = await this.sb
-        .from('subscriptions')
-        .update({ open_original: mode === 'original' })
-        .eq('feed_id', feedId);
-      if (!e2) return;
-      // Even open_original is absent (pre-0027): record it and no-op.
-      if (isMissingColumnError(e2)) {
-        this.openOriginalColumn = false;
-        return;
-      }
-      throw e2 instanceof Error ? e2 : new Error(String(e2));
-    }
-    throw error instanceof Error ? error : new Error(String(error));
-  }
-
-  supportsMarkDoneOnOpen(): boolean {
-    // False only once a subscriptions read has proven the column absent (a
-    // pre-0037 backend). Optimistic until then; the Feeds page reads this after
-    // the subscriptions query settles, so by the time the rows render the value
-    // is known. Mirrors supportsOpenOriginal.
-    return this.markDoneOnOpenColumn;
+    if (error) throw error instanceof Error ? error : new Error(String(error));
   }
 
   async setMarkDoneOnOpen(feedId: FeedId, markDoneOnOpen: boolean): Promise<void> {
@@ -1612,27 +1404,7 @@ export class SupabaseDataSource implements DataSource {
       .from('subscriptions')
       .update({ mark_done_on_open: markDoneOnOpen })
       .eq('feed_id', feedId);
-    if (!error) return;
-    // Against a backend that predates 0037 the column doesn't exist. The Feeds
-    // page hides the control via supportsMarkDoneOnOpen(), but that flag is only
-    // proven after a live subscriptions read — a render served entirely from the
-    // persisted query cache could still surface the control. So tolerate the
-    // undefined-column write here too: record the column as absent (so the
-    // control hides on the next render) and no-op rather than hard-reject. The
-    // client must never *require* the unshipped migration (guardrail #11).
-    if (isMissingColumnError(error)) {
-      this.markDoneOnOpenColumn = false;
-      return;
-    }
-    throw error instanceof Error ? error : new Error(String(error));
-  }
-
-  supportsSubscriptionListLayout(): boolean {
-    // False only once a subscriptions read has proven the column absent (a
-    // pre-0051 backend). Optimistic until then; the Feeds page reads this after
-    // the subscriptions query settles, so by the time the rows render the value
-    // is known. Mirrors supportsMarkDoneOnOpen.
-    return this.listLayoutColumn;
+    if (error) throw error instanceof Error ? error : new Error(String(error));
   }
 
   async setSubscriptionListLayout(
@@ -1646,19 +1418,7 @@ export class SupabaseDataSource implements DataSource {
       .from('subscriptions')
       .update({ list_layout: listLayout })
       .eq('feed_id', feedId);
-    if (!error) return;
-    // Against a backend that predates 0051 the column doesn't exist. The Feeds
-    // page hides the control via supportsSubscriptionListLayout(), but that flag
-    // is only proven after a live subscriptions read — a render served entirely
-    // from the persisted query cache could still surface the control. So tolerate
-    // the undefined-column write here too: record the column as absent (so the
-    // control hides on the next render) and no-op rather than hard-reject. The
-    // client must never *require* the unshipped migration (guardrail #11).
-    if (isMissingColumnError(error)) {
-      this.listLayoutColumn = false;
-      return;
-    }
-    throw error instanceof Error ? error : new Error(String(error));
+    if (error) throw error instanceof Error ? error : new Error(String(error));
   }
 
   async setTitleOverride(feedId: FeedId, title: string | null): Promise<void> {
@@ -1778,7 +1538,13 @@ export class SupabaseDataSource implements DataSource {
     );
     let added = 0;
     let skipped = 0;
-    for (const url of urls) {
+    // Once the account hits its feed cap every remaining subscribe is doomed, so
+    // stop early and count the rest as skipped rather than firing one rejected
+    // RPC per entry. A cap error can surface from either branch's subscribe.
+    const isCapError = (err: unknown) =>
+      err instanceof AddFeedError && err.kind === 'feed-limit';
+    for (let i = 0; i < urls.length; i++) {
+      const url = urls[i];
       // Google News feeds are restricted to the trusted-user allowlist, enforced
       // server-side in the `discover` Edge Function. importOpml otherwise
       // subscribes directly (no discover step), which would let an OPML import
@@ -1795,14 +1561,22 @@ export class SupabaseDataSource implements DataSource {
             continue;
           }
           feed = await this.subscribeOnly(candidate.url);
-        } catch {
+        } catch (err) {
+          if (isCapError(err)) {
+            skipped += urls.length - i; // this entry + all remaining
+            break;
+          }
           skipped++;
           continue;
         }
       } else {
         try {
           feed = await this.subscribeOnly(url); // no per-feed refresh storm
-        } catch {
+        } catch (err) {
+          if (isCapError(err)) {
+            skipped += urls.length - i; // this entry + all remaining
+            break;
+          }
           // A dead URL or transient RPC failure skips this entry only — one bad
           // outline must not abort the rest of the file (entries before it are
           // already committed server-side, and the caller would report nothing).
@@ -1824,29 +1598,51 @@ export class SupabaseDataSource implements DataSource {
   }
 
   /**
-   * KNOWN LIMITATION (tracked for the deferred backend item): `xmlUrl` here is
-   * the display-safe `site_url` (homepage), not the RSS/Atom fetch URL. That is
-   * deliberate — `feeds_public` never exposes `url`/`secret_url` (a per-user
-   * token can ride in `secret_url`), so the client cannot emit the real feed
-   * endpoint without leaking server-only data. A faithful, re-importable export
-   * needs an authenticated server export RPC; until that lands the exported OPML
-   * carries the public homepage address only.
+   * Export the caller's subscriptions as OPML. The `export_subscriptions` RPC
+   * (0061) returns the feed fetch URL (`feeds.url`) that `feeds_public` withholds
+   * from clients, so the export is re-importable into other readers. Exposing
+   * `url` (which can embed a pasted per-user token) is a deliberate owner-scoped
+   * carve-out: the RPC is scoped to the caller's own `subscriptions`, and to
+   * subscribe to a tokenized feed you had to present that URL yourself — so a
+   * user only ever gets back tokens they already have (see the migration's
+   * safety note). It never emits the separate server-only `secret_url`, so a
+   * rare secret-backed feed exports its token-stripped `url` and may not
+   * round-trip. Against a backend that predates the RPC (PGRST202)
+   * we fall back to the display-safe homepage URL — the older behavior — so a
+   * new client keeps working before the manual `make deploy` lands (guardrail
+   * #11). Any other RPC error is surfaced to the caller (Export shows a toast).
    */
   async exportOpml(): Promise<string> {
+    const { data, error } = await this.sb.rpc('export_subscriptions');
+    if (!error && Array.isArray(data)) {
+      // `feed_url` is the real fetch URL; `title` is resolved server-side
+      // (override → title → site_url) but is null when a never-fetched feed has
+      // none of them, so fall back to the same "Untitled feed" the list uses.
+      const rows = data as Array<{
+        feed_url: string;
+        site_url: string | null;
+        title: string | null;
+      }>;
+      const outlines = rows.map((r) => ({
+        title: r.title ?? r.site_url ?? 'Untitled feed',
+        xmlUrl: r.feed_url,
+        htmlUrl: r.site_url,
+      }));
+      return buildOpml(outlines, { dateCreated: new Date() });
+    }
+    const err = error as { code?: string; message?: string } | null;
+    if (err && err.code !== 'PGRST202') {
+      throw error instanceof Error ? error : new Error(err.message ?? String(error));
+    }
+    // Old backend: the RPC isn't deployed, so emit the homepage URL (all the
+    // client can see) rather than the real feed endpoint.
     const subs = await this.loadSubscriptions();
-    const outlines = subs
-      .map(({ subscription, feed }) => {
-        const title = subscription.titleOverride ?? feed.title;
-        // See the method-level note: public homepage URL only, by design.
-        return `    <outline type="rss" text="${escapeXml(title)}" title="${escapeXml(
-          title,
-        )}" xmlUrl="${escapeXml(feed.url)}"${
-          feed.siteUrl ? ` htmlUrl="${escapeXml(feed.siteUrl)}"` : ''
-        } />`;
-      })
-      .filter(Boolean)
-      .join('\n');
-    return `<?xml version="1.0" encoding="UTF-8"?>\n<opml version="2.0">\n  <head><title>Readmo subscriptions</title></head>\n  <body>\n${outlines}\n  </body>\n</opml>\n`;
+    const outlines = subs.map(({ subscription, feed }) => ({
+      title: subscription.titleOverride ?? feed.title,
+      xmlUrl: feed.url,
+      htmlUrl: feed.siteUrl,
+    }));
+    return buildOpml(outlines, { dateCreated: new Date() });
   }
 
   // --- Capabilities & admin -------------------------------------------------
@@ -1854,17 +1650,10 @@ export class SupabaseDataSource implements DataSource {
   async getCapabilities(): Promise<Capabilities> {
     const { data, error } = await this.sb.rpc('get_capabilities');
     if (error) {
-      // Feature-detect a backend that predates the RPC: PostgREST reports a
-      // missing function as PGRST202. Treat ONLY that as "no capabilities", so an
-      // old backend just behaves like today (no chip, no /admin; the gates are
-      // server-enforced regardless — guardrail #11). Any OTHER error (transient
-      // network / 5xx) is rethrown so React Query retries and keeps the prior
-      // cached value, instead of pinning a permissive all-false for the 5-min
-      // staleTime and letting an off-list user issue `fulltext` calls meanwhile.
+      // Rethrow (rather than returning a permissive all-false) so React Query
+      // retries and keeps the prior cached value for the 5-min staleTime, instead
+      // of letting an off-list user issue `fulltext` calls meanwhile.
       const err = error as { code?: string; message?: string };
-      if (err.code === 'PGRST202') {
-        return { family: false, admin: false, allowlistArmed: false };
-      }
       throw error instanceof Error ? error : new Error(err.message ?? String(error));
     }
     // `get_capabilities` returns a single-row table → an array of one row.
@@ -1882,11 +1671,7 @@ export class SupabaseDataSource implements DataSource {
       family: row?.family === true,
       admin: row?.admin === true,
       allowlistArmed: row?.allowlist_armed === true,
-      // Absent against a backend that predates 0030 → false, so /admin hides the
-      // block/delete/sign-up controls until their RPCs are deployed.
       canManageUsers: row?.can_manage_users === true,
-      // Absent before 0047 → false, so the console hides the Feeds/Users
-      // subscription drill-down links until their RPCs are deployed.
       canViewSubscriptions: row?.can_view_subscriptions === true,
     };
   }
@@ -1918,13 +1703,7 @@ export class SupabaseDataSource implements DataSource {
 
   async listFeedStatuses(): Promise<AdminFeedStatus[]> {
     const { data, error } = await this.sb.rpc('admin_list_feeds');
-    if (error) {
-      // Feature-detect a backend that predates the RPC (PostgREST PGRST202) →
-      // empty list, so an old backend just shows no feeds rather than crashing
-      // (guardrail #11). Other errors propagate so the page shows its retry UI.
-      if ((error as { code?: string }).code === 'PGRST202') return [];
-      throw error instanceof Error ? error : new Error(String(error));
-    }
+    if (error) throw error instanceof Error ? error : new Error(String(error));
     const rows = (data ?? []) as Array<{
       id: string;
       title: string | null;
@@ -1966,12 +1745,10 @@ export class SupabaseDataSource implements DataSource {
         lastFetchedAt: r.last_fetched_at ?? null,
         errorCount,
         lastError: r.last_error ?? null,
-        // Feature-detect a backend that predates the paused column: absent →
-        // null ("pausing not supported yet"), so the console hides Pause rather
-        // than offering a control whose RPC isn't deployed. Present → the flag.
+        // A malformed row → null ("unknown"), so the console degrades rather
+        // than rendering a bogus control. Present → the flag.
         paused: typeof r.paused === 'boolean' ? r.paused : null,
-        // Feature-detect a backend that predates the subscriber-count column:
-        // absent → null ("unknown"), not a false 0. A present 0 stays 0.
+        // A malformed row → null ("unknown"), not a false 0. A present 0 stays 0.
         subscriberCount:
           typeof r.subscriber_count === 'number' ? r.subscriber_count : null,
         fetchFailed: errorCount > 0,
@@ -1999,13 +1776,7 @@ export class SupabaseDataSource implements DataSource {
 
   async listUsers(): Promise<RegisteredUser[]> {
     const { data, error } = await this.sb.rpc('list_users');
-    if (error) {
-      // Feature-detect a backend that predates the RPC (PostgREST PGRST202) →
-      // empty list, so an old backend just shows no users rather than crashing
-      // (guardrail #11). Other errors propagate so the page shows its retry UI.
-      if ((error as { code?: string }).code === 'PGRST202') return [];
-      throw error instanceof Error ? error : new Error(String(error));
-    }
+    if (error) throw error instanceof Error ? error : new Error(String(error));
     const rows = (data ?? []) as Array<{
       email: string;
       created_at: string;
@@ -2020,8 +1791,6 @@ export class SupabaseDataSource implements DataSource {
       lastSignInAt: r.last_sign_in_at ?? null,
       family: r.family === true,
       admin: r.admin === true,
-      // `blocked` is absent against a backend that predates 0030 — treat the
-      // missing column as "not blocked" so an old backend renders fine.
       blocked: r.blocked === true,
     }));
   }
@@ -2085,13 +1854,7 @@ export class SupabaseDataSource implements DataSource {
 
   async getSignupsEnabled(): Promise<boolean> {
     const { data, error } = await this.sb.rpc('get_signups_enabled');
-    if (error) {
-      // Feature-detect a backend that predates the switch (PostgREST PGRST202)
-      // → report sign-ups on, the default-open state (guardrail #11). Other
-      // errors propagate so the toggle can surface a failure.
-      if ((error as { code?: string }).code === 'PGRST202') return true;
-      throw error instanceof Error ? error : new Error(String(error));
-    }
+    if (error) throw error instanceof Error ? error : new Error(String(error));
     return data === true;
   }
 

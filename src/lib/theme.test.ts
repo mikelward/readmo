@@ -141,21 +141,27 @@ describe('theme lib', () => {
   });
 
   it('resolveTheme follows matchMedia when set to system', () => {
-    const spy = vi.spyOn(window, 'matchMedia').mockImplementation(
-      (query: string) =>
-        ({
-          matches: query === '(prefers-color-scheme: dark)',
-          media: query,
-          addEventListener: vi.fn(),
-          removeEventListener: vi.fn(),
-          addListener: vi.fn(),
-          removeListener: vi.fn(),
-          dispatchEvent: vi.fn(),
-          onchange: null,
-        }) as unknown as MediaQueryList,
-    );
-    expect(resolveTheme('system')).toBe('dark');
-    spy.mockRestore();
+    // jsdom doesn't implement matchMedia, so there's no function for
+    // `vi.spyOn` to replace (vitest 4 throws on spying a non-function).
+    // Assign the stub directly and restore the original, matching the idiom
+    // in usePointerDevice.test.tsx / useWideViewport.test.tsx.
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) =>
+      ({
+        matches: query === '(prefers-color-scheme: dark)',
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+        onchange: null,
+      }) as unknown as MediaQueryList) as typeof window.matchMedia;
+    try {
+      expect(resolveTheme('system')).toBe('dark');
+    } finally {
+      window.matchMedia = original;
+    }
   });
 });
 

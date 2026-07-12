@@ -49,26 +49,21 @@ export function useCapabilities(): Capabilities {
   return useCapabilitiesQuery().data ?? DEFAULT_CAPABILITIES;
 }
 
-/** Whether reading-mode full text is *known* to be allowed for the caller — the
- * conservative gate the reader and offline warmer use to decide whether to issue
- * a `fulltext` Edge call. Unlike `canUseFullText(useCapabilities())`, this does
- * NOT treat an unresolved gate as open: while a signed-in user's capabilities
- * are still loading — or have errored without resolving — we return `false`, so
- * an off-list user on an armed allowlist doesn't fire `fulltext` calls before we
- * know the gate (the warmer's "zero Edge calls" promise). The value is cached +
- * persisted, so this normally only bites the very first load; the server
- * enforces the gate regardless. A disabled query (signed out, or not yet
- * enabled) has no gate to wait on, so it defaults open — matching today's
- * behavior, incl. against an old backend. */
+/** Whether reading-mode full text and AI summaries are *known* to be allowed for
+ * the caller — the conservative gate the reader and offline warmer use to decide
+ * whether to issue a `fulltext` / `summary` Edge call. Allowed ONLY once we've
+ * resolved the caller is allowlisted (or the list is disarmed). "No resolved
+ * capabilities → not allowed" covers three cases at once:
+ *   - **Signed out** — the capabilities query is disabled (`enabled: !!user`), so
+ *     it never resolves. These are per-account, allowlist-gated features and a
+ *     signed-out caller can never be allowlisted, so they're closed, not open.
+ *   - **Signed in, still loading** — don't fire Edge calls speculatively; wait
+ *     until we actually know the gate (the warmer's "zero Edge calls" promise).
+ *   - **Signed in, errored** — a transient `get_capabilities` failure ends with
+ *     no data, which must not read as open.
+ * The value is cached + persisted, so this normally only bites the very first
+ * load; the server enforces the gate regardless. */
 export function useFullTextAllowed(): boolean {
-  const { user } = useAuth();
   const { data } = useCapabilitiesQuery();
-  if (data) return canUseFullText(data);
-  // No resolved capabilities yet. For a SIGNED-IN user the query is enabled and
-  // we're in a loading OR errored state — either way stay closed (don't resume
-  // Edge calls until we actually know the gate; a transient `get_capabilities`
-  // failure ends 'idle' with no data, which must not read as open). Signed out →
-  // the query is disabled, there's no gate to wait on, so default open (matches
-  // today, incl. against an old backend).
-  return !user;
+  return data ? canUseFullText(data) : false;
 }

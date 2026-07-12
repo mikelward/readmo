@@ -34,7 +34,10 @@ step 4), which is enough to shed a loop.
    a *local* `wrangler.toml` and don't commit the real values. (No real secrets
    go here; the Worker doesn't use the service_role key or JWT secret.)
 2. **Deploy the Worker:** from this directory, `npx wrangler deploy`
-   (after `wrangler login`).
+   (after `wrangler login`). From the repo root, `make deploy-gateway` does the
+   same. (It's a standalone target — **not** part of `make deploy`, which is
+   Supabase-only; redeploy the Worker only when it or its `wrangler.toml` vars
+   change.)
 3. **Bind the hostname:** add `api.readmo.app` as a Worker **Custom Domain**
    (Workers & Pages → your Worker → Settings → Domains & Routes). This provisions
    DNS + TLS. (Alternatively uncomment the `routes` block in `wrangler.toml`.)

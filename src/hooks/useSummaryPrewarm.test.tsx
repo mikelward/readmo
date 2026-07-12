@@ -14,10 +14,20 @@ import {
   resetReadingPrefsCacheForTest,
 } from './useReadingPrefs';
 import { summaryQueryKey } from './useSummary';
+import { CAPABILITIES_QUERY_KEY } from './useCapabilities';
 import type { SummaryResult } from '../lib/summary';
+import type { Capabilities } from '../lib/data/DataSource';
 
 function setNavigatorOnline(value: boolean) {
   Object.defineProperty(window.navigator, 'onLine', { configurable: true, value });
+}
+
+// The prewarm gates on useFullTextAllowed, which is now closed until capabilities
+// resolve to allowed (a signed-out caller is never allowlisted). Seed a disarmed
+// (open-to-all) capability set so these tests exercise the allowed path.
+const ALLOWED_CAPS: Capabilities = { family: false, admin: false, allowlistArmed: false };
+function seedAllowed(qc: QueryClient) {
+  qc.setQueryData(CAPABILITIES_QUERY_KEY, ALLOWED_CAPS);
 }
 
 afterEach(() => {
@@ -35,6 +45,7 @@ function Harness() {
 
 function setup(source: MockDataSource) {
   const queryClient = new QueryClient();
+  seedAllowed(queryClient);
   render(
     <QueryClientProvider client={queryClient}>
       <DataSourceProvider source={source}>
@@ -128,6 +139,7 @@ describe('useSummaryPrewarm', () => {
     source.stateStore.set(ID, 'pinned', true);
     const spy = vi.spyOn(source, 'getSummary');
     const queryClient = new QueryClient();
+    seedAllowed(queryClient);
 
     const tree = (restoring: boolean) => (
       <QueryClientProvider client={queryClient}>

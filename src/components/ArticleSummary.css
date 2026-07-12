@@ -29,6 +29,16 @@
   margin: 2px 0;
 }
 
+/* Blockquotes the model emits when a summary leans on a direct quotation
+   (rendered by MarkdownText). A left rule + muted text reads as "quoted" without
+   a heavy card-in-card; tight margins keep the summary compact. */
+.article-summary__body .markdown-quote {
+  margin: 6px 0 0;
+  padding-left: 0.75rem;
+  border-left: 3px solid var(--rm-border);
+  color: var(--rm-meta);
+}
+
 .article-summary__loading {
   color: var(--rm-meta);
   font-size: 0.95rem;

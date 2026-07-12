@@ -36,6 +36,7 @@ function item(over: Partial<Item> = {}): Item {
     contentHtml: '',
     summary: null,
     fullContentHtml: null,
+    aiSummary: null,
     enclosures: [],
     ...over,
   };

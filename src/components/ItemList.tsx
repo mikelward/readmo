@@ -878,6 +878,12 @@ export function ItemList({
   const { bottomBarPosition } = useBottomBarPosition();
   const pinnedBar = bottomBarPosition === 'screen';
   const [atListEnd, setAtListEnd] = useState(false);
+  // The blank scroll-space appended at the true end of a feed when auto-hide-on-
+  // scroll is on (see the render), so the last screenful of rows can be scrolled
+  // up past the top chrome and auto-marked too. Measured off the DOM so the
+  // end-of-list check below discounts it — "the end" is the last real row, not
+  // the bottom of the blank tail — keeping the pinned-bar pager honest.
+  const scrollSpaceRef = useRef<HTMLDivElement>(null);
 
   // Collapse/expand of feed sections (group-by-feed only). Read here, near the
   // top, because the end-of-list measurement and the "More" fetch loop both
@@ -1870,9 +1876,16 @@ export function ItemList({
   useEffect(() => {
     const check = () => {
       const doc = document.documentElement;
+      // Discount the auto-hide scroll-space (blank tail below the last real row):
+      // the list "ends" at the last row, not at the bottom of the empty tail, so
+      // the pinned-bar pager settles into "No more items" — and stops paging the
+      // reader down into blank — once the real content foot is in view.
+      const tail = scrollSpaceRef.current?.offsetHeight ?? 0;
       // Within 2px of the maximum scroll offset = the foot of the list is in
       // view (the sub-pixel slack avoids a sticky "More" at exact bottom).
-      setAtListEnd(window.scrollY + window.innerHeight >= doc.scrollHeight - 2);
+      setAtListEnd(
+        window.scrollY + window.innerHeight >= doc.scrollHeight - tail - 2,
+      );
     };
     check();
     window.addEventListener('scroll', check, { passive: true });
@@ -3105,6 +3118,21 @@ export function ItemList({
   const showRefreshing =
     isRefreshing && undoRefetchDepth.current === 0 && items.length > 0;
 
+  // Auto-hide-on-scroll marks a row Done once it scrolls off the TOP — but the
+  // last screenful of RENDERED rows can never do that (nothing below them to
+  // scroll into), so they stay unmarkable-by-scroll and need a Sweep. Append a
+  // blank scroll-space below the foot, tall enough to push the final rows up
+  // past the top chrome, so the pure-scroll flow reaches the very last visible
+  // article. Present whenever the feature is on and rows are showing —
+  // independent of `hasMore`: auto-hide only ever marks rendered rows, and rows
+  // still behind "More" aren't in the DOM (so they can't be scrolled past
+  // anyway), yet the last LOADED row is stranded just the same whether or not
+  // another page could be fetched. Gating on the true end would force the reader
+  // to page in more unread content just to mark the tail they can already see.
+  // See ItemList.css.
+  const showScrollSpace =
+    hideOnScroll && !showMissState && visibleItems.length > 0;
+
   return (
     <div
       className="item-list"
@@ -3296,6 +3324,19 @@ export function ItemList({
         </div>
       ) : null}
 
+      {/* Pinned bar: the scroll-space goes ABOVE the sticky bar so the bar stays
+          the last flow element and never un-sticks from the viewport foot; the
+          blank tail still gives the last rows room to scroll off the top under
+          the pinned bar. */}
+      {showScrollSpace && pinnedBar ? (
+        <div
+          className="item-list__scroll-space"
+          data-testid="scroll-space"
+          aria-hidden="true"
+          ref={scrollSpaceRef}
+        />
+      ) : null}
+
       <ListToolbar
         placement="bottom"
         onUndo={handleUndoScroll}
@@ -3324,6 +3365,18 @@ export function ItemList({
             : undefined
         }
       />
+
+      {/* Relative bar: the scroll-space sits BELOW the in-flow bottom toolbar,
+          so the reader scrolls past the last row → toolbar → blank tail, and the
+          final rows clear the top chrome to auto-hide. */}
+      {showScrollSpace && !pinnedBar ? (
+        <div
+          className="item-list__scroll-space"
+          data-testid="scroll-space"
+          aria-hidden="true"
+          ref={scrollSpaceRef}
+        />
+      ) : null}
     </div>
   );
 }

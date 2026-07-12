@@ -19,6 +19,10 @@ describe('isSummarySettled', () => {
   it('treats a retryable-flagged result as unsettled (e.g. allowlist denial)', () => {
     expect(isSummarySettled({ status: 'empty', summary: null, retryable: true })).toBe(false);
   });
+
+  it('treats a viaRow seed as unsettled (provisional — the real fetch is still wanted)', () => {
+    expect(isSummarySettled({ status: 'ok', summary: 'x', viaRow: true })).toBe(false);
+  });
 });
 
 describe('summaryStaleTime', () => {
@@ -40,5 +44,9 @@ describe('summaryStaleTime', () => {
     expect(
       summaryStaleTime(q({ status: 'empty', summary: null, retryable: true })),
     ).toBe(0);
+  });
+
+  it('keeps a viaRow seed stale so it revalidates when the query runs', () => {
+    expect(summaryStaleTime(q({ status: 'ok', summary: 'x', viaRow: true }))).toBe(0);
   });
 });

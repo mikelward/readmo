@@ -18,6 +18,16 @@ export interface SummaryResult {
    * client still treats the result as its plain status (guardrail #11).
    */
   retryable?: boolean;
+  /**
+   * Provisional `ok` seeded from the list-row ride-along (`useSummary`), NOT a
+   * value fetched from the `summary` Edge Function. It's shown immediately and
+   * kept alive offline (`useOfflineCacheLock` retains `['summary', id]`), but is
+   * deliberately treated as **unsettled/stale** so that once the query actually
+   * runs — the feed row that fed it has been GC'd — it revalidates against the
+   * server and graduates to a durable fetched summary. Offline it's served as-is
+   * (a stale gist beats an empty card). Cleared when a real fetch overwrites it.
+   */
+  viaRow?: boolean;
 }
 
 /** Whether a summary result is terminal — safe to treat as the final answer and
@@ -25,14 +35,18 @@ export interface SummaryResult {
  * {@link SummaryResult.retryable} (e.g. an allowlist denial a later change could
  * flip), is NOT settled, so a reconnect / gate-resolve should re-check it. */
 export function isSummarySettled(data: SummaryResult): boolean {
+  // A row seed is provisional — the real fetch is still wanted (so the prewarm
+  // keeps warming it, and `summaryStaleTime` treats it as stale → revalidate).
+  if (data.viaRow) return false;
   if (data.status === 'unreachable' || data.status === 'unavailable') return false;
   return !data.retryable;
 }
 
 /** staleTime policy for the `['summary', id]` query: terminal outcomes (`ok`,
- * `empty`) are cached forever, but a transient `unreachable`/`unavailable` — or
- * any result flagged {@link SummaryResult.retryable} (e.g. an allowlist denial a
- * later change could flip) — stays stale so the next pin/open retries it. */
+ * `empty`) are cached forever, but a transient `unreachable`/`unavailable`, a
+ * result flagged {@link SummaryResult.retryable} (e.g. an allowlist denial a
+ * later change could flip), or a provisional {@link SummaryResult.viaRow} seed —
+ * stays stale so the next pin/open revalidates it. */
 export function summaryStaleTime(query: {
   state: { data?: SummaryResult };
 }): number {

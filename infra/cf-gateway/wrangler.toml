@@ -14,7 +14,11 @@ compatibility_date = "2024-11-01"
 [vars]
 SUPABASE_ORIGIN  = "https://psjfdgsfvmwnntxptnin.supabase.co"   # the origin to forward to
 APP_ORIGINS      = "https://readmo.app,https://www.readmo.app"  # CORS allow-list
-MIN_CLIENT_BUILD = "0"   # version gate: "0" = disarmed; raise past a bad build
+MIN_CLIENT_BUILD = "472"   # floor = the build live ~1 week ago (fdbea58, 2026-07-04).
+                           # Enforces the "no clients older than a week" assumption:
+                           # builds <=471 get 426. Also >the LWW cutover (319), so it
+                           # sheds every pre-LWW client that still sends p_base_version
+                           # before the 0060 migration drops that param. "0" = disarmed.
 
 # Bind api.readmo.app to this Worker. Either keep this route block (the zone must
 # be in this Cloudflare account), or instead add api.readmo.app as a Worker

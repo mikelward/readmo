@@ -28,6 +28,7 @@ function feedItem(id: string, contentHtml = `<p>body of ${id}</p>`): FeedItem {
     contentHtml,
     summary: null,
     fullContentHtml: null,
+    aiSummary: null,
     enclosures: [],
   };
   return { item, feed };

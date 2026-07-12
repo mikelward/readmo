@@ -532,7 +532,14 @@ newshacker_link (user_id PK/FK, token, created_at)                    -- compani
   (only the poller's service role reads it); expose a display-safe identifier
   (`site_url` / `title` / feed id). De-dup two users who paste the same
   tokenized URL onto one shared `feeds` row keyed by the full URL, token
-  server-only.
+  server-only. **One deliberate carve-out:** the authenticated OPML-export RPC
+  returns each caller their **own** subscriptions' fetch `url` (so exports
+  round-trip into other readers). This is safe because it's scoped to the
+  caller's `subscriptions` (never the permanent-state visibility above) and a
+  user must have presented a tokenized feed's URL to subscribe in the first
+  place — so they only ever get back tokens they already hold. `secret_url` is
+  still never returned, so a secret-backed feed exports its token-stripped `url`
+  and may not round-trip.
 
 ### Feed fetching & parsing (server)
 
@@ -691,6 +698,16 @@ newshacker_link (user_id PK/FK, token, created_at)                    -- compani
   curated autocomplete suggestions bypass discovery entirely as before. The
   picker only surfaces the sections a site advertises on the submitted page; it
   does not crawl the site for sections that page doesn't link.
+- **Per-account feed cap.** An account may follow at most **100 feeds**,
+  enforced server-side on subscribe (so a direct RPC can't bypass it) and shared
+  by every add path — Add a feed, the multi-select picker, and OPML import. At
+  the cap, adding another feed fails with "You've reached the feed limit. Remove
+  a feed to add another," and an OPML import subscribes feeds up to the cap and
+  reports the rest as skipped. Re-adding a feed already followed always works
+  (it's idempotent, not a new subscription). The cap primarily bounds
+  abuse/cost; it also keeps a typical account's group-by-feed read smaller, so
+  it pages against PostgREST's 1000-row response limit less often (that read
+  already pages by cursor on overflow — see *Feed views → Group by feed*).
 - **Curated section feeds.** Big news orgs publish many per-section feeds
   (World, Business, Sport, …) but often advertise *none* of them where a crawler
   can see — BBC's feeds live on a separate host and are only listed on a help
@@ -1126,23 +1143,21 @@ negligible and off every critical path. See the External services table in
   `set_item_state` RPC — surviving reloads/offline gaps and replaying on
   reconnect. Each changed field carries its action timestamp; `set_item_state`
   (`0023_item_state_lww.sql`) keeps, per field, whichever write has the newer
-  `at`, so a stale replay is superseded rather than rejected. A transitional
-  compat shim (`0024_set_item_state_compat.sql`) re-adds a trailing,
-  accepted-and-ignored `p_base_version` param and treats a missing `p_<f>_at` as
-  `now()`, so a pre-0023 service-worker-cached client's write still resolves and
-  applies during the deploy window instead of 404ing and retrying forever (its
-  item_state *read* still degrades until it reloads — `feed_items` is unaffected);
-  drop the shim once no pre-0023 client remains. The hydrate path
+  `at`, so a stale replay is superseded rather than rejected. The hydrate path
   overlays only still-pending fields onto server truth and clears genuinely-stale
   rows. Add-feed / OPML import / parked-feed retry go through the
   `subscribe_to_feed` RPC and the `refresh` function. `main.tsx` selects the live
   source when `isSupabaseConfigured()` (else the mock seed), so a configured
   deployment boots on real RLS-scoped data. Conflict resolution is per-field, so
   two devices editing the same item never cross-conflict on independent flags;
-  same-field edits resolve to the later action time. Still deferred: an
-  **authenticated OPML-export RPC** — the client can't emit real feed fetch URLs
-  (`feeds_public` exposes `site_url`, never the fetch URLs `url`/`secret_url`), so live
-  `exportOpml` carries homepage URLs until a server-side export exists.
+  same-field edits resolve to the later action time. **OPML export** goes through
+  an authenticated server RPC scoped to the caller's own subscriptions, so the
+  exported file carries each feed's fetch `url` and is re-importable into other
+  readers (the deliberate owner-scoped carve-out to the "url server-only"
+  invariant — see *Row-level security*). It never emits the server-only
+  `secret_url`, so a secret-backed feed exports its token-stripped `url` and may
+  not round-trip. Against a backend that predates the RPC the client falls back
+  to the homepage URL.
 - **At-least-once delivery, no exactly-once needed.** The outbox can re-send a
   write that committed but whose ack was lost to a crash. Under per-field LWW a
   replay is idempotent in effect: re-applying the same field with the same (or an
@@ -1188,10 +1203,7 @@ negligible and off every critical path. See the External services table in
        list rows), then its `guid` (hnrss feeds), then its `url` (Ask/Show HN),
        then the stored description HTML (`contentHtml`) as a backfill: the
        official `news.ycombinator.com/rss` feed carries the discussion link only
-       in the item `<description>`, and a backend predating the `comments_url`
-       column (0033) omits the structured field. (`ITEM_COLS` reads
-       — library/search/reader — now select `comments_url`, stepping down to the
-       pre-0033 column set if the backend lacks it.)
+       in the item `<description>`.
        Falls back to the reader for any item with no derivable HN id. **$0** — a
        plain deep link, no API call (see *External services*: none added).
 
@@ -1226,8 +1238,7 @@ negligible and off every critical path. See the External services table in
      actions, letting a "read the source and I'm done" feed clear items without a
      second tap. Marking Done clears Pinned (the usual exclusivity). Per-user,
      synced (stored on the subscription as `mark_done_on_open`, 0037, like
-     Mute/Rename); off by default. Feature-detected: hidden against a backend that
-     predates the column (guardrail #11).
+     Mute/Rename); off by default.
    - **Feed-health badge** when the poller parks a feed, with "retry now".
 
 2. **Feed views (the lists)** — the chronological merge of subscription items,
@@ -1370,9 +1381,13 @@ negligible and off every critical path. See the External services table in
        fetch — and there is no per-section server paging at all. If an
        account's grouped read overflows the server's response row cap
        (PostgREST's 1000), the read pages by cursor via a bottom "More" so
-       later sections aren't dropped; a **planned per-account feed cap**
-       (`TODO(feed-cap)`) will keep normal accounts under it. (Drilling into a
-       single feed's own page is the flat pager.)
+       later sections aren't dropped. (Overflow depends on how many *listable*
+       rows each feed contributes — its freshness window plus pins, not the
+       10-row display window — so it's the busy-feed row volume, not the feed
+       count alone, that drives paging.) The **per-account feed cap** (100
+       feeds, enforced server-side on subscribe) bounds that volume loosely and
+       primarily guards abuse/cost. (Drilling into a single feed's own page is
+       the flat pager.)
        Revealed rows get the same live item-state overlay as window rows
        (locally Done/Hidden are filtered, pin/opened read from the store), and
        the whole fetched set self-heals together on the next refetch.
@@ -1640,6 +1655,16 @@ negligible and off every critical path. See the External services table in
      topmost restored row** (the earliest one you'd scrolled past) when it lands
      above the fold, so the rows it brought back are actually in view rather than
      left off-screen above you.
+     **A blank scroll-space follows the foot of the loaded list** (only while
+     auto-hide is on): the last screenful of rows can't otherwise scroll off the
+     top — nothing sits below them — so they'd stay stranded, needing a Sweep.
+     The empty tail lets you keep scrolling until the final visible article
+     clears the top and is marked too, so the pure-scroll flow reaches every row
+     you can see. It's present whenever rows are showing, not only at the feed's
+     end: auto-hide only marks rows you scroll past, so rows still behind "More"
+     (not yet loaded) are never affected, and you shouldn't have to page in more
+     unread content just to mark the tail already in front of you. It sits below
+     the relative bottom bar (and above the pinned one, which stays put).
 
 7. **Bottom action bar** — Back-to-top + More + Undo + Sweep on feed footers;
    Back-to-top only on library footers. Same slot order. **More lives in the
@@ -1750,29 +1775,24 @@ negligible and off every critical path. See the External services table in
       `open_newshacker` mutually exclusively (per-user, synced). The options are
       **Open here** (the in-app reader, the default) and **Open original**, plus
       **Open on newshacker** *only when applicable* — i.e. only for a **Hacker
-      News feed** and only when the `open_newshacker` column exists (0034). The
-      submenu **replaces the whole menu panel** (it's never taller than the top
+      News feed**. The submenu **replaces the whole menu panel** (it's never taller than the top
       level it swapped out, so the flip-above placement stays valid), and the
       drill level resets whenever the menu is reopened. When *open original* is
       on, the feed's rows link straight to the source website; when *open on
       newshacker* is on, they link to the item's Hacker News discussion on
-      `newshacker.app`; both open in a new tab instead of the in-app reader. The
-      whole open-mode control hides against a backend that predates the
-      `open_original` column (0027); the writes degrade safely (a
-      reader/original choice still persists `open_original` even where
-      `open_newshacker` is absent). A separate **Mark done when opening**
+      `newshacker.app`; both open in a new tab instead of the in-app reader. A
+      separate **Mark done when opening**
       checkbox (writing `subscriptions.mark_done_on_open`, 0037, independent of the
       open mode) makes opening an item on its original source / newshacker target
-      also mark it Done — see *Feeds page → Mark done when opening* above; it hides
-      against a backend that predates the column. A **Card style** control sets
+      also mark it Done — see *Feeds page → Mark done when opening* above. A
+      **Card style** control sets
       this feed's per-feed article-row layout override; like the open-mode choice
       it's a **two-level control** — a single **Card style** row (with a `›`
       chevron) drills into a submenu of a **‹ Back** row plus a `menuitemradio`
       group (**Default / Title only / Small thumbnail / Large thumbnail /
       Excerpt**, writing `subscriptions.list_layout`, 0051). See *Article layout →
       Per-feed override* above; **Default** clears it (fall back to the app-wide
-      setting), and the whole control hides against a backend that predates the
-      column. Both submenus share the same drill machinery: the submenu replaces
+      setting). Both submenus share the same drill machinery: the submenu replaces
       the whole menu panel, focus moves into it (its Back row) on drill-in and
       back onto the originating row on return, placement re-measures on the drill
       transition, and the drill level resets when the menu is reopened. The overflow menu dismisses via
@@ -1810,12 +1830,10 @@ negligible and off every critical path. See the External services table in
         can't silently wall off signups). All of these are plain admin-gated SQL
         RPCs (migration `0030`) — the migration role owns the SECURITY DEFINER
         functions, so they touch `auth.users` directly without the service-role
-        admin API or a new Edge function. Because the client auto-deploys ahead
-        of migrations, the block/delete/sign-up controls are gated on a
-        `canManageUsers` capability (a `can_manage_users` flag
-        `get_capabilities()` only returns once `0030` is live): against a backend
-        that still predates `0030` they're hidden, so the page never offers a
-        button whose RPC would 404. The family promote/demote toggle (the `0028`
+        admin API or a new Edge function. The block/delete/sign-up controls are
+        gated on a `canManageUsers` capability (a `can_manage_users` flag from
+        `get_capabilities()`): they're hidden when the flag is absent. The family
+        promote/demote toggle (the `0028`
         allowlist RPCs) stays available. The menu also holds a **Feeds** item that
         drills down to that user's subscription list — see *Subscription
         drill-downs* below.
@@ -1834,10 +1852,8 @@ negligible and off every critical path. See the External services table in
       `admin_list_feed_subscribers`, migration `0047`) that return only
       display-safe columns (never `secret_url`) and fail closed (`42501`) for
       non-admins. Gated on a `canViewSubscriptions` capability (a
-      `can_view_subscriptions` flag `get_capabilities()` only returns once `0047`
-      is live): the *Feeds*/*Users* menu items are hidden against an older
-      backend, so a direct URL hit is the only way to reach the un-deployed-RPC
-      error state.
+      `can_view_subscriptions` flag from `get_capabilities()`): the
+      *Feeds*/*Users* menu items are hidden when the flag is absent.
 
     A non-admin who reaches any admin route sees a short no-access message and
     nothing else — the gate is client convenience only; the server re-checks
@@ -1857,9 +1873,10 @@ negligible and off every critical path. See the External services table in
       the admin RPC, which sees every subscription), the sampled article's title,
       a single derived **status** pill, and a muted **server-response** line. As in the grouped list headers, a feed with no
       resolved favicon (or one whose icon fails to load) reserves a matching
-      16px slot so every title lines up at the same left edge. Only display-safe feed metadata leaves the server
-      — the `feeds.url` fetch URL (possibly subscriber-tokenized) is never
-      returned to the browser. The
+      16px slot so every title lines up at the same left edge. Only display-safe feed metadata leaves the server here
+      — this admin read never returns the `feeds.url` fetch URL (possibly
+      subscriber-tokenized); the one path that does is the owner-scoped OPML
+      export (see *Row-level security*). The
       status is derived in priority order: **Poll failed** (the feed's last poll
       errored — `error_count > 0`, with `last_error`) → **Not tried** (no
       reading-mode download has been attempted for any of the feed's articles) →
@@ -2022,12 +2039,10 @@ values mirror the app-wide choices). Every row resolves its layout as
 shared `['subscriptions']` query (`useListLayoutFeeds`, deduped with the open-mode
 hooks) and passes each row its feed's layout; `ItemRow` falls back to the
 app-wide `useListLayout` when no override is given. Because it adds a synced
-column, this half is **not** client-only: it ships behind the `list_layout`
-column (migration **0051**) and feature-detects a backend without it
-(`supportsSubscriptionListLayout`) — the "Card style" control hides until the
-column is deployed, and a stale-cache write to a pre-0051 backend no-ops rather
-than erroring (guardrail #11). Requires a manual `make migrate`. Cost: one extra
-nullable text column, **negligible** — no new fetch or external call.
+column, this half is **not** client-only: it stores the override on the
+`list_layout` column (migration **0051**), so it requires a manual `make
+migrate`. Cost: one extra nullable text column, **negligible** — no new fetch or
+external call.
 
 Display-only meta (plain text inside the row link): **source** (feed/site
 name, trimmed to the registrable domain the way newshacker trims
@@ -2312,8 +2327,10 @@ page's discipline is unchanged.
     entirely** for an off-list user — so an off-list reader shows the feed stub
     with zero Edge calls and the warmer doesn't re-prefetch a bucketed item on
     every state-sync. The client gate is **conservative on an unknown state**:
-    while a signed-in user's capabilities are still loading it holds off the call
-    (rather than treating unknown as open), and the `getCapabilities` mapping
+    it stays closed until capabilities resolve to allowed — a **signed-out
+    caller is never allowlisted** (these are per-account features), and while a
+    signed-in user's capabilities are still loading it holds off the call
+    (rather than treating unknown as open) — and the `getCapabilities` mapping
     only treats a *missing* RPC (PostgREST `PGRST202`, an old backend) as
     "no capabilities" — a transient error is rethrown so React Query retries
     instead of caching an open gate. It all re-warms automatically when
@@ -2344,12 +2361,33 @@ page's discipline is unchanged.
 - **AI article summaries (allowlisted).** A short AI summary (a few
   sentences) of the article, shown **directly below the title/byline, above the
   reading-mode bar and article body** — for an **allowlisted user**. The
-  **`allowlist` table is the only access boundary** (the same trusted-user list
+  **`allowlist` table is the access boundary** (the same trusted-user list
   as reading mode / Google News — summaries are a generation-cost surface, one
-  Gemini call per cache miss). Access is gated solely on the allowlist
-  (`useFullTextAllowed`, the shared gate — it holds off while a signed-in user's
-  capabilities are still loading, so an off-list user fires no Edge call), and the
+  Gemini call per cache miss). Access is gated on the allowlist
+  (`useFullTextAllowed`, the shared gate — it stays **closed until a signed-in
+  user's capabilities resolve to allowed**: a signed-out caller is never
+  allowlisted, and a still-loading/errored gate fires no Edge call), and the
   `summary` Edge Function re-checks the allowlist server-side regardless.
+  - **A cached summary rides the list row for an allowlisted reader — instant,
+    no round-trip, and durable offline.** Once generated, the gist is delivered
+    ON the item in list reads (`feed_items` includes `ai_summary` **only for an
+    allowlisted caller**, NULL for everyone else — the generation cost gate is
+    unchanged, only who receives an already-cached gist), so it lands in the
+    persisted list cache with the pinned article. The reader shows it the instant
+    it opens — no "Summarizing…" placeholder — falling back to the `summary` Edge
+    call when the row carries none yet (just-pinned, an old backend, or a
+    non-cacheable stub). For a **pinned/favorited** article the summary is
+    **retained offline like the body**: `useOfflineCacheLock` keeps `['summary',
+    id]` alive alongside `['item']`/`['fulltext']`, and it's populated three ways
+    — the reader seeds it on open, the pinned prewarm fetches it, and
+    `useSavedSummarySeed` eagerly copies it from the cached feed row for **every**
+    saved item (so a favorite never opened online keeps its gist too, cache-only,
+    never a generation). So an offline open shows the gist (a **stale gist beats
+    an empty card**) rather than losing it when the feed cache is evicted. The
+    row-sourced seed is provisional and **revalidates against the server** the
+    next time the reader is online, so it self-heals after a publisher edit. An
+    off-allowlist co-subscriber still receives NULL, so the boundary is unchanged
+    for them.
   - **Generation is not automatic on every open — pin before opening, or ask.**
     The reader's `useSummary` auto-generates only when the article was **pinned
     before it opened** (the "I'll read this" signal the pre-warm already acts on,
@@ -2466,12 +2504,13 @@ page's discipline is unchanged.
     once) any row cached before the strip existed so legacy preambles don't
     render forever. The response is rendered
     with the **`MarkdownText`** component **ported from newshacker**
-    (guardrail #9) — inline `<strong>`/`<em>`/`<code>` plus flat **bullet lists**
-    (`-`/`*`/`+` runs → `<ul>`), all emitted as React elements, never
+    (guardrail #9) — inline `<strong>`/`<em>`/`<code>`, flat **bullet lists**
+    (`-`/`*`/`+` runs → `<ul>`), and **blockquotes** (`>` runs → `<blockquote>`,
+    for a summary that quotes the article), all emitted as React elements, never
     `dangerouslySetInnerHTML`, so there's no markdown-library dependency and no
     XSS surface (the model's text is React-escaped by construction). Other
-    block-level Markdown (headings, ordered/nested lists, blockquotes, code
-    fences) renders as literal text and the prompt steers the model away from it.
+    block-level Markdown (headings, ordered/nested lists, code fences) renders as
+    literal text and the prompt steers the model away from it.
   - **Model:** Google **Gemini `gemini-2.5-flash-lite`** via the
     `generateContent` REST endpoint (fixed Google host; the article is in the
     request body, never a URL), `thinkingBudget: 0` to keep latency low. Needs
@@ -2672,11 +2711,10 @@ page's discipline is unchanged.
     concealed result — see *Article layout*). **Share** (row and reader) sends the *displayed*
     headline too, so it never leaks the hidden scoreline into the share sheet.
     TODO: make it per-feed as well as per-user.
-  - **Backwards compatible (guardrail #11).** The client ships first and safe:
-    `mapItem` defaults `spoilerFreeTitle` to null, the `ITEM_COLS` read steps down
-    past a missing column on a pre-0045 backend, and display falls back to the
-    original — nothing shows until `make migrate` + `make deploy` land and the
-    poller populates the column. Server changes are additive.
+  - **Deploy dependency.** The spoiler-free title only appears once `make
+    migrate` + `make deploy` land and the poller populates the column; until then
+    `mapItem` defaults `spoilerFreeTitle` to null and display falls back to the
+    original headline. Server changes are additive.
   - **Cost & reliability (guardrail #5):** one Gemini Flash-Lite call per **new
     item in an allowlisted-subscriber feed** — a headline + short RSS body in, a
     headline out — cached forever on the shared item, regenerated only on
@@ -2719,12 +2757,10 @@ immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
     thread (`newshacker.app/item/<id>`), same as the row's "open on newshacker"
     mode. The HN id is derived from the comments URL / guid / item url / body
     (`lib/newshacker.ts`), so it resolves even for the official HN feed (whose
-    discussion link lives only in the description) and when the reader's
-    single-item read omits `comments_url` (a pre-0033 backend).
+    discussion link lives only in the description).
   - On **any other feed** it opens the item's structured comments URL (RSS
     `<comments>` / Atom `rel="replies"`, persisted as `items.comments_url`,
-    which `ITEM_COLS` now selects — stepping down to the pre-0033 column set
-    against a backend without it). If that comments URL *itself* points at an HN
+    selected by `ITEM_COLS`). If that comments URL *itself* points at an HN
     thread it is still routed to newshacker. The body/url/guid HN scan is **not**
     applied here, so a normal article that merely links to an HN thread in its
     body doesn't sprout a (mislabeled) newshacker button.

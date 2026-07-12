@@ -11,6 +11,11 @@ interface ArticleSummaryProps {
    * unpinned → offer a "Generate summary" button instead, so a casual open
    * doesn't spend a Gemini/Jina call. */
   autoGenerate: boolean;
+  /** The summary already delivered ON the item row (the allowlisted ride-along
+   * from `feed_items`, 0058). When present it renders instantly — no Edge call,
+   * no "Summarizing…" placeholder. Null → fall back to the on-demand
+   * `useSummary` flow (just-pinned, old backend, off-allowlist). */
+  cachedSummary?: string | null;
 }
 
 /**
@@ -25,11 +30,17 @@ interface ArticleSummaryProps {
  * card). Always mounted by the reader (hook order stays stable); the gating
  * lives in `useSummary`.
  */
-export function ArticleSummary({ id, online, autoGenerate }: ArticleSummaryProps) {
+export function ArticleSummary({
+  id,
+  online,
+  autoGenerate,
+  cachedSummary,
+}: ArticleSummaryProps) {
   const { summary, loading, canGenerate, generate, failed, retry, offlineWithoutCache } =
     useSummary(id, {
       online,
       autoGenerate,
+      initialSummary: cachedSummary,
     });
 
   if (loading) {

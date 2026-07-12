@@ -35,6 +35,7 @@ const ADD_FEED_MESSAGES: Record<AddFeedErrorKind, string> = {
   'not-found': 'That URL could not be found (404).',
   unreachable: 'Couldn’t reach that URL. Check the address and try again.',
   blocked: 'Google News feeds aren’t available on this account.',
+  'feed-limit': 'You’ve reached the feed limit. Remove a feed to add another.',
   unknown: 'Couldn’t add that feed. Please try again.',
 };
 
@@ -453,7 +454,9 @@ export function FeedsPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'readmo-subscriptions.opml';
+      // Date-stamp the download so successive exports don't collide in the
+      // browser's downloads folder (readmo-subscriptions-2026-07-12.opml).
+      a.download = `readmo-subscriptions-${new Date().toISOString().slice(0, 10)}.opml`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -668,15 +671,6 @@ export function FeedsPage() {
             await ds.setOpenMode(feedId, mode);
             invalidate();
           }}
-          // Hide the toggle until the backend has the open_original column
-          // (post-migration). The subscriptions query above has settled by the
-          // time these rows render, so the capability is known. Defaults to
-          // supported for sources that don't report it (the mock).
-          showOpenOriginal={ds.supportsOpenOriginal?.() ?? true}
-          // Likewise gate the newshacker option on the open_newshacker column
-          // (0034); a pre-0034 backend degrades the Hacker-News-feed choice to
-          // the reader/original checkbox.
-          showOpenNewshacker={ds.supportsOpenNewshacker?.() ?? true}
           onSetMarkDoneOnOpen={async (feedId, markDoneOnOpen) => {
             await ds.setMarkDoneOnOpen(feedId, markDoneOnOpen);
             // Re-read subscriptions so useMarkDoneOnOpenFeeds (which backs the
@@ -684,9 +678,6 @@ export function FeedsPage() {
             // the change on the next render.
             invalidate();
           }}
-          // Hide the toggle until the backend has the mark_done_on_open column
-          // (0037); a pre-0037 backend simply doesn't offer it.
-          showMarkDoneOnOpen={ds.supportsMarkDoneOnOpen?.() ?? true}
           onSetListLayout={async (feedId, listLayout) => {
             await ds.setSubscriptionListLayout(feedId, listLayout);
             // Re-read subscriptions so useListLayoutFeeds (which backs every
@@ -694,9 +685,6 @@ export function FeedsPage() {
             // re-render at the new layout.
             invalidate();
           }}
-          // Hide the Card style choice until the backend has the list_layout
-          // column (0051); a pre-0051 backend simply doesn't offer it.
-          showListLayout={ds.supportsSubscriptionListLayout?.() ?? true}
           onUnsubscribe={async (feedId) => {
             await ds.unsubscribe(feedId);
             invalidate();
