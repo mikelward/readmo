@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
-import type { SVGProps } from 'react';
+import type { JSX, SVGProps } from 'react';
 import * as icons from './icons';
 
 const REQUIRED = [
