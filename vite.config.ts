@@ -4,7 +4,8 @@ import {
   coverageConfigDefaults,
   defineConfig,
 } from 'vitest/config';
-import react from '@vitejs/plugin-react';
+import react, { reactCompilerPreset } from '@vitejs/plugin-react';
+import babel from '@rolldown/plugin-babel';
 import { VitePWA } from 'vite-plugin-pwa';
 
 // `process.env.VITEST` is set when vitest boots; skip the PWA plugin in
@@ -168,6 +169,13 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    // React Compiler (bail-out mode): auto-memoizes components it can prove are
+    // safe and silently skips any it can't, so it never breaks a working one.
+    // Runs via @rolldown/plugin-babel since plugin-react v6 transforms with oxc,
+    // not Babel. Skipped in tests (like the PWA plugin) to keep the unit run
+    // fast — tests exercise the source; the compiler is a build-time optimization.
+    // target '19' uses React 19's built-in react/compiler-runtime.
+    !isTest && babel({ presets: [reactCompilerPreset({ target: '19' })] }),
     !isTest &&
       VitePWA({
         // autoUpdate silently activates a new service worker on the next
