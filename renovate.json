@@ -1,0 +1,97 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommitsDisabled"
+  ],
+  "timezone": "Australia/Sydney",
+  "schedule": ["before 6am on saturday"],
+  "assignees": ["mikelward"],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 0,
+  "rangeStrategy": "bump",
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on saturday"]
+  },
+  "platformAutomerge": true,
+  "packageRules": [
+    {
+      "description": "Cooldown before an update is offered (mirrors the old dependabot semver-aware cooldown).",
+      "matchUpdateTypes": ["major"],
+      "minimumReleaseAge": "14 days"
+    },
+    {
+      "matchUpdateTypes": ["minor"],
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "matchUpdateTypes": ["patch", "pin", "digest"],
+      "minimumReleaseAge": "5 days"
+    },
+    {
+      "description": "Auto-merge every patch and minor once CI is green; majors always wait for review. Pre-1.0 (0.x) packages are excluded — SemVer permits breaking changes in a 0.x minor, so they still open a PR for review.",
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "lockFileMaintenance"],
+      "matchCurrentVersion": "!/^0/",
+      "automerge": true
+    },
+    {
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    },
+    {
+      "description": "Grouping (mirrors the old dependabot groups; keeps peer-related packages in one PR).",
+      "groupName": "tanstack",
+      "matchPackageNames": ["@tanstack/**"]
+    },
+    {
+      "groupName": "types",
+      "matchPackageNames": ["@types/**"]
+    },
+    {
+      "groupName": "eslint",
+      "matchPackageNames": [
+        "eslint",
+        "eslint-**",
+        "@typescript-eslint/**",
+        "typescript-eslint"
+      ]
+    },
+    {
+      "groupName": "testing",
+      "matchPackageNames": [
+        "@testing-library/**",
+        "vitest",
+        "@vitest/**",
+        "jsdom"
+      ]
+    },
+    {
+      "groupName": "vite",
+      "matchPackageNames": ["vite", "@vitejs/**", "vite-plugin-**"]
+    },
+    {
+      "groupName": "react",
+      "matchPackageNames": ["react", "react-dom", "react-router-dom"]
+    },
+    {
+      "groupName": "supabase",
+      "matchPackageNames": ["@supabase/**"]
+    },
+    {
+      "groupName": "workbox",
+      "matchPackageNames": ["workbox-**"]
+    },
+    {
+      "groupName": "fonts",
+      "matchPackageNames": ["@fontsource**"]
+    },
+    {
+      "description": "GitHub Actions: group + cooldown, same weekly cadence.",
+      "matchManagers": ["github-actions"],
+      "groupName": "github-actions",
+      "minimumReleaseAge": "7 days"
+    }
+  ]
+}
