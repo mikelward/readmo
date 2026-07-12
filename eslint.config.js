@@ -29,13 +29,15 @@ export default tseslint.config(
       'react-refresh': reactRefresh,
     },
     rules: {
-      // Enforce the classic Rules of Hooks. Pinned explicitly rather than
-      // spreading `reactHooks.configs.recommended.rules` because v7 folded the
-      // new React-Compiler rules (refs, set-state-in-effect, immutability,
-      // globals) into `recommended` as errors. Adopting those is a separate
-      // effort; keep the linter bump net-neutral and turn them on deliberately.
+      // Enforce the classic Rules of Hooks. The remaining v7 React-Compiler
+      // rules (refs, set-state-in-effect) are still off pending a deliberate
+      // adoption pass over their ~69 existing violations in product code.
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
+      // Adopted incrementally: these two only had test-file violations, now
+      // fixed, so they are enforced.
+      'react-hooks/globals': 'error',
+      'react-hooks/immutability': 'error',
       'react-refresh/only-export-components': [
         'warn',
         { allowConstantExport: true },
