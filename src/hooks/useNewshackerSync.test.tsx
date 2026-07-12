@@ -45,7 +45,7 @@ function hnItem(id: string, hnId: string): FeedItem {
 function makeFakeSource(items: FeedItem[]) {
   let listener: MutationListener | null = null;
   const syncNewshackerState = vi.fn(async (_payload: MirrorPayload) => {});
-  const pullNewshackerDone = vi.fn(async () => ({ linked: true, applied: 0 }));
+  const pullNewshackerState = vi.fn(async () => ({ linked: true, applied: 0 }));
   const source = {
     stateStore: {
       subscribeMutations: (l: MutationListener) => {
@@ -60,12 +60,12 @@ function makeFakeSource(items: FeedItem[]) {
       items.filter((it) => ids.includes(it.item.id)),
     ),
     syncNewshackerState,
-    pullNewshackerDone,
+    pullNewshackerState,
   } as unknown as DataSource;
   return {
     source,
     syncNewshackerState,
-    pullNewshackerDone,
+    pullNewshackerState,
     emit: (id: ItemId, changed: Partial<Record<ItemStateField, boolean>>) => {
       listener?.(id, changed);
     },
@@ -115,14 +115,14 @@ describe('useNewshackerSync', () => {
     const fake = makeFakeSource([hnItem('a', '12345')]);
     mount(fake.source, true);
     await vi.advanceTimersByTimeAsync(0);
-    expect(fake.pullNewshackerDone).toHaveBeenCalledTimes(1);
+    expect(fake.pullNewshackerState).toHaveBeenCalledTimes(1);
   });
 
   it('does not pull when the account is not linked', async () => {
     const fake = makeFakeSource([hnItem('a', '12345')]);
     mount(fake.source, false);
     await vi.advanceTimersByTimeAsync(0);
-    expect(fake.pullNewshackerDone).not.toHaveBeenCalled();
+    expect(fake.pullNewshackerState).not.toHaveBeenCalled();
   });
 
   it('mirrors a pinned HN item after the debounce', async () => {

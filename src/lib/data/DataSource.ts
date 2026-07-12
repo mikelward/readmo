@@ -392,15 +392,15 @@ export interface DataSource {
    * the local state stays authoritative; no-ops when unlinked, unsupported, or
    * the batch has no HN items. */
   syncNewshackerState?(payload: MirrorPayload): Promise<void>;
-  /** Reverse sync: pull the linked newshacker account's own **Done** list and
-   * apply it to Readmo `item_state`, mapping each HN id back to a subscribed
-   * item (SPEC.md *Mirror dismissals and pins to newshacker* → reverse pull).
-   * Best-effort — never throws; returns `{ linked:false, applied:0 }` when
-   * unlinked, unsupported, or on any failure. When it applied any Done it
-   * re-hydrates local state so the feed reflects it (hydration never fires the
-   * outbound mirror, so there's no echo). Optional — a source without it, or an
-   * old backend missing the `apply_newshacker_dones` RPC, simply pulls nothing. */
-  pullNewshackerDone?(): Promise<{ linked: boolean; applied: number }>;
+  /** Reverse sync: pull the linked newshacker account's own **Done + Pinned**
+   * lists and apply them to Readmo `item_state`, mapping each HN id back to a
+   * subscribed item (SPEC.md *Mirror dismissals and pins to newshacker* →
+   * reverse pull). Best-effort — never throws; returns `{ linked:false,
+   * applied:0 }` when unlinked, unsupported, or on any failure. When it applied
+   * anything it re-hydrates local state so the feed reflects it (hydration never
+   * fires the outbound mirror, so there's no echo). Optional — a source without
+   * it, or an old backend missing the RPC, simply pulls nothing. */
+  pullNewshackerState?(): Promise<{ linked: boolean; applied: number }>;
 
   // --- OPML -----------------------------------------------------------------
   importOpml(xml: string): Promise<{ added: number; skipped: number }>;

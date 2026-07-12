@@ -11,11 +11,13 @@
 //
 // GET /functions/v1/newshacker-sync    (pull: newshacker → Readmo, Done only)
 //   → { linked, applied }
-// Fetches newshacker's own Done list (GET /api/sync with the same bearer token)
-// and applies it to the caller's item_state via the `apply_newshacker_dones`
-// RPC (0062), mapping each HN id back to a Readmo item the user subscribes to.
-// This is the reverse half of the mirror — e.g. once you open a story on
-// newshacker and mark it Done there, it flows back and dismisses it in Readmo.
+// Fetches newshacker's own Done + Pinned lists (GET /api/sync with the same
+// bearer token) and applies them to the caller's item_state via the
+// `apply_newshacker_state` RPC (0063; falls back to the Done-only 0062
+// `apply_newshacker_dones` when 0063 isn't deployed yet), mapping each HN id
+// back to a Readmo item the user subscribes to. This is the reverse half of the
+// mirror — e.g. once you open a story on newshacker and mark it Done there, it
+// flows back and dismisses it in Readmo; pinning there pins it here too.
 // The RPC runs as the CALLER (userClient, so auth.uid() is the account and RLS
 // applies), not the service role. `applied` is the number of item_state writes
 // issued (0 when nothing mapped); the client re-hydrates when it's > 0.
@@ -41,7 +43,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { preflight } from '../_shared/cors.ts';
 import { jsonCors as json } from '../_shared/respond.ts';
-import { extractDoneEntries } from '../_shared/newshackerPull.ts';
+import { extractDoneEntries, extractPinnedEntries } from '../_shared/newshackerPull.ts';
 
 const NEWSHACKER_ORIGIN =
   Deno.env.get('NEWSHACKER_ORIGIN') ?? 'https://newshacker.app';
@@ -157,7 +159,7 @@ async function handlePush(req: Request, token: string | undefined): Promise<Resp
   }
 }
 
-/** GET: pull newshacker's own Done list and apply it to the caller's
+/** GET: pull newshacker's own Done + Pinned lists and apply them to the caller's
  * item_state (reverse sync). Runs the RPC as the caller (userClient) so
  * auth.uid() is the account and RLS applies. Best-effort throughout. */
 async function handlePull(
@@ -166,10 +168,12 @@ async function handlePull(
 ): Promise<Response> {
   if (!token) return json({ linked: false, applied: 0 });
 
-  // Fetch newshacker's full sync state via its bearer branch, then keep Done.
+  // Fetch newshacker's full sync state via its bearer branch, then keep the
+  // Done + Pinned lists.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SYNC_TIMEOUT_MS);
-  let entries: ReturnType<typeof extractDoneEntries>;
+  let dones: ReturnType<typeof extractDoneEntries>;
+  let pins: ReturnType<typeof extractPinnedEntries>;
   try {
     const res = await fetch(NEWSHACKER_SYNC_URL, {
       method: 'GET',
@@ -177,19 +181,34 @@ async function handlePull(
       signal: controller.signal,
     });
     if (!res.ok) return json({ linked: true, applied: 0 });
-    entries = extractDoneEntries(await res.json(), PULL_MAX);
+    const body = await res.json();
+    dones = extractDoneEntries(body, PULL_MAX);
+    pins = extractPinnedEntries(body, PULL_MAX);
   } catch (err) {
     console.error('newshacker-sync: pull fetch failed:', err instanceof Error ? err.message : err);
     return json({ linked: true, applied: 0 });
   } finally {
     clearTimeout(timer);
   }
-  if (entries.length === 0) return json({ linked: true, applied: 0 });
+  if (dones.length === 0 && pins.length === 0) {
+    return json({ linked: true, applied: 0 });
+  }
 
-  const { data, error } = await userClient.rpc('apply_newshacker_dones', {
-    p_entries: entries,
+  const { data, error } = await userClient.rpc('apply_newshacker_state', {
+    p_dones: dones,
+    p_pins: pins,
   });
   if (error) {
+    // Fall back to the Done-only RPC (0062) if the general one (0063) isn't
+    // deployed yet, so the reverse pull still works on an older backend.
+    if (error.code === 'PGRST202' && dones.length > 0) {
+      const { data: d2, error: e2 } = await userClient.rpc('apply_newshacker_dones', {
+        p_entries: dones,
+      });
+      if (!e2) return json({ linked: true, applied: typeof d2 === 'number' ? d2 : 0 });
+      console.error('newshacker-sync: apply (fallback) failed:', e2.message);
+      return json({ linked: true, applied: 0 });
+    }
     console.error('newshacker-sync: apply failed:', error.message);
     return json({ linked: true, applied: 0 });
   }

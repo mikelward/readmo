@@ -113,17 +113,18 @@ export function useNewshackerSync(): void {
     };
   }, [ds, linked]);
 
-  // Reverse sync: once linked, pull newshacker's own Done list and apply it to
-  // Readmo (SPEC.md *Mirror dismissals and pins to newshacker* → reverse pull).
-  // One-shot per mount / link activation; best-effort. The apply lands in
-  // item_state server-side and re-hydrates through the store's `hydrate` path,
-  // which never fires the outbound mirror above — so there's no echo loop.
+  // Reverse sync: once linked, pull newshacker's own Done + Pinned lists and
+  // apply them to Readmo (SPEC.md *Mirror dismissals and pins to newshacker* →
+  // reverse pull). One-shot per mount / link activation; best-effort. The apply
+  // lands in item_state server-side and re-hydrates through the store's
+  // `hydrate` path, which never fires the outbound mirror above — so there's no
+  // echo loop; a pulled pin also warms its offline cache via useOfflineCacheLock.
   useEffect(() => {
     if (!linked) return;
-    const pull = ds.pullNewshackerDone?.bind(ds);
+    const pull = ds.pullNewshackerState?.bind(ds);
     if (!pull) return;
     void pull().catch(() => {
-      // best-effort; the local Done state is authoritative.
+      // best-effort; the local state is authoritative.
     });
   }, [ds, linked]);
 }
