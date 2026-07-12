@@ -6,14 +6,14 @@
     ":semanticCommitsDisabled"
   ],
   "timezone": "UTC",
-  "schedule": ["before 6am on saturday"],
+  "schedule": ["after 6am and before 12pm on saturday"],
   "assignees": ["mikelward"],
   "prConcurrentLimit": 5,
   "prHourlyLimit": 0,
   "rangeStrategy": "bump",
   "lockFileMaintenance": {
     "enabled": true,
-    "schedule": ["before 6am on saturday"]
+    "schedule": ["after 6am and before 12pm on saturday"]
   },
   "platformAutomerge": true,
   "packageRules": [
