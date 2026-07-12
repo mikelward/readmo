@@ -697,9 +697,10 @@ newshacker_link (user_id PK/FK, token, created_at)                    -- compani
   the cap, adding another feed fails with "You've reached the feed limit. Remove
   a feed to add another," and an OPML import subscribes feeds up to the cap and
   reports the rest as skipped. Re-adding a feed already followed always works
-  (it's idempotent, not a new subscription). Beyond bounding abuse/cost, the cap
-  keeps the group-by-feed read's opening page under PostgREST's 1000-row
-  response limit (see *Feed views → Group by feed*).
+  (it's idempotent, not a new subscription). The cap primarily bounds
+  abuse/cost; it also keeps a typical account's group-by-feed read smaller, so
+  it pages against PostgREST's 1000-row response limit less often (that read
+  already pages by cursor on overflow — see *Feed views → Group by feed*).
 - **Curated section feeds.** Big news orgs publish many per-section feeds
   (World, Business, Sport, …) but often advertise *none* of them where a crawler
   can see — BBC's feeds live on a separate host and are only listed on a help
@@ -1379,10 +1380,13 @@ negligible and off every critical path. See the External services table in
        fetch — and there is no per-section server paging at all. If an
        account's grouped read overflows the server's response row cap
        (PostgREST's 1000), the read pages by cursor via a bottom "More" so
-       later sections aren't dropped; the **per-account feed cap** (100 feeds,
-       enforced server-side on subscribe) keeps normal accounts under it —
-       100 feeds × the 10-row opening window = the 1000-row page. (Drilling into
-       a single feed's own page is the flat pager.)
+       later sections aren't dropped. (Overflow depends on how many *listable*
+       rows each feed contributes — its freshness window plus pins, not the
+       10-row display window — so it's the busy-feed row volume, not the feed
+       count alone, that drives paging.) The **per-account feed cap** (100
+       feeds, enforced server-side on subscribe) bounds that volume loosely and
+       primarily guards abuse/cost. (Drilling into a single feed's own page is
+       the flat pager.)
        Revealed rows get the same live item-state overlay as window rows
        (locally Done/Hidden are filtered, pin/opened read from the store), and
        the whole fetched set self-heals together on the next refetch.
