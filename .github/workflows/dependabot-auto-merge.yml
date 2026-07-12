@@ -1,0 +1,74 @@
+name: Dependabot auto-merge
+
+# Auto-merge the *safe* Dependabot PRs and only those: minor and patch version
+# bumps that have passed every required check. `gh pr merge --auto` queues the
+# merge and GitHub only completes it once branch-protection's required checks go
+# green — so a PR that fails to build never merges itself.
+#
+# Major bumps are deliberately NOT auto-merged: they tend to carry breaking
+# changes that need code edits (e.g. the TypeScript 5 -> 6 bump, which fails the
+# build), so they stay assigned to the maintainer for review.
+#
+# Prerequisites (one-time repo settings, can't be set from the repo tree):
+#   1. Settings -> General -> "Allow auto-merge" enabled.
+#   2. Branch protection on `main` requiring the CI checks (build, edge) — this
+#      is what makes `--auto` wait for green instead of merging immediately.
+# Without branch protection, auto-merge has nothing to gate on.
+
+on: pull_request
+
+# Serialize per PR and cancel any older in-flight run, so a stale run can't
+# complete out of order and act on an outdated update-type after a newer push.
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    # Only act on Dependabot's own PRs. The `permissions` block above is what
+    # grants this Dependabot-triggered run a writable token (it is read-only by
+    # default); we never check out or run the PR's code, so plain
+    # `pull_request` is safe here — no `pull_request_target` needed.
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+
+      - name: Enable auto-merge for minor and patch updates
+        # For grouped PRs, update-type is the highest bump in the group, so a
+        # group containing any major is held for review.
+        if: steps.meta.outputs.update-type == 'version-update:semver-minor' || steps.meta.outputs.update-type == 'version-update:semver-patch'
+        # --match-head-commit pins the action to the SHA this run evaluated, so a
+        # stale/out-of-order run won't queue auto-merge if the head has since
+        # moved (e.g. rebased into a major); the newer run handles the new head.
+        run: gh pr merge --auto --squash --match-head-commit "$HEAD_SHA" "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Disable auto-merge for anything not minor/patch
+        # If a PR that was queued as minor/patch later rebases into a major (or a
+        # group's highest bump becomes major), clear any auto-merge already set —
+        # GitHub won't auto-disable it for a write-access pusher like Dependabot,
+        # so without this a now-major PR could still merge itself once green.
+        # Guard on the current auto-merge state so we only call --disable-auto
+        # when it is actually enabled: that skips the benign "not enabled" no-op
+        # without a blanket `|| true`, so a real failure (auth/API error, or a
+        # --match-head-commit mismatch) still fails the job loudly instead of
+        # silently leaving a now-major PR armed to merge.
+        if: steps.meta.outputs.update-type != 'version-update:semver-minor' && steps.meta.outputs.update-type != 'version-update:semver-patch'
+        run: |
+          if [ "$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')" = "true" ]; then
+            gh pr merge --disable-auto --match-head-commit "$HEAD_SHA" "$PR_URL"
+          fi
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
