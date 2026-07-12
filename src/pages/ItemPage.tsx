@@ -343,12 +343,49 @@ export function ItemPage() {
   //
   // `isRestoring` gates the scan: the list caches it walks are still hydrating at
   // boot, so wait for restoration (its flip to false re-renders and re-runs this).
-  const fallback = useMemo(
-    () =>
-      data === undefined && !isRestoring ? findCachedFeedItem(queryClient, id) : null,
-    [data, isRestoring, queryClient, id],
+  // One scan of the persisted list caches for this item, reused twice: the
+  // instant body fallback below (while `getItem` is in flight / offline), AND
+  // the AI summary that rides the list row for an allowlisted caller
+  // (`feed_items`, 0058). The per-item `getItem` read omits `ai_summary`, so
+  // once it resolves and becomes `resolved` the summary is no longer on the item
+  // — it must still come from the list cache. Scans whenever the cache is
+  // hydrated (its restore flip re-runs this); null while restoring so a cold
+  // offline start doesn't read an empty cache.
+  const listItem = useMemo(
+    () => (!isRestoring ? findCachedFeedItem(queryClient, id) : null),
+    [isRestoring, queryClient, id],
   );
+  const fallback = data === undefined ? listItem : null;
   const resolved = data === undefined ? fallback : data;
+  // The cached AI summary for this article, delivered on the item row (the
+  // allowlisted ride-along) — lets the reader show a pinned article's summary
+  // instantly + offline with no "Summarizing…" placeholder; null falls back to
+  // the on-demand `useSummary` flow (just-pinned / old backend / off-allowlist).
+  //
+  // Trust the list-row summary ONLY when it describes the content we're actually
+  // showing. A publisher edit changes content_html/title AND nulls the
+  // server-side summary (upsert_feed_items, 0035), but an older persisted list
+  // row can still hold the PREVIOUS gist — rendering it over the fresh body and
+  // suppressing regeneration. So match the list row's content against the
+  // displayed item and drop a mismatch (let useSummary regenerate/hide). While
+  // getItem hasn't resolved, the displayed body IS the list row, so they're
+  // consistent by construction.
+  const cachedSummary = useMemo(() => {
+    const shown = resolved?.item;
+    if (!shown) return null;
+    // A direct read that carries the summary (getItem omits it today, but this
+    // future-proofs and is always the freshest source when present).
+    if (shown.aiSummary) return shown.aiSummary;
+    const rowSummary = listItem?.item.aiSummary;
+    if (
+      rowSummary &&
+      listItem!.item.title === shown.title &&
+      listItem!.item.contentHtml === shown.contentHtml
+    ) {
+      return rowSummary;
+    }
+    return null;
+  }, [resolved, listItem]);
 
   // Remember this HN item's numeric id while the reader is open, so the
   // newshacker mirror can still resolve it if the user unpins/unmarks-done here
@@ -514,9 +551,9 @@ export function ItemPage() {
   // Hacker News feeds open the newshacker thread (not news.ycombinator.com),
   // deriving the HN id from the item's url/guid/body — same as the row's "open
   // on newshacker" mode, and the only way to find the official HN feed's
-  // discussion link (it lives in the description, not a structured field; it
-  // also covers a pre-0033 backend that omits comments_url). That broad scan is
-  // GATED to HN feeds: on a normal feed a body that merely mentions an HN thread
+  // discussion link (it lives in the description, not a structured field). That
+  // broad scan is GATED to HN feeds: on a normal feed a body that merely mentions
+  // an HN thread
   // would otherwise mislabel/redirect the button (PR #264 review).
   //
   // Every other feed uses its structured comments URL (RSS <comments> / Atom
@@ -848,12 +885,19 @@ export function ItemPage() {
       </header>
 
       {/* AI summary — directly after the title/byline, above the article. For an
-          allowlisted user it generates automatically only when the article was
-          pinned before opening (useSummaryPrewarm usually has it warmed already);
-          otherwise it offers a "Generate summary" button. The gating lives in
-          useSummary, so it's always mounted to keep hook order stable and renders
-          nothing when there's nothing to show. */}
-      <ArticleSummary id={item.id} online={online} autoGenerate={pinnedAtOpen} />
+          allowlisted user it shows the cached gist that rides the list row
+          instantly (no spinner, works offline); failing that it generates
+          automatically only when the article was pinned before opening
+          (useSummaryPrewarm usually has it warmed already), otherwise it offers a
+          "Generate summary" button. The gating lives in useSummary, so it's
+          always mounted to keep hook order stable and renders nothing when
+          there's nothing to show. */}
+      <ArticleSummary
+        id={item.id}
+        online={online}
+        autoGenerate={pinnedAtOpen}
+        cachedSummary={cachedSummary}
+      />
 
       <div className="reader__modebar">
         {fetchingFull ? (

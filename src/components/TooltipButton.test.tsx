@@ -232,8 +232,11 @@ describe('TooltipButton', () => {
     // Force :focus-visible to match so the focus path fires (jsdom
     // is conservative about :focus-visible heuristics).
     const originalMatches = btn.matches;
-    btn.matches = (sel: string) =>
-      sel === ':focus-visible' ? true : originalMatches.call(btn, sel);
+    // matches() has type-predicate overloads (TS 6.0+ DOM lib); cast the stub.
+    btn.matches = ((sel: string) =>
+      sel === ':focus-visible'
+        ? true
+        : originalMatches.call(btn, sel)) as typeof btn.matches;
     try {
       act(() => {
         btn.focus();
@@ -261,8 +264,11 @@ describe('TooltipButton', () => {
     );
     const btn = screen.getByTestId('btn') as HTMLButtonElement;
     const originalMatches = btn.matches;
-    btn.matches = (sel: string) =>
-      sel === ':focus-visible' ? false : originalMatches.call(btn, sel);
+    // matches() has type-predicate overloads (TS 6.0+ DOM lib); cast the stub.
+    btn.matches = ((sel: string) =>
+      sel === ':focus-visible'
+        ? false
+        : originalMatches.call(btn, sel)) as typeof btn.matches;
     try {
       act(() => {
         btn.focus();

@@ -8,6 +8,7 @@ import { useDataSource } from '../lib/data/context';
 import { useOnlineStatus } from './useOnlineStatus';
 import { useAuth } from './useAuth';
 import { fullTextStaleTime, isFullTextSettled, looksTruncated } from '../lib/fullText';
+import { summaryQueryKey } from './useSummary';
 import {
   CAPABILITIES_QUERY_KEY,
   canUseFullText,
@@ -30,8 +31,11 @@ function prefetchImages(html: string): void {
  * (SPEC.md *Prefetch on Pin/Favorite*; these are exactly the items `/offline`
  * lists). While an item is in either bucket we keep its reader queries alive in
  * the persisted React Query cache so it reads offline:
- *   - `['item', id]`     — the item detail + sanitized feed body, and
- *   - `['fulltext', id]` — the extracted reading body, for truncated feeds.
+ *   - `['item', id]`     — the item detail + sanitized feed body,
+ *   - `['fulltext', id]` — the extracted reading body, for truncated feeds, and
+ *   - `['summary', id]`  — the AI summary (the 0058 ride-along seeds it here via
+ *                          `useSummary`; retaining it keeps the gist offline like
+ *                          the body, rather than only in the GC-able feed cache).
  *
  * An idle (`enabled: false`) observer per query blocks garbage collection while
  * the item stays bucketed — including across a reload, since on mount we re-lock
@@ -218,6 +222,20 @@ export function useOfflineCacheLock(): void {
             queryFn: () => ds.fetchFullText(id),
             enabled: false,
           }),
+          // Retain the AI summary too, so a pinned article's gist survives
+          // offline like its body. The ride-along (0058) delivers it on the feed
+          // row, and `useSummary` seeds it into `['summary', id]` on open (or the
+          // prewarm fetches it); this lock just keeps that entry alive, since the
+          // feed-list cache it came from isn't GC-locked — without it an offline
+          // open past the GC window would keep the body and lose the summary. Holds
+          // whatever's seeded/prewarmed; population stays the reader's/prewarm's
+          // job (never fetches — disabled). A favorite that's never been opened
+          // online has nothing to retain here yet; its gist lands on first open.
+          new QueryObserver(queryClient, {
+            queryKey: summaryQueryKey(id),
+            queryFn: () => ds.getSummary(id),
+            enabled: false,
+          }),
         ];
         const unsubscribers = observers.map((obs) => obs.subscribe(() => {}));
         locks.set(id, () => unsubscribers.forEach((un) => un()));
@@ -231,6 +249,7 @@ export function useOfflineCacheLock(): void {
       release();
       locks.delete(id);
       warmed.delete(id);
+      queryClient.removeQueries({ queryKey: summaryQueryKey(id), exact: true });
       queryClient.removeQueries({ queryKey: ['fulltext', id], exact: true });
       queryClient.removeQueries({ queryKey: ['item', id], exact: true });
     };

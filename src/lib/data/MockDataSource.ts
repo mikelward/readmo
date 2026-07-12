@@ -16,7 +16,8 @@ import {
   ItemStateStore,
   localStoragePersistence,
 } from './itemState';
-import { escapeXml, decodeXmlEntities } from './xmlEntities';
+import { decodeXmlEntities } from './xmlEntities';
+import { buildOpml } from './opml';
 import type { FullTextResult } from '../fullText';
 import type { SummaryResult } from '../summary';
 import {
@@ -592,12 +593,6 @@ export class MockDataSource implements DataSource {
     if (sub) sub.openOriginal = openOriginal;
   }
 
-  supportsOpenOriginal(): boolean {
-    // The in-memory store always carries the field, so the control is always
-    // available against the mock.
-    return true;
-  }
-
   async setOpenMode(feedId: FeedId, mode: OpenMode): Promise<void> {
     const sub = this.subs.get(feedId);
     if (sub) {
@@ -608,21 +603,9 @@ export class MockDataSource implements DataSource {
     }
   }
 
-  supportsOpenNewshacker(): boolean {
-    // The in-memory store always carries the field, so the control is always
-    // available against the mock.
-    return true;
-  }
-
   async setMarkDoneOnOpen(feedId: FeedId, markDoneOnOpen: boolean): Promise<void> {
     const sub = this.subs.get(feedId);
     if (sub) sub.markDoneOnOpen = markDoneOnOpen;
-  }
-
-  supportsMarkDoneOnOpen(): boolean {
-    // The in-memory store always carries the field, so the control is always
-    // available against the mock.
-    return true;
   }
 
   async setSubscriptionListLayout(
@@ -631,12 +614,6 @@ export class MockDataSource implements DataSource {
   ): Promise<void> {
     const sub = this.subs.get(feedId);
     if (sub) sub.listLayout = listLayout;
-  }
-
-  supportsSubscriptionListLayout(): boolean {
-    // The in-memory store always carries the field, so the control is always
-    // available against the mock.
-    return true;
   }
 
   async setTitleOverride(feedId: FeedId, title: string | null): Promise<void> {
@@ -755,20 +732,12 @@ export class MockDataSource implements DataSource {
   }
 
   async exportOpml(): Promise<string> {
-    const outlines = [...this.subs.values()]
-      .map((sub) => {
-        const feed = this.feeds.get(sub.feedId);
-        if (!feed) return '';
-        const title = sub.titleOverride ?? feed.title;
-        return `    <outline type="rss" text="${escapeXml(title)}" title="${escapeXml(
-          title,
-        )}" xmlUrl="${escapeXml(feed.url)}"${
-          feed.siteUrl ? ` htmlUrl="${escapeXml(feed.siteUrl)}"` : ''
-        } />`;
-      })
-      .filter(Boolean)
-      .join('\n');
-    return `<?xml version="1.0" encoding="UTF-8"?>\n<opml version="2.0">\n  <head><title>Readmo subscriptions</title></head>\n  <body>\n${outlines}\n  </body>\n</opml>\n`;
+    const outlines = [...this.subs.values()].flatMap((sub) => {
+      const feed = this.feeds.get(sub.feedId);
+      if (!feed) return [];
+      return [{ title: sub.titleOverride ?? feed.title, xmlUrl: feed.url, htmlUrl: feed.siteUrl }];
+    });
+    return buildOpml(outlines, { dateCreated: new Date() });
   }
 
   // --- Capabilities & admin (in-memory) -------------------------------------

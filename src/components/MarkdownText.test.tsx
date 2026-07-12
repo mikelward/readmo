@@ -40,6 +40,44 @@ describe('MarkdownText', () => {
     expect(container.innerHTML).toBe('the variable <em>x</em> here');
   });
 
+  it('italicizes a multi-word work title with asterisks', () => {
+    const { container } = render(
+      <MarkdownText text="Homer's *The Odyssey* is an epic poem." />,
+    );
+    expect(container.innerHTML).toBe(
+      "Homer's <em>The Odyssey</em> is an epic poem.",
+    );
+  });
+
+  it('renders _underscore_ italic as <em>', () => {
+    const { container } = render(
+      <MarkdownText text="This is _kind of_ a big deal." />,
+    );
+    expect(container.innerHTML).toBe('This is <em>kind of</em> a big deal.');
+  });
+
+  it('italicizes a multi-word work title with underscores', () => {
+    // The reported bug: Gemini emits `_The Odyssey_` and it must render italic,
+    // not leak literal underscores.
+    const { container } = render(
+      <MarkdownText text="Homer's _The Odyssey_ is an epic poem." />,
+    );
+    expect(container.innerHTML).toBe(
+      "Homer's <em>The Odyssey</em> is an epic poem.",
+    );
+  });
+
+  it('leaves a __dunder__ identifier literal', () => {
+    // `_init_` is the only span the tokenizer could match inside `__init__`, and
+    // its outer neighbor is another `_` (a word char), so the guard rejects it.
+    const { container } = render(
+      <MarkdownText text="Python calls it __init__ for constructors." />,
+    );
+    expect(container.innerHTML).toBe(
+      'Python calls it __init__ for constructors.',
+    );
+  });
+
   it('keeps **bold** as <strong> rather than treating the inner * as italic', () => {
     const { container } = render(
       <MarkdownText text="This is **important** stuff." />,
@@ -132,6 +170,24 @@ describe('MarkdownText', () => {
     expect(container.innerHTML).toBe('The base_url and api_key fields.');
   });
 
+  it('renders inline markdown between two rejected snake_case identifiers', () => {
+    // A rejected underscore span must not swallow the real **bold** sitting
+    // between two snake_case identifiers on the same line.
+    const { container } = render(
+      <MarkdownText text="base_url to **value** and api_key" />,
+    );
+    expect(container.innerHTML).toBe(
+      'base_url to <strong>value</strong> and api_key',
+    );
+  });
+
+  it('renders inline code between two rejected asterisk identifiers', () => {
+    const { container } = render(
+      <MarkdownText text="foo*bar `code` baz*qux" />,
+    );
+    expect(container.innerHTML).toBe('foo*bar <code>code</code> baz*qux');
+  });
+
   it('escapes HTML in user-supplied text — no tag injection', () => {
     const { container } = render(
       <MarkdownText text={'innocent <script>alert(1)</script> text'} />,
@@ -217,6 +273,81 @@ describe('MarkdownText', () => {
   it('leaves **bold** at the start of a line as bold, not a bullet', () => {
     const { container } = render(<MarkdownText text="**heads up** everyone" />);
     expect(container.innerHTML).toBe('<strong>heads up</strong> everyone');
+  });
+
+  it('renders a "> " line as a <blockquote>', () => {
+    const { container } = render(
+      <MarkdownText text="> A single quoted line." />,
+    );
+    expect(container.innerHTML).toBe(
+      '<blockquote class="markdown-quote">A single quoted line.</blockquote>',
+    );
+  });
+
+  it('collapses a run of "> " lines into one blockquote and tokenizes inside', () => {
+    const { container } = render(
+      <MarkdownText text={'> The author calls it **bold**.\n> A second quoted line.'} />,
+    );
+    expect(container.innerHTML).toBe(
+      '<blockquote class="markdown-quote">The author calls it ' +
+        '<strong>bold</strong>.\nA second quoted line.</blockquote>',
+    );
+  });
+
+  it('renders a lead-in paragraph followed by a blockquote', () => {
+    const { container } = render(
+      <MarkdownText text={'The report concludes:\n> Growth will slow.'} />,
+    );
+    expect(container.innerHTML).toBe(
+      'The report concludes:<blockquote class="markdown-quote">' +
+        'Growth will slow.</blockquote>',
+    );
+  });
+
+  it('eats only one space after the "> " marker, preserving further indent', () => {
+    const { container } = render(<MarkdownText text="> 	indented quote" />);
+    expect(container.innerHTML).toBe(
+      '<blockquote class="markdown-quote">\tindented quote</blockquote>',
+    );
+  });
+
+  it('does not treat a mid-sentence ">" as a blockquote', () => {
+    const { container } = render(
+      <MarkdownText text="the value grew to > 50% overall" />,
+    );
+    // `&gt;` is the serialized form of a literal ">" text node — it's rendered as
+    // text, not turned into a blockquote (the marker must open the line).
+    expect(container.innerHTML).toBe('the value grew to &gt; 50% overall');
+  });
+
+  it('keeps a line-leading greater-than comparison literal, not a blockquote', () => {
+    // A `>` opening on a digit, operator, currency, or sign is a comparison /
+    // threshold — eating the `>` would change its meaning. All must stay literal.
+    for (const [input, expected] of [
+      ['> 50% of respondents agreed', '&gt; 50% of respondents agreed'],
+      ['>10 ms latency was measured', '&gt;10 ms latency was measured'],
+      ['>  25 units shipped', '&gt;  25 units shipped'],
+      ['>= 50% of the vote', '&gt;= 50% of the vote'],
+      ['> $1M in revenue', '&gt; $1M in revenue'],
+      ['> -5% year over year', '&gt; -5% year over year'],
+    ] as const) {
+      const { container } = render(<MarkdownText text={input} />);
+      expect(container.innerHTML).toBe(expected);
+    }
+  });
+
+  it('quotes a line that opens on a quotation mark', () => {
+    const { container } = render(<MarkdownText text={'> "The end is near," she said.'} />);
+    expect(container.innerHTML).toBe(
+      '<blockquote class="markdown-quote">"The end is near," she said.</blockquote>',
+    );
+  });
+
+  it('still quotes a line that opens on a non-digit after the marker', () => {
+    const { container } = render(<MarkdownText text="> Growth will slow, they say." />);
+    expect(container.innerHTML).toBe(
+      '<blockquote class="markdown-quote">Growth will slow, they say.</blockquote>',
+    );
   });
 
   it('renders the full DeepSeek example end to end', () => {

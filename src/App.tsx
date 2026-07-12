@@ -9,6 +9,7 @@ import { useAuth } from './hooks/useAuth';
 import { useUserCacheScope } from './hooks/useUserCacheScope';
 import { useOfflineCacheLock } from './hooks/useOfflineCacheLock';
 import { useSummaryPrewarm } from './hooks/useSummaryPrewarm';
+import { useSavedSummarySeed } from './hooks/useSavedSummarySeed';
 import { useFeedInvalidation } from './hooks/useFeedInvalidation';
 import { useStateSync } from './hooks/useStateSync';
 import { useNewshackerSync } from './hooks/useNewshackerSync';
@@ -73,6 +74,11 @@ export default function App() {
   // lock above (which warms the reader body + full text). Cheap cross-device
   // because the summary is cached server-side; generates at most once per item.
   useSummaryPrewarm();
+  // Eagerly retain SAVED items' summaries offline — seeds ['summary', id] from
+  // the cached feed row for pinned AND favorited items (the prewarm above only
+  // covers pins), so a favorite never opened online keeps its gist offline.
+  // Cache-only, never a generation.
+  useSavedSummarySeed();
   // Invalidate feed caches on any state change, even while the feed list is
   // unmounted (e.g. user marks Done on the reader page then navigates back).
   useFeedInvalidation();

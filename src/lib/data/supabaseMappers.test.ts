@@ -88,8 +88,9 @@ describe('mapFeed', () => {
     ).toBe('https://example.com/favicon.ico');
   });
 
-  it('defaults faviconUrl to null against a pre-0036 backend (column absent)', () => {
-    // `base` omits favicon_url entirely, mirroring an older feeds_public view.
+  it('defaults faviconUrl to null when favicon_url is absent or null', () => {
+    // `base` omits favicon_url entirely (a malformed row); a present null maps
+    // the same way.
     expect(mapFeed(base).faviconUrl).toBeNull();
     expect(mapFeed({ ...base, favicon_url: null }).faviconUrl).toBeNull();
   });
@@ -146,7 +147,7 @@ describe('mapItem', () => {
       mapItem({ ...row, comments_url: 'https://news.ycombinator.com/item?id=1' })
         .commentsUrl,
     ).toBe('https://news.ycombinator.com/item?id=1');
-    // ITEM_COLS reads / a pre-0033 backend omit the column entirely.
+    // A malformed row omitting the column defaults to null.
     expect(mapItem(row).commentsUrl).toBeNull();
   });
 
@@ -154,9 +155,17 @@ describe('mapItem', () => {
     expect(
       mapItem({ ...row, spoiler_free_title: 'EPL MNU v ARS spoiler' }).spoilerFreeTitle,
     ).toBe('EPL MNU v ARS spoiler');
-    // A pre-0045 backend (or the step-down column set) omits it entirely.
+    // A malformed row omitting the column defaults to null.
     expect(mapItem(row).spoilerFreeTitle).toBeNull();
     expect(mapItem({ ...row, spoiler_free_title: null }).spoilerFreeTitle).toBeNull();
+  });
+
+  it('maps ai_summary (the allowlisted list-row ride-along), defaulting to null', () => {
+    expect(mapItem({ ...row, ai_summary: 'A cached gist.' }).aiSummary).toBe('A cached gist.');
+    // Direct ITEM_COLS reads omit it, an off-allowlist caller / an old backend
+    // gets it NULLed — all map to null, and the reader falls back to `getSummary`.
+    expect(mapItem(row).aiSummary).toBeNull();
+    expect(mapItem({ ...row, ai_summary: null }).aiSummary).toBeNull();
   });
 });
 

@@ -1,6 +1,8 @@
 IMPORT_MAP := supabase/functions/import_map.json
 
-.PHONY: deploy deploy-discover deploy-refresh deploy-poll deploy-img deploy-fulltext deploy-summary deploy-newshacker-sync deploy-notify-signup deploy-db-perf migrate set-build check-link
+.PHONY: deploy deploy-discover deploy-refresh deploy-poll deploy-img deploy-fulltext deploy-summary deploy-newshacker-sync deploy-notify-signup deploy-db-perf deploy-gateway migrate set-build check-link
+
+GATEWAY_DIR := infra/cf-gateway
 
 # Fail fast unless we're sitting in the linked project. Without a local
 # supabase/config.toml the CLI silently walks up the tree and resolves a
@@ -75,3 +77,13 @@ deploy-notify-signup: check-link
 # deploy with --no-verify-jwt like poll.
 deploy-db-perf: check-link
 	supabase functions deploy db-perf --import-map $(IMPORT_MAP) --no-verify-jwt
+
+## Deploy the Cloudflare API gateway Worker (infra/cf-gateway/). Deliberately
+## NOT part of `make deploy`: that target is Supabase-only (gated on `check-link`
+## + the Supabase CLI), whereas this uses a different vendor and auth
+## (`wrangler login`, not `supabase link`), rolls out on its own clock, and the
+## Worker is a rarely-changing dumb forwarder. Run it on its own when the Worker
+## or its `wrangler.toml` vars change. Needs the Cloudflare CLI logged in
+## (`npx wrangler login`); see infra/cf-gateway/README.md.
+deploy-gateway:
+	cd $(GATEWAY_DIR) && npx wrangler deploy
