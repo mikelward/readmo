@@ -22,7 +22,8 @@ import { confirmBackendReachable } from '../networkStatus';
 import { OUTBOX_SUFFIX } from '../userCache';
 import { isGoogleNewsFeedUrl } from '../googleNews';
 import { ItemStateStore, localStoragePersistence } from './itemState';
-import { escapeXml, decodeXmlEntities } from './xmlEntities';
+import { decodeXmlEntities } from './xmlEntities';
+import { buildOpml } from './opml';
 import {
   ItemStateOutbox,
   localStorageOutboxPersistence,
@@ -209,9 +210,9 @@ async function classifyFunctionError(error: unknown): Promise<AddFeedError> {
  *
  * Triage writes flow through the durable offline outbox ({@link ItemStateOutbox})
  * to `set_item_state`, which resolves cross-device conflicts by per-field
- * last-write-wins on each field's action timestamp (see SPEC *Sync*). Still
- * deferred: an authenticated OPML *export* RPC (the client can't emit server-only
- * fetch URLs).
+ * last-write-wins on each field's action timestamp (see SPEC *Sync*). OPML
+ * *export* goes through the `export_subscriptions` RPC (0061), which returns the
+ * caller's real feed fetch URLs so the file is re-importable elsewhere.
  *
  * Pagination is offset-based behind an opaque numeric cursor (mirroring the
  * mock); each page is the bounded slice of the combined pinned-then-body
@@ -1597,29 +1598,51 @@ export class SupabaseDataSource implements DataSource {
   }
 
   /**
-   * KNOWN LIMITATION (tracked for the deferred backend item): `xmlUrl` here is
-   * the display-safe `site_url` (homepage), not the RSS/Atom fetch URL. That is
-   * deliberate — `feeds_public` never exposes `url`/`secret_url` (a per-user
-   * token can ride in `secret_url`), so the client cannot emit the real feed
-   * endpoint without leaking server-only data. A faithful, re-importable export
-   * needs an authenticated server export RPC; until that lands the exported OPML
-   * carries the public homepage address only.
+   * Export the caller's subscriptions as OPML. The `export_subscriptions` RPC
+   * (0061) returns the feed fetch URL (`feeds.url`) that `feeds_public` withholds
+   * from clients, so the export is re-importable into other readers. Exposing
+   * `url` (which can embed a pasted per-user token) is a deliberate owner-scoped
+   * carve-out: the RPC is scoped to the caller's own `subscriptions`, and to
+   * subscribe to a tokenized feed you had to present that URL yourself — so a
+   * user only ever gets back tokens they already have (see the migration's
+   * safety note). It never emits the separate server-only `secret_url`, so a
+   * rare secret-backed feed exports its token-stripped `url` and may not
+   * round-trip. Against a backend that predates the RPC (PGRST202)
+   * we fall back to the display-safe homepage URL — the older behavior — so a
+   * new client keeps working before the manual `make deploy` lands (guardrail
+   * #11). Any other RPC error is surfaced to the caller (Export shows a toast).
    */
   async exportOpml(): Promise<string> {
+    const { data, error } = await this.sb.rpc('export_subscriptions');
+    if (!error && Array.isArray(data)) {
+      // `feed_url` is the real fetch URL; `title` is resolved server-side
+      // (override → title → site_url) but is null when a never-fetched feed has
+      // none of them, so fall back to the same "Untitled feed" the list uses.
+      const rows = data as Array<{
+        feed_url: string;
+        site_url: string | null;
+        title: string | null;
+      }>;
+      const outlines = rows.map((r) => ({
+        title: r.title ?? r.site_url ?? 'Untitled feed',
+        xmlUrl: r.feed_url,
+        htmlUrl: r.site_url,
+      }));
+      return buildOpml(outlines, { dateCreated: new Date() });
+    }
+    const err = error as { code?: string; message?: string } | null;
+    if (err && err.code !== 'PGRST202') {
+      throw error instanceof Error ? error : new Error(err.message ?? String(error));
+    }
+    // Old backend: the RPC isn't deployed, so emit the homepage URL (all the
+    // client can see) rather than the real feed endpoint.
     const subs = await this.loadSubscriptions();
-    const outlines = subs
-      .map(({ subscription, feed }) => {
-        const title = subscription.titleOverride ?? feed.title;
-        // See the method-level note: public homepage URL only, by design.
-        return `    <outline type="rss" text="${escapeXml(title)}" title="${escapeXml(
-          title,
-        )}" xmlUrl="${escapeXml(feed.url)}"${
-          feed.siteUrl ? ` htmlUrl="${escapeXml(feed.siteUrl)}"` : ''
-        } />`;
-      })
-      .filter(Boolean)
-      .join('\n');
-    return `<?xml version="1.0" encoding="UTF-8"?>\n<opml version="2.0">\n  <head><title>Readmo subscriptions</title></head>\n  <body>\n${outlines}\n  </body>\n</opml>\n`;
+    const outlines = subs.map(({ subscription, feed }) => ({
+      title: subscription.titleOverride ?? feed.title,
+      xmlUrl: feed.url,
+      htmlUrl: feed.siteUrl,
+    }));
+    return buildOpml(outlines, { dateCreated: new Date() });
   }
 
   // --- Capabilities & admin -------------------------------------------------

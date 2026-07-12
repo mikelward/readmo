@@ -2502,4 +2502,53 @@ describe('SupabaseDataSource — empty-feed caught-up confirmation', () => {
     expect(page.items.length).toBeGreaterThan(0);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('exportOpml emits the real feed URL from export_subscriptions (not the homepage)', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'export_subscriptions') {
+        return Promise.resolve({
+          data: [
+            { feed_url: 'https://a.example.com/feed.xml', site_url: 'https://a.example.com', title: 'Alpha Blog' },
+            { feed_url: 'https://b.example.com/rss?a=1&b=2', site_url: null, title: null },
+          ],
+          error: null,
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+
+    const xml = await env.ds.exportOpml();
+    // The RSS endpoint, not the site homepage, is what an importer subscribes to.
+    expect(xml).toContain('xmlUrl="https://a.example.com/feed.xml"');
+    expect(xml).toContain('htmlUrl="https://a.example.com"');
+    // A null title falls back to "Untitled feed"; the & in the URL is escaped.
+    expect(xml).toContain('xmlUrl="https://b.example.com/rss?a=1&amp;b=2"');
+    expect(xml).toContain('text="Untitled feed"');
+    expect(xml).toContain('<dateCreated>');
+  });
+
+  it('exportOpml falls back to the homepage URL against a backend without the RPC (PGRST202)', async () => {
+    // The default fake returns PGRST202 for any unknown RPC, so export_subscriptions
+    // is "not deployed" — the client must still produce a document, using the only
+    // URL it can see (the display-safe site_url), rather than throwing.
+    const { ds } = setup();
+    const xml = await ds.exportOpml();
+    expect(xml).toContain('xmlUrl="https://a.example.com"'); // site_url, the fallback
+    expect(xml).toContain('title="Alpha Blog"');
+    expect(xml).not.toContain('/feed.xml');
+  });
+
+  it('exportOpml rethrows a non-PGRST202 RPC error instead of masking it', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'export_subscriptions') {
+        return Promise.resolve({ data: null, error: { code: '503', message: 'service unavailable' } });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    await expect(env.ds.exportOpml()).rejects.toThrow('service unavailable');
+  });
 });

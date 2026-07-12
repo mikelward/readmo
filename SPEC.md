@@ -532,7 +532,14 @@ newshacker_link (user_id PK/FK, token, created_at)                    -- compani
   (only the poller's service role reads it); expose a display-safe identifier
   (`site_url` / `title` / feed id). De-dup two users who paste the same
   tokenized URL onto one shared `feeds` row keyed by the full URL, token
-  server-only.
+  server-only. **One deliberate carve-out:** the authenticated OPML-export RPC
+  returns each caller their **own** subscriptions' fetch `url` (so exports
+  round-trip into other readers). This is safe because it's scoped to the
+  caller's `subscriptions` (never the permanent-state visibility above) and a
+  user must have presented a tokenized feed's URL to subscribe in the first
+  place — so they only ever get back tokens they already hold. `secret_url` is
+  still never returned, so a secret-backed feed exports its token-stripped `url`
+  and may not round-trip.
 
 ### Feed fetching & parsing (server)
 
@@ -1143,10 +1150,14 @@ negligible and off every critical path. See the External services table in
   source when `isSupabaseConfigured()` (else the mock seed), so a configured
   deployment boots on real RLS-scoped data. Conflict resolution is per-field, so
   two devices editing the same item never cross-conflict on independent flags;
-  same-field edits resolve to the later action time. Still deferred: an
-  **authenticated OPML-export RPC** — the client can't emit real feed fetch URLs
-  (`feeds_public` exposes `site_url`, never the fetch URLs `url`/`secret_url`), so live
-  `exportOpml` carries homepage URLs until a server-side export exists.
+  same-field edits resolve to the later action time. **OPML export** goes through
+  an authenticated server RPC scoped to the caller's own subscriptions, so the
+  exported file carries each feed's fetch `url` and is re-importable into other
+  readers (the deliberate owner-scoped carve-out to the "url server-only"
+  invariant — see *Row-level security*). It never emits the server-only
+  `secret_url`, so a secret-backed feed exports its token-stripped `url` and may
+  not round-trip. Against a backend that predates the RPC the client falls back
+  to the homepage URL.
 - **At-least-once delivery, no exactly-once needed.** The outbox can re-send a
   write that committed but whose ack was lost to a crash. Under per-field LWW a
   replay is idempotent in effect: re-applying the same field with the same (or an
@@ -1862,9 +1873,10 @@ negligible and off every critical path. See the External services table in
       the admin RPC, which sees every subscription), the sampled article's title,
       a single derived **status** pill, and a muted **server-response** line. As in the grouped list headers, a feed with no
       resolved favicon (or one whose icon fails to load) reserves a matching
-      16px slot so every title lines up at the same left edge. Only display-safe feed metadata leaves the server
-      — the `feeds.url` fetch URL (possibly subscriber-tokenized) is never
-      returned to the browser. The
+      16px slot so every title lines up at the same left edge. Only display-safe feed metadata leaves the server here
+      — this admin read never returns the `feeds.url` fetch URL (possibly
+      subscriber-tokenized); the one path that does is the owner-scoped OPML
+      export (see *Row-level security*). The
       status is derived in priority order: **Poll failed** (the feed's last poll
       errored — `error_count > 0`, with `last_error`) → **Not tried** (no
       reading-mode download has been attempted for any of the feed's articles) →

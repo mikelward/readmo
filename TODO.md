@@ -173,11 +173,6 @@ constraint is documented in more detail.
 
 ## Server RPCs
 
-- **Authenticated OPML-export RPC.** `feeds_public` exposes only `site_url`
-  (never `url`/`secret_url`), so the client can't emit real feed fetch URLs;
-  live `exportOpml` carries homepage URLs until a server-side export exists.
-  See SPEC.md §Sync.
-
 - **Server-side subscription-scoped feed RPC for very large libraries.** Home/
   folder reads use `.in('feed_id', feedIds)`; a user with hundreds of
   subscriptions could exceed request-line limits. The scalable fix is the
