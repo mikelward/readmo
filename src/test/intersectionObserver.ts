@@ -26,6 +26,10 @@ function makeEntry(el: Element, ratio: number): IntersectionObserverEntry {
 class MockIntersectionObserver implements IntersectionObserver {
   root: Element | null = null;
   rootMargin: string;
+  // Added to the real IntersectionObserver interface in the newer DOM lib
+  // (TypeScript 6.0+); the mock ignores it, but it has to exist to satisfy
+  // `implements IntersectionObserver`. Harmless extra property on older libs.
+  scrollMargin = '';
   thresholds: ReadonlyArray<number>;
   private cb: IntersectionObserverCallback;
   readonly watched = new Set<Element>();
