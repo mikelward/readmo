@@ -684,14 +684,14 @@ export class SupabaseDataSource implements DataSource {
     }
   }
 
-  /** Reverse sync: pull newshacker's own Done list (the `newshacker-sync` GET
-   * branch applies it to item_state server-side) and, if anything landed,
-   * re-hydrate so the local store + feed views reflect it. Swallows every
-   * failure (signed out, function/RPC not deployed, unlinked, newshacker down);
-   * the local state stays authoritative. The re-hydrate goes through the store's
-   * `hydrate` path, which never fires the mutation mirror, so a pulled Done is
-   * not echoed back out to newshacker. */
-  async pullNewshackerDone(): Promise<{ linked: boolean; applied: number }> {
+  /** Reverse sync: pull newshacker's own Done + Pinned lists (the
+   * `newshacker-sync` GET branch applies them to item_state server-side) and, if
+   * anything landed, re-hydrate so the local store + feed views reflect it.
+   * Swallows every failure (signed out, function/RPC not deployed, unlinked,
+   * newshacker down); the local state stays authoritative. The re-hydrate goes
+   * through the store's `hydrate` path, which never fires the mutation mirror, so
+   * a pulled Done/pin is not echoed back out to newshacker. */
+  async pullNewshackerState(): Promise<{ linked: boolean; applied: number }> {
     let linked = false;
     let applied = 0;
     try {
@@ -707,7 +707,7 @@ export class SupabaseDataSource implements DataSource {
     }
     if (applied > 0) {
       await this.resyncState().catch(() => {
-        // The dones are already in item_state server-side; a failed re-hydrate
+        // The changes are already in item_state server-side; a failed re-hydrate
         // just means the local view catches up on the next read/resync.
       });
     }

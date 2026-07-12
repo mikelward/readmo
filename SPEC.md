@@ -373,10 +373,10 @@ live.
 Dismissing (**Done**) or **pinning** a **Hacker News** story in Readmo can also
 update the matching list on **newshacker** (the sibling HN reader), so the two
 apps stay in step for HN feeds. Both directions are wired and opt-in per
-account: Readmo **pushes** Done + Pinned to newshacker, and **pulls** Done back
+account: Readmo **pushes** Done + Pinned to newshacker, and **pulls** both back
 from it (so marking a story Done on newshacker — including after the
-open-on-newshacker handoff — dismisses it in Readmo too). Pinned is push-only;
-pulling pins back remains a stretch goal.
+open-on-newshacker handoff — dismisses it in Readmo too, and a pin there pins it
+here).
 
 - **Why it's possible.** Readmo already derives the numeric HN item id from an
   HN-feed item (`src/lib/newshacker.ts`, used by *Open on newshacker*). newshacker
@@ -429,18 +429,24 @@ pulling pins back remains a stretch goal.
   any explicit dismissal (swipe/Sweep/menu) or scroll-away Done, still mirrors.
   This is also the only same-tab-unload dismissal path, so excluding it means the
   remaining dismissals all happen with the app open (no unload race).
-- **Reverse pull (Done).** When linked, Readmo also pulls newshacker's own
-  **Done** list and applies it to `item_state`, mapping each HN id back to an
-  item the user subscribes to (an item newshacker knows Done but Readmo doesn't
-  is dismissed here too). This is why the open-on-newshacker Done isn't pushed
-  forward: once you hand off, newshacker owns that item's Done and syncs it back.
-  It reuses the same link/token; the target host is a compile-time constant, so
-  there's no user-controlled URL / SSRF surface. A pulled Done reconciles by the
-  same per-field last-write-wins as any other write, so a stale pulled Done loses
-  to a newer local change and the round-trip is idempotent — no ping-pong. A
-  pull that lands nothing is a no-op; anything that lands re-hydrates local state
-  (via the sync path, which never re-triggers the push, so there's no echo).
-  Pulling **pins** back remains a stretch goal.
+- **Reverse pull (Done + Pinned).** When linked, Readmo also pulls newshacker's
+  own **Done** and **Pinned** lists and applies them to `item_state`, mapping
+  each HN id back to an item the user subscribes to (an item newshacker knows
+  Done but Readmo doesn't is dismissed here too; a pin there becomes a pin here).
+  This is why the open-on-newshacker Done isn't pushed forward: once you hand
+  off, newshacker owns that item's Done and syncs it back. It reuses the same
+  link/token; the target host is a compile-time constant, so there's no
+  user-controlled URL / SSRF surface. A pulled action reconciles by the same
+  per-field last-write-wins as any other write (a story that's pinned on one list
+  and done on the other resolves to whichever action is newer), so a stale pull
+  loses to a newer local change and the round-trip is idempotent — no ping-pong.
+  A pull that lands nothing is a no-op; anything that lands re-hydrates local
+  state (via the sync path, which never re-triggers the push, so there's no
+  echo), and a pulled pin also warms its offline cache like a local pin.
+  **Limitation:** a pulled pin can only attach to an item still present in Readmo
+  (a subscribed HN feed's item inside the freshness window); a pin for a story
+  that has aged out has no item to hang on and is skipped — pins are permanent on
+  newshacker but the pull is recency-bounded.
 - **Best-effort.** Every failure (signed out, function not deployed, unlinked,
   newshacker down) is swallowed; the local Done/Pinned state stays authoritative.
   The whole feature feature-detects: a backend without the 0050 RPC just reports
@@ -449,10 +455,11 @@ pulling pins back remains a stretch goal.
   Supabase Edge Function runtime and one small first-party call to newshacker per
   debounced batch of HN Done/Pinned changes (push) plus one on link activation
   (pull). **Negligible.** Failure mode: the sync no-ops; Readmo is unaffected.
-  **Manual deploy:** `make migrate` (0050, 0062) + `make deploy` (the
+  **Manual deploy:** `make migrate` (0050, 0062, 0063) + `make deploy` (the
   `newshacker-sync` function) — and newshacker's app-token endpoint must be live
-  first. The client feature-detects, so shipping it ahead of the 0062 deploy just
-  pulls nothing until the migration lands.
+  first. The client feature-detects, so shipping it ahead of the migrations just
+  pulls nothing until they land (and the Edge Function falls back to the
+  Done-only 0062 RPC if 0063 isn't deployed yet).
 
 ### Schema (sketch)
 

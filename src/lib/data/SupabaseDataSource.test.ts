@@ -1451,11 +1451,11 @@ describe('SupabaseDataSource dispatch + writes', () => {
     ).rejects.toMatchObject({ name: 'AddFeedError', kind: 'blocked' });
   });
 
-  it('pullNewshackerDone invokes the GET branch and re-hydrates when dones applied', async () => {
+  it('pullNewshackerState invokes the GET branch and re-hydrates when dones applied', async () => {
     const env = setup();
     env.fake.invokeResult.current = { data: { linked: true, applied: 2 }, error: null };
     const resync = vi.spyOn(env.ds, 'resyncState').mockResolvedValue();
-    const res = await env.ds.pullNewshackerDone();
+    const res = await env.ds.pullNewshackerState();
     expect(res).toEqual({ linked: true, applied: 2 });
     expect(env.fake.invokeCalls).toContainEqual({
       name: 'newshacker-sync',
@@ -1465,20 +1465,20 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(resync).toHaveBeenCalledTimes(1);
   });
 
-  it('pullNewshackerDone does not re-hydrate when nothing was applied', async () => {
+  it('pullNewshackerState does not re-hydrate when nothing was applied', async () => {
     const env = setup();
     env.fake.invokeResult.current = { data: { linked: true, applied: 0 }, error: null };
     const resync = vi.spyOn(env.ds, 'resyncState').mockResolvedValue();
-    const res = await env.ds.pullNewshackerDone();
+    const res = await env.ds.pullNewshackerState();
     expect(res).toEqual({ linked: true, applied: 0 });
     expect(resync).not.toHaveBeenCalled();
   });
 
-  it('pullNewshackerDone reports unlinked on a function error and skips re-hydrate', async () => {
+  it('pullNewshackerState reports unlinked on a function error and skips re-hydrate', async () => {
     const env = setup();
     env.fake.invokeResult.current = { data: null, error: { message: 'boom' } };
     const resync = vi.spyOn(env.ds, 'resyncState').mockResolvedValue();
-    const res = await env.ds.pullNewshackerDone();
+    const res = await env.ds.pullNewshackerState();
     expect(res).toEqual({ linked: false, applied: 0 });
     expect(resync).not.toHaveBeenCalled();
   });
