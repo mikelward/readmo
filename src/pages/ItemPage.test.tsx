@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -1159,7 +1159,11 @@ describe('ItemPage reading mode', () => {
     let finishRestoring: () => void = () => {};
     function Restoring({ children }: { children: ReactNode }) {
       const [restoring, setRestoring] = useState(true);
-      finishRestoring = () => setRestoring(false);
+      // Capture the setter in an effect, not during render, so the test can
+      // flip the restoration flag without reassigning an outer variable mid-render.
+      useEffect(() => {
+        finishRestoring = () => setRestoring(false);
+      }, []);
       return <IsRestoringProvider value={restoring}>{children}</IsRestoringProvider>;
     }
 

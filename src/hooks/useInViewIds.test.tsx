@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useEffect } from 'react';
 import { act, render } from '@testing-library/react';
 import type { ItemId } from '../lib/types';
 import { useInViewIds } from './useInViewIds';
@@ -284,9 +285,17 @@ describe('useInViewIds onExitTop', () => {
   // per observation frame) when delivery lags a busy main thread — ordered
   // oldest→newest. Only the newest record reflects the row's current state.
   describe('multiple records for one row in a single batch', () => {
-    function ViewProbe({ out }: { out: { current: ReadonlySet<ItemId> } }) {
+    function ViewProbe({
+      onIds,
+    }: {
+      onIds: (ids: ReadonlySet<ItemId>) => void;
+    }) {
       const { inViewIds, getRowRef } = useInViewIds();
-      out.current = inViewIds;
+      // Report the latest value through a callback from an effect, rather than
+      // mutating a caller-owned box (a prop is immutable to the component).
+      useEffect(() => {
+        onIds(inViewIds);
+      }, [onIds, inViewIds]);
       return (
         <ul>
           <li data-item-id="a" ref={getRowRef('a')} />
@@ -296,7 +305,7 @@ describe('useInViewIds onExitTop', () => {
 
     it('keeps a row in view when the newest record says fully visible', () => {
       const out = { current: new Set<ItemId>() as ReadonlySet<ItemId> };
-      render(<ViewProbe out={out} />);
+      render(<ViewProbe onIds={(ids) => (out.current = ids)} />);
       // Entered partially (older record), then crossed to fully visible
       // (newer record) — both delivered in one lagged batch. The stale
       // partial record must not override the newer fully-visible one, or the
@@ -307,7 +316,7 @@ describe('useInViewIds onExitTop', () => {
 
     it('drops a row when the newest record says no longer fully visible', () => {
       const out = { current: new Set<ItemId>() as ReadonlySet<ItemId> };
-      render(<ViewProbe out={out} />);
+      render(<ViewProbe onIds={(ids) => (out.current = ids)} />);
       fire(entryFor('a', 1), entryFor('a', 0.4));
       expect(out.current.has('a')).toBe(false);
     });
