@@ -228,6 +228,8 @@ export interface DiscoveredFeed {
  *     401/403); a private/login-only feed can't be added.
  *   - `blocked`     — adding this feed isn't allowed for this account (e.g. a
  *     Google News feed when the caller isn't on the trusted-user allowlist).
+ *   - `feed-limit`  — the account is at its per-account feed cap; an existing
+ *     feed must be removed before another can be added.
  */
 export type AddFeedErrorKind =
   | 'signed-out'
@@ -236,6 +238,7 @@ export type AddFeedErrorKind =
   | 'not-found' // the URL 404/410'd
   | 'unreachable' // network/DNS/timeout/SSRF-blocked/5xx
   | 'blocked' // disallowed for this account (e.g. Google News, off-allowlist)
+  | 'feed-limit' // the account is at its per-account feed cap (0059)
   | 'unknown';
 
 /** A classified "Add a feed" failure (discover or subscribe). `kind` drives the

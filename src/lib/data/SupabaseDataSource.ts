@@ -59,6 +59,7 @@ import {
   isPermanentWriteError,
   toRequestError,
   PARKED_ERROR_THRESHOLD,
+  FEED_LIMIT_CODE,
 } from './supabaseMappers';
 
 /** The display-safe columns of `feeds_public` (and of `feeds` for clients —
@@ -1466,20 +1467,31 @@ export class SupabaseDataSource implements DataSource {
    * shared feed, subscribes auth.uid(), and returns the feeds_public row. Does
    * NOT trigger a fetch — callers that want the immediate poll do it.
    *
-   * TODO(feed-cap): cap the number of feeds a user may subscribe to. Enforce it
-   * server-side in the `subscribe_to_feed` RPC (count the caller's subscriptions
-   * and reject past the limit) so it can't be bypassed, and surface a clear
-   * "subscription limit reached" error here. Beyond abuse/cost, the cap bounds
-   * the grouped feed read: the group-by-feed view returns up to K items per feed
-   * in one response, so a hard feed cap keeps that under the PostgREST row cap
-   * (and the OPML import path must respect it too). */
+   * The RPC caps the account at 100 feeds server-side (0059; idempotent
+   * re-subscribes exempt) — bounding abuse/cost and keeping the group-by-feed
+   * read's opening page under the PostgREST 1000-row cap (100 × PER_FEED_WINDOW).
+   * A subscribe past the cap comes back as SQLSTATE 53400, mapped below to a
+   * typed AddFeedError('feed-limit') so both the Add-a-feed UI and importOpml
+   * see the limit. Older backends predating 0059 never raise it. */
   private async subscribeOnly(feedUrl: string, folder?: string | null): Promise<Feed> {
-    const rows = this.unwrap<FeedPublicRow[]>(
-      await this.sb.rpc('subscribe_to_feed', {
-        p_url: feedUrl,
-        p_folder: folder ?? null,
-      }),
-    );
+    let rows: FeedPublicRow[];
+    try {
+      rows = this.unwrap<FeedPublicRow[]>(
+        await this.sb.rpc('subscribe_to_feed', {
+          p_url: feedUrl,
+          p_folder: folder ?? null,
+        }),
+      );
+    } catch (err) {
+      // The server rejects a subscribe past the per-account feed cap with
+      // SQLSTATE 53400 (see migration 0059). Map it to a typed AddFeedError so
+      // the UI shows the "feed limit reached" copy instead of a generic failure,
+      // and importOpml can stop early. Any other error propagates unchanged.
+      if ((err as { code?: unknown } | null)?.code === FEED_LIMIT_CODE) {
+        throw new AddFeedError('feed-limit', err instanceof Error ? err.message : undefined);
+      }
+      throw err;
+    }
     const row = Array.isArray(rows) ? rows[0] : (rows as FeedPublicRow | null);
     if (!row) throw new Error('subscribe_to_feed returned no feed');
     const feed = mapFeed(row);
@@ -1778,7 +1790,13 @@ export class SupabaseDataSource implements DataSource {
     );
     let added = 0;
     let skipped = 0;
-    for (const url of urls) {
+    // Once the account hits its feed cap every remaining subscribe is doomed, so
+    // stop early and count the rest as skipped rather than firing one rejected
+    // RPC per entry. A cap error can surface from either branch's subscribe.
+    const isCapError = (err: unknown) =>
+      err instanceof AddFeedError && err.kind === 'feed-limit';
+    for (let i = 0; i < urls.length; i++) {
+      const url = urls[i];
       // Google News feeds are restricted to the trusted-user allowlist, enforced
       // server-side in the `discover` Edge Function. importOpml otherwise
       // subscribes directly (no discover step), which would let an OPML import
@@ -1795,14 +1813,22 @@ export class SupabaseDataSource implements DataSource {
             continue;
           }
           feed = await this.subscribeOnly(candidate.url);
-        } catch {
+        } catch (err) {
+          if (isCapError(err)) {
+            skipped += urls.length - i; // this entry + all remaining
+            break;
+          }
           skipped++;
           continue;
         }
       } else {
         try {
           feed = await this.subscribeOnly(url); // no per-feed refresh storm
-        } catch {
+        } catch (err) {
+          if (isCapError(err)) {
+            skipped += urls.length - i; // this entry + all remaining
+            break;
+          }
           // A dead URL or transient RPC failure skips this entry only — one bad
           // outline must not abort the rest of the file (entries before it are
           // already committed server-side, and the caller would report nothing).

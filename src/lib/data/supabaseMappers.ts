@@ -41,6 +41,13 @@ export function isPermanentWriteError(error: unknown): boolean {
   return typeof code === 'string' && PERMANENT_WRITE_CODES.has(code);
 }
 
+/** SQLSTATE `subscribe_to_feed` raises when the caller is at the per-account
+ * feed cap (configuration_limit_exceeded; see migration 0059). The client maps
+ * it to a typed AddFeedError('feed-limit') so the UI shows the "limit reached"
+ * copy. An older backend predating 0059 never raises it, so the mapping is a
+ * no-op there (guardrail #11). */
+export const FEED_LIMIT_CODE = '53400';
+
 /** An Error carrying the HTTP `status` + PostgREST `code` of a failed request. */
 export type RequestError = Error & { status?: number; code?: string };
 

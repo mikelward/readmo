@@ -35,6 +35,7 @@ const ADD_FEED_MESSAGES: Record<AddFeedErrorKind, string> = {
   'not-found': 'That URL could not be found (404).',
   unreachable: 'Couldn’t reach that URL. Check the address and try again.',
   blocked: 'Google News feeds aren’t available on this account.',
+  'feed-limit': 'You’ve reached the feed limit. Remove a feed to add another.',
   unknown: 'Couldn’t add that feed. Please try again.',
 };
 
