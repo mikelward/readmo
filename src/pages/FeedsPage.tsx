@@ -454,7 +454,9 @@ export function FeedsPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'readmo-subscriptions.opml';
+      // Date-stamp the download so successive exports don't collide in the
+      // browser's downloads folder (readmo-subscriptions-2026-07-12.opml).
+      a.download = `readmo-subscriptions-${new Date().toISOString().slice(0, 10)}.opml`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {

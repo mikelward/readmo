@@ -16,7 +16,8 @@ import {
   ItemStateStore,
   localStoragePersistence,
 } from './itemState';
-import { escapeXml, decodeXmlEntities } from './xmlEntities';
+import { decodeXmlEntities } from './xmlEntities';
+import { buildOpml } from './opml';
 import type { FullTextResult } from '../fullText';
 import type { SummaryResult } from '../summary';
 import {
@@ -731,20 +732,12 @@ export class MockDataSource implements DataSource {
   }
 
   async exportOpml(): Promise<string> {
-    const outlines = [...this.subs.values()]
-      .map((sub) => {
-        const feed = this.feeds.get(sub.feedId);
-        if (!feed) return '';
-        const title = sub.titleOverride ?? feed.title;
-        return `    <outline type="rss" text="${escapeXml(title)}" title="${escapeXml(
-          title,
-        )}" xmlUrl="${escapeXml(feed.url)}"${
-          feed.siteUrl ? ` htmlUrl="${escapeXml(feed.siteUrl)}"` : ''
-        } />`;
-      })
-      .filter(Boolean)
-      .join('\n');
-    return `<?xml version="1.0" encoding="UTF-8"?>\n<opml version="2.0">\n  <head><title>Readmo subscriptions</title></head>\n  <body>\n${outlines}\n  </body>\n</opml>\n`;
+    const outlines = [...this.subs.values()].flatMap((sub) => {
+      const feed = this.feeds.get(sub.feedId);
+      if (!feed) return [];
+      return [{ title: sub.titleOverride ?? feed.title, xmlUrl: feed.url, htmlUrl: feed.siteUrl }];
+    });
+    return buildOpml(outlines, { dateCreated: new Date() });
   }
 
   // --- Capabilities & admin (in-memory) -------------------------------------
