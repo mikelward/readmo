@@ -3119,15 +3119,19 @@ export function ItemList({
     isRefreshing && undoRefetchDepth.current === 0 && items.length > 0;
 
   // Auto-hide-on-scroll marks a row Done once it scrolls off the TOP — but the
-  // last screenful of a feed can never do that (nothing below it to scroll
-  // into), so those rows stay unmarkable-by-scroll and need a Sweep. Append a
+  // last screenful of RENDERED rows can never do that (nothing below them to
+  // scroll into), so they stay unmarkable-by-scroll and need a Sweep. Append a
   // blank scroll-space below the foot, tall enough to push the final rows up
-  // past the top chrome, so the pure-scroll flow reaches the very last article.
-  // Only when the feature is on, the body is showing rows, and the feed is at
-  // its TRUE end (no more pages to fetch — before that the reader pages with
-  // "More", and the loaded tail isn't the last article). See ItemList.css.
+  // past the top chrome, so the pure-scroll flow reaches the very last visible
+  // article. Present whenever the feature is on and rows are showing —
+  // independent of `hasMore`: auto-hide only ever marks rendered rows, and rows
+  // still behind "More" aren't in the DOM (so they can't be scrolled past
+  // anyway), yet the last LOADED row is stranded just the same whether or not
+  // another page could be fetched. Gating on the true end would force the reader
+  // to page in more unread content just to mark the tail they can already see.
+  // See ItemList.css.
   const showScrollSpace =
-    hideOnScroll && !showMissState && !hasMore && visibleItems.length > 0;
+    hideOnScroll && !showMissState && visibleItems.length > 0;
 
   return (
     <div
