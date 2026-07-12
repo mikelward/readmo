@@ -1198,10 +1198,7 @@ negligible and off every critical path. See the External services table in
        list rows), then its `guid` (hnrss feeds), then its `url` (Ask/Show HN),
        then the stored description HTML (`contentHtml`) as a backfill: the
        official `news.ycombinator.com/rss` feed carries the discussion link only
-       in the item `<description>`, and a backend predating the `comments_url`
-       column (0033) omits the structured field. (`ITEM_COLS` reads
-       — library/search/reader — now select `comments_url`, stepping down to the
-       pre-0033 column set if the backend lacks it.)
+       in the item `<description>`.
        Falls back to the reader for any item with no derivable HN id. **$0** — a
        plain deep link, no API call (see *External services*: none added).
 
@@ -1236,8 +1233,7 @@ negligible and off every critical path. See the External services table in
      actions, letting a "read the source and I'm done" feed clear items without a
      second tap. Marking Done clears Pinned (the usual exclusivity). Per-user,
      synced (stored on the subscription as `mark_done_on_open`, 0037, like
-     Mute/Rename); off by default. Feature-detected: hidden against a backend that
-     predates the column (guardrail #11).
+     Mute/Rename); off by default.
    - **Feed-health badge** when the poller parks a feed, with "retry now".
 
 2. **Feed views (the lists)** — the chronological merge of subscription items,
@@ -1774,29 +1770,24 @@ negligible and off every critical path. See the External services table in
       `open_newshacker` mutually exclusively (per-user, synced). The options are
       **Open here** (the in-app reader, the default) and **Open original**, plus
       **Open on newshacker** *only when applicable* — i.e. only for a **Hacker
-      News feed** and only when the `open_newshacker` column exists (0034). The
-      submenu **replaces the whole menu panel** (it's never taller than the top
+      News feed**. The submenu **replaces the whole menu panel** (it's never taller than the top
       level it swapped out, so the flip-above placement stays valid), and the
       drill level resets whenever the menu is reopened. When *open original* is
       on, the feed's rows link straight to the source website; when *open on
       newshacker* is on, they link to the item's Hacker News discussion on
-      `newshacker.app`; both open in a new tab instead of the in-app reader. The
-      whole open-mode control hides against a backend that predates the
-      `open_original` column (0027); the writes degrade safely (a
-      reader/original choice still persists `open_original` even where
-      `open_newshacker` is absent). A separate **Mark done when opening**
+      `newshacker.app`; both open in a new tab instead of the in-app reader. A
+      separate **Mark done when opening**
       checkbox (writing `subscriptions.mark_done_on_open`, 0037, independent of the
       open mode) makes opening an item on its original source / newshacker target
-      also mark it Done — see *Feeds page → Mark done when opening* above; it hides
-      against a backend that predates the column. A **Card style** control sets
+      also mark it Done — see *Feeds page → Mark done when opening* above. A
+      **Card style** control sets
       this feed's per-feed article-row layout override; like the open-mode choice
       it's a **two-level control** — a single **Card style** row (with a `›`
       chevron) drills into a submenu of a **‹ Back** row plus a `menuitemradio`
       group (**Default / Title only / Small thumbnail / Large thumbnail /
       Excerpt**, writing `subscriptions.list_layout`, 0051). See *Article layout →
       Per-feed override* above; **Default** clears it (fall back to the app-wide
-      setting), and the whole control hides against a backend that predates the
-      column. Both submenus share the same drill machinery: the submenu replaces
+      setting). Both submenus share the same drill machinery: the submenu replaces
       the whole menu panel, focus moves into it (its Back row) on drill-in and
       back onto the originating row on return, placement re-measures on the drill
       transition, and the drill level resets when the menu is reopened. The overflow menu dismisses via
@@ -1834,12 +1825,10 @@ negligible and off every critical path. See the External services table in
         can't silently wall off signups). All of these are plain admin-gated SQL
         RPCs (migration `0030`) — the migration role owns the SECURITY DEFINER
         functions, so they touch `auth.users` directly without the service-role
-        admin API or a new Edge function. Because the client auto-deploys ahead
-        of migrations, the block/delete/sign-up controls are gated on a
-        `canManageUsers` capability (a `can_manage_users` flag
-        `get_capabilities()` only returns once `0030` is live): against a backend
-        that still predates `0030` they're hidden, so the page never offers a
-        button whose RPC would 404. The family promote/demote toggle (the `0028`
+        admin API or a new Edge function. The block/delete/sign-up controls are
+        gated on a `canManageUsers` capability (a `can_manage_users` flag from
+        `get_capabilities()`): they're hidden when the flag is absent. The family
+        promote/demote toggle (the `0028`
         allowlist RPCs) stays available. The menu also holds a **Feeds** item that
         drills down to that user's subscription list — see *Subscription
         drill-downs* below.
@@ -1858,10 +1847,8 @@ negligible and off every critical path. See the External services table in
       `admin_list_feed_subscribers`, migration `0047`) that return only
       display-safe columns (never `secret_url`) and fail closed (`42501`) for
       non-admins. Gated on a `canViewSubscriptions` capability (a
-      `can_view_subscriptions` flag `get_capabilities()` only returns once `0047`
-      is live): the *Feeds*/*Users* menu items are hidden against an older
-      backend, so a direct URL hit is the only way to reach the un-deployed-RPC
-      error state.
+      `can_view_subscriptions` flag from `get_capabilities()`): the
+      *Feeds*/*Users* menu items are hidden when the flag is absent.
 
     A non-admin who reaches any admin route sees a short no-access message and
     nothing else — the gate is client convenience only; the server re-checks
@@ -2046,12 +2033,10 @@ values mirror the app-wide choices). Every row resolves its layout as
 shared `['subscriptions']` query (`useListLayoutFeeds`, deduped with the open-mode
 hooks) and passes each row its feed's layout; `ItemRow` falls back to the
 app-wide `useListLayout` when no override is given. Because it adds a synced
-column, this half is **not** client-only: it ships behind the `list_layout`
-column (migration **0051**) and feature-detects a backend without it
-(`supportsSubscriptionListLayout`) — the "Card style" control hides until the
-column is deployed, and a stale-cache write to a pre-0051 backend no-ops rather
-than erroring (guardrail #11). Requires a manual `make migrate`. Cost: one extra
-nullable text column, **negligible** — no new fetch or external call.
+column, this half is **not** client-only: it stores the override on the
+`list_layout` column (migration **0051**), so it requires a manual `make
+migrate`. Cost: one extra nullable text column, **negligible** — no new fetch or
+external call.
 
 Display-only meta (plain text inside the row link): **source** (feed/site
 name, trimmed to the registrable domain the way newshacker trims
@@ -2720,11 +2705,10 @@ page's discipline is unchanged.
     concealed result — see *Article layout*). **Share** (row and reader) sends the *displayed*
     headline too, so it never leaks the hidden scoreline into the share sheet.
     TODO: make it per-feed as well as per-user.
-  - **Backwards compatible (guardrail #11).** The client ships first and safe:
-    `mapItem` defaults `spoilerFreeTitle` to null, the `ITEM_COLS` read steps down
-    past a missing column on a pre-0045 backend, and display falls back to the
-    original — nothing shows until `make migrate` + `make deploy` land and the
-    poller populates the column. Server changes are additive.
+  - **Deploy dependency.** The spoiler-free title only appears once `make
+    migrate` + `make deploy` land and the poller populates the column; until then
+    `mapItem` defaults `spoilerFreeTitle` to null and display falls back to the
+    original headline. Server changes are additive.
   - **Cost & reliability (guardrail #5):** one Gemini Flash-Lite call per **new
     item in an allowlisted-subscriber feed** — a headline + short RSS body in, a
     headline out — cached forever on the shared item, regenerated only on
@@ -2767,12 +2751,10 @@ immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
     thread (`newshacker.app/item/<id>`), same as the row's "open on newshacker"
     mode. The HN id is derived from the comments URL / guid / item url / body
     (`lib/newshacker.ts`), so it resolves even for the official HN feed (whose
-    discussion link lives only in the description) and when the reader's
-    single-item read omits `comments_url` (a pre-0033 backend).
+    discussion link lives only in the description).
   - On **any other feed** it opens the item's structured comments URL (RSS
     `<comments>` / Atom `rel="replies"`, persisted as `items.comments_url`,
-    which `ITEM_COLS` now selects — stepping down to the pre-0033 column set
-    against a backend without it). If that comments URL *itself* points at an HN
+    selected by `ITEM_COLS`). If that comments URL *itself* points at an HN
     thread it is still routed to newshacker. The body/url/guid HN scan is **not**
     applied here, so a normal article that merely links to an HN thread in its
     body doesn't sprout a (mislabeled) newshacker button.
