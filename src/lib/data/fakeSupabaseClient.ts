@@ -65,11 +65,6 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
        * failSelectOnce — used to model an undefined-column write against a
        * pre-migration backend. */
       failUpdateOnce: Map<string, unknown>;
-      /** Tables whose select() should error (persistently) whenever the
-       * requested column projection contains the given substring — models a
-       * specific column being absent on a pre-migration backend, so a tiered
-       * fallback that drops the column then succeeds can be tested. */
-      failSelectWhenCols: Map<string, { needle: string; error?: unknown }>;
       ignoreNotIn: boolean;
       selectCounts: Map<string, number>;
       /** Last `select(cols)` projection string requested per table (lets tests
@@ -238,20 +233,6 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
         count: null,
         error: injected ?? { message: `injected error for ${this.table}` },
       };
-    }
-    // Persistent column-aware failure: error whenever the requested projection
-    // names a column the (modeled) backend doesn't have, so a tiered fallback
-    // can drop it and retry. Reads the cols captured by select() for this table.
-    const failCols = this.control.failSelectWhenCols.get(this.table);
-    if (failCols) {
-      const cols = this.control.selectCols.get(this.table) ?? '';
-      if (cols.includes(failCols.needle)) {
-        return {
-          data: null,
-          count: null,
-          error: failCols.error ?? { code: '42703' },
-        };
-      }
     }
     const matched = this.filtered();
     const count = this.wantCount ? matched.length : null;
@@ -520,11 +501,6 @@ export function makeFakeSupabase(tables: FakeTables): {
   /** Make the next `update` on `table` return an error once. Pass `error` to
    * control what's surfaced (e.g. `{ code: '42703' }` for a missing column). */
   failUpdateOnce: (table: string, error?: unknown) => void;
-  /** Make every `select` on `table` whose column projection contains `needle`
-   * return an error (defaults to `{ code: '42703' }`), modeling that column
-   * being absent on a pre-migration backend. A tiered read that drops the
-   * column and retries then succeeds. */
-  failSelectWhenColumns: (table: string, needle: string, error?: unknown) => void;
   /** Make `.not('…','in',…)` a no-op, simulating the server-side exclusion filter
    * being skipped (exclusion set over the cap). */
   ignoreNotInFilter: () => void;
@@ -548,7 +524,6 @@ export function makeFakeSupabase(tables: FakeTables): {
   const control = {
     failSelectOnce: new Map<string, unknown>(),
     failUpdateOnce: new Map<string, unknown>(),
-    failSelectWhenCols: new Map<string, { needle: string; error?: unknown }>(),
     ignoreNotIn: false,
     selectCounts: new Map<string, number>(),
     selectCols: new Map<string, string | undefined>(),
@@ -564,8 +539,6 @@ export function makeFakeSupabase(tables: FakeTables): {
       control.failSelectOnce.set(table, error),
     failUpdateOnce: (table: string, error?: unknown) =>
       control.failUpdateOnce.set(table, error),
-    failSelectWhenColumns: (table: string, needle: string, error?: unknown) =>
-      control.failSelectWhenCols.set(table, { needle, error }),
     ignoreNotInFilter: () => {
       control.ignoreNotIn = true;
     },

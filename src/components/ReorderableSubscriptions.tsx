@@ -46,36 +46,16 @@ interface Props {
   /** Set the feed's open mode — the mutually-exclusive choice (**Open here** /
    * **Open original** / **Open on newshacker**) shown as the "Open on…" drill
    * submenu. The parent persists it by clearing the other mode and setting the
-   * chosen one; it degrades safely when the backend lacks the newshacker column.
-   */
+   * chosen one. */
   onSetOpenMode: (feedId: FeedId, mode: OpenMode) => void;
-  /** Whether to offer the open-mode ("Open on…") choice at all. Hidden when the
-   * backend doesn't support the `open_original` column yet (pre-0027), so the
-   * control never triggers a write the old backend would reject. Defaults to
-   * true. */
-  showOpenOriginal?: boolean;
-  /** Whether to offer the "Open on newshacker" option (only ever applicable to
-   * Hacker News feeds). Hidden when the backend doesn't support the
-   * `open_newshacker` column yet (pre-0034), so the choice degrades to just
-   * **Open here** / **Open original**. Defaults to true. */
-  showOpenNewshacker?: boolean;
   /** Toggle the feed's "mark done when opening" preference — when on, opening one
    * of its items on the original source or the newshacker discussion also marks
    * it Done. Independent of the open-mode choice above. */
   onSetMarkDoneOnOpen: (feedId: FeedId, markDoneOnOpen: boolean) => void;
-  /** Whether to offer the "Mark done when opening" menu item. Hidden when the
-   * backend doesn't support the `mark_done_on_open` preference yet (pre-0037), so
-   * the control never triggers a write the old backend would reject. Defaults to
-   * true. */
-  showMarkDoneOnOpen?: boolean;
   /** Set the feed's per-feed "card style" override — how much of its articles a
    * row shows. Pass a {@link ListLayout} to override the app-wide Article layout
    * setting for this feed, or `null` to clear it (fall back to the app setting). */
   onSetListLayout: (feedId: FeedId, listLayout: ListLayout | null) => void;
-  /** Whether to offer the "Card style" choice. Hidden when the backend doesn't
-   * support the `list_layout` column yet (pre-0051), so the control never
-   * triggers a write the old backend would reject. Defaults to true. */
-  showListLayout?: boolean;
   onUnsubscribe: (feedId: FeedId) => void;
   /** Set a per-user display name for `feedId`. Pass `null` to clear the
    * override and fall back to the publisher's feed title. */
@@ -101,12 +81,8 @@ export function ReorderableSubscriptions({
   onReorder,
   onMute,
   onSetOpenMode,
-  showOpenOriginal = true,
-  showOpenNewshacker = true,
   onSetMarkDoneOnOpen,
-  showMarkDoneOnOpen = true,
   onSetListLayout,
-  showListLayout = true,
   onUnsubscribe,
   onRename,
   scrollToFeedId,
@@ -503,22 +479,16 @@ export function ReorderableSubscriptions({
         if (!entry) return null;
         const { feed, subscription } = entry;
         const title = subscription.titleOverride ?? feed.title;
-        // The open-mode choice (Open here / Open original / Open on newshacker)
-        // is a drill-in submenu offered whenever the backend supports the
-        // open_original column. The newshacker option is only applicable to
-        // Hacker News feeds (and only when its column exists).
-        const showOpenModeChoice = showOpenOriginal;
-        const showNewshackerOption =
-          isHackerNewsFeed(feed) && showOpenNewshacker;
+        // The newshacker option in the open-mode choice (Open here / Open
+        // original / Open on newshacker) is only applicable to Hacker News feeds.
+        const showNewshackerOption = isHackerNewsFeed(feed);
         // Which drill submenu (if any) is showing for THIS row's open menu.
-        // Guarded on the control actually being offered, so a stale key can
-        // never render an empty submenu panel.
         const activeSubmenu: Submenu =
           menuFor !== feed.id
             ? null
-            : submenu === 'openMode' && showOpenModeChoice
+            : submenu === 'openMode'
               ? 'openMode'
-              : submenu === 'cardStyle' && showListLayout
+              : submenu === 'cardStyle'
                 ? 'cardStyle'
                 : null;
         return (
@@ -748,72 +718,54 @@ export function ReorderableSubscriptions({
                       >
                         {subscription.muted ? 'Unmute' : 'Mute'}
                       </button>
-                      {showOpenModeChoice ? (
-                        // Top level of the open-mode control: a single row that
-                        // drills into the Open here / Open original / (newshacker)
-                        // submenu above.
-                        <button
-                          type="button"
-                          role="menuitem"
-                          ref={openModeDrillRef}
-                          aria-haspopup="menu"
-                          aria-expanded={false}
-                          className="settings__sub-menuitem settings__sub-menuitem--check"
-                          onClick={() => setSubmenu('openMode')}
-                        >
-                          Open on…
-                          <span
-                            className="settings__sub-chevron"
-                            aria-hidden="true"
-                          >
-                            ›
-                          </span>
-                        </button>
-                      ) : null}
-                      {showMarkDoneOnOpen ? (
-                        <button
-                          type="button"
-                          role="menuitemcheckbox"
-                          aria-checked={subscription.markDoneOnOpen}
-                          className="settings__sub-menuitem settings__sub-menuitem--check"
-                          onClick={() => {
-                            setMenuFor(null);
-                            onSetMarkDoneOnOpen(
-                              feed.id,
-                              !subscription.markDoneOnOpen,
-                            );
-                          }}
-                        >
-                          Mark done when opening
-                          <span
-                            className="settings__sub-check"
-                            aria-hidden="true"
-                          >
-                            {subscription.markDoneOnOpen ? '✓' : ''}
-                          </span>
-                        </button>
-                      ) : null}
-                      {showListLayout ? (
-                        // Top level of the Card style control: a single row that
-                        // drills into the layout submenu above.
-                        <button
-                          type="button"
-                          role="menuitem"
-                          ref={cardStyleDrillRef}
-                          aria-haspopup="menu"
-                          aria-expanded={false}
-                          className="settings__sub-menuitem settings__sub-menuitem--check"
-                          onClick={() => setSubmenu('cardStyle')}
-                        >
-                          Card style
-                          <span
-                            className="settings__sub-chevron"
-                            aria-hidden="true"
-                          >
-                            ›
-                          </span>
-                        </button>
-                      ) : null}
+                      {/* Top level of the open-mode control: a single row that
+                          drills into the Open here / Open original /
+                          (newshacker) submenu above. */}
+                      <button
+                        type="button"
+                        role="menuitem"
+                        ref={openModeDrillRef}
+                        aria-haspopup="menu"
+                        aria-expanded={false}
+                        className="settings__sub-menuitem settings__sub-menuitem--check"
+                        onClick={() => setSubmenu('openMode')}
+                      >
+                        Open on…
+                        <span className="settings__sub-chevron" aria-hidden="true">
+                          ›
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitemcheckbox"
+                        aria-checked={subscription.markDoneOnOpen}
+                        className="settings__sub-menuitem settings__sub-menuitem--check"
+                        onClick={() => {
+                          setMenuFor(null);
+                          onSetMarkDoneOnOpen(feed.id, !subscription.markDoneOnOpen);
+                        }}
+                      >
+                        Mark done when opening
+                        <span className="settings__sub-check" aria-hidden="true">
+                          {subscription.markDoneOnOpen ? '✓' : ''}
+                        </span>
+                      </button>
+                      {/* Top level of the Card style control: a single row that
+                          drills into the layout submenu above. */}
+                      <button
+                        type="button"
+                        role="menuitem"
+                        ref={cardStyleDrillRef}
+                        aria-haspopup="menu"
+                        aria-expanded={false}
+                        className="settings__sub-menuitem settings__sub-menuitem--check"
+                        onClick={() => setSubmenu('cardStyle')}
+                      >
+                        Card style
+                        <span className="settings__sub-chevron" aria-hidden="true">
+                          ›
+                        </span>
+                      </button>
                       <button
                         type="button"
                         role="menuitem"

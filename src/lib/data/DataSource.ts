@@ -322,35 +322,18 @@ export interface DataSource {
    * original article on the source website directly (new tab) instead of the
    * in-app reader. */
   setOpenOriginal(feedId: FeedId, openOriginal: boolean): Promise<void>;
-  /** Whether the backend supports the "open original" preference (the
-   * `open_original` column exists). False against a backend that predates the
-   * migration, so the UI can hide the control rather than offer a write the old
-   * backend rejects. Omitted sources are assumed to support it. */
-  supportsOpenOriginal?(): boolean;
   /** Set a feed's open mode — the mutually-exclusive choice of where its article
    * rows open: the in-app `reader` (default), the `original` source website, or
    * the item's Hacker News discussion on `newshacker`. Writes the `open_original`
    * and `open_newshacker` booleans **atomically in one update**, so a feed can
-   * never be left with both set (which an old client that only knows
-   * `open_original` would misread). `newshacker` is offered for Hacker News feeds
+   * never be left with both set. `newshacker` is offered for Hacker News feeds
    * only. */
   setOpenMode(feedId: FeedId, mode: OpenMode): Promise<void>;
-  /** Whether the backend supports the "open on newshacker" preference (the
-   * `open_newshacker` column, 0034, exists). False against a backend that
-   * predates the migration, so the UI hides the newshacker option rather than
-   * offer a write the old backend rejects. Omitted sources are assumed to
-   * support it. */
-  supportsOpenNewshacker?(): boolean;
   /** Per-feed "mark done when opening": when true, opening one of the feed's
    * items on the original source website or the newshacker discussion also marks
    * it Done. Deliberately does NOT cover an in-app reader (article view) open.
    * Independent of the open mode. */
   setMarkDoneOnOpen(feedId: FeedId, markDoneOnOpen: boolean): Promise<void>;
-  /** Whether the backend supports the "mark done when opening" preference (the
-   * `mark_done_on_open` column, 0037, exists). False against a backend that
-   * predates the migration, so the UI can hide the control rather than offer a
-   * write the old backend rejects. Omitted sources are assumed to support it. */
-  supportsMarkDoneOnOpen?(): boolean;
   /** Per-feed "card style" override: how much of this feed's articles a row
    * shows. Pass a {@link ListLayout} to override the app-wide Article layout
    * setting for this feed only, or `null` to clear the override (fall back to the
@@ -359,11 +342,6 @@ export interface DataSource {
     feedId: FeedId,
     listLayout: ListLayout | null,
   ): Promise<void>;
-  /** Whether the backend supports the per-feed card-style preference (the
-   * `list_layout` column, 0051, exists). False against a backend that predates
-   * the migration, so the UI can hide the control rather than offer a write the
-   * old backend rejects. Omitted sources are assumed to support it. */
-  supportsSubscriptionListLayout?(): boolean;
   setTitleOverride(feedId: FeedId, title: string | null): Promise<void>;
   /** Force an immediate server-side refresh of one feed (or all). */
   refresh(feedId?: FeedId): Promise<void>;

@@ -592,12 +592,6 @@ export class MockDataSource implements DataSource {
     if (sub) sub.openOriginal = openOriginal;
   }
 
-  supportsOpenOriginal(): boolean {
-    // The in-memory store always carries the field, so the control is always
-    // available against the mock.
-    return true;
-  }
-
   async setOpenMode(feedId: FeedId, mode: OpenMode): Promise<void> {
     const sub = this.subs.get(feedId);
     if (sub) {
@@ -608,21 +602,9 @@ export class MockDataSource implements DataSource {
     }
   }
 
-  supportsOpenNewshacker(): boolean {
-    // The in-memory store always carries the field, so the control is always
-    // available against the mock.
-    return true;
-  }
-
   async setMarkDoneOnOpen(feedId: FeedId, markDoneOnOpen: boolean): Promise<void> {
     const sub = this.subs.get(feedId);
     if (sub) sub.markDoneOnOpen = markDoneOnOpen;
-  }
-
-  supportsMarkDoneOnOpen(): boolean {
-    // The in-memory store always carries the field, so the control is always
-    // available against the mock.
-    return true;
   }
 
   async setSubscriptionListLayout(
@@ -631,12 +613,6 @@ export class MockDataSource implements DataSource {
   ): Promise<void> {
     const sub = this.subs.get(feedId);
     if (sub) sub.listLayout = listLayout;
-  }
-
-  supportsSubscriptionListLayout(): boolean {
-    // The in-memory store always carries the field, so the control is always
-    // available against the mock.
-    return true;
   }
 
   async setTitleOverride(feedId: FeedId, title: string | null): Promise<void> {

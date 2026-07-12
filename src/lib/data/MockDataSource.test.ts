@@ -100,7 +100,6 @@ describe('MockDataSource feed reads', () => {
     expect(
       after.find((s) => s.feed.id === 'feed-verge')!.subscription.openOriginal,
     ).toBe(false);
-    expect(ds.supportsMarkDoneOnOpen()).toBe(true);
   });
 
   it('persists the per-feed card-style (list layout) override, and clears it', async () => {
@@ -123,7 +122,6 @@ describe('MockDataSource feed reads', () => {
     expect(
       after.find((s) => s.feed.id === 'feed-verge')!.subscription.listLayout,
     ).toBe(null);
-    expect(ds.supportsSubscriptionListLayout()).toBe(true);
   });
 
   it('paginates with an explicit cursor', async () => {

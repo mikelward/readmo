@@ -551,9 +551,9 @@ export function ItemPage() {
   // Hacker News feeds open the newshacker thread (not news.ycombinator.com),
   // deriving the HN id from the item's url/guid/body — same as the row's "open
   // on newshacker" mode, and the only way to find the official HN feed's
-  // discussion link (it lives in the description, not a structured field; it
-  // also covers a pre-0033 backend that omits comments_url). That broad scan is
-  // GATED to HN feeds: on a normal feed a body that merely mentions an HN thread
+  // discussion link (it lives in the description, not a structured field). That
+  // broad scan is GATED to HN feeds: on a normal feed a body that merely mentions
+  // an HN thread
   // would otherwise mislabel/redirect the button (PR #264 review).
   //
   // Every other feed uses its structured comments URL (RSS <comments> / Atom

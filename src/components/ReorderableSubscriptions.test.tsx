@@ -408,28 +408,6 @@ describe('ReorderableSubscriptions', () => {
     expect(screen.queryByRole('menu')).toBeNull(); // closes after action
   });
 
-  it('hides "Mark done when opening" when the backend does not support it', () => {
-    render(
-      <ReorderableSubscriptions
-        subs={[entry('a', 'Alpha', 0)]}
-        onReorder={vi.fn()}
-        onMute={vi.fn()}
-        onSetOpenMode={vi.fn()}
-        onSetMarkDoneOnOpen={vi.fn()}
-        onSetListLayout={vi.fn()}
-        showMarkDoneOnOpen={false}
-        onUnsubscribe={vi.fn()}
-        onRename={vi.fn()}
-      />,
-    );
-    openMenu('Alpha');
-    expect(
-      screen.queryByRole('menuitemcheckbox', { name: 'Mark done when opening' }),
-    ).toBeNull();
-    // The rest of the menu is unaffected.
-    expect(screen.getByRole('menuitem', { name: 'Unsubscribe' })).toBeInTheDocument();
-  });
-
   // --- Per-feed card style -------------------------------------------------
 
   // Card style is a two-level control too: a single "Card style" row drills into
@@ -534,26 +512,6 @@ describe('ReorderableSubscriptions', () => {
     expect(onSetListLayout).toHaveBeenCalledWith('a', null);
   });
 
-  it('hides the Card style choice when the backend does not support it', () => {
-    render(
-      <ReorderableSubscriptions
-        subs={[entry('a', 'Alpha', 0)]}
-        onReorder={vi.fn()}
-        onMute={vi.fn()}
-        onSetOpenMode={vi.fn()}
-        onSetMarkDoneOnOpen={vi.fn()}
-        onSetListLayout={vi.fn()}
-        showListLayout={false}
-        onUnsubscribe={vi.fn()}
-        onRename={vi.fn()}
-      />,
-    );
-    openMenu('Alpha');
-    expect(screen.queryByRole('menuitem', { name: 'Card style' })).toBeNull();
-    expect(screen.queryByRole('group', { name: 'Card style' })).toBeNull();
-    expect(screen.getByRole('menuitem', { name: 'Unsubscribe' })).toBeInTheDocument();
-  });
-
   it('marks the current open mode checked and switches it when already set', () => {
     const onSetOpenMode = vi.fn();
     render(
@@ -579,35 +537,9 @@ describe('ReorderableSubscriptions', () => {
     expect(onSetOpenMode).toHaveBeenCalledWith('a', 'reader');
   });
 
-  it('hides the open-mode choice when the backend does not support it', () => {
-    render(
-      <ReorderableSubscriptions
-        subs={[entry('a', 'Alpha', 0)]}
-        onReorder={vi.fn()}
-        onMute={vi.fn()}
-        onSetOpenMode={vi.fn()}
-        onSetMarkDoneOnOpen={vi.fn()}
-        onSetListLayout={vi.fn()}
-        showOpenOriginal={false}
-        onUnsubscribe={vi.fn()}
-        onRename={vi.fn()}
-      />,
-    );
-    openMenu('Alpha');
-    const menu = screen.getByRole('menu');
-    // No "Open on…" drill row at all when the open_original column is absent.
-    expect(within(menu).queryByRole('menuitem', { name: 'Open on…' })).toBeNull();
-    // The rest of the menu is unaffected.
-    expect(within(menu).getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
-    expect(within(menu).getByRole('menuitem', { name: 'Unsubscribe' })).toBeInTheDocument();
-  });
-
   // --- Hacker News feeds: the three-way open-mode choice -------------------
 
-  function renderHn(
-    sub: Partial<SubscriptionEntry['subscription']> = {},
-    props: { showOpenOriginal?: boolean; showOpenNewshacker?: boolean } = {},
-  ) {
+  function renderHn(sub: Partial<SubscriptionEntry['subscription']> = {}) {
     const onSetOpenMode = vi.fn();
     const onSetMarkDoneOnOpen = vi.fn();
     render(
@@ -620,7 +552,6 @@ describe('ReorderableSubscriptions', () => {
         onSetListLayout={vi.fn()}
         onUnsubscribe={vi.fn()}
         onRename={vi.fn()}
-        {...props}
       />,
     );
     return { onSetOpenMode, onSetMarkDoneOnOpen };
@@ -822,18 +753,6 @@ describe('ReorderableSubscriptions', () => {
     drillIntoOpenMode();
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Open here' }));
     expect(onSetOpenMode).toHaveBeenCalledWith('hn', 'reader');
-  });
-
-  it('drops "Open on newshacker" from a Hacker News feed when its column is unsupported', () => {
-    renderHn({}, { showOpenNewshacker: false });
-    openMenu('Hacker News');
-    drillIntoOpenMode();
-    // The submenu degrades to just Open here / Open original.
-    expect(
-      screen.queryByRole('menuitemradio', { name: 'Open on newshacker' }),
-    ).toBeNull();
-    expect(screen.getByRole('menuitemradio', { name: 'Open here' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitemradio', { name: 'Open original' })).toBeInTheDocument();
   });
 
   it('does not offer "Open on newshacker" for a non–Hacker News feed', () => {
