@@ -7,6 +7,7 @@ import {
   type MirrorChange,
 } from '../lib/newshackerSync';
 import { consumeDoneMirrorSuppression } from '../lib/newshackerMirrorSuppress';
+import { clearAllReverseSyncPending } from '../lib/newshackerReverseSyncPending';
 import { recallHackerNewsItemId } from '../lib/newshackerItemIds';
 import type { ItemId } from '../lib/types';
 
@@ -115,16 +116,55 @@ export function useNewshackerSync(): void {
 
   // Reverse sync: once linked, pull newshacker's own Done + Pinned lists and
   // apply them to Readmo (SPEC.md *Mirror dismissals and pins to newshacker* →
-  // reverse pull). One-shot per mount / link activation; best-effort. The apply
-  // lands in item_state server-side and re-hydrates through the store's
-  // `hydrate` path, which never fires the outbound mirror above — so there's no
-  // echo loop; a pulled pin also warms its offline cache via useOfflineCacheLock.
+  // reverse pull). Runs on mount/link activation AND on tab focus / visibility /
+  // reconnect — the same triggers as the item-state resync — so triage done on
+  // newshacker shows up without a manual refresh. Best-effort. The apply lands in
+  // item_state server-side and re-hydrates through the store's `hydrate` path,
+  // which (a) never fires the outbound mirror above — no echo loop — and (b)
+  // grays a now-Done row IN PLACE via the ItemList overlay rather than reflowing
+  // the list (cross-device-dismiss behavior), so a focus sync never yanks rows
+  // out from under the reader. A pulled pin also warms its offline cache via
+  // useOfflineCacheLock. Each completed pull clears the reverse-sync "pending"
+  // markers, resolving any open-on-newshacker "syncing" spinner (→ struck if the
+  // item is now Done, else the opened fade).
   useEffect(() => {
     if (!linked) return;
     const pull = ds.pullNewshackerState?.bind(ds);
     if (!pull) return;
-    void pull().catch(() => {
-      // best-effort; the local state is authoritative.
-    });
+    // Coalesce overlapping pulls: a single tab return can dispatch BOTH `focus`
+    // and `visibilitychange`, and the Edge GET isn't itself deduped — so guard on
+    // an in-flight flag to issue one pull per return, not two.
+    let pulling = false;
+    const run = () => {
+      if (pulling) return;
+      pulling = true;
+      void pull()
+        .catch(() => {
+          // best-effort; the local state is authoritative.
+        })
+        .then(() => {
+          pulling = false;
+          clearAllReverseSyncPending();
+        });
+    };
+    run();
+    const onFocus = () => {
+      // A bare `focus` can fire on a still-hidden tab; only pull when visible.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
+      run();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') run();
+    };
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('online', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('online', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [ds, linked]);
 }

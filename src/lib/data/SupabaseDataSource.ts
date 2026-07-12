@@ -706,7 +706,11 @@ export class SupabaseDataSource implements DataSource {
       return { linked: false, applied: 0 };
     }
     if (applied > 0) {
-      await this.resyncState().catch(() => {
+      // force: a focus-time resync (useStateSync) may already be in flight, and
+      // it can have read item_state BEFORE this pull applied the changes —
+      // coalescing onto it would clear the "syncing" spinner without the row
+      // actually graying/pinning until the next event. force chains a fresh read.
+      await this.resyncState(true).catch(() => {
         // The changes are already in item_state server-side; a failed re-hydrate
         // just means the local view catches up on the next read/resync.
       });
@@ -1509,7 +1513,7 @@ export class SupabaseDataSource implements DataSource {
    * fired) gets pushed out — the read side's pending snapshot keeps that
    * in-flight write safe.
    */
-  resyncState(): Promise<void> {
+  resyncState(force = false): Promise<void> {
     // Coalesce overlapping calls (a single tab return can fire `focus` AND
     // `visibilitychange`) — but remember the request, because conditions may
     // have changed in a way the in-flight attempt won't reflect. Notably an
@@ -1517,6 +1521,18 @@ export class SupabaseDataSource implements DataSource {
     // is still in flight and doomed to fail; coalescing into it would lose the
     // recovery. So if the in-flight attempt fails, we run a fresh one after.
     if (this.resyncing) {
+      if (force) {
+        // The caller just applied server-side changes it must see (the
+        // newshacker reverse pull). The in-flight read may have STARTED before
+        // that write, and a successful coalesced read clears the request without
+        // re-reading — so chain a guaranteed-fresh read AFTER the in-flight one
+        // instead of coalescing onto it. (When it settles, `this.resyncing` is
+        // already null, so the inner call starts a new read.)
+        return this.resyncing.then(
+          () => this.resyncState(),
+          () => this.resyncState(),
+        );
+      }
       this.resyncPending = true;
       return this.resyncing;
     }

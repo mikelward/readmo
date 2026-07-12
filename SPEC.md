@@ -436,13 +436,25 @@ here).
   This is why the open-on-newshacker Done isn't pushed forward: once you hand
   off, newshacker owns that item's Done and syncs it back. It reuses the same
   link/token; the target host is a compile-time constant, so there's no
-  user-controlled URL / SSRF surface. A pulled action reconciles by the same
+  user-controlled URL / SSRF surface. The pull runs on app open, on tab
+  focus / reconnect, and on **pull-to-refresh** — the same triggers as the
+  item-state resync. It never reflows the list: a pulled Done grays the row **in
+  place** (dim + strikethrough) exactly like a dismiss from another device, and
+  is only compacted out when it scrolls off-screen or on the next pull-to-refresh
+  — so a Done or pin made on newshacker updates a card's *style* under you but
+  never yanks rows around. A pulled action reconciles by the same
   per-field last-write-wins as any other write (a story that's pinned on one list
   and done on the other resolves to whichever action is newer), so a stale pull
   loses to a newer local change and the round-trip is idempotent — no ping-pong.
   A pull that lands nothing is a no-op; anything that lands re-hydrates local
   state (via the sync path, which never re-triggers the push, so there's no
   echo), and a pulled pin also warms its offline cache like a local pin.
+  **Handoff "syncing" state.** When you open a story *on newshacker* (without
+  mark-done-on-open), Readmo remembers that card and shows a **syncing spinner in
+  its right slot** on return, until the next pull resolves it — struck if you
+  marked it done over there, otherwise the plain opened fade. The marker persists
+  across the same-tab hop to newshacker and back, and a failsafe drops it if the
+  pull never lands.
   **Limitation:** a pulled pin can only attach to an item still present in Readmo
   (a subscribed HN feed's item inside the freshness window); a pin for a story
   that has aged out has no item to hang on and is skipped — pins are permanent on
@@ -453,8 +465,10 @@ here).
   "not linked" and the Settings section hides.
 - **Cost/reliability (guardrail #5).** No new third-party account — reuses the
   Supabase Edge Function runtime and one small first-party call to newshacker per
-  debounced batch of HN Done/Pinned changes (push) plus one on link activation
-  (pull). **Negligible.** Failure mode: the sync no-ops; Readmo is unaffected.
+  debounced batch of HN Done/Pinned changes (push) plus one on app open, tab
+  focus/reconnect, and each pull-to-refresh (pull) — all coalesced with the
+  existing item-state resync cadence. **Negligible.** Failure mode: the sync
+  no-ops; Readmo is unaffected.
   **Manual deploy:** `make migrate` (0050, 0062, 0063) + `make deploy` (the
   `newshacker-sync` function) — and newshacker's app-token endpoint must be live
   first. The client feature-detects, so shipping it ahead of the migrations just

@@ -1,12 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient } from '@tanstack/react-query';
+import { NEWSHACKER_LINK_QUERY_KEY } from '../hooks/useNewshackerSync';
 import { useLocation } from 'react-router-dom';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { ItemRow } from './ItemRow';
 import { PushPinFilled } from './icons';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import { consumeDoneMirrorSuppression } from '../lib/newshackerMirrorSuppress';
+import {
+  markReverseSyncPending,
+  clearAllReverseSyncPending,
+  _resetReverseSyncPendingForTests,
+} from '../lib/newshackerReverseSyncPending';
 import { recallHackerNewsItemId } from '../lib/newshackerItemIds';
 import {
   HIDE_SPORTS_SPOILERS_KEY,
@@ -73,6 +80,11 @@ describe('ItemRow', () => {
   afterEach(() => {
     restoreMatchMedia?.();
     restoreMatchMedia = null;
+    // Reverse-sync pending is a sessionStorage singleton — clear it so a marker
+    // from one test can't hide another test's Pin button behind a spinner.
+    clearAllReverseSyncPending();
+    sessionStorage.clear();
+    _resetReverseSyncPendingForTests();
   });
 
   it('renders the title and display-only meta (source · age · author)', () => {
@@ -355,6 +367,125 @@ describe('ItemRow', () => {
       // Opening ON newshacker is a handoff: the Done mirror is suppressed so it
       // isn't swept to Done on newshacker as the user arrives there.
       expect(consumeDoneMirrorSuppression('item-1')).toBe(true);
+    });
+
+    it('shows a syncing spinner after an open-on-newshacker handoff (no mark-done-on-open)', async () => {
+      const user = userEvent.setup();
+      const hn: FeedItem = {
+        item: {
+          ...FEED_ITEM.item,
+          guid: 'https://news.ycombinator.com/item?id=42662903',
+          url: 'https://example.com/the-article',
+        },
+        feed: {
+          ...FEED_ITEM.feed,
+          url: 'https://news.ycombinator.com/rss',
+          siteUrl: 'https://news.ycombinator.com',
+          title: 'Hacker News',
+        },
+      };
+      // Linked account → the reverse pull can resolve the marker, so it's set.
+      // Non-zero gcTime so the seeded link status survives with no observer
+      // mounted (ItemRow reads it imperatively, it doesn't useQuery it).
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+      });
+      queryClient.setQueryData(NEWSHACKER_LINK_QUERY_KEY, {
+        linked: true,
+        supported: true,
+      });
+      const { source } = renderWithProviders(<ItemRow feedItem={hn} openNewshacker />, {
+        queryClient,
+      });
+      // Before the handoff: the Pin button is shown, no spinner.
+      expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
+      expect(screen.queryByTestId('row-syncing')).not.toBeInTheDocument();
+
+      await user.click(screen.getByTestId('item-title'));
+
+      // Opened but NOT done (no mark-done-on-open) — outcome is unknown until the
+      // reverse pull, so the card is now awaiting sync.
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+      expect(source.stateStore.get('item-1').done).toBe(false);
+      // The right slot swaps the Pin button for a non-interactive spinner.
+      expect(screen.getByTestId('row-syncing')).toBeInTheDocument();
+      expect(screen.queryByTestId('pin-btn')).not.toBeInTheDocument();
+    });
+
+    it('does NOT show a syncing spinner on a handoff when the account is unlinked', async () => {
+      const user = userEvent.setup();
+      const hn: FeedItem = {
+        item: {
+          ...FEED_ITEM.item,
+          guid: 'https://news.ycombinator.com/item?id=42662903',
+          url: 'https://example.com/the-article',
+        },
+        feed: {
+          ...FEED_ITEM.feed,
+          url: 'https://news.ycombinator.com/rss',
+          siteUrl: 'https://news.ycombinator.com',
+          title: 'Hacker News',
+        },
+      };
+      // No link status seeded → unlinked → no pull will run, so no marker/spinner.
+      const { source } = renderWithProviders(<ItemRow feedItem={hn} openNewshacker />);
+      await user.click(screen.getByTestId('item-title'));
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+      expect(screen.queryByTestId('row-syncing')).not.toBeInTheDocument();
+      expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
+    });
+
+    it('the `o` shortcut opens the original without flagging a newshacker handoff', () => {
+      const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+      const hn: FeedItem = {
+        item: {
+          ...FEED_ITEM.item,
+          guid: 'https://news.ycombinator.com/item?id=42662903',
+          url: 'https://example.com/the-article',
+        },
+        feed: {
+          ...FEED_ITEM.feed,
+          url: 'https://news.ycombinator.com/rss',
+          siteUrl: 'https://news.ycombinator.com',
+          title: 'Hacker News',
+        },
+      };
+      // Linked, so a REAL newshacker handoff would flag pending — proving the `o`
+      // path (which opens the original article) deliberately does not.
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+      });
+      queryClient.setQueryData(NEWSHACKER_LINK_QUERY_KEY, {
+        linked: true,
+        supported: true,
+      });
+      const { source } = renderWithProviders(<ItemRow feedItem={hn} openNewshacker />, {
+        queryClient,
+      });
+      fireEvent.keyDown(screen.getByTestId('item-title'), { key: 'o' });
+      expect(openSpy).toHaveBeenCalledWith(
+        'https://example.com/the-article',
+        '_blank',
+        'noopener,noreferrer',
+      );
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+      // Opening the original is not a newshacker handoff → no syncing spinner.
+      expect(screen.queryByTestId('row-syncing')).not.toBeInTheDocument();
+      expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
+      openSpy.mockRestore();
+    });
+
+    it('resolves the syncing spinner back to the Pin button when the pull clears pending', () => {
+      markReverseSyncPending('item-1');
+      renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
+      expect(screen.getByTestId('row-syncing')).toBeInTheDocument();
+      expect(screen.queryByTestId('pin-btn')).not.toBeInTheDocument();
+
+      // A completed reverse pull clears every pending marker.
+      act(() => clearAllReverseSyncPending());
+
+      expect(screen.queryByTestId('row-syncing')).not.toBeInTheDocument();
+      expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
     });
 
     it('does NOT mark done when opening the in-app reader (reader-mode body tap)', async () => {

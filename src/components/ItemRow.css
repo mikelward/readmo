@@ -310,6 +310,35 @@
   height: 100%;
 }
 
+/* Reverse-sync "syncing" state: a non-interactive spinner filling the Pin slot
+   after an open-on-newshacker handoff, until the next pull resolves the card.
+   Matches the pull-to-refresh spinner's border style, in the row's meta color. */
+.pin-btn--syncing {
+  cursor: default;
+}
+
+.pin-btn__spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--rm-meta) 30%, transparent);
+  border-top-color: var(--rm-meta);
+  animation: pin-btn-spin 700ms linear infinite;
+}
+
+@keyframes pin-btn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Slow (don't stop) — a frozen spinner reads as broken. */
+  .pin-btn__spinner {
+    animation-duration: 1.8s;
+  }
+}
+
 @media (hover: hover) {
   .pin-btn:hover {
     background: var(--rm-bg);

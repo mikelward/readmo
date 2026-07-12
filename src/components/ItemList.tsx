@@ -19,6 +19,8 @@ import { useInViewIds } from '../hooks/useInViewIds';
 import { useHideOnScroll, useBottomBarPosition } from '../hooks/useReadingPrefs';
 import { useCollapsedFeeds } from '../hooks/useCollapsedFeeds';
 import { useTopChromeHeight } from '../hooks/useTopChromeHeight';
+import { useNewshackerLink } from '../hooks/useNewshackerLink';
+import { clearAllReverseSyncPending } from '../lib/newshackerReverseSyncPending';
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
 import type { FeedId, FeedItem, ItemId } from '../lib/types';
 import { placeStayInBodyPins } from '../lib/feedOrder';
@@ -310,6 +312,9 @@ export function ItemList({
   onToggleSort,
 }: Props) {
   const ds = useDataSource();
+  // Whether this account has linked a newshacker token — gates the reverse
+  // pull on pull-to-refresh (below) so we skip the network call when unlinked.
+  const { linked: newshackerLinked } = useNewshackerLink();
   // Per-section "More" is live only when the page told us the display window
   // each grouped section opens at (the grouped home/folder reads).
   const perGroupMore = groupByFeed && perFeedLimit != null && perFeedLimit > 0;
@@ -3173,14 +3178,34 @@ export function ItemList({
           // anyway), and aborting here made a pull a complete visual no-op
           // with no error surfaced: the refresh-failure strip keys off the
           // QUERY's error, and the query never ran.
-          try {
-            await ds.refresh();
-          } catch (err) {
-            console.warn(
-              '[readmo] pull-to-refresh server poll failed; refetching anyway:',
-              err,
-            );
+          // Run the server re-poll and (when linked) the reverse newshacker pull
+          // together — both are best-effort freshness that feed the refetch
+          // below. The pull brings the linked account's Done/Pinned lists back so
+          // triage done on newshacker reflects here; PTR is the deliberate
+          // refresh gesture where that reconciliation belongs (a Done drops via
+          // the store overlay, an out-of-window pin surfaces in the fresh page).
+          // allSettled, NOT all: `ds.refresh()` rejects on a rate-limit/offline,
+          // and `Promise.all` would abort before the still-running pull applied +
+          // hydrated — so the refetch would miss the reverse-sync results (e.g.
+          // out-of-window pins). allSettled waits for the pull to finish first.
+          {
+            const [refreshResult] = await Promise.allSettled([
+              ds.refresh(),
+              newshackerLinked && ds.pullNewshackerState
+                ? ds.pullNewshackerState()
+                : Promise.resolve(),
+            ]);
+            if (refreshResult.status === 'rejected') {
+              console.warn(
+                '[readmo] pull-to-refresh server poll failed; refetching anyway:',
+                refreshResult.reason,
+              );
+            }
           }
+          // The pull (success or fail) resolves any open-on-newshacker "syncing"
+          // spinners — a completed reverse pull reconciles the full newshacker
+          // state, so each pending card's outcome is now known.
+          clearAllReverseSyncPending();
           // React Query's `refetch()` resolves with the new result rather
           // than throwing on error, so a failed refresh would otherwise
           // proceed to clear sticky/extras against the stale cached page —
