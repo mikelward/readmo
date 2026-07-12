@@ -1654,6 +1654,14 @@ negligible and off every critical path. See the External services table in
      topmost restored row** (the earliest one you'd scrolled past) when it lands
      above the fold, so the rows it brought back are actually in view rather than
      left off-screen above you.
+     **At the true end of a feed a blank scroll-space follows the foot** (only
+     while auto-hide is on): the last screenful can't otherwise scroll off the
+     top — nothing sits below it — so those rows would stay stranded, needing a
+     Sweep. The empty tail lets you keep scrolling until the final article
+     clears the top and is marked too, so the pure-scroll flow reaches the very
+     last row. It sits below the relative bottom bar (and above the pinned one,
+     which stays put), and only appears once the feed has no more pages to
+     fetch.
 
 7. **Bottom action bar** — Back-to-top + More + Undo + Sweep on feed footers;
    Back-to-top only on library footers. Same slot order. **More lives in the

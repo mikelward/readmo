@@ -5625,6 +5625,92 @@ describe('ItemList', () => {
     expect(scrollBySpy).not.toHaveBeenCalled();
   });
 
+  describe('bottom scroll-space (auto-hide-on-scroll)', () => {
+    // The last screenful of a feed can never scroll off the TOP (nothing below
+    // it to scroll into), so auto-hide-on-scroll leaves those rows stranded. A
+    // blank scroll-space appended at the true end of the feed gives them the
+    // room to be pushed up past the top chrome and auto-marked — but ONLY when
+    // the feature is on, the feed is at its true end, and rows are showing.
+    it('appends the scroll-space at the true end of the feed when the feature is on', async () => {
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      const source = new MockDataSource(`test-${Math.random()}`);
+      renderHome(source);
+
+      // The seed feed fits in one page, so hasMore is false — the true end.
+      await screen.findAllByTestId('item-row');
+      expect(screen.getByTestId('scroll-space')).toBeInTheDocument();
+    });
+
+    it('renders no scroll-space when auto-hide-on-scroll is off (the default)', async () => {
+      const source = new MockDataSource(`test-${Math.random()}`);
+      renderHome(source);
+
+      await screen.findAllByTestId('item-row');
+      expect(screen.queryByTestId('scroll-space')).not.toBeInTheDocument();
+    });
+
+    it('withholds the scroll-space while more pages remain, adding it only at the end', async () => {
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const all = await source.getHomeItems({ limit: 100 });
+      // Two rows per page so the first page leaves more to fetch (hasMore true).
+      const rows = all.items.slice(0, 4);
+      const user = userEvent.setup();
+      renderPaged(source, rows, 2);
+
+      // Mid-feed (a fetchable page remains): the loaded tail isn't the last
+      // article, so no scroll-space yet — the reader pages with "More".
+      await screen.findAllByTestId('item-row');
+      expect(screen.queryByTestId('scroll-space')).not.toBeInTheDocument();
+
+      // Page to the true end; now the scroll-space appears.
+      await user.click(screen.getByTestId('more-btn'));
+      await waitFor(() => {
+        expect(screen.getByTestId('scroll-space')).toBeInTheDocument();
+      });
+    });
+
+    it('places the scroll-space BELOW the in-flow relative bottom toolbar', async () => {
+      // Default bottom-bar ('list'): the bar sits at the end of the list in
+      // flow, and the reader scrolls past the last row → toolbar → blank tail.
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      resetReadingPrefsCacheForTest();
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const { container } = renderHome(source);
+
+      await screen.findAllByTestId('item-row');
+      const bar = container.querySelector('.list-toolbar--bottom')!;
+      const spacer = screen.getByTestId('scroll-space');
+      // DOCUMENT_POSITION_FOLLOWING: the spacer follows the toolbar in the DOM.
+      expect(
+        bar.compareDocumentPosition(spacer) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    });
+
+    it('places the scroll-space ABOVE the pinned bottom toolbar so the bar stays stuck', async () => {
+      // Pinned bar ('screen'): the bar is sticky to the viewport foot, so the
+      // blank tail goes above it — keeping the bar the last flow element (it
+      // never un-sticks) while still giving the last rows room to scroll off.
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      window.localStorage.setItem(BOTTOM_BAR_KEY, 'screen');
+      resetReadingPrefsCacheForTest();
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const { container } = renderHome(source);
+
+      await screen.findAllByTestId('item-row');
+      const bar = container.querySelector('.list-toolbar--bottom')!;
+      const spacer = screen.getByTestId('scroll-space');
+      // DOCUMENT_POSITION_PRECEDING: the spacer precedes the toolbar in the DOM.
+      expect(
+        bar.compareDocumentPosition(spacer) &
+          Node.DOCUMENT_POSITION_PRECEDING,
+      ).toBeTruthy();
+    });
+  });
+
   describe('per-section More (group by feed)', () => {
     // Synthetic FeedItems for two feeds with controllable depth, cloned from a
     // real seed row so every Item/Feed field is populated.
