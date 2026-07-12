@@ -5626,18 +5626,17 @@ describe('ItemList', () => {
   });
 
   describe('bottom scroll-space (auto-hide-on-scroll)', () => {
-    // The last screenful of a feed can never scroll off the TOP (nothing below
-    // it to scroll into), so auto-hide-on-scroll leaves those rows stranded. A
-    // blank scroll-space appended at the true end of the feed gives them the
-    // room to be pushed up past the top chrome and auto-marked — but ONLY when
-    // the feature is on, the feed is at its true end, and rows are showing.
-    it('appends the scroll-space at the true end of the feed when the feature is on', async () => {
+    // The last screenful of RENDERED rows can never scroll off the TOP (nothing
+    // below them to scroll into), so auto-hide-on-scroll leaves those rows
+    // stranded. A blank scroll-space appended below the loaded foot gives them
+    // the room to be pushed up past the top chrome and auto-marked — whenever
+    // the feature is on and rows are showing.
+    it('appends the scroll-space when the feature is on and rows are showing', async () => {
       window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
       resetReadingPrefsCacheForTest();
       const source = new MockDataSource(`test-${Math.random()}`);
       renderHome(source);
 
-      // The seed feed fits in one page, so hasMore is false — the true end.
       await screen.findAllByTestId('item-row');
       expect(screen.getByTestId('scroll-space')).toBeInTheDocument();
     });
@@ -5650,26 +5649,23 @@ describe('ItemList', () => {
       expect(screen.queryByTestId('scroll-space')).not.toBeInTheDocument();
     });
 
-    it('withholds the scroll-space while more pages remain, adding it only at the end', async () => {
+    it('shows the scroll-space even while more pages remain — the loaded tail is stranded too', async () => {
+      // Auto-hide only marks RENDERED rows; the last loaded row can't scroll off
+      // the top whether or not another page could be fetched, so the tail is
+      // stranded the same. The scroll-space must not wait for the feed's end —
+      // the reader shouldn't have to page in more unread rows to mark the tail
+      // they can already see.
       window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
       resetReadingPrefsCacheForTest();
       const source = new MockDataSource(`test-${Math.random()}`);
       const all = await source.getHomeItems({ limit: 100 });
       // Two rows per page so the first page leaves more to fetch (hasMore true).
       const rows = all.items.slice(0, 4);
-      const user = userEvent.setup();
       renderPaged(source, rows, 2);
 
-      // Mid-feed (a fetchable page remains): the loaded tail isn't the last
-      // article, so no scroll-space yet — the reader pages with "More".
+      // A fetchable page still remains, yet the scroll-space is already present.
       await screen.findAllByTestId('item-row');
-      expect(screen.queryByTestId('scroll-space')).not.toBeInTheDocument();
-
-      // Page to the true end; now the scroll-space appears.
-      await user.click(screen.getByTestId('more-btn'));
-      await waitFor(() => {
-        expect(screen.getByTestId('scroll-space')).toBeInTheDocument();
-      });
+      expect(screen.getByTestId('scroll-space')).toBeInTheDocument();
     });
 
     it('places the scroll-space BELOW the in-flow relative bottom toolbar', async () => {
