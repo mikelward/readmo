@@ -490,18 +490,25 @@ export function ItemPage() {
   const view = userView ?? defaultView;
   const showReading = view === 'full' && !!fullHtml;
 
-  // Opening the reader marks the item Opened (auto), and resets the per-article
-  // reading-mode view state when navigating between items.
-  useEffect(() => {
-    if (resolved) set('opened', true);
+  // Reset the per-article reading-mode view state when navigating between items.
+  // Done during render via a previous-id guard (not in an effect), so it doesn't
+  // cascade a commit; the lazy state initializers above cover the first mount.
+  // (SPA navigation between items reuses this component.)
+  const openItemId = resolved?.item.id;
+  const [prevOpenItemId, setPrevOpenItemId] = useState(openItemId);
+  if (prevOpenItemId !== openItemId) {
+    setPrevOpenItemId(openItemId);
     setManualTrigger(false);
     setUserView(null);
-    // Re-snapshot "was the full body already cached?" for the newly-opened item
-    // (SPA navigation between items reuses this component, so the lazy init
-    // above only covers the first mount).
+    // Re-snapshot "was the full body already cached?" for the newly-opened item.
     setFullReadyAtOpen(
       cachedFullTextOk(queryClient.getQueryData<FullTextResult>(['fulltext', id])),
     );
+  }
+
+  // Opening the reader marks the item Opened (auto).
+  useEffect(() => {
+    if (resolved) set('opened', true);
     // (The pinned-at-open snapshot is captured during render, above — keeping it
     // out of this effect is what closes the auto-generate leak window.)
     // Only when the item first resolves / changes.

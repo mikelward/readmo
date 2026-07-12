@@ -100,8 +100,13 @@ export function ReorderableSubscriptions({
   // never revert the order the user is looking at mid-reorder. On a membership
   // change we keep existing feeds in their current local order, drop removed
   // ones, and append newly-added ones (in prop order).
+  // Reconcile during render (not in an effect) when the feed *set* changes:
+  // storing the previous membership key and adjusting state in render is React's
+  // recommended way to derive from props without a cascading effect commit.
   const membershipKey = [...propIds].sort().join(',');
-  useEffect(() => {
+  const [prevMembershipKey, setPrevMembershipKey] = useState(membershipKey);
+  if (prevMembershipKey !== membershipKey) {
+    setPrevMembershipKey(membershipKey);
     setOrder((cur) => {
       const propSet = new Set(propIds);
       const curSet = new Set(cur);
@@ -112,10 +117,7 @@ export function ReorderableSubscriptions({
       const added = propIds.filter((id) => !curSet.has(id));
       return [...kept, ...added];
     });
-    // membershipKey changes iff the set of feed ids changes; propIds is read
-    // inside but only its membership matters here.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [membershipKey]);
+  }
 
   // Persist is debounced AND serialized, so only the newest order can win.
   //
@@ -190,9 +192,14 @@ export function ReorderableSubscriptions({
   // whenever the open menu changes (including closing) so a stale drill level
   // can't leak onto the next row's menu.
   const [submenu, setSubmenu] = useState<Submenu>(null);
-  useEffect(() => {
-    setSubmenu(null);
-  }, [menuFor]);
+  // Reset the drill level during render when the open menu changes (including
+  // closing), rather than in an effect, so a stale level can't leak onto the
+  // next row's menu.
+  const [submenuResetFor, setSubmenuResetFor] = useState(menuFor);
+  if (submenuResetFor !== menuFor) {
+    setSubmenuResetFor(menuFor);
+    if (submenu !== null) setSubmenu(null);
+  }
   // Drilling in/out unmounts the button the user just activated, which would
   // otherwise drop focus to <body> and lose their place. Move focus into the
   // submenu (its Back row) on drill-in and back onto the originating drill row
@@ -245,8 +252,11 @@ export function ReorderableSubscriptions({
   const [menuPlacement, setMenuPlacement] = useState<'below' | 'above'>(
     'below',
   );
+  // Measures the committed DOM to decide above/below, so it must set state from
+  // a layout effect — this is not derivable during render.
   useLayoutEffect(() => {
     if (menuFor === null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setMenuPlacement('below');
       return;
     }
