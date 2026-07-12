@@ -105,6 +105,17 @@ export function measureStickyBottomInset(): number {
   if (typeof document === 'undefined' || typeof window === 'undefined') return 0;
   const el = document.querySelector('.list-toolbar--bottom');
   if (!el) return 0;
+  // The default ('list') bottom bar is `position: static` — class
+  // `list-toolbar--relative` — sitting at the end of the list in normal flow,
+  // *below* the last row; only the opt-in ('screen') bar pins to the viewport
+  // foot and overlays rows. A relative footer occludes nothing, so its inset is
+  // 0. The `Math.min(…, rect.height)` clamp below already keeps a relative
+  // footer harmless (it sits below every row, so a phantom intrusion capped at
+  // the footer's own height can never shrink the root's bottom above any row's
+  // bottom — no row is dropped); this early return is a clarity/perf tidy-up
+  // that states the intent directly and skips a needless layout-flushing
+  // getBoundingClientRect on the common path, rather than a fix for a live bug.
+  if (el.classList.contains('list-toolbar--relative')) return 0;
   const rect = el.getBoundingClientRect();
   const intrusion = window.innerHeight - rect.top;
   return Math.max(0, Math.min(Math.floor(intrusion), Math.floor(rect.height)));
