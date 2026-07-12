@@ -55,6 +55,7 @@ export const POPULAR_FEEDS: PopularFeed[] = [
   // United Kingdom
   { name: 'The Telegraph', feedUrl: 'https://www.telegraph.co.uk/news/rss.xml', category: 'News' },
   { name: 'The Independent', feedUrl: 'https://www.independent.co.uk/news/uk/rss', category: 'News' },
+  { name: 'i Paper', feedUrl: 'https://inews.co.uk/category/news/feed', category: 'News' },
   { name: 'Sky News', feedUrl: 'https://feeds.skynews.com/feeds/rss/home.xml', category: 'News' },
   { name: 'Daily Mail', feedUrl: 'https://www.dailymail.co.uk/news/index.rss', category: 'News' },
   { name: 'Daily Mirror', feedUrl: 'https://www.mirror.co.uk/news/?service=rss', category: 'News' },
