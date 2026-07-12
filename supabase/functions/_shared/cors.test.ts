@@ -8,6 +8,9 @@ describe('cors', () => {
     const methods = corsHeaders['Access-Control-Allow-Methods'];
     expect(methods).toContain('POST');
     expect(methods).toContain('OPTIONS');
+    // GET is advertised so the newshacker-sync reverse-pull GET clears the
+    // browser preflight (supabase-js preflights every authorized invoke).
+    expect(methods).toContain('GET');
     const allowed = corsHeaders['Access-Control-Allow-Headers'].toLowerCase();
     for (const h of ['authorization', 'apikey', 'content-type', 'x-client-info', 'x-readmo-build']) {
       expect(allowed).toContain(h);

@@ -22,6 +22,10 @@ export interface FakeTables {
 export interface InvokeCall {
   name: string;
   body: unknown;
+  /** Present only when the caller passed a non-default HTTP method (e.g. the
+   * newshacker-sync reverse pull uses GET). Omitted for the common POST path so
+   * existing `toContainEqual({ name, body })` assertions still match. */
+  method?: string;
 }
 
 function parseInList(value: string): Set<string> {
@@ -489,7 +493,7 @@ export function makeFakeSupabase(tables: FakeTables): {
   client: {
     from: (table: string) => FakeQuery;
     rpc: (name: string, params?: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }>;
-    functions: { invoke: (name: string, opts?: { body?: unknown }) => Promise<{ data: unknown; error: unknown }> };
+    functions: { invoke: (name: string, opts?: { body?: unknown; method?: string }) => Promise<{ data: unknown; error: unknown }> };
   };
   store: FakeTables;
   invokeCalls: InvokeCall[];
@@ -554,8 +558,10 @@ export function makeFakeSupabase(tables: FakeTables): {
         ) => Promise.resolve(runRpc(store, rpcCalls, name, params ?? {})).then(onF, onR),
       }),
       functions: {
-        invoke: async (name: string, opts?: { body?: unknown }) => {
-          invokeCalls.push({ name, body: opts?.body });
+        invoke: async (name: string, opts?: { body?: unknown; method?: string }) => {
+          const call: InvokeCall = { name, body: opts?.body };
+          if (opts?.method !== undefined) call.method = opts.method;
+          invokeCalls.push(call);
           return invokeResult.current;
         },
       },

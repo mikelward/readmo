@@ -708,6 +708,11 @@ export class MockDataSource implements DataSource {
     // No newshacker to reach from the mock — no-op.
   }
 
+  async pullNewshackerDone(): Promise<{ linked: boolean; applied: number }> {
+    // No newshacker to reach from the mock — report the link state, apply nothing.
+    return { linked: this.newshackerToken != null, applied: 0 };
+  }
+
   // --- OPML -----------------------------------------------------------------
 
   async importOpml(xml: string): Promise<{ added: number; skipped: number }> {

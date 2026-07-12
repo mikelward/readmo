@@ -372,8 +372,11 @@ live.
 
 Dismissing (**Done**) or **pinning** a **Hacker News** story in Readmo can also
 update the matching list on **newshacker** (the sibling HN reader), so the two
-apps stay in step for HN feeds. One-way today (Readmo → newshacker); opt-in per
-account.
+apps stay in step for HN feeds. Both directions are wired and opt-in per
+account: Readmo **pushes** Done + Pinned to newshacker, and **pulls** Done back
+from it (so marking a story Done on newshacker — including after the
+open-on-newshacker handoff — dismisses it in Readmo too). Pinned is push-only;
+pulling pins back remains a stretch goal.
 
 - **Why it's possible.** Readmo already derives the numeric HN item id from an
   HN-feed item (`src/lib/newshacker.ts`, used by *Open on newshacker*). newshacker
@@ -420,28 +423,36 @@ account.
   newshacker* (open-on-newshacker mode) with *Mark done when opening* marks it
   Done in Readmo, but that Done is a **handoff, not a dismissal** — mirroring it
   would sweep the item to Done on newshacker at the moment you arrive to read it
-  there (and it'd fight the planned reverse sync below). So the row's open
+  there (and it'd fight the reverse pull below). So the row's open
   handler registers a one-shot suppression (`newshackerMirrorSuppress.ts`) that
   the hook consumes and skips. Opening the **original source** with mark-done, or
   any explicit dismissal (swipe/Sweep/menu) or scroll-away Done, still mirrors.
   This is also the only same-tab-unload dismissal path, so excluding it means the
   remaining dismissals all happen with the app open (no unload race).
-- **Stretch goal (TODO, not built): reverse sync** — pull newshacker's own
-  `done`/`pinned` (a `GET /api/sync`) and apply it to Readmo `item_state`, mapping
-  each HN id back to a Readmo item the user has. This is why the open-on-newshacker
-  Done isn't pushed forward: once you hand off, newshacker should own that item's
-  Done and sync it back. (Pushing pins Readmo → newshacker — the former stretch
-  goal — now ships above.)
+- **Reverse pull (Done).** When linked, Readmo also pulls newshacker's own
+  **Done** list and applies it to `item_state`, mapping each HN id back to an
+  item the user subscribes to (an item newshacker knows Done but Readmo doesn't
+  is dismissed here too). This is why the open-on-newshacker Done isn't pushed
+  forward: once you hand off, newshacker owns that item's Done and syncs it back.
+  It reuses the same link/token; the target host is a compile-time constant, so
+  there's no user-controlled URL / SSRF surface. A pulled Done reconciles by the
+  same per-field last-write-wins as any other write, so a stale pulled Done loses
+  to a newer local change and the round-trip is idempotent — no ping-pong. A
+  pull that lands nothing is a no-op; anything that lands re-hydrates local state
+  (via the sync path, which never re-triggers the push, so there's no echo).
+  Pulling **pins** back remains a stretch goal.
 - **Best-effort.** Every failure (signed out, function not deployed, unlinked,
   newshacker down) is swallowed; the local Done/Pinned state stays authoritative.
   The whole feature feature-detects: a backend without the 0050 RPC just reports
   "not linked" and the Settings section hides.
 - **Cost/reliability (guardrail #5).** No new third-party account — reuses the
   Supabase Edge Function runtime and one small first-party call to newshacker per
-  debounced batch of HN Done/Pinned changes. **Negligible.** Failure mode: the
-  mirror no-ops; Readmo is unaffected. **Manual deploy:** `make migrate` (0050) +
-  `make deploy` (the `newshacker-sync` function) — and newshacker's app-token
-  endpoint must be live first.
+  debounced batch of HN Done/Pinned changes (push) plus one on link activation
+  (pull). **Negligible.** Failure mode: the sync no-ops; Readmo is unaffected.
+  **Manual deploy:** `make migrate` (0050, 0062) + `make deploy` (the
+  `newshacker-sync` function) — and newshacker's app-token endpoint must be live
+  first. The client feature-detects, so shipping it ahead of the 0062 deploy just
+  pulls nothing until the migration lands.
 
 ### Schema (sketch)
 
