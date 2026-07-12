@@ -1138,6 +1138,9 @@ export function ItemList({
   // As the loaded window changes (pagination, refetch), drop stay ids that left
   // it — a held pin that's no longer displayed has nothing to anchor.
   useEffect(() => {
+    // Reconciles against the async-loaded window; the functional updater
+    // returns the same set when nothing changed, so it can't cascade renders.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setStayInBodyIds((cur) => {
       if (cur.size === 0) return cur;
       let next: Set<ItemId> | null = null;
@@ -1216,6 +1219,10 @@ export function ItemList({
     rematerializeRef.current = 'idle';
     if (error) return;
     justRematerializedRef.current = true;
+    // Edge-triggered re-baseline when a refetch settles (isFetching → false with
+    // the 'landed' latch) — synchronizing with React Query's async fetch state,
+    // which is legitimate effect work, not derivable during render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDisplayedByFeed(new Map());
     setStayInBodyIds(new Set());
     setPendingFeedMore(new Set());
@@ -1390,7 +1397,11 @@ export function ItemList({
     // now would reveal stale rows. Drop the queued taps instead — the button
     // reverts to a tappable "More" so the reader can retry once a refresh
     // succeeds.
+    // Edge-triggered drain of queued "More" taps once a refetch settles —
+    // reacting to React Query's async fetch state, legitimate effect work
+    // (not derivable during render); the set-state-in-effect disables mark that.
     if (error) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPendingFeedMore(new Set());
       return;
     }
