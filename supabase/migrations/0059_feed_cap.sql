@@ -1,14 +1,14 @@
 -- Per-account feed cap on subscribe_to_feed.
 --
--- Bounds the number of feeds one account may follow, for two reasons:
---   1. Abuse / cost — a runaway account can't subscribe to an unbounded number
---      of feeds and turn the poller/refresh into an open-ended fetch bill.
---   2. It keeps the grouped feed read's opening page under PostgREST's 1000-row
---      response cap: the group-by-feed view opens each section to its newest
---      PER_FEED_WINDOW (10) rows, so FEED_CAP × PER_FEED_WINDOW = 100 × 10 =
---      1000 means every subscribed feed's opening window fits in one response.
---      (An account that still overflows pages by cursor; the cap keeps normal
---      accounts off that path — see SPEC.md §"Group by feed".)
+-- Bounds the number of feeds one account may follow. The primary reason is
+-- abuse / cost — a runaway account can't subscribe to an unbounded number of
+-- feeds and turn the poller/refresh into an open-ended fetch bill. Secondarily
+-- it keeps a typical account's group-by-feed read smaller so it pages against
+-- PostgREST's 1000-row response cap less often; note this is a LOOSE bound, not
+-- a guarantee — the grouped read returns each feed's full listable set (its
+-- freshness window + all pins, NOT the client's 10-row display window), so a few
+-- busy feeds can overflow 1000 rows on their own. That read pages by cursor on
+-- overflow, so nothing is dropped regardless. See SPEC.md §"Group by feed".
 --
 -- Enforced server-side inside subscribe_to_feed so it can't be bypassed by a
 -- hand-crafted direct RPC call. Rejection uses SQLSTATE 53400
