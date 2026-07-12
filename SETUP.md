@@ -210,6 +210,13 @@ supabase functions deploy img      --import-map supabase/functions/import_map.js
 supabase functions deploy notify-signup --import-map supabase/functions/import_map.json --no-verify-jwt
 ```
 
+> **The Cloudflare API gateway Worker deploys separately.** `make deploy` is
+> Supabase-only. The gateway (`infra/cf-gateway/`) is a different vendor on its
+> own clock and uses `wrangler login`, not `supabase link`, so it has its own
+> target: `make deploy-gateway` (= `npx wrangler deploy` from that directory).
+> Run it only when the Worker or its `wrangler.toml` vars change — see
+> `infra/cf-gateway/README.md`.
+
 > **`img` must deploy with `--no-verify-jwt`.** It's the image proxy: the
 > browser loads it via `<img src="…/functions/v1/img?url=…">`, and an `<img>`
 > tag can't send an `Authorization` header — with JWT verification on (the
