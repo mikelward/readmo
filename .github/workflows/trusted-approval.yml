@@ -1,0 +1,227 @@
+name: Trusted approval gate
+
+# Publishes the `trusted-approval` commit status that branch protection requires
+# alongside the CI checks (build, edge). It turns green only when a *trusted*
+# reviewer who is NOT the PR author has signed off on the *current* head commit.
+#
+# Sign-off signals (either counts):
+#   - a 👍 (:+1:) reaction on the PR body (the issue-level reaction), or
+#   - a formal "Approve" pull-request review.
+# ...from one of the TRUSTED logins below. Codex reviews as
+# chatgpt-codex-connector[bot] and signs off with a 👍 on the PR body; a human
+# can 👍 or use the normal Approve button.
+#
+# Freshness: a signal only counts if it lands at/after the latest commit, so a
+# new push invalidates a prior 👍 and the reviewer must re-approve the new code
+# — reactions, unlike reviews, are not auto-dismissed by GitHub on a new push.
+#
+# Policy: score model. A trusted AUTHOR is worth 1 point ("authoring is itself a
+# sign-off"), and each distinct trusted reviewer who is NOT the author adds 1
+# more; the PR merges at REQUIRED_SIGNOFFS points. Dependabot is trusted, so a
+# Dependabot PR starts at 1 and needs exactly one 👍 from me or Codex to reach 2.
+# The author is never counted as their own second point, so no one can
+# self-satisfy the gate.
+#
+# To change later: add Claude's reviewer login to TRUSTED once it is wired up
+# (widens who can supply a point), or adjust REQUIRED_SIGNOFFS.
+
+on:
+  # SECURITY: use pull_request_TARGET, not pull_request. `pull_request` runs the
+  # workflow file from the PR head, so a PR could edit THIS file (lower
+  # REQUIRED_SIGNOFFS, add its author to TRUSTED, force success) and, with
+  # statuses:write, self-publish `trusted-approval: success` — bypassing the
+  # non-author sign-off this gate exists to enforce. pull_request_target runs the
+  # base-branch (trusted) version instead, so PR-supplied edits can't alter the
+  # gate. Safe because this job only reads PR metadata via the API and posts a
+  # status; it never checks out or executes the PR's code. The other triggers
+  # below already run from the default branch, so they aren't affected.
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+  pull_request_review:
+    types: [submitted, dismissed]
+  issue_comment:
+    types: [created]
+  schedule:
+    # Backstop: 👍 reactions do not emit workflow events, so poll to catch a
+    # sign-off that arrived without any other event to re-trigger us.
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+# Serialize gate runs so an older run can't overwrite a newer one's status —
+# e.g. a stale `success` clobbering the `failure` a later run posted for a
+# CHANGES_REQUESTED veto, which would re-green the gate until the next sweep.
+# One run at a time (no cancel, so in-flight work finishes); each run re-reads
+# fresh review/reaction state at its start, so whichever run executes last posts
+# the current truth. A single global group is fine at this repo's PR volume, and
+# distinct PRs write distinct per-SHA statuses so they never overwrite anyway.
+concurrency:
+  group: trusted-approval-gate
+  cancel-in-progress: false
+
+permissions:
+  statuses: write
+  pull-requests: read
+  contents: read
+  # PR-body 👍 reactions come from the issues reactions endpoint, which needs
+  # Issues read; unspecified GITHUB_TOKEN scopes default to none, so without
+  # this the gate 403s on private repos and deadlocks every protected PR.
+  issues: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const TRUSTED = new Set([
+              'mikelward',
+              'chatgpt-codex-connector[bot]',
+              'dependabot[bot]',
+              // TODO(claude): add Claude's reviewer login here once it is set up.
+            ]);
+            const REQUIRED_SIGNOFFS = 2;
+
+            const { owner, repo } = context.repo;
+
+            async function evaluate(prNumber) {
+              const { data: pr } = await github.rest.pulls.get({
+                owner, repo, pull_number: prNumber,
+              });
+              if (pr.state !== 'open') return;
+
+              const headSha = pr.head.sha;
+              const author = pr.user.login;
+
+              const { data: headCommit } = await github.rest.repos.getCommit({
+                owner, repo, ref: headSha,
+              });
+              const headTime = new Date(headCommit.commit.committer.date).getTime();
+
+              // Reaction freshness: a 👍 only counts if it post-dates the head
+              // commit. For the Dependabot (server-authored) PRs this gate
+              // targets, committer.date is the push time, so a stale 👍 on an
+              // older head never carries over. Limitation: for a human-authored
+              // PR whose head commit was created locally *before* a 👍 on the
+              // prior head but pushed *after* it, the 👍 could still be credited
+              // — true push time isn't available via REST on our schedule/
+              // dispatch triggers, and proxies risk excluding a 👍 that races
+              // our first run (a deadlock, worse than the edge). Formal reviews
+              // below are SHA-bound and not subject to this.
+              const fresh = (when) => new Date(when).getTime() >= headTime;
+              const trustedNonAuthor = (login) =>
+                TRUSTED.has(login) && login !== author;
+
+              const approvers = new Set();
+
+              // 1. 👍 reactions on the PR body (issue-level reactions).
+              const reactions = await github.paginate(
+                github.rest.reactions.listForIssue,
+                { owner, repo, issue_number: prNumber, per_page: 100 },
+              );
+              for (const r of reactions) {
+                if (r.content === '+1' && r.user &&
+                    trustedNonAuthor(r.user.login) && fresh(r.created_at)) {
+                  approvers.add(r.user.login);
+                }
+              }
+
+              // 2. Formal reviews on the current head, applied AFTER reactions
+              //    so a review can override a 👍. We collapse to each reviewer's
+              //    LATEST decision on this head (reviews come oldest-first, so
+              //    the last write wins; COMMENTED is ignored as it doesn't change
+              //    standing). Then: APPROVED grants credit, and CHANGES_REQUESTED
+              //    REVOKES it — including any credit the reviewer got from a 👍
+              //    reaction, so an explicit block can't be left green by a stale
+              //    reaction. DISMISSED is neutral (no grant, but it doesn't
+              //    revoke an independent 👍).
+              const reviews = await github.paginate(
+                github.rest.pulls.listReviews,
+                { owner, repo, pull_number: prNumber, per_page: 100 },
+              );
+              const latestReview = new Map();
+              for (const rv of reviews) {
+                if (rv.commit_id === headSha && rv.user &&
+                    ['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(rv.state)) {
+                  latestReview.set(rv.user.login, rv.state);
+                }
+              }
+              // A CHANGES_REQUESTED from a trusted non-author is a blocking
+              // veto: it removes that reviewer's own credit AND blocks the gate
+              // regardless of score, until superseded by their own later
+              // APPROVED on the same head (or the review is dismissed).
+              let vetoedBy = null;
+              for (const [login, state] of latestReview) {
+                if (state === 'APPROVED') {
+                  if (trustedNonAuthor(login)) approvers.add(login);
+                } else if (state === 'CHANGES_REQUESTED') {
+                  approvers.delete(login);
+                  if (trustedNonAuthor(login)) vetoedBy = login;
+                }
+              }
+
+              // Authoring is itself a sign-off when the author is trusted.
+              const authorPoint = TRUSTED.has(author) ? 1 : 0;
+              const score = authorPoint + approvers.size;
+              const ok = score >= REQUIRED_SIGNOFFS && !vetoedBy;
+
+              const credited = [
+                ...(authorPoint ? [`${author} (author)`] : []),
+                ...approvers,
+              ];
+              const state = ok ? 'success' : (vetoedBy ? 'failure' : 'pending');
+              // Commit-status descriptions must be plain and <=140 chars; strip
+              // any non-ASCII (e.g. emoji) which the status API rejects (422).
+              const description = (
+                vetoedBy
+                  ? `Blocked: changes requested by ${vetoedBy}`
+                  : ok
+                  ? `Score ${score}/${REQUIRED_SIGNOFFS}: ${credited.join(', ')}`
+                  : `Score ${score}/${REQUIRED_SIGNOFFS} - awaiting a trusted sign-off`
+              ).replace(/[^\x00-\x7F]/g, '').slice(0, 140);
+
+              // Idempotent write: GitHub caps statuses at 1000 per SHA+context,
+              // so a no-op status on every 10-min sweep would exhaust the head
+              // in ~7 days and then wedge the gate. Only POST when the latest
+              // trusted-approval status actually differs. (Statuses are returned
+              // newest-first, so the first match is the current one.)
+              const existing = await github.paginate(
+                github.rest.repos.listCommitStatusesForRef,
+                { owner, repo, ref: headSha, per_page: 100 },
+              );
+              const current = existing.find((s) => s.context === 'trusted-approval');
+              if (current && current.state === state &&
+                  current.description === description) {
+                return;
+              }
+
+              await github.rest.repos.createCommitStatus({
+                owner, repo, sha: headSha,
+                context: 'trusted-approval',
+                state,
+                description,
+              });
+            }
+
+            // Route the event to the PR(s) it concerns.
+            const ev = context.eventName;
+            try {
+              if (ev === 'pull_request' || ev === 'pull_request_review') {
+                await evaluate(context.payload.pull_request.number);
+              } else if (ev === 'issue_comment') {
+                if (context.payload.issue.pull_request) {
+                  await evaluate(context.payload.issue.number);
+                }
+              } else {
+                // schedule / workflow_dispatch: sweep all open PRs.
+                const prs = await github.paginate(github.rest.pulls.list, {
+                  owner, repo, state: 'open', per_page: 100,
+                });
+                for (const pr of prs) {
+                  try { await evaluate(pr.number); }
+                  catch (e) { core.warning(`PR #${pr.number}: ${e.message}`); }
+                }
+              }
+            } catch (e) {
+              core.setFailed(e.message);
+            }
