@@ -5,7 +5,7 @@
     ":dependencyDashboard",
     ":semanticCommitsDisabled"
   ],
-  "timezone": "Australia/Sydney",
+  "timezone": "UTC",
   "schedule": ["before 6am on saturday"],
   "assignees": ["mikelward"],
   "prConcurrentLimit": 5,
