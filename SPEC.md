@@ -1031,7 +1031,10 @@ negligible and off every critical path. See the External services table in
   outbox keyed by `item_id` recording the changed fields and the action's
   timestamp; on reconnect it flushes to Postgres, coalesced and serialized per
   item. The UI reflects it immediately, rolling back only on a non-transient
-  server rejection (lost item visibility — never a sync conflict).
+  server rejection (lost item visibility — never a sync conflict). A change made
+  right before the tab is closed or backgrounded (mark done, then close the tab)
+  is flushed immediately and reaches the server without waiting for the next app
+  open — it is not stranded in the outbox until reconnect.
 - **Conflict resolution is per-field last-write-wins on the action timestamp.**
   Each field carries the wall-clock time of the action that set it (`<f>_at`,
   which doubles as the field's ordering/TTL key, read only while the flag is

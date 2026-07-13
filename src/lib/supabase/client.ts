@@ -117,6 +117,20 @@ const READ_RPC_PATHS = [
 ];
 
 /**
+ * The item-state write RPC (`set_item_state`) the outbox delivers triage toggles
+ * through. Recognized so it can be marked `keepalive` — see supabaseFetch: a
+ * mark-done / pin fired just before the tab is closed or backgrounded must still
+ * reach the server, not be canceled with the page. The payload is a handful of
+ * boolean fields, far under the 64 KB keepalive body cap.
+ */
+function isItemStateWrite(input: RequestInfo | URL, init?: RequestInit): boolean {
+  return (
+    requestMethod(input, init) === 'POST' &&
+    requestUrl(input).includes('/rest/v1/rpc/set_item_state')
+  );
+}
+
+/**
  * The requests that get the short cap: **GET reads** on PostgREST (`/rest/v1/`)
  * — the path the service worker mediates (Workbox runtime caching is GET-only),
  * so the cache-miss-hang this targets is a GET — plus the known read-only RPCs
@@ -268,6 +282,15 @@ export function supabaseFetch(
   //     expired-token storm — exactly when the breaker is open — as must the
   //     /auth/v1/health connectivity probe. Edge Functions/storage/realtime too.
   if (!isBoundedRead(input, init)) {
+    // Item-state writes get `keepalive` so a triage toggle (mark done / pin)
+    // issued in the moments before the tab is closed or backgrounded still
+    // reaches the server, rather than being canceled with the page and left to
+    // replay only on the next boot. The outbox also flushes on
+    // `visibilitychange`→hidden (SupabaseDataSource), so an in-flight write is
+    // already started when the page begins to unload; keepalive lets it finish.
+    if (isItemStateWrite(input, init)) {
+      return trackedFetch(input, { ...init, keepalive: true });
+    }
     return trackedFetch(input, init);
   }
 
