@@ -106,4 +106,35 @@ describe('SupabaseDataSource tab-teardown flush', () => {
     await tick();
     expect(stateWrites()).toHaveLength(1);
   });
+
+  it('pushes a queued write out when the window loses focus (blur)', async () => {
+    // A desktop OS-level app switch (Cmd/Alt-Tab) fires `blur` but leaves the tab
+    // "visible", so neither visibilitychange nor pagehide fires — yet the write
+    // must still reach the server (and, for a pin, trigger the summary) before the
+    // backgrounded browser can be reclaimed.
+    setOnline(false);
+    const { ds, stateWrites } = setup();
+    ds.stateStore.set('i1', 'pinned', true, 1000);
+    await tick();
+    expect(stateWrites()).toHaveLength(0);
+
+    setOnline(true);
+    window.dispatchEvent(new Event('blur'));
+    await tick();
+    expect(stateWrites()).toHaveLength(1);
+    expect(stateWrites()[0].params).toMatchObject({ p_item_id: 'i1', p_pinned: true });
+  });
+
+  it('pushes a queued write out when the page is frozen (freeze)', async () => {
+    setOnline(false);
+    const { ds, stateWrites } = setup();
+    ds.stateStore.set('i1', 'done', true, 1000);
+    await tick();
+    expect(stateWrites()).toHaveLength(0);
+
+    setOnline(true);
+    document.dispatchEvent(new Event('freeze'));
+    await tick();
+    expect(stateWrites()).toHaveLength(1);
+  });
 });
