@@ -6111,6 +6111,36 @@ describe('ItemList', () => {
       await waitFor(() => expect(pullSpy).toHaveBeenCalledTimes(1));
     });
 
+    it('resyncs item state on pull-to-refresh even when the reverse pull applies nothing', async () => {
+      // The reverse pull only re-hydrates when IT applied something
+      // (applied > 0). Cross-device state drift (a pin/done written by another
+      // device straight into item_state) applies nothing on the pull path, and
+      // PTR has no focus/visibility event to trigger useStateSync — so the PTR
+      // handler must resync explicitly, for unlinked accounts too.
+      const { source, mk } = await makeRows();
+      const resyncSpy = vi.spyOn(source, 'resyncState');
+      vi.spyOn(source, 'pullNewshackerState').mockResolvedValue({
+        linked: true,
+        applied: 0,
+      });
+      const fetchPage = vi.fn(() =>
+        Promise.resolve({ items: [mk('A', 'Feed A', 1)], nextCursor: null }),
+      );
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      });
+      queryClient.setQueryData(NEWSHACKER_LINK_QUERY_KEY, { linked: true, supported: true });
+      renderWithProviders(
+        <ItemList viewKey={`ns-ptr-resync-${viewKeySeq++}`} fetchPage={fetchPage} emptyLabel="x" />,
+        { source, queryClient },
+      );
+      await screen.findAllByTestId('item-row');
+
+      await pullToRefresh();
+
+      await waitFor(() => expect(resyncSpy).toHaveBeenCalledWith(true));
+    });
+
     it('does not pull newshacker state on pull-to-refresh when the account is unlinked', async () => {
       const { source, mk } = await makeRows();
       const pullSpy = vi.spyOn(source, 'pullNewshackerState');

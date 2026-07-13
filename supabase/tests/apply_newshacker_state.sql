@@ -1,5 +1,6 @@
--- Regression test for 0063_apply_newshacker_state.sql — the reverse pull of
--- newshacker's Done AND Pinned lists. Plain SQL (no pgTAP): each check raises
+-- Regression test for apply_newshacker_state (0063, rewritten set-based and
+-- change-only in 0065) — the reverse pull of newshacker's Done AND Pinned
+-- lists. Plain SQL (no pgTAP): each check raises
 -- NOTICE 'PASS …' on success and an EXCEPTION on failure, so under psql with
 -- ON_ERROR_STOP=1 it's a hard gate. Same harness as access_rpcs.sql.
 --
@@ -122,15 +123,23 @@ begin
   perform public.set_item_state(
     '33333333-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     p_pinned => false, p_pinned_at => to_timestamp(1700000009000 / 1000.0));
-  -- Stale pulled pin (older clock) must not re-pin it.
+  -- Stale pulled pin (older clock) must not re-pin it. The entry still writes
+  -- ONCE — the pin itself loses LWW, but its exclusivity closure stamps the
+  -- row's never-recorded done/hidden clocks — and the REPEAT pull is silent
+  -- (0063 re-counted the rejected attempt forever, telling the client to
+  -- re-hydrate for nothing on every pull).
   n := public.apply_newshacker_state(
     '[]'::jsonb,
     '[{"id":300,"at":1700000008000}]'::jsonb);
-  if n <> 1 then raise exception 'FAIL T5a: expected 1 write attempt, got %', n; end if;
+  if n <> 1 then raise exception 'FAIL T5a: expected 1 closure write, got %', n; end if;
   select count(*) into n from public.item_state
     where item_id='33333333-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and pinned;
   if n <> 0 then raise exception 'FAIL T5b: stale pulled pin clobbered a newer local unpin'; end if;
-  raise notice 'PASS T5: stale pulled pin loses per-field LWW';
+  n := public.apply_newshacker_state(
+    '[]'::jsonb,
+    '[{"id":300,"at":1700000008000}]'::jsonb);
+  if n <> 0 then raise exception 'FAIL T5c: stale pin re-pull wrote % rows', n; end if;
+  raise notice 'PASS T5: stale pulled pin loses per-field LWW, then goes quiet';
 end $$;
 
 -- ===== Test 6: empty / non-array inputs are a no-op =========================
@@ -147,6 +156,186 @@ begin
   n := public.apply_newshacker_state('[]'::jsonb);
   if n <> 0 then raise exception 'FAIL T6c: default pins arg wrote % rows', n; end if;
   raise notice 'PASS T6: empty / non-array / defaulted inputs are a no-op';
+end $$;
+
+-- ===== Test 7: re-pulling already-applied state is a zero-write no-op =======
+-- The steady-state pull (every tab focus): newshacker's lists still contain
+-- everything applied earlier, and none of it may issue a write or count toward
+-- `applied` — a non-zero return makes the client re-hydrate its whole state.
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  -- Item 200 is pinned since T2; its done was cleared by T2's closure. Re-pull
+  -- both facts (the pin, and an un-done tombstone) at their original clocks.
+  n := public.apply_newshacker_state(
+    '[{"id":200,"at":1700000005000,"deleted":true}]'::jsonb,
+    '[{"id":200,"at":1700000005000}]'::jsonb);
+  if n <> 0 then raise exception 'FAIL T7a: re-pull issued % writes', n; end if;
+  select count(*) into n from public.item_state
+    where item_id='22222222-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and pinned and not done;
+  if n <> 1 then raise exception 'FAIL T7b: re-pull disturbed item 200'; end if;
+  raise notice 'PASS T7: an already-in-sync pull issues zero writes';
+end $$;
+
+-- ===== Test 8: malformed entries are skipped, valid siblings still apply ====
+-- 0063 skipped malformed entries via per-entry exception blocks; 0065 must do
+-- the same via its filter predicates — and never abort the whole batch.
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  n := public.apply_newshacker_state(
+    ('[' ||
+     '"junk",' ||                                -- not an object
+     '{"id":"300","at":1700000010000},' ||       -- id as a string, not a number
+     '{"id":300.5,"at":1700000010000},' ||       -- fractional id
+     '{"id":-300,"at":1700000010000},' ||        -- non-positive id
+     '{"id":300,"at":1e20},' ||                  -- at past the timestamp ceiling
+     '{"id":300,"at":"soon"},' ||                -- at not a number
+     '{"id":300},' ||                            -- at missing
+     '{"id":300,"at":1700000010000}' ||          -- valid: done item 300
+     ']')::jsonb,
+    '[]'::jsonb);
+  if n <> 1 then raise exception 'FAIL T8a: expected 1 write, got %', n; end if;
+  select count(*) into n from public.item_state
+    where item_id='33333333-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and done;
+  if n <> 1 then raise exception 'FAIL T8b: valid entry did not apply'; end if;
+  raise notice 'PASS T8: malformed entries are skipped without aborting the batch';
+end $$;
+
+-- ===== Test 9: a newer same-value entry advances the field clock ============
+-- Item 100 is unpinned locally-and-remotely (T3, clock t6). A LATER newshacker
+-- unpin tombstone (t7) changes no value, but must still write ONCE so the
+-- stored clock advances — otherwise a stale offline pin timestamped between
+-- t6 and t7 would pass LWW and resurrect the pin the user already undid.
+-- Re-pulling the same tombstone afterwards must be a zero-write no-op.
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  n := public.apply_newshacker_state(
+    '[]'::jsonb,
+    '[{"id":100,"at":1700000007000,"deleted":true}]'::jsonb);
+  if n <> 1 then raise exception 'FAIL T9a: expected 1 clock-advancing write, got %', n; end if;
+  -- A stale offline pin between the two unpin clocks must now lose LWW.
+  perform public.set_item_state(
+    '11111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    p_pinned => true, p_pinned_at => to_timestamp(1700000006500 / 1000.0));
+  select count(*) into n from public.item_state
+    where item_id='11111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and pinned;
+  if n <> 0 then raise exception 'FAIL T9b: stale offline pin beat the advanced clock'; end if;
+  -- The same tombstone again: clock equal, value equal -> filtered.
+  n := public.apply_newshacker_state(
+    '[]'::jsonb,
+    '[{"id":100,"at":1700000007000,"deleted":true}]'::jsonb);
+  if n <> 0 then raise exception 'FAIL T9c: re-pull of the tombstone wrote % rows', n; end if;
+  raise notice 'PASS T9: newer same-value entry advances the LWW clock, once';
+end $$;
+
+-- ===== Test 10: same-clock Done+Pin conflict settles on the pin =============
+-- newshacker's lists are independent, so the same id can appear non-deleted in
+-- BOTH with a tied millisecond clock. The pin must win deterministically and
+-- the pull must settle (repeat pulls issue zero writes) — without the
+-- conflict rule, each write's exclusivity closure re-arms the other entry's
+-- tied-clock branch and the item flips Done<->Pinned on alternating pulls.
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  -- Item 300 is Done since T8 (done_at t10). Both lists now claim it at t11.
+  n := public.apply_newshacker_state(
+    '[{"id":300,"at":1700000011000}]'::jsonb,
+    '[{"id":300,"at":1700000011000}]'::jsonb);
+  if n <> 1 then raise exception 'FAIL T10a: expected 1 write (pin only), got %', n; end if;
+  select count(*) into n from public.item_state
+    where item_id='33333333-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and pinned and not done;
+  if n <> 1 then raise exception 'FAIL T10b: tied Done+Pin did not settle on the pin'; end if;
+  -- The very next pull re-sends both entries: nothing may write or flip.
+  n := public.apply_newshacker_state(
+    '[{"id":300,"at":1700000011000}]'::jsonb,
+    '[{"id":300,"at":1700000011000}]'::jsonb);
+  if n <> 0 then raise exception 'FAIL T10c: tied re-pull oscillated (% writes)', n; end if;
+  select count(*) into n from public.item_state
+    where item_id='33333333-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and pinned and not done;
+  if n <> 1 then raise exception 'FAIL T10d: state flipped on the re-pull'; end if;
+  raise notice 'PASS T10: tied Done+Pin resolves to the pin and settles';
+end $$;
+
+-- ===== Test 11: far-future clocks are dropped, sane skew is accepted ========
+-- set_item_state clamps a far-future clock to now() on write, so a pulled
+-- entry whose raw `at` stays in the future would outrank its own clamped
+-- stored clock again on EVERY pull (now() keeps advancing) — writing and
+-- returning applied>0 forever. The pull therefore drops entries beyond the
+-- same 10-minute tolerance instead of clamping. Skew inside the tolerance
+-- still applies normally.
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  -- An hour in the future: dropped, no write, no state change (twice — the
+  -- second pull must be just as quiet).
+  n := public.apply_newshacker_state(
+    jsonb_build_array(jsonb_build_object(
+      'id', 100, 'at', (extract(epoch from now()) * 1000 + 3600000)::bigint)),
+    '[]'::jsonb);
+  if n <> 0 then raise exception 'FAIL T11a: far-future entry applied (%)', n; end if;
+  n := public.apply_newshacker_state(
+    jsonb_build_array(jsonb_build_object(
+      'id', 100, 'at', (extract(epoch from now()) * 1000 + 3600000)::bigint)),
+    '[]'::jsonb);
+  if n <> 0 then raise exception 'FAIL T11b: far-future entry re-applied (%)', n; end if;
+  select count(*) into n from public.item_state
+    where item_id='11111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and done;
+  if n <> 0 then raise exception 'FAIL T11c: far-future entry changed state'; end if;
+  -- Five minutes ahead (ordinary device skew, inside the tolerance): applies.
+  n := public.apply_newshacker_state(
+    jsonb_build_array(jsonb_build_object(
+      'id', 100, 'at', (extract(epoch from now()) * 1000 + 300000)::bigint)),
+    '[]'::jsonb);
+  if n <> 1 then raise exception 'FAIL T11d: in-tolerance skew did not apply (%)', n; end if;
+  select count(*) into n from public.item_state
+    where item_id='11111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and done;
+  if n <> 1 then raise exception 'FAIL T11e: in-tolerance done not applied'; end if;
+  raise notice 'PASS T11: far-future clocks dropped, in-tolerance skew applies';
+end $$;
+
+-- ===== Test 12: a stale entry still lands its winning exclusivity clear =====
+-- A non-deleted entry writes its own field plus the exclusivity clears, each
+-- LWW-gated separately by set_item_state. An entry stale for its OWN field
+-- (a newer un-done outranks it) can still carry a winning cross-field clear:
+-- the Done at t11.5 below lost to the local un-done at t12, but its closure
+-- must still unpin the OLDER pin from t5 — the pin was consumed when the item
+-- became Done. The gate must admit such entries, and re-pulling must be quiet.
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  -- Item 200 is pinned@t5 (T2). Local un-done at t12 (newer than the pull).
+  perform public.set_item_state(
+    '22222222-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    p_done => false, p_done_at => to_timestamp(1700000012000 / 1000.0));
+  -- Pulled Done between the pin and the un-done: done=true loses (t11.5<t12),
+  -- but the closure's pinned=false wins (t11.5>t5) and must clear the pin.
+  n := public.apply_newshacker_state(
+    '[{"id":200,"at":1700000011500}]'::jsonb,
+    '[]'::jsonb);
+  if n <> 1 then raise exception 'FAIL T12a: expected 1 write, got %', n; end if;
+  select count(*) into n from public.item_state
+    where item_id='22222222-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and not pinned and not done;
+  if n <> 1 then raise exception 'FAIL T12b: stale Done''s closure did not unpin'; end if;
+  -- Same entry again: every field it writes is now at >= its clock -> quiet.
+  n := public.apply_newshacker_state(
+    '[{"id":200,"at":1700000011500}]'::jsonb,
+    '[]'::jsonb);
+  if n <> 0 then raise exception 'FAIL T12c: re-pull re-applied (% writes)', n; end if;
+  raise notice 'PASS T12: stale entry lands its winning exclusivity clear, once';
 end $$;
 
 -- --- Cleanup ---------------------------------------------------------------
