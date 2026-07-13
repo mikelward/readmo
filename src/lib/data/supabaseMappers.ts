@@ -8,6 +8,7 @@ import type {
   ListLayout,
   Subscription,
 } from '../types';
+import type { SyncedSettings } from '../settingsSync';
 
 // Pure row→domain mappers for the Supabase (PostgREST) shapes. Kept separate
 // from SupabaseDataSource so they can be unit-tested without a client. PostgREST
@@ -47,6 +48,21 @@ export function isPermanentWriteError(error: unknown): boolean {
  * copy. An older backend predating 0059 never raises it, so the mapping is a
  * no-op there (guardrail #11). */
 export const FEED_LIMIT_CODE = '53400';
+
+/** Whether a PostgREST error says the backend doesn't serve a table at all —
+ * the feature-detect for a table the manual `make migrate` hasn't created yet
+ * (guardrail #11):
+ *   - PGRST205 — table not in PostgREST's schema cache (the usual signal)
+ *   - 42P01   — undefined_table (cache knows it, the DB doesn't)
+ *   - 42501   — insufficient_privilege (created but not granted — same
+ *               conclusion for the caller: this backend can't serve it)
+ * Everything else is a transient failure the caller may retry. */
+export function isMissingTableError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return (
+    typeof code === 'string' && ['PGRST205', '42P01', '42501'].includes(code)
+  );
+}
 
 /** An Error carrying the HTTP `status` + PostgREST `code` of a failed request. */
 export type RequestError = Error & { status?: number; code?: string };
@@ -254,6 +270,34 @@ export function mapSubscription(row: SubscriptionRow): Subscription {
     listLayout: mapListLayout(row.list_layout),
     sort: row.sort,
   };
+}
+
+export interface UserSettingsRow {
+  item_sort?: string | null;
+  group_by_feed?: boolean | null;
+  hide_on_scroll?: boolean | null;
+  show_row_favicon?: boolean | null;
+  show_group_favicon?: boolean | null;
+  hide_sports_spoilers?: boolean | null;
+  auto_summarize_pinned?: boolean | null;
+}
+
+/** `user_settings` row → the synced-settings patch (0064). A null/absent
+ * column means "not set" — the key is omitted so the client default applies —
+ * and an unrecognized `item_sort` value is dropped the same way, keeping a
+ * stray/newer-client value from reaching the stores. */
+export function mapUserSettings(row: UserSettingsRow): Partial<SyncedSettings> {
+  const out: Partial<SyncedSettings> = {};
+  if (row.item_sort === 'newest' || row.item_sort === 'oldest') {
+    out.itemSort = row.item_sort;
+  }
+  if (typeof row.group_by_feed === 'boolean') out.groupByFeed = row.group_by_feed;
+  if (typeof row.hide_on_scroll === 'boolean') out.hideOnScroll = row.hide_on_scroll;
+  if (typeof row.show_row_favicon === 'boolean') out.showRowFavicon = row.show_row_favicon;
+  if (typeof row.show_group_favicon === 'boolean') out.showGroupFavicon = row.show_group_favicon;
+  if (typeof row.hide_sports_spoilers === 'boolean') out.hideSportsSpoilers = row.hide_sports_spoilers;
+  if (typeof row.auto_summarize_pinned === 'boolean') out.autoSummarizePinned = row.auto_summarize_pinned;
+  return out;
 }
 
 /** A library/feed item id paired with its already-mapped state, for callers

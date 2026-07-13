@@ -2621,3 +2621,132 @@ describe('SupabaseDataSource — empty-feed caught-up confirmation', () => {
     await expect(env.ds.exportOpml()).rejects.toThrow('service unavailable');
   });
 });
+
+describe('synced settings (user_settings, 0064)', () => {
+  it('getSyncedSettings maps the row to camelCase and omits unset (null) columns', async () => {
+    const { ds } = setup({
+      ...seed(),
+      user_settings: [
+        {
+          user_id: 'u1',
+          item_sort: 'oldest',
+          group_by_feed: true,
+          hide_on_scroll: null,
+          show_row_favicon: null,
+          show_group_favicon: false,
+          hide_sports_spoilers: null,
+          auto_summarize_pinned: null,
+        },
+      ],
+    });
+    await expect(ds.getSyncedSettings()).resolves.toEqual({
+      itemSort: 'oldest',
+      groupByFeed: true,
+      showGroupFavicon: false,
+    });
+  });
+
+  it('getSyncedSettings returns {} when the account has no row yet', async () => {
+    const { ds } = setup({ ...seed(), user_settings: [] });
+    await expect(ds.getSyncedSettings()).resolves.toEqual({});
+  });
+
+  it('getSyncedSettings drops an unrecognized item_sort value (newer-client write)', async () => {
+    const { ds } = setup({
+      ...seed(),
+      user_settings: [{ user_id: 'u1', item_sort: 'shuffled', group_by_feed: true }],
+    });
+    await expect(ds.getSyncedSettings()).resolves.toEqual({ groupByFeed: true });
+  });
+
+  it('setSyncedSettings upserts only the changed columns, merging into the row', async () => {
+    const env = setup({
+      ...seed(),
+      user_settings: [{ user_id: 'u1', item_sort: 'oldest', group_by_feed: false }],
+    });
+    await env.ds.setSyncedSettings({ groupByFeed: true, hideOnScroll: true });
+    // The merge touched only the pushed columns; item_sort survives.
+    expect(env.fake.store.user_settings).toEqual([
+      {
+        user_id: 'u1',
+        item_sort: 'oldest',
+        group_by_feed: true,
+        hide_on_scroll: true,
+      },
+    ]);
+  });
+
+  it('setSyncedSettings with an empty patch never issues a request', async () => {
+    const env = setup({ ...seed(), user_settings: [] });
+    await env.ds.setSyncedSettings({});
+    expect(env.fake.store.user_settings).toEqual([]);
+  });
+
+  it('feature-detects a backend without the table on read: null, and stops calling (guardrail #11)', async () => {
+    const env = setup(seed()); // no user_settings table seeded
+    env.fake.failSelectOnce('user_settings', {
+      code: 'PGRST205',
+      message: "Could not find the table 'public.user_settings' in the schema cache",
+    });
+    await expect(env.ds.getSyncedSettings()).resolves.toBeNull();
+    // Remembered: the next read short-circuits (no second select), and a write
+    // REJECTS without touching the network. The rejection matters: a resolved
+    // set() is the sync engine's cue to acknowledge the patch as delivered,
+    // and a fake ack would strand the value device-local forever once the
+    // manual `make migrate` lands — local == acked leaves no pending diff to
+    // push (Codex P2 on #494).
+    await expect(env.ds.getSyncedSettings()).resolves.toBeNull();
+    expect(env.fake.selectCount('user_settings')).toBe(1);
+    await expect(env.ds.setSyncedSettings({ groupByFeed: true })).rejects.toThrow('not deployed');
+    expect(env.fake.store.user_settings ?? []).toEqual([]);
+  });
+
+  it('feature-detects a backend without the table on write: rejects and remembers', async () => {
+    const env = setup({ ...seed(), user_settings: [] });
+    env.fake.failUpdateOnce('user_settings', { code: 'PGRST205', message: 'no such table' });
+    // Must NOT resolve — the change stays pending in the sync engine so it
+    // pushes for real after the migration (see the read-side test above).
+    await expect(env.ds.setSyncedSettings({ groupByFeed: true })).rejects.toThrow();
+    // Remembered for the session: the follow-up read short-circuits to null.
+    await expect(env.ds.getSyncedSettings()).resolves.toBeNull();
+    expect(env.fake.selectCount('user_settings')).toBe(0);
+  });
+
+  it('setSyncedSettings rethrows a transient failure so the sync engine keeps the diff pending', async () => {
+    const env = setup({ ...seed(), user_settings: [] });
+    env.fake.failUpdateOnce('user_settings', { code: '503', message: 'service unavailable' });
+    await expect(env.ds.setSyncedSettings({ groupByFeed: true })).rejects.toThrow();
+    // NOT remembered as unsupported: the next write goes through.
+    await env.ds.setSyncedSettings({ groupByFeed: true });
+    expect(env.fake.store.user_settings).toEqual([{ group_by_feed: true }]);
+  });
+
+  it('re-probes after the unsupported memo expires, so a long-lived tab picks up the migration', async () => {
+    const now = vi.spyOn(Date, 'now');
+    now.mockReturnValue(1_000_000);
+    // Backend predates 0064: detection remembered, reads short-circuit.
+    const env = setup({ ...seed(), user_settings: [{ user_id: 'u1', group_by_feed: true }] });
+    env.fake.failSelectOnce('user_settings', { code: 'PGRST205', message: 'no such table' });
+    await expect(env.ds.getSyncedSettings()).resolves.toBeNull();
+    await expect(env.ds.getSyncedSettings()).resolves.toBeNull();
+    await expect(env.ds.setSyncedSettings({ groupByFeed: false })).rejects.toThrow('not deployed');
+    expect(env.fake.selectCount('user_settings')).toBe(1);
+
+    // The operator runs `make migrate` while this tab stays open. Once the
+    // memo's retry window passes, the next reconcile goes back to the network
+    // and the pending settings can drain — no reload required.
+    now.mockReturnValue(1_000_000 + 6 * 60 * 1000);
+    await expect(env.ds.getSyncedSettings()).resolves.toEqual({ groupByFeed: true });
+    await env.ds.setSyncedSettings({ groupByFeed: false });
+    expect(env.fake.store.user_settings).toEqual([{ user_id: 'u1', group_by_feed: false }]);
+    now.mockRestore();
+  });
+
+  it('getSyncedSettings treats a transient read failure as "nothing to hydrate" without disabling sync', async () => {
+    const env = setup({ ...seed(), user_settings: [{ user_id: 'u1', group_by_feed: true }] });
+    env.fake.failSelectOnce('user_settings', { code: '503', message: 'service unavailable' });
+    await expect(env.ds.getSyncedSettings()).resolves.toBeNull();
+    // The next reconcile (focus/online) reads normally.
+    await expect(env.ds.getSyncedSettings()).resolves.toEqual({ groupByFeed: true });
+  });
+});

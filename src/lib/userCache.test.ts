@@ -13,6 +13,11 @@ import {
   rqCacheKey,
 } from './userCache';
 import { getItem, setItem, _resetIdbForTests } from './idbStorage';
+import {
+  ackedSettingsKey,
+  DIRTY_SETTINGS_KEY,
+  SYNCED_SETTINGS_STORAGE_KEYS,
+} from './settingsSync';
 
 // fake-indexeddb keeps its data across `it` blocks; start each test with a fresh,
 // empty IndexedDB so a blob seeded by one case can't leak into the next.
@@ -63,6 +68,33 @@ describe('clearUserCaches', () => {
     expect(del).toHaveBeenCalledWith('readmo-data');
     expect(del).toHaveBeenCalledWith('readmo-images');
     expect(del).toHaveBeenCalledWith('readmo-favicons');
+  });
+
+  it('purges the synced reading prefs and EVERY acked snapshot (account data, guardrail #8)', async () => {
+    for (const key of SYNCED_SETTINGS_STORAGE_KEYS) {
+      window.localStorage.setItem(key, '1');
+    }
+    window.localStorage.setItem(ackedSettingsKey('u1'), '{"groupByFeed":true}');
+    window.localStorage.setItem(ackedSettingsKey('u2'), '{"groupByFeed":true}');
+    window.localStorage.setItem(DIRTY_SETTINGS_KEY, '["groupByFeed"]');
+    vi.stubGlobal('caches', { delete: vi.fn().mockResolvedValue(true) });
+
+    await clearUserCaches('u1');
+
+    // The synced prefs mirror the departing account's user_settings row, so
+    // none may survive into the next account on a shared device.
+    for (const key of SYNCED_SETTINGS_STORAGE_KEYS) {
+      expect(window.localStorage.getItem(key)).toBeNull();
+    }
+    expect(window.localStorage.getItem(ackedSettingsKey('u1'))).toBeNull();
+    // EVERY account's snapshot goes with them — the pref keys are global, so a
+    // leftover snapshot for a returning account would no longer match the
+    // wiped prefs: a fresh flip to the stale-acked value would look already
+    // delivered and a later reconcile would overwrite it (Codex P2 on #494).
+    expect(window.localStorage.getItem(ackedSettingsKey('u2'))).toBeNull();
+    // The dirty markers annotate the wiped prefs; left behind they'd push the
+    // next account's defaults as if the user chose them.
+    expect(window.localStorage.getItem(DIRTY_SETTINGS_KEY)).toBeNull();
   });
 
   it("purges the departing user's IndexedDB query-cache blob, not another user's", async () => {

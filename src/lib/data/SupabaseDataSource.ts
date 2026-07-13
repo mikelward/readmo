@@ -17,6 +17,7 @@ import {
 import type { FullTextResult, FullTextStatus } from '../fullText';
 import type { SummaryResult, SummaryStatus } from '../summary';
 import type { MirrorPayload } from '../newshackerSync';
+import type { SyncedSettings } from '../settingsSync';
 import { getSupabase } from '../supabase/client';
 import { confirmBackendReachable } from '../networkStatus';
 import { OUTBOX_SUFFIX } from '../userCache';
@@ -53,10 +54,13 @@ import {
   type ItemRow,
   type ItemStateRow,
   type SubscriptionRow,
+  type UserSettingsRow,
   mapFeed,
   mapItem,
   mapItemState,
   mapSubscription,
+  mapUserSettings,
+  isMissingTableError,
   isPermanentWriteError,
   toRequestError,
   PARKED_ERROR_THRESHOLD,
@@ -85,6 +89,17 @@ const ITEM_STATE_COLS =
   'item_id, pinned, pinned_at, favorite, favorite_at, done, done_at, hidden, hidden_at, opened, opened_at';
 const SUBSCRIPTION_COLS =
   'feed_id, folder, title_override, muted, open_original, open_newshacker, mark_done_on_open, list_layout, sort';
+/** The synced reading-behavior settings columns (`user_settings`, 0064) — the
+ * caller's own row only (RLS); `user_id`/`updated_at` never leave the server. */
+const USER_SETTINGS_COLS =
+  'item_sort, group_by_feed, hide_on_scroll, show_row_favicon, show_group_favicon, hide_sports_spoilers, auto_summarize_pinned';
+
+/** How long a "backend has no user_settings table" detection is trusted before
+ * the next reconcile re-probes. Long enough that a pre-migration tab isn't
+ * paying a failing request per focus/flip, short enough that a long-lived PWA
+ * tab notices the operator's `make migrate` within minutes and drains its
+ * pending settings without needing a reload. */
+const SETTINGS_UNSUPPORTED_RETRY_MS = 5 * 60 * 1000;
 
 /** Max ids per `in (…)` lookup, so a large library bucket (Done/Hidden/Favorite
  * with hundreds/thousands of ids) is fetched in bounded batches rather than one
@@ -266,6 +281,26 @@ export class SupabaseDataSource implements DataSource {
   /** Epoch ms of the last successful server item_state pull, or null until the
    * first one lands. Surfaced on `/debug` via {@link getLastSyncedAt}. */
   private lastSyncedAt: number | null = null;
+  /** Epoch ms of the last `user_settings` read/write that said the backend has
+   * no such table (predates 0064), or null when the table is (assumed)
+   * present. While fresh, both settings methods short-circuit so prefs behave
+   * device-local without hitting the network (guardrail #11) — but the memo
+   * EXPIRES ({@link SETTINGS_UNSUPPORTED_RETRY_MS}): a PWA tab can outlive the
+   * operator's `make migrate` by days, and a permanent memo would strand its
+   * pending settings until a reload. After expiry the next reconcile re-probes;
+   * a still-missing table just re-stamps it (Codex P2 on #494). */
+  private syncedSettingsUnsupportedAt: number | null = null;
+
+  /** Whether the backend was recently seen without `user_settings`, expiring
+   * the memo when its retry window has passed. */
+  private settingsBackendUnsupported(): boolean {
+    if (this.syncedSettingsUnsupportedAt === null) return false;
+    if (Date.now() - this.syncedSettingsUnsupportedAt < SETTINGS_UNSUPPORTED_RETRY_MS) {
+      return true;
+    }
+    this.syncedSettingsUnsupportedAt = null;
+    return false;
+  }
   private resyncing: Promise<void> | null = null;
   /** A resync was requested while one was already in flight — re-run a fresh one
    * if the in-flight attempt fails, so a recovery (e.g. an `online` event after
@@ -1453,6 +1488,77 @@ export class SupabaseDataSource implements DataSource {
       .update({ list_layout: listLayout })
       .eq('feed_id', feedId);
     if (error) throw error instanceof Error ? error : new Error(String(error));
+  }
+
+  /** Synced reading-behavior settings (`user_settings`, 0064; RLS scopes the
+   * read to the caller's own row). A backend without the table — the manual
+   * `make migrate` hasn't run — is remembered (with expiry, see
+   * {@link settingsBackendUnsupported}) and both methods short-circuit, so
+   * prefs simply stay device-local until the deploy lands (guardrail #11).
+   * Any other read error also resolves null (soft): the sync layer re-tries on
+   * the next focus/online reconcile. */
+  async getSyncedSettings(): Promise<Partial<SyncedSettings> | null> {
+    if (this.settingsBackendUnsupported()) return null;
+    const { data, error } = await this.sb
+      .from('user_settings')
+      .select(USER_SETTINGS_COLS)
+      .maybeSingle();
+    if (error) {
+      if (isMissingTableError(error)) {
+        this.syncedSettingsUnsupportedAt = Date.now();
+      }
+      return null;
+    }
+    return data ? mapUserSettings(data as UserSettingsRow) : {};
+  }
+
+  async setSyncedSettings(patch: Partial<SyncedSettings>): Promise<void> {
+    const row: Record<string, unknown> = {};
+    if (patch.itemSort !== undefined) row.item_sort = patch.itemSort;
+    if (patch.groupByFeed !== undefined) row.group_by_feed = patch.groupByFeed;
+    if (patch.hideOnScroll !== undefined) row.hide_on_scroll = patch.hideOnScroll;
+    if (patch.showRowFavicon !== undefined) row.show_row_favicon = patch.showRowFavicon;
+    if (patch.showGroupFavicon !== undefined) row.show_group_favicon = patch.showGroupFavicon;
+    if (patch.hideSportsSpoilers !== undefined) row.hide_sports_spoilers = patch.hideSportsSpoilers;
+    if (patch.autoSummarizePinned !== undefined) row.auto_summarize_pinned = patch.autoSummarizePinned;
+    if (Object.keys(row).length === 0) return;
+    // An unsupported backend REJECTS rather than resolving: a resolved set()
+    // is the sync engine's cue to acknowledge the patch as delivered, and a
+    // fake ack would strand these values device-local forever — after the
+    // manual `make migrate`, local == acked means there is no pending diff
+    // left to push (Codex P2 on #494). Rejecting keeps the diff pending, so
+    // the first push after the migration lands it for real. The remembered
+    // detection short-circuits before the network (free retries) but EXPIRES
+    // (settingsBackendUnsupported), so a long-lived tab re-probes and drains
+    // its pending settings within minutes of the migration, no reload needed.
+    if (this.settingsBackendUnsupported()) {
+      throw new Error('user_settings is not deployed on this backend');
+    }
+    // The payload carries ONLY the changed columns — `user_id` is filled by its
+    // `default auth.uid()` (0064) so no identity rides in the request, and the
+    // ON CONFLICT (user_id) merge leaves the row's other columns untouched.
+    // That per-column write is what makes cross-device conflicts resolve
+    // last-write-wins per setting rather than per row.
+    //
+    // A single-OBJECT payload already gets the DB default for its absent
+    // columns (postgrest-js only sends the `columns=` param — where missing
+    // keys become NULL — for array payloads; PostgREST builds the INSERT from
+    // the object's own keys, so an unlisted column takes its SQL default).
+    // `defaultToNull: false` (`Prefer: missing=default`) is belt-and-braces on
+    // top: it keeps the `auth.uid()` default in force even if this payload
+    // ever becomes an array (Codex P1 on #494).
+    const { error } = await this.sb
+      .from('user_settings')
+      .upsert(row, { onConflict: 'user_id', defaultToNull: false });
+    if (error) {
+      if (isMissingTableError(error)) {
+        this.syncedSettingsUnsupportedAt = Date.now();
+      }
+      // Missing table or transient (offline/5xx) alike: throw so the sync
+      // engine keeps the diff pending — it retries on the next change/online/
+      // focus, and post-migration the pending values sync for real.
+      throw error instanceof Error ? error : new Error(String((error as { message?: string }).message ?? error));
+    }
   }
 
   async setTitleOverride(feedId: FeedId, title: string | null): Promise<void> {

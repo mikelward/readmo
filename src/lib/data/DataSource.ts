@@ -12,6 +12,7 @@ import type {
 import type { FullTextResult } from '../fullText';
 import type { SummaryResult } from '../summary';
 import type { MirrorPayload } from '../newshackerSync';
+import type { SyncedSettings } from '../settingsSync';
 import type { ItemStateStore } from './itemState';
 
 /** Per-user capability flags, resolved from the server (`get_capabilities` RPC).
@@ -366,6 +367,20 @@ export interface DataSource {
    * on `/debug` as "Last sync". Optional: sources with no server to reconcile
    * against (the in-memory mock) omit it, and `/debug` then shows it as N/A. */
   getLastSyncedAt?(): number | null;
+  /** The account's synced reading-behavior settings (`user_settings`, 0064) —
+   * only the columns the user has set; `{}` when the row doesn't exist yet;
+   * `null` when the backend can't serve them (a backend predating the table —
+   * feature-detected, guardrail #11 — or a transient failure). Optional: the
+   * mock omits both methods and prefs stay device-local, exactly the demo-mode
+   * behavior (no account, nothing to sync). Consumed by useSettingsSync. */
+  getSyncedSettings?(): Promise<Partial<SyncedSettings> | null>;
+  /** Merge the given settings into the account's `user_settings` row (only the
+   * passed keys change — per-column last-write-wins across devices). Throws on
+   * any failure — transient or a backend without the table — so the caller
+   * keeps the change pending and retries: pre-migration values must never be
+   * acknowledged as delivered, or they'd stay device-local forever once the
+   * table exists (local == acked, nothing left to push). */
+  setSyncedSettings?(patch: Partial<SyncedSettings>): Promise<void>;
   /** On-demand `/debug` probe: run the grouped windowed home read (and a flat
    * page for comparison) OUTSIDE the query cache and report where rows survive
    * — raw rows the backend returned, rows left after feed-metadata resolution,

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
+import { DIRTY_SETTINGS_KEY } from '../lib/settingsSync';
 import {
   BOTTOM_BAR_KEY,
   DEBUG_SCROLL_JUMPS_KEY,
@@ -59,6 +60,19 @@ describe('useReadingPrefs', () => {
     });
     expect(screen.getByRole('button')).toHaveTextContent('on');
     expect(window.localStorage.getItem(HIDE_ON_SCROLL_KEY)).toBe('1');
+  });
+
+  it('stamps the synced-settings dirty marker on a user toggle', () => {
+    // The marker is what tells the sync engine "this is a user action" — a
+    // flip that lands back on the last-pushed value must still push and must
+    // not be overwritten by a fetched cross-device value (lib/settingsSync).
+    render(<HideOnScrollProbe />);
+    act(() => {
+      screen.getByRole('button').click();
+    });
+    expect(window.localStorage.getItem(DIRTY_SETTINGS_KEY)).toBe(
+      '["hideOnScroll"]',
+    );
   });
 
   it('notifies every mounted consumer of a change (cross-component reactivity)', () => {

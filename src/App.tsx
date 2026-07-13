@@ -12,6 +12,7 @@ import { useSummaryPrewarm } from './hooks/useSummaryPrewarm';
 import { useSavedSummarySeed } from './hooks/useSavedSummarySeed';
 import { useFeedInvalidation } from './hooks/useFeedInvalidation';
 import { useStateSync } from './hooks/useStateSync';
+import { useSettingsSync } from './hooks/useSettingsSync';
 import { useNewshackerSync } from './hooks/useNewshackerSync';
 import { useScrollDiag } from './hooks/useScrollDiag';
 import { useDebugScrollJumps } from './hooks/useReadingPrefs';
@@ -85,6 +86,9 @@ export default function App() {
   // Re-pull item state when the tab regains focus/visibility or comes back
   // online, so pins/favorites/done changed on another device sync in.
   useStateSync();
+  // Same treatment for the synced reading-behavior settings: hydrate on boot,
+  // re-pull on focus/online, push local pref flips (SPEC.md *Settings* scope).
+  useSettingsSync();
   // Mirror Hacker News dismissals (Done) and pins to newshacker's matching lists
   // when the account has linked a newshacker token (no-op otherwise). SPEC.md
   // *Mirror dismissals and pins to newshacker*.
