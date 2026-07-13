@@ -45,7 +45,8 @@ import { isSummarySettled, summaryStaleTime, type SummaryResult } from '../lib/s
  * `unavailable` stays unwarmed and retries on reconnect / once the allowlist gate
  * resolves. The store subscriber warms only **newly-pinned** ids (so an
  * unrelated state emit during an outage doesn't re-fetch every unsettled pinned
- * summary); whole-set retries are left to the restore/reconnect/gate effect.
+ * summary); whole-set retries are left to the restore/reconnect/gate effect and
+ * a bounded foreground-return (focus / visibility) retry.
  * Warming is held off until the persisted React Query cache has **restored**
  * (like `useOfflineCacheLock`): prefetching against the not-yet-hydrated cache
  * would re-fetch every already-cached pinned summary on each boot. Mount once
@@ -142,4 +143,34 @@ export function useSummaryPrewarm(): void {
     if (isRestoring || !online || !allowed || !autoSummarizePinned) return;
     for (const [id, s] of ds.stateStore.entries()) if (s.pinned) warm(id);
   }, [isRestoring, online, allowed, autoSummarizePinned, ds, warm]);
+
+  // Retry unsettled pins when the app returns to the FOREGROUND (tab focus /
+  // visibility→visible), the same natural retry boundary `useStateSync` re-pulls
+  // on. The store subscriber warms only newly-pinned deltas and the effect above
+  // only re-runs when online/allowed/opted-in/restore change — so a pinned item
+  // whose warm hit a *transient* failure while the app stayed online (a Jina/
+  // Gemini hiccup, no connectivity change) would otherwise never be retried until
+  // one of those flags flipped or the app rebooted. A foreground return is a
+  // bounded, once-per-return trigger (NOT a per-emit one — those are deliberately
+  // left unwarmed to avoid amplifying an outage), and `warm` is idempotent:
+  // already-warmed, offline, gated, or restoring ids no-op, so this never
+  // re-fetches a settled summary.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const rewarmPinned = () => {
+      // A bare `focus` can fire on a still-hidden tab; only warm when actually
+      // visible (mirrors useStateSync), so an occluded focus doesn't prefetch.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      for (const [id, s] of ds.stateStore.entries()) if (s.pinned) warm(id);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') rewarmPinned();
+    };
+    window.addEventListener('focus', rewarmPinned);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', rewarmPinned);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [ds, warm]);
 }

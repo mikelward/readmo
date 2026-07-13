@@ -188,6 +188,36 @@ describe('useSummaryPrewarm', () => {
     expect(source.summaryCalls).toBe(1);
   });
 
+  it('re-warms a pin that failed transiently when the app returns to the foreground', async () => {
+    // A pinned summary whose warm hit a transient failure while the app stayed
+    // online (no connectivity change) is left unwarmed. Returning to the app
+    // (window focus) is a bounded retry boundary that must pick it back up —
+    // unlike an unrelated state emit (previous test), which must NOT.
+    class FlakyOnce extends MockDataSource {
+      summaryCalls = 0;
+      async getSummary(): Promise<SummaryResult> {
+        this.summaryCalls += 1;
+        return this.summaryCalls === 1
+          ? { status: 'unreachable', summary: null }
+          : { status: 'ok', summary: 'Recovered on foreground.' };
+      }
+    }
+    const source = new FlakyOnce(`test-${Math.random()}`);
+    const qc = setup(source);
+
+    source.stateStore.set(ID, 'pinned', true);
+    await waitFor(() => expect(source.summaryCalls).toBe(1));
+    expect(qc.getQueryData(summaryQueryKey(ID))).toMatchObject({ status: 'unreachable' });
+
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+    await waitFor(() =>
+      expect(qc.getQueryData(summaryQueryKey(ID))).toMatchObject({ status: 'ok' }),
+    );
+    expect(source.summaryCalls).toBe(2);
+  });
+
   it('does not re-call once a terminal summary is cached (generate-once)', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     const qc = setup(source);
