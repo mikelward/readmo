@@ -19,8 +19,9 @@
 // mirror — e.g. once you open a story on newshacker and mark it Done there, it
 // flows back and dismisses it in Readmo; pinning there pins it here too.
 // The RPC runs as the CALLER (userClient, so auth.uid() is the account and RLS
-// applies), not the service role. `applied` is the number of item_state writes
-// issued (0 when nothing mapped); the client re-hydrates when it's > 0.
+// applies), not the service role. `applied` counts item_state writes carrying
+// NEW information (0 when nothing mapped or everything was already in sync —
+// the 0065 RPC skips no-op re-applies); the client re-hydrates when it's > 0.
 //
 // Trust + access:
 //   - The caller's JWT identifies the user (userClient.auth.getUser()).

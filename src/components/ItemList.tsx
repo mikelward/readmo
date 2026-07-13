@@ -3178,12 +3178,17 @@ export function ItemList({
           // anyway), and aborting here made a pull a complete visual no-op
           // with no error surfaced: the refresh-failure strip keys off the
           // QUERY's error, and the query never ran.
-          // Run the server re-poll and (when linked) the reverse newshacker pull
-          // together — both are best-effort freshness that feed the refetch
-          // below. The pull brings the linked account's Done/Pinned lists back so
-          // triage done on newshacker reflects here; PTR is the deliberate
-          // refresh gesture where that reconciliation belongs (a Done drops via
-          // the store overlay, an out-of-window pin surfaces in the fresh page).
+          // Run the server re-poll, an item-state resync, and (when linked) the
+          // reverse newshacker pull together — all best-effort freshness that
+          // feeds the refetch below. The explicit resync is what brings
+          // cross-device pins/dones into this already-open tab: PTR is the
+          // deliberate refresh gesture, and unlike focus/visibility/online it
+          // has no useStateSync listener — the reverse pull only re-hydrates
+          // when IT applied something, so without this a PTR could repaint
+          // against a stale local store. The pull brings the linked account's
+          // Done/Pinned lists back so triage done on newshacker reflects here
+          // (a Done drops via the store overlay, an out-of-window pin surfaces
+          // in the fresh page).
           // allSettled, NOT all: `ds.refresh()` rejects on a rate-limit/offline,
           // and `Promise.all` would abort before the still-running pull applied +
           // hydrated — so the refetch would miss the reverse-sync results (e.g.
@@ -3191,6 +3196,7 @@ export function ItemList({
           {
             const [refreshResult] = await Promise.allSettled([
               ds.refresh(),
+              ds.resyncState(true),
               newshackerLinked && ds.pullNewshackerState
                 ? ds.pullNewshackerState()
                 : Promise.resolve(),
