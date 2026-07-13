@@ -1,7 +1,7 @@
 // A minimal in-memory stand-in for the supabase-js client, just enough to drive
 // SupabaseDataSource's read/write surface in tests: the PostgREST query-builder
 // chain used by the data source (select/in/not/eq/ilike/order/range/limit/
-// maybeSingle, plus update/delete) and functions.invoke. NOT a faithful
+// maybeSingle, plus update/upsert/delete) and functions.invoke. NOT a faithful
 // PostgREST emulation — it applies the same filters the data source issues so we
 // can assert mapping, ordering, filtering, pagination, and dispatch.
 
@@ -53,8 +53,9 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
   private wantCount = false;
 
   // write modes
-  private mode: 'select' | 'update' | 'delete' = 'select';
+  private mode: 'select' | 'update' | 'upsert' | 'delete' = 'select';
   private patch: Row | null = null;
+  private onConflictCol: string | null = null;
 
   constructor(
     private readonly table: string,
@@ -93,6 +94,13 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
   update(patch: Row): this {
     this.mode = 'update';
     this.patch = patch;
+    return this;
+  }
+
+  upsert(row: Row, opts?: { onConflict?: string }): this {
+    this.mode = 'upsert';
+    this.patch = row;
+    this.onConflictCol = opts?.onConflict ?? null;
     return this;
   }
 
@@ -221,6 +229,31 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
         };
       }
       for (const r of this.filtered()) Object.assign(r, this.patch);
+      return { data: null, count: null, error: null };
+    }
+    if (this.mode === 'upsert') {
+      // Shares failUpdateOnce so a test can model a failed/pre-migration write.
+      if (this.control.failUpdateOnce.has(this.table)) {
+        const injected = this.control.failUpdateOnce.get(this.table);
+        this.control.failUpdateOnce.delete(this.table);
+        return {
+          data: null,
+          count: null,
+          error: injected ?? { message: `injected upsert error for ${this.table}` },
+        };
+      }
+      const rows = (this.store[this.table] ??= []);
+      // Merge semantics (Prefer: resolution=merge-duplicates). When the payload
+      // omits the conflict column — the DB fills it via a column default, e.g.
+      // user_settings.user_id defaulting to auth.uid() — the fake models the
+      // resulting one-row-per-caller shape by merging into the sole existing row.
+      const key = this.onConflictCol ? this.patch![this.onConflictCol] : undefined;
+      const match =
+        key !== undefined
+          ? rows.find((r) => r[this.onConflictCol!] === key)
+          : rows[0];
+      if (match) Object.assign(match, this.patch);
+      else rows.push({ ...this.patch });
       return { data: null, count: null, error: null };
     }
     // Count select requests per table (lets tests prove `in (…)` chunking).

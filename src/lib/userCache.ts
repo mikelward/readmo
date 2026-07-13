@@ -1,5 +1,10 @@
 import { removeItem as idbRemoveItem } from './idbStorage';
 import {
+  ACKED_SETTINGS_KEY_PREFIX,
+  DIRTY_SETTINGS_KEY,
+  SYNCED_SETTINGS_STORAGE_KEYS,
+} from './settingsSync';
+import {
   isRuntimeWorkboxCache,
   scopedWorkboxCacheName,
   WORKBOX_RUNTIME_CACHE_BASES,
@@ -26,8 +31,13 @@ const ITEM_STATE_BASE = 'readmo:item-state:v2';
 // Collapsed feed-sections set (group-by-feed view, see useCollapsedFeeds). It's a
 // single per-device key rather than uid-scoped — but it holds a *subscription-
 // derived* list of feed ids, so on a shared device it must not survive an account
-// change (guardrail #8). clearUserCaches purges it on every transition; the other
-// per-device prefs (hide-on-scroll, sort, …) carry no user data and stay global.
+// change (guardrail #8). clearUserCaches purges it on every transition. The
+// synced reading-behavior prefs (hide-on-scroll, sort, …) are ACCOUNT data too
+// (they mirror the account's `user_settings` row — see lib/settingsSync) and are
+// purged the same way, along with the per-uid acked snapshot; the next account
+// re-hydrates its own values from the server. Only the true device-ergonomic
+// prefs (theme/palette/font/text size, bottom-bar, list-layout default, debug
+// toggles) carry no user data and stay global.
 export const COLLAPSED_FEEDS_KEY = 'readmo:collapsed-feeds';
 // Suffix SupabaseDataSource appends to the item-state key for its offline write
 // outbox. Defined here so clearUserCaches purges queued mutations with the rest
@@ -227,6 +237,9 @@ export async function clearUserCaches(uid: string | null): Promise<void> {
     // Global (not uid-scoped), but subscription-derived — purge it so a departing
     // user's collapsed feeds don't carry into the next account on a shared device.
     window.localStorage.removeItem(COLLAPSED_FEEDS_KEY);
+    // The synced reading-behavior prefs mirror the departing account's
+    // user_settings row — account data, same rule (see the key comment above).
+    clearSyncedSettingsKeys();
   } catch {
     // ignore (storage unavailable/denied)
   }
@@ -247,8 +260,36 @@ export async function clearUserCaches(uid: string | null): Promise<void> {
     window.localStorage.removeItem(itemStateKey(uid));
     window.localStorage.removeItem(outboxKey(uid));
     window.localStorage.removeItem(COLLAPSED_FEEDS_KEY);
+    clearSyncedSettingsKeys();
   } catch {
     // ignore (storage unavailable/denied)
+  }
+}
+
+// Wipe the synced reading-behavior pref keys AND every account's acked
+// snapshot, together. The pref keys are global (a single set, wiped on every
+// transition) while the snapshots are uid-scoped — purging only the departing
+// uid's snapshot would leave the pair inconsistent for any OTHER account with
+// a leftover snapshot: its stale ack would make a fresh flip to the acked
+// value look already-delivered (push sends nothing) and a later reconcile
+// would overwrite the user's change with the server value (Codex P2 on #494).
+// Sweeping every snapshot whenever the prefs are wiped keeps the invariant
+// local — "prefs gone ⇒ acks gone" — instead of relying on every departure
+// path purging its own uid; the cost is nil (a lost ack at worst re-pushes the
+// same values, idempotent).
+function clearSyncedSettingsKeys(): void {
+  for (const key of SYNCED_SETTINGS_STORAGE_KEYS) {
+    window.localStorage.removeItem(key);
+  }
+  // The dirty-marker set rides with the pref keys it annotates: a leftover
+  // marker would push the NEXT account's defaults as if the user chose them.
+  window.localStorage.removeItem(DIRTY_SETTINGS_KEY);
+  // Backwards: removal shifts localStorage's key indices.
+  for (let i = window.localStorage.length - 1; i >= 0; i--) {
+    const key = window.localStorage.key(i);
+    if (key?.startsWith(ACKED_SETTINGS_KEY_PREFIX)) {
+      window.localStorage.removeItem(key);
+    }
   }
 }
 

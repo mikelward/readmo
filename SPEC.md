@@ -540,8 +540,8 @@ newshacker_link (user_id PK/FK, token, created_at)                    -- compani
 
 ### RLS — reads scoped to the caller; `feeds`/`items` are NOT world-readable
 
-- `subscriptions`, `item_state`, `folders`: readable/writable only where
-  `user_id = auth.uid()`.
+- `subscriptions`, `item_state`, `folders`, `user_settings`: readable/writable
+  only where `user_id = auth.uid()`.
 - `feeds` and `items` are physically shared but **must not** be exposed to
   every signed-in user — a feed URL and stored `content_html` are
   user-sensitive whenever a feed is private or tokenized (paid newsletters,
@@ -1155,6 +1155,15 @@ negligible and off every critical path. See the External services table in
     last-write-wins settles it against any change another device made in the
     meantime. So there is no hold-for-hydration window, no base seeding, and no
     version normalization: the write simply goes out and the newer `at` wins.
+- **Synced settings ride the same rhythm.** The per-account reading-behavior
+  settings (see *Settings scope*) hydrate from `user_settings` on boot and
+  re-pull on the same focus/visibility/online triggers; a local flip pushes
+  only the changed settings, so cross-device conflicts resolve latest-change-
+  wins **per setting**. A push that fails (offline, backend blip) stays pending
+  on the device and retries on those same triggers — a settings change made
+  offline is never lost, and a pending local change is never overwritten by a
+  fetched value. Against a backend without `user_settings` the client silently
+  stays device-local.
 - Realtime (optional, post-MVP): Supabase Realtime can push `item_state`
   changes to other open sessions. MVP relies on the refetch-on-focus above + PTR.
 - **Implementation status.** `SupabaseDataSource` (`src/lib/data/`) implements
@@ -1300,16 +1309,16 @@ negligible and off every critical path. See the External services table in
      reorders under the reader on a local action.) (When grouping by feed —
      below — pinned items lead **their own feed's section** rather than a global
      top section.)
-   - **Sort & grouping** (per-device — see *Settings → Sort order* and *Group by
-     feed*; applied server-side so they hold across pages, not a client re-sort
-     of loaded pages):
+   - **Sort & grouping** (per-account, synced — see *Settings → Sort order*,
+     *Group by feed*, and *Settings scope*; applied server-side so they hold
+     across pages, not a client re-sort of loaded pages):
      - **Sort order** (`readmo:item-sort`, default **`newest`**) sets the body's
        chronological order — **newest-first** (default) or **oldest-first** —
        on Home, folders, and single feeds. Pinned ordering is unaffected (always
        oldest-pin first within its section). Toggleable from Settings **and**
        from the list **top toolbar** (the **Sort order** toggle, whose glyph
        reflects the current order — see *List toolbar*), which writes the same
-       per-device preference.
+       synced preference.
      - **Group by feed** (`readmo:group-by-feed`, default **off**) sections Home
        and folder lists by feed instead of one merged river. Sections follow the
        user's **manual feed order** (the `subscriptions.sort` field, set by
@@ -1330,7 +1339,7 @@ negligible and off every critical path. See the External services table in
        single-feed view.
        Toggleable from Settings **and** from the multi-feed list **top toolbar**
        (the **Group by feed** toggle, whose flat-list / tree icon mirrors the
-       current layout — see *List toolbar*), which writes the same per-device
+       current layout — see *List toolbar*), which writes the same synced
        preference.
      - **Section header controls** (group-by-feed only). Each feed's header is a
        small control strip. On the far left, a **44px chevron** button is the
@@ -1747,13 +1756,13 @@ negligible and off every critical path. See the External services table in
     section each. Reached from the **account menu** (top-right avatar → Settings).
     Feed management lives on the Feeds page, not here, but an **Edit feeds**
     button at the top of Settings links there (see below).
-    - **Reading** — per-device toggles **Mark Done as you scroll**
+    - **Reading** — toggles **Mark Done as you scroll**
       (`readmo:hide-on-scroll`, **off by default**), wiring the auto-hide
       behavior in *List toolbar → Auto-hide on scroll*; and **Group by feed**
       (`readmo:group-by-feed`, **off by default**), sectioning Home/folder lists
       by feed (see *Feed views → Sort & grouping*) — followed by the **Sort
       order** picker (`readmo:item-sort`): **Newest first** (default) or **Oldest
-      first**.
+      first**. All per-account, synced (see *Settings scope*).
     - **Appearance** — the **Color theme** (Ink/Grape swatches), **Dark/light
       mode** (light/dark/system icons), **Text size** (Extra Small–Huge
       A-glyphs), and **Font** pickers (all symbolic segmented controls), then the
@@ -1774,10 +1783,28 @@ negligible and off every critical path. See the External services table in
       allowlist). When on, the summary for a pinned article is pre-warmed so it's
       ready before the reader opens it (see *AI article summaries* /
       `useSummaryPrewarm`); when a family user turns it off, no pin pre-warm
-      fires from this device — the reader still generates on open, and the
+      fires from the client — the reader still generates on open, and the
       server-side pin trigger (which the toggle does not reach — it's a
-      per-device control) still generates on pin. See *Spoiler-free sports
-      headlines* and *AI article summaries*.
+      client-side control) still generates on pin. Both toggles are
+      per-account, synced. See *Spoiler-free sports headlines* and *AI article
+      summaries*.
+    - **Settings scope.** Reading-*behavior* settings are **per-account and
+      sync across devices**: Sort order, Group by feed, Mark Done as you
+      scroll, both Feed icons toggles, Hide sports spoilers, and Auto generate
+      summaries (stored in `user_settings`, one nullable column per setting —
+      unset means the default; RLS-gated like every per-user table). A change
+      lands on other devices on their next launch/focus/reconnect; when two
+      devices disagree, the **latest change to each individual setting wins**.
+      Settings that are really *device ergonomics* stay **per-device**:
+      everything under Appearance (color theme, dark/light mode, text size,
+      font), the **Bottom toolbar** position and **Article layout** default
+      (screen-size calls — the synced per-feed *Card style* override rides the
+      subscription instead), and the `/debug` diagnostics toggle. Like all
+      per-account data, the synced settings are purged from the device on
+      sign-out or account switch (guardrail #8) and re-hydrated from the
+      server on the next sign-in — until the first hydration lands, a fresh
+      device briefly shows defaults. Against a backend predating
+      `user_settings` the client silently falls back to per-device behavior.
 
 11. **Feeds** — `/feeds`: feed management, reached from the drawer's **Feeds**
     section edit pencil (also linked from the account menu).
@@ -2088,14 +2115,14 @@ grouping. In **group-by-feed** view it's on the **section header** only (beside
 the feed name), identifying a feed's run of rows once rather than repeating on
 every article — gated on the **Show icons on groups** setting (Settings →
 Appearance → Feed icons; `readmo:show-group-favicon`, **on by default**,
-per-device). In **non-grouped** views (the flat river, library, search,
+synced). In **non-grouped** views (the flat river, library, search,
 offline), where rows from different feeds interleave with no section header to
 attribute them, each row *can* show its own feed's favicon just before the
 source name — gated on the **Show icons on articles** setting (same Feed icons
-group; `readmo:show-row-favicon`, **off by default**, per-device). The
+group; `readmo:show-row-favicon`, **off by default**, synced). The
 **single feed page** (`/feed/:feedId`) also shows it once, left of the feed name
 in the page-header title (sized up to 20px for the heading), independent of both
-per-device settings. That
+settings. That
 favicon comes from `feeds.favicon_url`, which
 the poller resolves on each fetch: the feed-advertised icon when present (Atom
 `<icon>`/`<logo>`, RSS `<image>`, JSON Feed `favicon`/`icon`, scheme-checked to
@@ -2450,9 +2477,9 @@ page's discipline is unchanged.
     cost-guard convention as the poller's spoiler-title pass; client-initiated
     calls keep their "empty list = open" semantics), skips items that already
     have both artifacts cached, and is a no-op until the operator configures
-    the Vault secrets (SETUP.md §9b). The per-device **Auto generate
-    summaries** toggle governs only the device pre-warm below, not this
-    server-side trigger.
+    the Vault secrets (SETUP.md §9b). The **Auto generate
+    summaries** toggle (synced) governs only the client pre-warm below, not
+    this server-side trigger.
   - **Pin is also a prefetch signal (incl. cross-device), generate-once.**
     `useSummaryPrewarm` pre-warms the summary for **every pinned item** — pinned
     on this device, synced from another device, or restored on boot — the summary
@@ -2731,7 +2758,7 @@ page's discipline is unchanged.
   - **Display gate (client).** The rewrite shows only when the caller is
     allowlisted (`canUseFullText(useCapabilities())`, the shared reading-mode gate)
     **and** the per-user **"Hide sports spoilers"** setting is on
-    (`useHideSportsSpoilers`, a per-device preference, **default on**, in the
+    (`useHideSportsSpoilers`, a synced per-account preference, **default on**, in the
     Settings → Smart features section; the toggle is hidden for off-list users). Off-list,
     setting-off, or no rewrite cached → the original headline, untouched. The
     rewritten row/headline carries a **subtle, non-interactive marker**
@@ -3151,10 +3178,16 @@ uid the page announces to the worker; the fonts cache alone stays shared.
   - `readmo:collapsed-feeds` — collapsed feed sections (group-by-feed view). Not
     uid-*keyed* (a single per-device key), but **subscription-derived**, so it's
     in the `clearUserCaches` purge list and wiped on every account change — a
-    shared device must not carry one user's collapsed feed ids into the next. The
-    pure-UI per-device prefs (`readmo:item-sort`, `readmo:group-by-feed`,
-    `readmo:hide-on-scroll`, `readmo:bottom-bar`, `readmo:fontSize`, theme) carry
-    no user data and stay global.
+    shared device must not carry one user's collapsed feed ids into the next.
+  - The **synced reading-behavior prefs** (`readmo:item-sort`,
+    `readmo:group-by-feed`, `readmo:hide-on-scroll`, the two favicon toggles,
+    `readmo:hide-sports-spoilers`, `readmo:auto-summarize-pinned`) and their
+    per-uid server-ack snapshot (`readmo:settings-acked:<uid>`) mirror the
+    account's `user_settings` row (see *Settings scope*), so they're purged on
+    every account change too and re-hydrate from the server on the next
+    sign-in. The true device-ergonomic prefs (`readmo:bottom-bar`,
+    `readmo:list-layout`, `readmo:fontSize`, theme, debug toggles) carry no
+    user data and stay global.
   - `readmo:chunk-reload` — the **one** `sessionStorage` (not `localStorage`)
     surface: a transient, per-tab one-shot flag set by `LazyRouteBoundary` when
     it auto-reloads to recover a stale/failed lazy route chunk, so a genuinely
