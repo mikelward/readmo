@@ -450,21 +450,35 @@ export class SupabaseDataSource implements DataSource {
     void this.outbox.flush();
     if (typeof window !== 'undefined') {
       window.addEventListener('online', () => void this.outbox.flush());
-      // Flush the moment the tab is backgrounded or torn down, so a triage
-      // toggle made right before leaving (mark done, then close the tab) is
-      // pushed out now instead of stranded in the outbox until the next boot.
-      // `visibilitychange`→hidden is the reliable teardown signal (it fires on
-      // tab switch, minimize, mobile app-backgrounding, and — unlike
-      // `beforeunload` — tab close); `pagehide` covers the bfcache/navigation
-      // path. `flushForUnload` (not the coalescing `flush`) is used so writes
-      // queued behind an in-flight slow write still start — each send is a
-      // keepalive fetch (see supabaseFetch), so it completes as the page unloads.
+      // Flush the moment the app might be about to lose the ability to send — any
+      // backgrounding, teardown, OR loss of focus — so a triage toggle made right
+      // before leaving (mark done / pin, then leave) is pushed out now instead of
+      // stranded in the outbox until the next boot. This applies to ALL queued
+      // writes uniformly, not just pins. `flushForUnload` (not the coalescing
+      // `flush`) is used so writes queued behind an in-flight slow write still
+      // start — each send is a keepalive fetch (see supabaseFetch), so it
+      // completes as the page unloads. The handler is idempotent and no-ops on an
+      // empty queue, so registering several overlapping signals is safe:
+      //   - `visibilitychange`→hidden: tab switch, minimize, mobile app-background,
+      //     and (unlike `beforeunload`) tab close;
+      //   - `pagehide`: the bfcache / navigation teardown path;
+      //   - `freeze` (Page Lifecycle): the tab being frozen after backgrounding,
+      //     the last callback before the page may be discarded;
+      //   - `blur` on the window: losing FOCUS without going hidden — e.g. a
+      //     desktop OS-level app switch (Cmd/Alt-Tab) leaves the tab "visible" so
+      //     the two events above never fire, yet the OS may still reclaim the
+      //     backgrounded browser. This is the focus-loss case the others miss.
+      const flushForUnload = () => this.outbox.flushForUnload();
       if (typeof document !== 'undefined') {
         document.addEventListener('visibilitychange', () => {
-          if (document.visibilityState === 'hidden') this.outbox.flushForUnload();
+          if (document.visibilityState === 'hidden') flushForUnload();
         });
+        // `freeze` fires on the Document (Page Lifecycle API); harmless where
+        // unsupported (the listener simply never fires).
+        document.addEventListener('freeze', flushForUnload);
       }
-      window.addEventListener('pagehide', () => this.outbox.flushForUnload());
+      window.addEventListener('pagehide', flushForUnload);
+      window.addEventListener('blur', flushForUnload);
     }
   }
 
