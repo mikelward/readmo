@@ -1971,6 +1971,62 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect('retryable' in result).toBe(false);
   });
 
+  it('getSummary retries once on a transient failure, then returns the success', async () => {
+    // A single network blip must not sink the summary until the next mount:
+    // getSummary resolves (never throws) so React Query can't retry it — the
+    // retry lives in getSummary itself. First call errors → `unreachable`, the
+    // retry succeeds → `ok`.
+    const env = setup();
+    env.ds.summaryRetryDelayMs = 0; // no real wait in the test
+    env.fake.invokeResultQueue.push(
+      { data: null, error: new Error('blip') },
+      { data: { status: 'ok', summary: 'A gist.' }, error: null },
+    );
+    expect(await env.ds.getSummary('i1')).toEqual({ status: 'ok', summary: 'A gist.' });
+    expect(env.fake.invokeCalls.filter((c) => c.name === 'summary')).toHaveLength(2);
+  });
+
+  it('getSummary retries a server-reported `unreachable`, then returns the success', async () => {
+    // The 200 `{ status: 'unreachable' }` envelope (a Gemini / allowlist-read
+    // hiccup) is transient too — retry it the same as a network blip.
+    const env = setup();
+    env.ds.summaryRetryDelayMs = 0;
+    env.fake.invokeResultQueue.push(
+      { data: { status: 'unreachable', summary: null }, error: null },
+      { data: { status: 'ok', summary: 'A gist.' }, error: null },
+    );
+    expect(await env.ds.getSummary('i1')).toEqual({ status: 'ok', summary: 'A gist.' });
+    expect(env.fake.invokeCalls.filter((c) => c.name === 'summary')).toHaveLength(2);
+  });
+
+  it('getSummary gives up after the retry and returns the transient outcome', async () => {
+    // Bounded: a persistently-down service is retried ONCE and then the
+    // `unreachable` is returned (the reader shows no card, re-checks next mount) —
+    // never a hot loop, matching the disciplined retry policy elsewhere.
+    const env = setup();
+    env.ds.summaryRetryDelayMs = 0;
+    env.fake.invokeResult.current = { data: null, error: new Error('still down') };
+    expect(await env.ds.getSummary('i1')).toEqual({ status: 'unreachable', summary: null });
+    expect(env.fake.invokeCalls.filter((c) => c.name === 'summary')).toHaveLength(2);
+  });
+
+  it('getSummary does NOT retry a terminal `unavailable` (key unset)', async () => {
+    // `unavailable` (GOOGLE_API_KEY not configured) won't flip in a few hundred
+    // ms, so retrying it just delays the (empty) card — return it immediately.
+    const env = setup();
+    env.ds.summaryRetryDelayMs = 0;
+    env.fake.invokeResult.current = {
+      data: { status: 'unavailable', summary: null, retryable: true },
+      error: null,
+    };
+    expect(await env.ds.getSummary('i1')).toEqual({
+      status: 'unavailable',
+      summary: null,
+      retryable: true,
+    });
+    expect(env.fake.invokeCalls.filter((c) => c.name === 'summary')).toHaveLength(1);
+  });
+
   it('refresh invokes the edge function with the feed id', async () => {
     const env = setup();
     await env.ds.refresh('feed-a');
