@@ -131,6 +131,16 @@ const GROUPED_WINDOW_ROW_CAP = 1000;
  * device write. Keying off the last item_id can't skip an existing row. */
 const ITEM_STATE_PAGE = 1000;
 
+/** Total attempts for a summary fetch (i.e. one retry). A transient outcome — a
+ * statusless network blip / 5xx on invoke, or the server's own `unreachable`
+ * envelope — is retried once before we return it, so a single blip no longer
+ * costs the whole summary until the next reader mount. See getSummary. */
+const SUMMARY_FETCH_ATTEMPTS = 2;
+
+/** Delay between those summary-fetch attempts. Short — long enough to clear a
+ * momentary blip, short enough not to make the reader's first open feel stuck. */
+const SUMMARY_FETCH_RETRY_DELAY_MS = 800;
+
 /** How long a feed/library read on a still-empty store will WAIT for the first
  * item_state hydration before rendering anyway (with default per-row flags / a
  * library that self-heals on the hydration's store emit). Bounds the cold-cache
@@ -313,6 +323,9 @@ export class SupabaseDataSource implements DataSource {
    * server's execution order (which HTTP/2 / server queueing can reorder). */
   private hydrationChain: Promise<void> = Promise.resolve();
   private readonly outbox: ItemStateOutbox;
+  /** Delay between summary-fetch retries (see getSummary). A mutable field rather
+   * than the const directly so tests can zero it and not wait on a real timer. */
+  summaryRetryDelayMs = SUMMARY_FETCH_RETRY_DELAY_MS;
 
   constructor(stateKey = 'readmo:item-state', client?: SupabaseClient) {
     this.sb = client ?? getSupabase();
@@ -1200,6 +1213,30 @@ export class SupabaseDataSource implements DataSource {
   }
 
   async getSummary(id: ItemId): Promise<SummaryResult> {
+    // Retry a TRANSIENT failure at least once before giving up. A transient
+    // outcome is a statusless network blip / 5xx on invoke, or the server's own
+    // `unreachable` envelope (a Gemini or allowlist-read hiccup) — none of which
+    // improve the summary on this attempt but may on the next. React Query can't
+    // do this retry for us: getSummary RESOLVES `unreachable` (a query SUCCESS,
+    // not a throw), so the client retry policy (queryRetry.ts, which only retries
+    // THROWN statusless errors) never engages — so the retry lives here. Terminal
+    // outcomes (ok/empty/unavailable) return immediately; `unavailable` (the key
+    // isn't set) won't flip in a few hundred ms, so it isn't retried either.
+    let result = await this.invokeSummaryOnce(id);
+    for (
+      let attempt = 1;
+      attempt < SUMMARY_FETCH_ATTEMPTS && result.status === 'unreachable';
+      attempt++
+    ) {
+      await new Promise((r) => setTimeout(r, this.summaryRetryDelayMs));
+      result = await this.invokeSummaryOnce(id);
+    }
+    return result;
+  }
+
+  /** One attempt of the summary fetch — the invoke + status/error mapping.
+   * {@link getSummary} wraps this in a bounded transient-failure retry. */
+  private async invokeSummaryOnce(id: ItemId): Promise<SummaryResult> {
     const { data, error } = await this.sb.functions.invoke('summary', {
       body: { itemId: id },
     });

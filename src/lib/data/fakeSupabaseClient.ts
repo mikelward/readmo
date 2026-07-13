@@ -531,6 +531,11 @@ export function makeFakeSupabase(tables: FakeTables): {
   store: FakeTables;
   invokeCalls: InvokeCall[];
   invokeResult: { current: { data: unknown; error: unknown } };
+  /** A queue of results returned by successive `functions.invoke` calls, ahead of
+   * `invokeResult.current`. Push one entry per expected call to model a retry
+   * (first call fails transiently, second succeeds); once drained, invoke falls
+   * back to `invokeResult.current`. Empty by default. */
+  invokeResultQueue: Array<{ data: unknown; error: unknown }>;
   /** Make the next `select` on `table` return an error once (transient-failure
    * simulation). Pass `error` to control what's surfaced — e.g.
    * `{ code: '42703' }` to model an undefined-column / pre-migration backend. */
@@ -558,6 +563,7 @@ export function makeFakeSupabase(tables: FakeTables): {
   const invokeCalls: InvokeCall[] = [];
   const rpcCalls: Array<{ name: string; params: Record<string, unknown> }> = [];
   const invokeResult = { current: { data: null as unknown, error: null as unknown } };
+  const invokeResultQueue: Array<{ data: unknown; error: unknown }> = [];
   const control = {
     failSelectOnce: new Map<string, unknown>(),
     failUpdateOnce: new Map<string, unknown>(),
@@ -572,6 +578,7 @@ export function makeFakeSupabase(tables: FakeTables): {
     invokeCalls,
     rpcCalls,
     invokeResult,
+    invokeResultQueue,
     failSelectOnce: (table: string, error?: unknown) =>
       control.failSelectOnce.set(table, error),
     failUpdateOnce: (table: string, error?: unknown) =>
@@ -595,7 +602,7 @@ export function makeFakeSupabase(tables: FakeTables): {
           const call: InvokeCall = { name, body: opts?.body };
           if (opts?.method !== undefined) call.method = opts.method;
           invokeCalls.push(call);
-          return invokeResult.current;
+          return invokeResultQueue.length ? invokeResultQueue.shift()! : invokeResult.current;
         },
       },
     },
