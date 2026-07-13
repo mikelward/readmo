@@ -437,6 +437,21 @@ export class SupabaseDataSource implements DataSource {
     void this.outbox.flush();
     if (typeof window !== 'undefined') {
       window.addEventListener('online', () => void this.outbox.flush());
+      // Flush the moment the tab is backgrounded or torn down, so a triage
+      // toggle made right before leaving (mark done, then close the tab) is
+      // pushed out now instead of stranded in the outbox until the next boot.
+      // `visibilitychange`→hidden is the reliable teardown signal (it fires on
+      // tab switch, minimize, mobile app-backgrounding, and — unlike
+      // `beforeunload` — tab close); `pagehide` covers the bfcache/navigation
+      // path. `flushForUnload` (not the coalescing `flush`) is used so writes
+      // queued behind an in-flight slow write still start — each send is a
+      // keepalive fetch (see supabaseFetch), so it completes as the page unloads.
+      if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'hidden') this.outbox.flushForUnload();
+        });
+      }
+      window.addEventListener('pagehide', () => this.outbox.flushForUnload());
     }
   }
 

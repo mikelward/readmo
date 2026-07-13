@@ -197,6 +197,44 @@ export class ItemStateOutbox {
     void this.flush();
   }
 
+  /** Deliver one item's queued changes and reconcile the outcome into the
+   * queue/inFlight bookkeeping. Moves the entry queue→inFlight before sending
+   * (so a concurrent enqueue re-adds it with newer fields and coalescing never
+   * loses the latest action, while `inFlight` keeps it reported as pending until
+   * the send resolves), then on the result: requeues (merging any newer enqueue)
+   * on a transient failure, drops it on a permanent one, or reports it delivered.
+   * Shared by the sequential {@link flush} drain and the concurrent
+   * {@link flushForUnload} teardown so both classify a send identically. */
+  private async deliver(
+    id: ItemId,
+    changed: StampedFields,
+  ): Promise<'delivered' | 'transient' | 'permanent'> {
+    this.queue.delete(id);
+    this.inFlight.set(id, changed);
+    let result: SendResult;
+    try {
+      result = await this.send(id, changed);
+    } catch {
+      result = { ok: false, permanent: false }; // network error → transient
+    } finally {
+      this.inFlight.delete(id);
+    }
+    if (!result.ok && !result.permanent) {
+      // Transient: requeue, letting any newer enqueue (arrived during send) win
+      // per field. The write never landed.
+      const newer = this.queue.get(id);
+      this.queue.set(id, newer ? mergeStamped(changed, newer) : changed);
+      return 'transient';
+    }
+    if (result.permanent) {
+      // Lost visibility: roll back. Drop this item entirely — including any
+      // newer edits queued during the send — and re-reconcile.
+      this.queue.delete(id);
+      return 'permanent';
+    }
+    return 'delivered';
+  }
+
   /** Attempt to deliver everything queued. Safe to call repeatedly (e.g. on the
    * `online` event and at boot); a single drain runs at a time. */
   async flush(): Promise<void> {
@@ -210,34 +248,10 @@ export class ItemStateOutbox {
       for (const id of [...this.queue.keys()]) {
         const changed = this.queue.get(id);
         if (!changed) continue;
-        // Take the entry before sending. A concurrent enqueue during the await
-        // re-adds the item with the newer fields, so coalescing never loses the
-        // latest action. The entry stays visible via `inFlight` so it's still
-        // reported as pending until the send resolves.
-        this.queue.delete(id);
-        this.inFlight.set(id, changed);
-        let result: SendResult;
-        try {
-          result = await this.send(id, changed);
-        } catch {
-          result = { ok: false, permanent: false }; // network error → transient
-        } finally {
-          this.inFlight.delete(id);
-        }
-        if (!result.ok && !result.permanent) {
-          // Transient: requeue, letting any newer enqueue (arrived during send)
-          // win per field. The write never landed.
-          transient = true;
-          const newer = this.queue.get(id);
-          this.queue.set(id, newer ? mergeStamped(changed, newer) : changed);
-        } else if (result.permanent) {
-          // Lost visibility: roll back. Drop this item entirely — including any
-          // newer edits queued during the send — and re-reconcile.
-          this.queue.delete(id);
-          rejected.push(id);
-        } else {
-          delivered = true;
-        }
+        const outcome = await this.deliver(id, changed);
+        if (outcome === 'transient') transient = true;
+        else if (outcome === 'permanent') rejected.push(id);
+        else delivered = true;
         if (!this.isOnline()) break; // went offline mid-drain; keep the rest
       }
     } finally {
@@ -264,6 +278,47 @@ export class ItemStateOutbox {
       this.retryAttempt = 0;
       this.clearRetry();
     }
+  }
+
+  /** Start delivering every queued write NOW, concurrently, even if a normal
+   * drain is already in flight. Fired when the tab is hidden or unloading
+   * (`visibilitychange`→hidden / `pagehide`): the transport marks item-state
+   * writes `keepalive`, so a send started here completes even as the page tears
+   * down. Unlike {@link flush}, this deliberately bypasses the single-drain
+   * guard — a plain flush is a no-op while a slow write is draining, which would
+   * strand a second write queued behind it until the next boot (the write is
+   * still durable in localStorage, just not delivered now). Items already in
+   * flight are left alone: their keepalive request is already outstanding, and
+   * they're absent from `queue` so this never double-sends them. Fire-and-forget
+   * — teardown can't await — but each send still reconciles the queue via
+   * {@link deliver}, so a survivor (tab hidden, not closed) replays or retries
+   * normally. */
+  flushForUnload(): void {
+    if (this.queue.size === 0 || !this.isOnline()) return;
+    const rejected: ItemId[] = [];
+    let delivered = false;
+    const sends: Array<Promise<void>> = [];
+    for (const id of [...this.queue.keys()]) {
+      const changed = this.queue.get(id);
+      if (!changed) continue;
+      sends.push(
+        this.deliver(id, changed).then((outcome) => {
+          if (outcome === 'permanent') rejected.push(id);
+          else if (outcome === 'delivered') delivered = true;
+        }),
+      );
+    }
+    if (sends.length === 0) return;
+    // Persist the taken/in-flight snapshot immediately so a genuine unload still
+    // replays these on the next boot if a keepalive send doesn't land server-
+    // side. deliver() has already moved each into `inFlight`, which persist()
+    // includes.
+    this.persist();
+    void Promise.allSettled(sends).then(() => {
+      this.persist();
+      if (rejected.length > 0) this.onPermanentReject(rejected);
+      if (delivered) this.onDrained?.();
+    });
   }
 
   /** Arm a single backed-off retry after a transient failure. */

@@ -328,6 +328,33 @@ describe('supabaseFetch', () => {
     expect(getOnline()).toBe(true);
   });
 
+  it('marks the item-state write RPC keepalive so it survives tab teardown, but not other writes', async () => {
+    // A mark-done/pin fired just before the tab closes must still reach the
+    // server. keepalive lets the in-flight write outlive the page unload; the
+    // outbox owns its durability/retry, so no read cap applies either way.
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response('{}', { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await supabaseFetch('https://x.supabase.co/rest/v1/rpc/set_item_state', {
+      method: 'POST',
+      body: '{}',
+    });
+    // A different write (unsubscribe) is not marked keepalive.
+    await supabaseFetch('https://x.supabase.co/rest/v1/subscriptions?id=eq.1', {
+      method: 'DELETE',
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'https://x.supabase.co/rest/v1/rpc/set_item_state',
+      expect.objectContaining({ keepalive: true }),
+    );
+    expect(fetchMock.mock.calls[1][1]).not.toHaveProperty('keepalive', true);
+  });
+
   it('forwards a caller abort without treating it as a connectivity drop', async () => {
     vi.stubGlobal('fetch', hangingFetch());
 

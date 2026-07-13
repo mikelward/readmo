@@ -177,6 +177,62 @@ describe('ItemStateOutbox', () => {
     expect(outbox.pendingIds()).toEqual([]);
   });
 
+  it('flushForUnload delivers all queued writes concurrently', async () => {
+    h.setOnline(false);
+    h.outbox.enqueue('a', { done: true }, 1000);
+    h.outbox.enqueue('b', { pinned: true }, 2000);
+    await tick();
+    expect(h.sent).toEqual([]); // offline: queued only
+
+    h.setOnline(true);
+    h.outbox.flushForUnload();
+    await tick();
+    expect(h.sent.map(([id]) => id).sort()).toEqual(['a', 'b']);
+    expect(h.outbox.pendingIds()).toEqual([]);
+  });
+
+  it('flushForUnload starts a write queued behind an in-flight slow drain', async () => {
+    // The teardown race: item A's send is slow (a keepalive RPC still open),
+    // item B is toggled and sits queued behind it, then the tab closes. A plain
+    // flush() no-ops while A drains, stranding B until the next boot; flushForUnload
+    // must start B's send now so keepalive can carry it out.
+    let releaseA!: () => void;
+    const gateA = new Promise<void>((r) => (releaseA = r));
+    const sent: string[] = [];
+    const outbox = new ItemStateOutbox(
+      async (id) => {
+        sent.push(id);
+        if (id === 'a') await gateA; // hold A's send open (slow keepalive RPC)
+        return { ok: true };
+      },
+      memPersistence(),
+      () => true,
+      () => {},
+    );
+    outbox.enqueue('a', { done: true }, 1000); // drain takes A, awaits gateA
+    await tick();
+    expect(sent).toEqual(['a']);
+
+    outbox.enqueue('b', { pinned: true }, 2000); // queued behind the in-flight A
+    // A plain flush would no-op here (draining) — verify the teardown path does not.
+    outbox.flushForUnload();
+    await tick();
+    expect(sent).toEqual(['a', 'b']); // B started despite the in-flight drain
+    expect(outbox.pendingChanges().get('b')).toBeUndefined();
+
+    releaseA();
+    await tick();
+    expect(outbox.pendingIds()).toEqual([]);
+  });
+
+  it('flushForUnload is a no-op while offline', () => {
+    h.setOnline(false);
+    h.outbox.enqueue('a', { done: true }, 1000);
+    h.outbox.flushForUnload();
+    expect(h.sent).toEqual([]);
+    expect(h.outbox.pendingIds()).toEqual(['a']); // still queued for next boot
+  });
+
   it('drops a permanently-rejected write and notifies for re-reconcile', async () => {
     h.setResult({ ok: false, permanent: true }); // lost visibility (42501)
     h.outbox.enqueue('a', { pinned: true }, 1000);
