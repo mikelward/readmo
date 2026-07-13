@@ -451,10 +451,16 @@ here).
   echo), and a pulled pin also warms its offline cache like a local pin.
   **Handoff "syncing" state.** When you open a story *on newshacker* (without
   mark-done-on-open), Readmo remembers that card and shows a **syncing spinner in
-  its right slot** on return, until the next pull resolves it — struck if you
-  marked it done over there, otherwise the plain opened fade. The marker persists
-  across the same-tab hop to newshacker and back, and a failsafe drops it if the
-  pull never lands.
+  its right slot** on return, until that story's outcome is actually observed —
+  struck if you marked it done over there, otherwise the plain opened fade. The
+  spinner resolves on evidence, not on the first pull's completion: the return
+  pull races newshacker's own just-flushed upload, so when a pull comes back
+  with the story unchanged, Readmo re-pulls a couple of times over the next
+  ~1.5 s before accepting "no change over there" as the answer. A pull that
+  *fails* (offline, backend down) resolves nothing — the spinner stays armed for
+  the next focus/reconnect/pull-to-refresh. The marker persists across the
+  same-tab hop to newshacker and back, and a failsafe drops it if no pull ever
+  resolves it.
   **Limitation:** a pulled pin can only attach to an item still present in Readmo
   (a subscribed HN feed's item inside the freshness window); a pin for a story
   that has aged out has no item to hang on and is skipped — pins are permanent on
@@ -467,7 +473,8 @@ here).
   Supabase Edge Function runtime and one small first-party call to newshacker per
   debounced batch of HN Done/Pinned changes (push) plus one on app open, tab
   focus/reconnect, and each pull-to-refresh (pull) — all coalesced with the
-  existing item-state resync cadence. **Negligible.** Failure mode: the sync
+  existing item-state resync cadence, plus at most two short-spaced follow-up
+  pulls per handoff return while a syncing card is unresolved. **Negligible.** Failure mode: the sync
   no-ops; Readmo is unaffected.
   **Manual deploy:** `make migrate` (0050, 0062, 0063) + `make deploy` (the
   `newshacker-sync` function) — and newshacker's app-token endpoint must be live

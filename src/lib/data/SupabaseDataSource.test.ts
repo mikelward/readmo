@@ -1511,13 +1511,31 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(resync).not.toHaveBeenCalled();
   });
 
-  it('pullNewshackerState reports unlinked on a function error and skips re-hydrate', async () => {
+  it('pullNewshackerState reports unlinked + not-ok on a function error and skips re-hydrate', async () => {
     const env = setup();
     env.fake.invokeResult.current = { data: null, error: { message: 'boom' } };
     const resync = vi.spyOn(env.ds, 'resyncState').mockResolvedValue();
     const res = await env.ds.pullNewshackerState();
-    expect(res).toEqual({ linked: false, applied: 0 });
+    expect(res).toEqual({ linked: false, applied: 0, ok: false });
     expect(resync).not.toHaveBeenCalled();
+  });
+
+  it('pullNewshackerState passes the Edge ok flag through verbatim', async () => {
+    const env = setup();
+    // Backend reached, newshacker not: the Edge soft-fails to 200 with ok:false.
+    env.fake.invokeResult.current = {
+      data: { linked: true, applied: 0, ok: false },
+      error: null,
+    };
+    const res = await env.ds.pullNewshackerState();
+    expect(res).toEqual({ linked: true, applied: 0, ok: false });
+  });
+
+  it('pullNewshackerState leaves ok undefined when an older backend omits it', async () => {
+    const env = setup();
+    env.fake.invokeResult.current = { data: { linked: true, applied: 0 }, error: null };
+    const res = await env.ds.pullNewshackerState();
+    expect(res.ok).toBeUndefined();
   });
 
   it('getCapabilities rethrows an error instead of caching all-false', async () => {

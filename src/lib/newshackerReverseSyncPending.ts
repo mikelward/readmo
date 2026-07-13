@@ -94,10 +94,41 @@ export function isReverseSyncPending(id: ItemId): boolean {
   return true;
 }
 
-/** Clear every pending marker — call once a reverse pull completes, since one
- * pull reconciles the full newshacker Done/Pinned state, so every pending id's
- * outcome (done → grayed in place, else the opened fade) is now known. No-op
- * when empty. */
+/** The ids still awaiting reverse-sync resolution, dropping (and pruning) any
+ * marker past the max-age failsafe. */
+export function getReverseSyncPendingIds(): ItemId[] {
+  const map = load();
+  const cutoff = Date.now() - MAX_AGE_MS;
+  let pruned = false;
+  for (const [id, at] of map) {
+    if (at < cutoff) {
+      map.delete(id);
+      pruned = true;
+    }
+  }
+  if (pruned) {
+    persist();
+    emit();
+  }
+  return [...map.keys()];
+}
+
+/** Resolve one item's pending marker — call when the reverse-pull coordinator
+ * has OBSERVED this item's outcome (its pull-visible state changed across a
+ * pull, or the retry ladder ended with a clean "no change" answer). No-op for
+ * an unknown id. */
+export function resolveReverseSyncPending(id: ItemId): void {
+  const map = load();
+  if (!map.delete(id)) return;
+  persist();
+  emit();
+}
+
+/** Clear every pending marker. The reverse-pull coordinator calls this when
+ * its retry ladder completes with pulls succeeding and the surviving items'
+ * state unchanged — newshacker's answer is "nothing changed", so every card
+ * can settle (done → grayed in place, else the opened fade). Also used to
+ * drop stale markers wholesale on account switch / unlink. No-op when empty. */
 export function clearAllReverseSyncPending(): void {
   const map = load();
   if (map.size === 0) return;

@@ -162,12 +162,20 @@ async function handlePush(req: Request, token: string | undefined): Promise<Resp
 
 /** GET: pull newshacker's own Done + Pinned lists and apply them to the caller's
  * item_state (reverse sync). Runs the RPC as the caller (userClient) so
- * auth.uid() is the account and RLS applies. Best-effort throughout. */
+ * auth.uid() is the account and RLS applies. Best-effort throughout.
+ *
+ * `ok` reports whether the round-trip actually CONSULTED newshacker and
+ * applied its lists — false when the outbound fetch failed/non-2xx or the
+ * apply RPC errored. The client's reverse-pull coordinator needs the
+ * distinction: an "applied: 0" from a newshacker outage must not be read as
+ * "newshacker answered: nothing changed", or a handoff card's syncing marker
+ * would settle on an answer nobody gave. Additive — an older client simply
+ * ignores the field. */
 async function handlePull(
   userClient: ReturnType<typeof createClient>,
   token: string | undefined,
 ): Promise<Response> {
-  if (!token) return json({ linked: false, applied: 0 });
+  if (!token) return json({ linked: false, applied: 0, ok: true });
 
   // Fetch newshacker's full sync state via its bearer branch, then keep the
   // Done + Pinned lists.
@@ -181,18 +189,18 @@ async function handlePull(
       headers: { Authorization: `Bearer ${token}` },
       signal: controller.signal,
     });
-    if (!res.ok) return json({ linked: true, applied: 0 });
+    if (!res.ok) return json({ linked: true, applied: 0, ok: false });
     const body = await res.json();
     dones = extractDoneEntries(body, PULL_MAX);
     pins = extractPinnedEntries(body, PULL_MAX);
   } catch (err) {
     console.error('newshacker-sync: pull fetch failed:', err instanceof Error ? err.message : err);
-    return json({ linked: true, applied: 0 });
+    return json({ linked: true, applied: 0, ok: false });
   } finally {
     clearTimeout(timer);
   }
   if (dones.length === 0 && pins.length === 0) {
-    return json({ linked: true, applied: 0 });
+    return json({ linked: true, applied: 0, ok: true });
   }
 
   const { data, error } = await userClient.rpc('apply_newshacker_state', {
@@ -206,12 +214,14 @@ async function handlePull(
       const { data: d2, error: e2 } = await userClient.rpc('apply_newshacker_dones', {
         p_entries: dones,
       });
-      if (!e2) return json({ linked: true, applied: typeof d2 === 'number' ? d2 : 0 });
+      if (!e2) {
+        return json({ linked: true, applied: typeof d2 === 'number' ? d2 : 0, ok: true });
+      }
       console.error('newshacker-sync: apply (fallback) failed:', e2.message);
-      return json({ linked: true, applied: 0 });
+      return json({ linked: true, applied: 0, ok: false });
     }
     console.error('newshacker-sync: apply failed:', error.message);
-    return json({ linked: true, applied: 0 });
+    return json({ linked: true, applied: 0, ok: false });
   }
-  return json({ linked: true, applied: typeof data === 'number' ? data : 0 });
+  return json({ linked: true, applied: typeof data === 'number' ? data : 0, ok: true });
 }

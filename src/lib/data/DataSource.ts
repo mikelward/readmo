@@ -418,9 +418,15 @@ export interface DataSource {
    * reverse pull). Best-effort — never throws; returns `{ linked:false,
    * applied:0 }` when unlinked, unsupported, or on any failure. When it applied
    * anything it re-hydrates local state so the feed reflects it (hydration never
-   * fires the outbound mirror, so there's no echo). Optional — a source without
-   * it, or an old backend missing the RPC, simply pulls nothing. */
-  pullNewshackerState?(): Promise<{ linked: boolean; applied: number }>;
+   * fires the outbound mirror, so there's no echo). `ok` distinguishes
+   * "newshacker was consulted and its lists applied" (true) from "the backend
+   * couldn't reach newshacker / couldn't apply" (false) — `applied: 0` alone
+   * can't tell "nothing changed over there" from "nobody answered", and the
+   * reverse-pull coordinator must not settle a handoff card on the latter.
+   * Undefined on a backend predating the flag (callers should treat that as
+   * consulted). Optional — a source without it, or an old backend missing the
+   * RPC, simply pulls nothing. */
+  pullNewshackerState?(): Promise<{ linked: boolean; applied: number; ok?: boolean }>;
 
   // --- OPML -----------------------------------------------------------------
   importOpml(xml: string): Promise<{ added: number; skipped: number }>;

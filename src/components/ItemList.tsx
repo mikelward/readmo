@@ -20,7 +20,7 @@ import { useHideOnScroll, useBottomBarPosition } from '../hooks/useReadingPrefs'
 import { useCollapsedFeeds } from '../hooks/useCollapsedFeeds';
 import { useTopChromeHeight } from '../hooks/useTopChromeHeight';
 import { useNewshackerLink } from '../hooks/useNewshackerLink';
-import { clearAllReverseSyncPending } from '../lib/newshackerReverseSyncPending';
+import { requestReversePull } from '../lib/newshackerReversePull';
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav';
 import type { FeedId, FeedItem, ItemId } from '../lib/types';
 import { placeStayInBodyPins } from '../lib/feedOrder';
@@ -3194,11 +3194,17 @@ export function ItemList({
           // hydrated — so the refetch would miss the reverse-sync results (e.g.
           // out-of-window pins). allSettled waits for the pull to finish first.
           {
+            // The reverse pull goes through the coordinator: it owns the
+            // open-on-newshacker "syncing" markers (resolving each only once
+            // its item's outcome is observed, retrying briefly when the first
+            // pull races newshacker's own upload), and its promise settles
+            // after the FIRST pull attempt so the refetch below isn't held
+            // hostage by the retry ladder.
             const [refreshResult] = await Promise.allSettled([
               ds.refresh(),
               ds.resyncState(true),
               newshackerLinked && ds.pullNewshackerState
-                ? ds.pullNewshackerState()
+                ? requestReversePull(ds)
                 : Promise.resolve(),
             ]);
             if (refreshResult.status === 'rejected') {
@@ -3208,10 +3214,6 @@ export function ItemList({
               );
             }
           }
-          // The pull (success or fail) resolves any open-on-newshacker "syncing"
-          // spinners — a completed reverse pull reconciles the full newshacker
-          // state, so each pending card's outcome is now known.
-          clearAllReverseSyncPending();
           // React Query's `refetch()` resolves with the new result rather
           // than throwing on error, so a failed refresh would otherwise
           // proceed to clear sticky/extras against the stale cached page —

@@ -7,7 +7,7 @@ import {
   type MirrorChange,
 } from '../lib/newshackerSync';
 import { consumeDoneMirrorSuppression } from '../lib/newshackerMirrorSuppress';
-import { clearAllReverseSyncPending } from '../lib/newshackerReverseSyncPending';
+import { requestReversePull } from '../lib/newshackerReversePull';
 import { recallHackerNewsItemId } from '../lib/newshackerItemIds';
 import type { ItemId } from '../lib/types';
 
@@ -124,28 +124,21 @@ export function useNewshackerSync(): void {
   // grays a now-Done row IN PLACE via the ItemList overlay rather than reflowing
   // the list (cross-device-dismiss behavior), so a focus sync never yanks rows
   // out from under the reader. A pulled pin also warms its offline cache via
-  // useOfflineCacheLock. Each completed pull clears the reverse-sync "pending"
-  // markers, resolving any open-on-newshacker "syncing" spinner (→ struck if the
-  // item is now Done, else the opened fade).
+  // useOfflineCacheLock.
+  //
+  // The open-on-newshacker "syncing" markers are owned by the reverse-pull
+  // coordinator (lib/newshackerReversePull): a marker resolves only once its
+  // item's outcome is actually observed, with a short retry ladder to outwait
+  // newshacker's own upload racing our return-focus pull — not on the first
+  // pull's completion regardless of what it saw.
   useEffect(() => {
     if (!linked) return;
-    const pull = ds.pullNewshackerState?.bind(ds);
-    if (!pull) return;
-    // Coalesce overlapping pulls: a single tab return can dispatch BOTH `focus`
-    // and `visibilitychange`, and the Edge GET isn't itself deduped — so guard on
-    // an in-flight flag to issue one pull per return, not two.
-    let pulling = false;
+    if (!ds.pullNewshackerState) return;
+    // The coordinator coalesces overlapping calls: a single tab return can
+    // dispatch BOTH `focus` and `visibilitychange`, and the Edge GET isn't
+    // itself deduped.
     const run = () => {
-      if (pulling) return;
-      pulling = true;
-      void pull()
-        .catch(() => {
-          // best-effort; the local state is authoritative.
-        })
-        .then(() => {
-          pulling = false;
-          clearAllReverseSyncPending();
-        });
+      void requestReversePull(ds);
     };
     run();
     const onFocus = () => {

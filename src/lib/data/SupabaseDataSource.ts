@@ -740,20 +740,31 @@ export class SupabaseDataSource implements DataSource {
    * Swallows every failure (signed out, function/RPC not deployed, unlinked,
    * newshacker down); the local state stays authoritative. The re-hydrate goes
    * through the store's `hydrate` path, which never fires the mutation mirror, so
-   * a pulled Done/pin is not echoed back out to newshacker. */
-  async pullNewshackerState(): Promise<{ linked: boolean; applied: number }> {
+   * a pulled Done/pin is not echoed back out to newshacker.
+   *
+   * `ok` passes through the Edge Function's consulted-newshacker signal
+   * verbatim when present (false = the backend couldn't reach newshacker or
+   * couldn't apply — see DataSource.pullNewshackerState); undefined on a
+   * not-yet-redeployed backend that doesn't send it. */
+  async pullNewshackerState(): Promise<{
+    linked: boolean;
+    applied: number;
+    ok?: boolean;
+  }> {
     let linked = false;
     let applied = 0;
+    let ok: boolean | undefined;
     try {
       const { data, error } = await this.sb.functions.invoke('newshacker-sync', {
         method: 'GET',
       });
-      if (error) return { linked: false, applied: 0 };
-      const d = (data ?? {}) as { linked?: unknown; applied?: unknown };
+      if (error) return { linked: false, applied: 0, ok: false };
+      const d = (data ?? {}) as { linked?: unknown; applied?: unknown; ok?: unknown };
       linked = d.linked === true;
       applied = typeof d.applied === 'number' && d.applied > 0 ? d.applied : 0;
+      if (typeof d.ok === 'boolean') ok = d.ok;
     } catch {
-      return { linked: false, applied: 0 };
+      return { linked: false, applied: 0, ok: false };
     }
     if (applied > 0) {
       // force: a focus-time resync (useStateSync) may already be in flight, and
@@ -765,7 +776,7 @@ export class SupabaseDataSource implements DataSource {
         // just means the local view catches up on the next read/resync.
       });
     }
-    return { linked, applied };
+    return { linked, applied, ok };
   }
 
   /** Memoized hydration, used by every read: once it has succeeded, reads return
