@@ -5803,6 +5803,127 @@ describe('ItemList', () => {
       expect(order()).toEqual(['A-0', 'A-1', 'A-2']);
     });
 
+    it('keeps a promoted pin in its section-leading slot when a reverse pull marks it Done', async () => {
+      // Reported live: a pinned article marked Done on newshacker was, after
+      // reconciliation (hydrate flips done:true and unpins via the exclusivity
+      // closure), re-seated below the remaining pinned rows — the grouped
+      // build's pinned-first pass reads live pin state, so losing the pin
+      // dropped the row into the body window. The dismissed-in-place rule
+      // exists precisely so the row does NOT move: it must keep its promoted
+      // slot, struck in place, until it leaves the screen or the view rebuilds.
+      installIntersectionObserverMock();
+      try {
+        const { source, mk } = await makeRows();
+        // Real clocks: `done` is retention-pruned on read past its TTL, so an
+        // epoch-adjacent doneAt would silently evaporate in stateStore.get().
+        const t0 = Date.now();
+        // Two load-time pins (A-0, A-1) ahead of a body row: the target A-0
+        // leads the section, so a regression re-seats it BELOW A-1.
+        source.stateStore.hydrate([
+          ['A-0', { ...DEFAULT_ITEM_STATE, pinned: true, pinnedAt: t0 - 2000 }],
+          ['A-1', { ...DEFAULT_ITEM_STATE, pinned: true, pinnedAt: t0 - 1000 }],
+        ]);
+        const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2)];
+        const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
+        renderWithProviders(
+          <ItemList
+            viewKey={`psm-donepin-${viewKeySeq++}`}
+            fetchPage={fetchPage}
+            emptyLabel="x"
+            groupByFeed
+            perFeedLimit={3}
+          />,
+          { source },
+        );
+        await screen.findAllByTestId('item-row');
+        const order = () =>
+          [...document.querySelectorAll('[data-item-id]')].map((el) =>
+            el.getAttribute('data-item-id'),
+          );
+        expect(order()).toEqual(['A-0', 'A-1', 'A-2']);
+
+        // The reverse pull lands: A-0 Done on newshacker, unpinned by the
+        // exclusivity closure, re-hydrated from the server. Hydrate is a
+        // WHOLESALE replace (a full item_state read), so the batch carries the
+        // still-pinned A-1 too — dropping it would wipe A-1's pin and mask the
+        // demotion this test exists to catch.
+        act(() => {
+          source.stateStore.hydrate([
+            [
+              'A-0',
+              {
+                ...DEFAULT_ITEM_STATE,
+                done: true,
+                doneAt: t0,
+                pinned: false,
+                pinnedAt: t0,
+              },
+            ],
+            ['A-1', { ...DEFAULT_ITEM_STATE, pinned: true, pinnedAt: t0 - 1000 }],
+          ]);
+        });
+
+        // Struck in place: same slot, grayed — not re-seated below A-1.
+        await waitFor(() => {
+          const row = document.querySelector('[data-item-id="A-0"]') as HTMLElement;
+          expect(row.classList.contains('item-list__row--dismissed')).toBe(true);
+        });
+        expect(order()).toEqual(['A-0', 'A-1', 'A-2']);
+      } finally {
+        uninstallIntersectionObserverMock();
+      }
+    });
+
+    it('re-seats a promoted pin into the body on a plain cross-device unpin', async () => {
+      // The hold above is ONLY for dismissals shown in place. A plain unpin
+      // (no Done/Hidden) has nothing to hold for — the row returns to the
+      // body window, as before.
+      installIntersectionObserverMock();
+      try {
+        const { source, mk } = await makeRows();
+        source.stateStore.hydrate([
+          ['A-0', { ...DEFAULT_ITEM_STATE, pinned: true, pinnedAt: 1000 }],
+        ]);
+        const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2)];
+        const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
+        renderWithProviders(
+          <ItemList
+            viewKey={`psm-unpin-${viewKeySeq++}`}
+            fetchPage={fetchPage}
+            emptyLabel="x"
+            groupByFeed
+            perFeedLimit={3}
+          />,
+          { source },
+        );
+        await screen.findAllByTestId('item-row');
+        const order = () =>
+          [...document.querySelectorAll('[data-item-id]')].map((el) =>
+            el.getAttribute('data-item-id'),
+          );
+        expect(order()).toEqual(['A-0', 'A-1', 'A-2']);
+
+        act(() => {
+          source.stateStore.hydrate([
+            ['A-0', { ...DEFAULT_ITEM_STATE, pinned: false, pinnedAt: 2000 }],
+          ]);
+        });
+
+        await waitFor(() => {
+          const row = document.querySelector('[data-item-id="A-0"]') as HTMLElement;
+          expect(within(row).getByTestId('pin-btn')).toHaveAttribute(
+            'aria-pressed',
+            'false',
+          );
+        });
+        // Not dismissed, not held — order comes from the sticky window as usual.
+        const row = document.querySelector('[data-item-id="A-0"]') as HTMLElement;
+        expect(row.classList.contains('item-list__row--dismissed')).toBe(false);
+      } finally {
+        uninstallIntersectionObserverMock();
+      }
+    });
+
     it('keeps a pinned row visible in a grouped section even when it is also Done (pin wins, no phantom)', async () => {
       // The reported live bug: a pinned article also marked Done locally (pinned,
       // then opened on a mark-done-on-open feed) was dropped by the feed's

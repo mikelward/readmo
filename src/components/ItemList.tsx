@@ -1064,6 +1064,12 @@ export function ItemList({
   // once-per-id; both reset on a view change / PTR (a re-materialize).
   const basePinnedRef = useRef<Set<ItemId>>(new Set());
   const seenForBaseRef = useRef<Set<ItemId>>(new Set());
+  // Ids currently occupying a promoted (section-leading) pin slot in the
+  // grouped windowed build. Tracked so a promoted pin that a reverse pull /
+  // cross-device dismissal flips to Done|Hidden (unpinning it via the
+  // exclusivity closure) can KEEP its slot while the dismissal is shown
+  // struck in place — see promotablePin in the mergedRaw build.
+  const promotedPinsRef = useRef<Set<ItemId>>(new Set());
 
   // Per-feed sticky display window: the set of item ids the user has committed
   // to viewing in this section. Initialized from the first base read for each
@@ -1177,6 +1183,7 @@ export function ItemList({
       localDismissedIdsRef.current = new Set();
       basePinnedRef.current = new Set();
       seenForBaseRef.current = new Set();
+      promotedPinsRef.current = new Set();
     }
   }, [viewKey]);
 
@@ -1250,6 +1257,10 @@ export function ItemList({
     }
     seenForBaseRef.current = seen;
     basePinnedRef.current = basePinned;
+    // A repaint is the natural end of any dismissed-in-place hold: the fresh
+    // sections seat from the new read, so a struck ex-pin releases its
+    // promoted slot here rather than surviving into the rebuilt view.
+    promotedPinsRef.current = new Set();
   }, [isFetching, error, items, ds]);
 
   // Initialize the sticky display window for any feed seen in `items` that
@@ -1512,10 +1523,29 @@ export function ItemList({
       //     was in the set unpinned, so it was never baselined) — the gap the old
       //     stayInBodyIds-only gate left open (Codex P2 on #411), which jumped a
       //     cross-device pin to the top.
-      const promotablePin = (fi: FeedItem): boolean =>
-        ds.stateStore.get(fi.item.id).pinned &&
-        basePinnedRef.current.has(fi.item.id) &&
-        !stayInBodyIds.has(fi.item.id);
+      const promotablePin = (fi: FeedItem): boolean => {
+        const id = fi.item.id;
+        const st = ds.stateStore.get(id);
+        if (st.pinned && basePinnedRef.current.has(id) && !stayInBodyIds.has(id)) {
+          promotedPinsRef.current.add(id);
+          return true;
+        }
+        if (promotedPinsRef.current.has(id)) {
+          // A promoted pin that just flipped to Done|Hidden (a reverse-pull /
+          // cross-device dismissal, whose exclusivity closure also unpinned
+          // it) keeps its section-leading slot: the row is being shown struck
+          // IN PLACE by the visibleItems overlay, and re-seating it into the
+          // body window would move it mid-gaze — the exact jump the
+          // dismissed-in-place rule exists to prevent. The hold is display-
+          // only and ends when the row stops being displayed (off-screen
+          // commit, or a rebuild that drops it from the loaded set); a plain
+          // unpin (no dismissal to hold for) releases immediately and the row
+          // re-seats into the body as before.
+          if (!st.pinned && (st.done || st.hidden)) return true;
+          promotedPinsRef.current.delete(id);
+        }
+        return false;
+      };
       // Pinned-first pass over the WHOLE base run — not just `allowed` — so a pin
       // sitting outside the position window still leads its section. Without this,
       // a pin the window doesn't cover (an older pin, a local pin the server still
@@ -3249,6 +3279,7 @@ export function ItemList({
           // stays at — its section top. Mirrors the view-change reset.
           seenForBaseRef.current = new Set();
           basePinnedRef.current = new Set();
+          promotedPinsRef.current = new Set();
           // …and compacts grayed cross-device dismisses (the refetch also drops
           // them server-side, so this just clears the in-session bookkeeping;
           // `onScreenIdsRef` is re-derived by the observer as the fresh rows
