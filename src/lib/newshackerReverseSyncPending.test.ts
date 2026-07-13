@@ -3,6 +3,8 @@ import {
   markReverseSyncPending,
   isReverseSyncPending,
   clearAllReverseSyncPending,
+  getReverseSyncPendingIds,
+  resolveReverseSyncPending,
   subscribeReverseSyncPending,
   _resetReverseSyncPendingForTests,
 } from './newshackerReverseSyncPending';
@@ -59,6 +61,36 @@ describe('newshackerReverseSyncPending', () => {
     clearAllReverseSyncPending();
     expect(cb).toHaveBeenCalledTimes(2);
     unsub();
+  });
+
+  it('resolves a single marker, leaving the others pending', () => {
+    const cb = vi.fn();
+    const unsub = subscribeReverseSyncPending(cb);
+    markReverseSyncPending('a');
+    markReverseSyncPending('b');
+    resolveReverseSyncPending('a');
+    expect(isReverseSyncPending('a')).toBe(false);
+    expect(isReverseSyncPending('b')).toBe(true);
+    expect(cb).toHaveBeenCalledTimes(3); // two marks + one resolve
+    // Resolving an unknown id is a silent no-op.
+    resolveReverseSyncPending('nope');
+    expect(cb).toHaveBeenCalledTimes(3);
+    unsub();
+  });
+
+  it('lists pending ids, pruning expired markers as it goes', () => {
+    sessionStorage.setItem(
+      KEY,
+      JSON.stringify([
+        { id: 'stale', at: Date.now() - 31 * 60 * 1000 },
+        { id: 'fresh', at: Date.now() },
+      ]),
+    );
+    _resetReverseSyncPendingForTests();
+    expect(getReverseSyncPendingIds()).toEqual(['fresh']);
+    // The prune persisted: the stale marker is gone from storage too.
+    _resetReverseSyncPendingForTests();
+    expect(getReverseSyncPendingIds()).toEqual(['fresh']);
   });
 
   it('tolerates unavailable/corrupt storage', () => {

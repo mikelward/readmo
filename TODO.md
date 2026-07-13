@@ -179,6 +179,27 @@ constraint is documented in more detail.
   tolerant of the count-only backend until it lands. See SPEC.md §"Per-feed
   unread count" and PR #194.
 
+## newshacker mirror
+
+- **Event-driven newshacker → Readmo push (webhook + Realtime).** Deliberately
+  deferred (2026-07): with newshacker's flush-on-hide upload and the cheap
+  set-based reverse pull on every focus/PTR, pull-on-focus covers the
+  single-device flow — staleness is only observable when the user looks at
+  Readmo, which is exactly what triggers the pull. The two gaps pull can't
+  close, and what each half buys if they ever matter: (1) *the handoff race*
+  (return-focus pull vs newshacker's just-flushed upload) — mitigated by the
+  PR #496 retry ladder; fully removed only by a webhook from newshacker's
+  `/api/sync` POST handler to a new Readmo Edge Function (auth: the same
+  linked bearer token; best-effort, the pull stays the reconciler);
+  (2) *two screens visible at once* (Readmo already open + focused while
+  triaging on newshacker elsewhere — no focus event ever fires) — needs
+  Supabase Realtime on `item_state` (free tier: 200 concurrent connections,
+  2M messages/mo — family-scale is nothing), which also gives
+  Readmo↔Readmo cross-device instant updates on its own and is the half to
+  build first. Rejected shape: a long-poll/pubsub endpoint on newshacker —
+  Readmo's client can't hold the newshacker token (server-only by design),
+  and Supabase Realtime already is the pubsub.
+
 ## Server / batch query limits
 
 - **Decide whether `service_role` (poll / refresh / import batch) needs an
