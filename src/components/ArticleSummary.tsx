@@ -6,10 +6,11 @@ import './ArticleSummary.css';
 interface ArticleSummaryProps {
   id: ItemId;
   online: boolean;
-  /** Whether the article was pinned before opening. Pinned → summarize
-   * automatically (it's the "I'll read this" signal the prewarm acts on);
-   * unpinned → offer a "Generate summary" button instead, so a casual open
-   * doesn't spend a Gemini/Jina call. */
+  /** Whether to summarize automatically: the article was pinned before opening
+   * (the "I'll read this" signal the prewarm acts on) AND the auto-summarize
+   * setting is on. Otherwise offer a "Generate summary" button instead, so a
+   * casual open — or a pinned open with the setting off — doesn't spend a
+   * Gemini/Jina call. */
   autoGenerate: boolean;
   /** The summary already delivered ON the item row (the allowlisted ride-along
    * from `feed_items`, 0058). When present it renders instantly — no Edge call,

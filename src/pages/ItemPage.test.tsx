@@ -12,6 +12,10 @@ import { DataSourceProvider } from '../lib/data/context';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import { _resetNetworkStatusForTests, trackedFetch } from '../lib/networkStatus';
 import { CAPABILITIES_QUERY_KEY } from '../hooks/useCapabilities';
+import {
+  AUTO_SUMMARIZE_PINNED_KEY,
+  resetReadingPrefsCacheForTest,
+} from '../hooks/useReadingPrefs';
 import type { Feed, FeedItem, Item, ItemId } from '../lib/types';
 import type { Capabilities } from '../lib/data/DataSource';
 import type { FullTextResult } from '../lib/fullText';
@@ -139,6 +143,8 @@ function mockLocationAssign() {
 afterEach(() => {
   setOnline(true);
   _resetNetworkStatusForTests();
+  window.localStorage.removeItem(AUTO_SUMMARIZE_PINNED_KEY);
+  resetReadingPrefsCacheForTest();
 });
 
 describe('ItemPage (reader)', () => {
@@ -231,6 +237,36 @@ describe('ItemPage (reader)', () => {
     await userEvent.click(screen.getByTestId('go-item-2'));
     expect(await screen.findByTestId('article-summary-generate')).toBeInTheDocument();
     expect(calledFor).not.toContain('item-2');
+  });
+
+  it('offers the Generate button (no auto-generation) for a pinned open when auto-summarize is off', async () => {
+    // The "Auto generate summaries for pinned articles" toggle gates the
+    // reader's pinned auto-generation, not just the pre-warm: with it off, a
+    // pinned open behaves like an unpinned one — a Generate button, zero
+    // getSummary calls, no "Summarizing…" flash.
+    window.localStorage.setItem(AUTO_SUMMARIZE_PINNED_KEY, '0');
+    resetReadingPrefsCacheForTest();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    source.stateStore.set('item-1', 'pinned', true); // pinned before opening
+    const calledFor: string[] = [];
+    const orig = source.getSummary.bind(source);
+    source.getSummary = (id) => {
+      calledFor.push(id);
+      return orig(id);
+    };
+
+    renderReader(source, 'item-1');
+
+    expect(await screen.findByTestId('article-summary-generate')).toBeInTheDocument();
+    expect(screen.queryByTestId('article-summary-loading')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('article-summary-body')).not.toBeInTheDocument();
+    expect(calledFor).toHaveLength(0);
+
+    // The button still works — auto-summarize off gates the automatic spend,
+    // not the user's explicit ask.
+    await userEvent.click(screen.getByTestId('article-summary-generate'));
+    await screen.findByTestId('article-summary-body');
+    expect(calledFor).toEqual(['item-1']);
   });
 
   it('shows the list-row summary instantly when its content still matches the fresh item', async () => {
