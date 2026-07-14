@@ -218,6 +218,106 @@ describe('useSummaryPrewarm', () => {
     expect(source.summaryCalls).toBe(2);
   });
 
+  it('keeps retrying a pin whose summary is not ready yet, until it settles', async () => {
+    // The durability fix: after a pin, the server may still be generating the
+    // summary in the background (the pin trigger downloads the full article
+    // first). The warm keeps polling on a bounded backoff — no external trigger
+    // needed — so the summary lands in the cache (durable offline) once ready.
+    vi.useFakeTimers();
+    try {
+      class NotReadyThenOk extends MockDataSource {
+        summaryCalls = 0;
+        async getSummary(): Promise<SummaryResult> {
+          this.summaryCalls += 1;
+          // Not ready on the first two tries, then the background generation
+          // completes and the fetch returns the summary.
+          return this.summaryCalls < 3
+            ? { status: 'unreachable', summary: null }
+            : { status: 'ok', summary: 'Ready now.' };
+        }
+      }
+      const source = new NotReadyThenOk(`test-${Math.random()}`);
+      const qc = setup(source);
+
+      source.stateStore.set(ID, 'pinned', true);
+      // First (immediate) attempt — still generating.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(source.summaryCalls).toBe(1);
+
+      // Backoff #1 (~2 s) → second attempt, still not ready.
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(source.summaryCalls).toBe(2);
+
+      // Backoff #2 (~4 s) → third attempt succeeds and settles into the cache.
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(source.summaryCalls).toBe(3);
+      expect(qc.getQueryData(summaryQueryKey(ID))).toMatchObject({ status: 'ok' });
+
+      // Settled → the loop stops; no further polling.
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(source.summaryCalls).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops the retry loop after a bounded number of attempts', async () => {
+    // A genuinely-down summary service must not poll forever — the backoff is
+    // capped (SUMMARY_WARM_MAX_RETRIES) so it gives up and leaves the pin to an
+    // external trigger (reconnect / foreground) rather than hammering.
+    vi.useFakeTimers();
+    try {
+      class AlwaysDown extends MockDataSource {
+        summaryCalls = 0;
+        async getSummary(): Promise<SummaryResult> {
+          this.summaryCalls += 1;
+          return { status: 'unreachable', summary: null };
+        }
+      }
+      const source = new AlwaysDown(`test-${Math.random()}`);
+      setup(source);
+
+      source.stateStore.set(ID, 'pinned', true);
+      // Run well past the whole backoff window (2+4+8+16+30+30 s ≈ 90 s).
+      await vi.advanceTimersByTimeAsync(200_000);
+
+      // 1 initial attempt + 6 bounded retries, then it stops.
+      expect(source.summaryCalls).toBe(7);
+
+      // Idle further — no more polling once the ceiling is hit.
+      await vi.advanceTimersByTimeAsync(200_000);
+      expect(source.summaryCalls).toBe(7);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels a pending retry when the item is unpinned', async () => {
+    vi.useFakeTimers();
+    try {
+      class AlwaysDown extends MockDataSource {
+        summaryCalls = 0;
+        async getSummary(): Promise<SummaryResult> {
+          this.summaryCalls += 1;
+          return { status: 'unreachable', summary: null };
+        }
+      }
+      const source = new AlwaysDown(`test-${Math.random()}`);
+      setup(source);
+
+      source.stateStore.set(ID, 'pinned', true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(source.summaryCalls).toBe(1);
+
+      // Unpin before the first backoff fires → the chain is cancelled.
+      source.stateStore.set(ID, 'pinned', false);
+      await vi.advanceTimersByTimeAsync(200_000);
+      expect(source.summaryCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not re-call once a terminal summary is cached (generate-once)', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     const qc = setup(source);

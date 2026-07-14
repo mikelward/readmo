@@ -2514,10 +2514,16 @@ page's discipline is unchanged.
     warm of an already-generated summary is a *server cache hit* (the `summary`
     Edge Function short-circuits on `items.ai_summary` — no Jina, no Gemini), and
     a never-summarized item generates exactly **once**, shared across every device
-    and user. A warm is marked done only on a **settled** result, so a transient
-    `unreachable`/`unavailable` retries on reconnect or once the allowlist gate
-    resolves. The pre-warm subscriber warms only newly-pinned items, so an
-    unrelated state change doesn't re-fetch unsettled summaries during an outage.
+    and user. A warm is marked done only on a **settled** result; an unsettled one
+    (the server is still generating it in the background, or a transient
+    `unreachable`/`unavailable`) is **retried on a bounded backoff until it lands
+    in the cache** — so a pinned article is durably available offline even when the
+    summary only becomes ready seconds after the pin, without the user having to
+    reconnect or return to the app first. The loop is bounded (a genuinely-down
+    service doesn't poll forever); reconnect, the allowlist gate resolving, and a
+    foreground return each restart it. The pre-warm subscriber warms only
+    newly-pinned items, so an unrelated state change doesn't re-fetch unsettled
+    summaries during an outage.
   - **Article text comes from Jina (like newshacker), by design.** The summary's
     input is fetched through **Jina Reader** (`r.jina.ai`), which returns clean
     **markdown** and transparently handles bot-blocked / paywalled / JS-rendered
