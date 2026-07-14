@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties, MouseEvent, PointerEvent } from 'react';
 
-// Ported from newshacker verbatim — the swipe physics are reused as-is
-// (SPEC.md *What is identical to newshacker*). Action-agnostic: the caller
+// Ported from newshacker; the swipe physics are reused as-is except for a
+// lighter commit threshold (SWIPE_RATIO/SWIPE_MIN_PX below) so a card dismisses
+// with less travel — readmo rows are denser than newshacker's, so the original
+// max(56px, 25%·width) felt heavy. Everything else (arming, angle gate, exit
+// timing) is unchanged. Action-agnostic: the caller
 // wires onSwipeLeft/onSwipeRight/onLongPress; a swipe whose handler is
 // undefined falls through to the snap-back branch, which is exactly how the
 // Pinned/Hidden "rubber-band shield" behavior is achieved upstream.
 
-const SWIPE_RATIO = 0.25;
-const SWIPE_MIN_PX = 56;
+const SWIPE_RATIO = 0.2;
+const SWIPE_MIN_PX = 48;
 const ANGLE_RATIO = 1.2;
 const START_THRESHOLD_PX = 8;
 const EXIT_DURATION_MS = 200;
