@@ -456,7 +456,10 @@ export function ItemPage() {
 
   const fullQuery = useQuery({
     queryKey: ['fulltext', id],
-    queryFn: () => ds.fetchFullText(id),
+    // Per-fetch signal threaded into the invoke, so cancelling this query (a
+    // superseded navigation, the offline lock's foreground-resume cancel)
+    // aborts the actual request instead of orphaning it.
+    queryFn: ({ signal }) => ds.fetchFullText(id, { signal }),
     enabled: wantFull,
     // Terminal outcomes (ok/empty/auth) are cached forever; a transient
     // `unreachable` stays stale so reopening (or the in-view "Try again")

@@ -308,7 +308,11 @@ describe('ItemPage (reader)', () => {
       ),
     );
     expect(screen.queryByText(/Stale gist/)).not.toBeInTheDocument();
-    expect(spy).toHaveBeenCalledWith('item-1');
+    expect(spy).toHaveBeenCalledWith(
+      'item-1',
+      // The queryFn threads React Query's per-fetch abort signal through.
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it('renders the article and marks it opened on view', async () => {

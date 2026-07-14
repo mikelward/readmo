@@ -121,8 +121,11 @@ export function useSummary(
 
   const query = useQuery({
     queryKey: summaryQueryKey(id),
-    queryFn: async () => {
-      const result = await ds.getSummary(id);
+    // React Query's per-fetch signal is threaded into the invoke, so cancelling
+    // this query (superseded navigation, the prewarm's foreground-resume cancel)
+    // aborts the actual request instead of leaving an orphaned transport.
+    queryFn: async ({ signal }) => {
+      const result = await ds.getSummary(id, { signal });
       // Don't let a TRANSIENT failure replace a gist we're already showing (a
       // viaRow seed, or an earlier ok being revalidated) with a "Could not
       // summarize" card — stale beats empty. A real `ok` graduates the seed; a

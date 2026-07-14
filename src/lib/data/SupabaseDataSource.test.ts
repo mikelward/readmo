@@ -1985,6 +1985,30 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(env.fake.invokeCalls.filter((c) => c.name === 'fulltext')).toHaveLength(1);
   });
 
+  it('fetchFullText times out a hung invoke and degrades to a retryable unreachable', async () => {
+    // A fetch frozen mid-flight (app suspended on mobile) may never settle after
+    // resume. Uncapped, that corpse would wedge — via React Query's dedupe —
+    // every later warm retry and the reader's own open. The invoke ceiling turns
+    // it into the retryable `unreachable` so the retry loops actually loop.
+    const env = setup();
+    env.ds.fullTextRetryDelayMs = 0;
+    env.ds.invokeTimeoutMs = 5;
+    const signals: Array<AbortSignal | undefined> = [];
+    env.fake.client.functions.invoke = (_name: string, opts?: { body?: unknown; method?: string; signal?: AbortSignal }) => {
+      signals.push(opts?.signal);
+      return new Promise<never>(() => {}); // hangs forever
+    };
+    expect(await env.ds.fetchFullText('i1')).toEqual({
+      status: 'unreachable',
+      contentHtml: null,
+    });
+    // The hung transport is genuinely ABORTED at the ceiling, not just abandoned
+    // — an orphaned fetch would keep holding a connection slot while the retry
+    // loop stacked more of them.
+    expect(signals.length).toBeGreaterThan(0);
+    expect(signals.every((s) => s?.aborted)).toBe(true);
+  });
+
   it('fetchFullText maps a 404 (function not deployed / item hidden) to a terminal empty', async () => {
     // Frontend deployed ahead of the manual `fulltext` Edge Function deploy, or
     // RLS hid the item: a 404 that retrying can't fix. Map to a terminal `empty`
@@ -2093,6 +2117,54 @@ describe('SupabaseDataSource dispatch + writes', () => {
       retryable: true,
     });
     expect(env.fake.invokeCalls.filter((c) => c.name === 'summary')).toHaveLength(1);
+  });
+
+  it('getSummary times out a hung invoke and degrades to a retryable unreachable', async () => {
+    // Same suspension-corpse guard as fetchFullText: a hung summary invoke must
+    // resolve to the retryable `unreachable` (after the in-place transient
+    // retry), not hang the `['summary', id]` query forever.
+    const env = setup();
+    env.ds.summaryRetryDelayMs = 0;
+    env.ds.invokeTimeoutMs = 5;
+    const signals: Array<AbortSignal | undefined> = [];
+    env.fake.client.functions.invoke = (_name: string, opts?: { body?: unknown; method?: string; signal?: AbortSignal }) => {
+      signals.push(opts?.signal);
+      return new Promise<never>(() => {}); // hangs forever
+    };
+    expect(await env.ds.getSummary('i1')).toEqual({ status: 'unreachable', summary: null });
+    // The hung transport is genuinely aborted at the ceiling (see the fulltext
+    // twin of this test for the rationale).
+    expect(signals.length).toBeGreaterThan(0);
+    expect(signals.every((s) => s?.aborted)).toBe(true);
+  });
+
+  it('getSummary forwards the caller signal to the invoke and does not retry a cancelled fetch', async () => {
+    // React Query's per-fetch signal is threaded through the queryFns, so
+    // cancelQueries (the foreground-resume path) must abort the ACTUAL invoke —
+    // not just reset query state — and the in-place transient retry must not
+    // fire a second request whose result nobody wants.
+    const env = setup();
+    env.ds.summaryRetryDelayMs = 0;
+    const controller = new AbortController();
+    const signals: Array<AbortSignal | undefined> = [];
+    env.fake.client.functions.invoke = (
+      _name: string,
+      opts?: { body?: unknown; method?: string; signal?: AbortSignal },
+    ) => {
+      signals.push(opts?.signal);
+      // Cancel mid-flight, then fail the fetch the way an aborted transport does.
+      controller.abort();
+      return Promise.resolve({ data: null, error: new Error('aborted') });
+    };
+    expect(await env.ds.getSummary('i1', { signal: controller.signal })).toEqual({
+      status: 'unreachable',
+      summary: null,
+    });
+    // The caller's abort reached the transport-level signal…
+    expect(signals).toHaveLength(1);
+    expect(signals[0]?.aborted).toBe(true);
+    // …and no second attempt was spent on a response nobody wants (length
+    // asserted above).
   });
 
   it('refresh invokes the edge function with the feed id', async () => {

@@ -2560,12 +2560,19 @@ page's discipline is unchanged.
     a never-summarized item generates exactly **once**, shared across every device
     and user. A warm is marked done only on a **settled** result; an unsettled one
     (the server is still generating it in the background, or a transient
-    `unreachable`/`unavailable`) is **retried on a bounded backoff until it lands
-    in the cache** — so a pinned article is durably available offline even when the
-    summary only becomes ready seconds after the pin, without the user having to
-    reconnect or return to the app first. The loop is bounded (a genuinely-down
-    service doesn't poll forever); reconnect, the allowlist gate resolving, and a
-    foreground return each restart it. The pre-warm subscriber warms only
+    `unreachable`/`unavailable`) is **retried on a backoff until it lands in the
+    cache, for as long as the item stays pinned and the app stays open** — so a
+    pinned article is durably available offline even when the summary only
+    becomes ready after the pin, without the user having to reconnect or return
+    to the app first. The backoff caps the retry *rate*, not the attempts (a
+    genuinely-down service sees a slow trickle, never a hammer, and never a
+    given-up pin); reconnect, the allowlist gate resolving, and a foreground
+    return each retry immediately. **A stalled request can't wedge the loop**: a
+    summary/full-text fetch that never answers (typically one frozen by the
+    phone suspending the app mid-request) times out into a retryable failure,
+    and returning to the foreground abandons any still-hanging fetch and issues
+    a fresh one — otherwise every later retry (and the reader's own open) would
+    silently join the dead request. The pre-warm subscriber warms only
     newly-pinned items, so an unrelated state change doesn't re-fetch unsettled
     summaries during an outage.
   - **Article text comes from Jina (like newshacker), by design.** The summary's
@@ -3314,6 +3321,13 @@ uid the page announces to the worker; the fonts cache alone stays shared.
 - Pinned/Favorite cache entries lock at `gcTime: Infinity` while the state
   holds and re-lock on cross-tab change / rehydrate / late image fetch (the
   `subscribeToPinnedCacheLocking` pattern). Never evicted while pinned/favorited.
+- **The warm keeps trying until the data is actually cached.** A saved item
+  whose detail or reading body failed to fetch (a transient error, a fetch that
+  died with an app suspension) isn't left cold until the next pin/reconnect: the
+  lock re-checks unfinished items periodically while the app is open, and a
+  return to the foreground abandons any fetch left hanging by the suspension and
+  fetches fresh. Settled items cost nothing — the re-check only touches items
+  still missing data.
 - **The server prepares pinned articles too.** For an allowlisted user, a pin's
   sync write also triggers the full-article download and AI summary
   **server-side** (see *AI article summaries*), so the shared item carries both

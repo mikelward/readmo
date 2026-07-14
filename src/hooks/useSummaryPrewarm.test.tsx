@@ -261,10 +261,12 @@ describe('useSummaryPrewarm', () => {
     }
   });
 
-  it('stops the retry loop after a bounded number of attempts', async () => {
-    // A genuinely-down summary service must not poll forever — the backoff is
-    // capped (SUMMARY_WARM_MAX_RETRIES) so it gives up and leaves the pin to an
-    // external trigger (reconnect / foreground) rather than hammering.
+  it('never gives up on an unsettled pin: backs off to the delay ceiling and keeps polling', async () => {
+    // A pin is a promise that the summary will be on-device. The backoff caps
+    // its DELAY (60 s), not its attempts — a chain that stopped after N tries
+    // left the pin cold in exactly the case the user notices (opening it after
+    // an outage clears). At the ceiling this is one tiny request per minute per
+    // unsettled pin, only while the app is open.
     vi.useFakeTimers();
     try {
       class AlwaysDown extends MockDataSource {
@@ -278,18 +280,48 @@ describe('useSummaryPrewarm', () => {
       setup(source);
 
       source.stateStore.set(ID, 'pinned', true);
-      // Run well past the whole backoff window (2+4+8+16+30+30 s ≈ 90 s).
+      // Attempts land at t ≈ 0, 2, 6, 14, 30, 62, 122, 182 s (delays 2, 4, 8,
+      // 16, 32, then the 60 s ceiling).
       await vi.advanceTimersByTimeAsync(200_000);
+      expect(source.summaryCalls).toBe(8);
 
-      // 1 initial attempt + 6 bounded retries, then it stops.
-      expect(source.summaryCalls).toBe(7);
-
-      // Idle further — no more polling once the ceiling is hit.
-      await vi.advanceTimersByTimeAsync(200_000);
-      expect(source.summaryCalls).toBe(7);
+      // Well past the old 6-attempt ceiling it is STILL polling, one per minute.
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(source.summaryCalls).toBe(11);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('cancels a stuck in-flight fetch on return to foreground and refetches fresh', async () => {
+    // A fetch that was in flight when the app was suspended can be a corpse
+    // that never settles after resume — and React Query dedupes any later
+    // prefetch into it, so without the cancel the foreground rewarm (and the
+    // reader's own open) would silently join the dead fetch. The
+    // hidden→visible handler must cancel it and issue a genuinely new request.
+    class HangsFirst extends MockDataSource {
+      summaryCalls = 0;
+      async getSummary(): Promise<SummaryResult> {
+        this.summaryCalls += 1;
+        if (this.summaryCalls === 1) return new Promise<never>(() => {}); // frozen
+        return { status: 'ok', summary: 'Fresh after resume.' };
+      }
+    }
+    const source = new HangsFirst(`test-${Math.random()}`);
+    const qc = setup(source);
+
+    source.stateStore.set(ID, 'pinned', true);
+    await waitFor(() => expect(source.summaryCalls).toBe(1));
+
+    // Return to the foreground (jsdom's visibilityState is 'visible').
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    await waitFor(() =>
+      expect(qc.getQueryData(summaryQueryKey(ID))).toMatchObject({ status: 'ok' }),
+    );
+    expect(source.summaryCalls).toBe(2);
   });
 
   it('cancels a pending retry when the item is unpinned', async () => {

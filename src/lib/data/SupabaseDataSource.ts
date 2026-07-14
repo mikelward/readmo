@@ -152,6 +152,21 @@ const FULLTEXT_FETCH_ATTEMPTS = 2;
  * summary retry, for the same reason. */
 const FULLTEXT_FETCH_RETRY_DELAY_MS = 800;
 
+/** Hard ceiling on a single summary/full-text Edge invoke. These calls are
+ * legitimately long-running (a cache miss generates: Jina + Gemini, or the
+ * publisher fetch + extraction — tens of seconds; a coalescing waiter blocks
+ * until the generator's result lands), which is exactly why the global
+ * supabaseFetch read cap deliberately skips `/functions/v1/`. But "uncapped"
+ * must not mean "can hang forever": on a phone, a fetch that's in flight when
+ * the app is suspended can neither resolve nor reject after resume, and because
+ * React Query dedupes every later fetch of the same key into that in-flight
+ * promise, one frozen invoke silently wedges every future prewarm retry AND the
+ * reader's own open. The cap turns that corpse into a retryable `unreachable`
+ * so the retry loops actually loop. Sized above the worst-case legitimate
+ * response (generation ≤ ~40 s; a waiter's poll ≤ 45 s) so it only ever fires
+ * on a genuinely dead transport. */
+const INVOKE_TIMEOUT_MS = 60_000;
+
 /** How long a feed/library read on a still-empty store will WAIT for the first
  * item_state hydration before rendering anyway (with default per-row flags / a
  * library that self-heals on the hydration's store emit). Bounds the cold-cache
@@ -340,6 +355,9 @@ export class SupabaseDataSource implements DataSource {
   /** Delay between full-text fetch retries (see fetchFullText). Mutable for the
    * same reason as {@link summaryRetryDelayMs} — tests zero it. */
   fullTextRetryDelayMs = FULLTEXT_FETCH_RETRY_DELAY_MS;
+  /** Ceiling on a single summary/full-text Edge invoke (see INVOKE_TIMEOUT_MS).
+   * Mutable so tests can shrink it instead of waiting out a real minute. */
+  invokeTimeoutMs = INVOKE_TIMEOUT_MS;
 
   constructor(stateKey = 'readmo:item-state', client?: SupabaseClient) {
     this.sb = client ?? getSupabase();
@@ -1203,31 +1221,95 @@ export class SupabaseDataSource implements DataSource {
     return fi ?? null;
   }
 
-  async fetchFullText(id: ItemId): Promise<FullTextResult> {
+  async fetchFullText(
+    id: ItemId,
+    opts?: { signal?: AbortSignal },
+  ): Promise<FullTextResult> {
     // Retry a TRANSIENT failure once before giving up, mirroring getSummary: a
     // full-text fetch RESOLVES `unreachable` (a React Query success, not a
     // throw), so the client retry policy never engages — the retry has to live
     // here. `unreachable` (a network blip / 5xx on invoke, or the server's own
     // unreachable envelope) may clear on the next attempt; terminal outcomes
     // (ok/empty/auth) return immediately since re-fetching can't change them.
-    let result = await this.invokeFullTextOnce(id);
+    // A CANCELLED fetch (the caller's signal aborted — the query was superseded
+    // or the foreground-resume path cancelled a frozen one) is not retried: the
+    // caller no longer wants this response, so a second attempt only spends a
+    // request whose result gets discarded.
+    let result = await this.invokeFullTextOnce(id, opts?.signal);
     for (
       let attempt = 1;
-      attempt < FULLTEXT_FETCH_ATTEMPTS && result.status === 'unreachable';
+      attempt < FULLTEXT_FETCH_ATTEMPTS &&
+      result.status === 'unreachable' &&
+      !opts?.signal?.aborted;
       attempt++
     ) {
       await new Promise((r) => setTimeout(r, this.fullTextRetryDelayMs));
-      result = await this.invokeFullTextOnce(id);
+      result = await this.invokeFullTextOnce(id, opts?.signal);
     }
     return result;
   }
 
+  /** Invoke a summary/full-text Edge Function with the {@link invokeTimeoutMs}
+   * ceiling, so the caller can degrade to a retryable `unreachable` instead of
+   * hanging forever (see INVOKE_TIMEOUT_MS — a fetch frozen by an app suspension
+   * otherwise wedges, via React Query's dedupe, every later warm retry and the
+   * reader's own open). At the ceiling the underlying request is ABORTED (the
+   * forwarded signal), not just abandoned — an orphaned transport would keep
+   * holding a browser connection slot / the radio, and the retry loop would
+   * stack more of them (Codex P2 on #506). The race resolving `'timeout'` is
+   * the belt-and-braces on top: even a transport stuck so hard it never
+   * observes the abort still can't hang the query. A response lost to the
+   * abort is fine — its result is cached server-side, so the next retry is a
+   * cheap hit.
+   *
+   * `callerSignal` (React Query's per-fetch signal, threaded through from the
+   * queryFn) composes with the timeout: cancelling the query — notably the
+   * foreground-resume path that cancels a fetch left frozen by an app
+   * suspension — aborts the underlying invoke too, freeing the transport
+   * immediately instead of leaving an orphan running to the timeout while the
+   * fresh warm starts a second request (Codex P2, round 2 on #506). */
+  private invokeWithTimeout(
+    fn: string,
+    body: Record<string, unknown>,
+    callerSignal?: AbortSignal,
+  ): Promise<{ data: unknown; error: unknown } | 'timeout'> {
+    const controller = new AbortController();
+    const forwardAbort = () => controller.abort(callerSignal?.reason);
+    if (callerSignal) {
+      if (callerSignal.aborted) controller.abort(callerSignal.reason);
+      else callerSignal.addEventListener('abort', forwardAbort, { once: true });
+    }
+    let timer: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => {
+        controller.abort(
+          new DOMException('Edge Function invoke timed out', 'TimeoutError'),
+        );
+        resolve('timeout');
+      }, this.invokeTimeoutMs);
+    });
+    return Promise.race([
+      this.sb.functions.invoke(fn, { body, signal: controller.signal }),
+      timeout,
+    ]).finally(() => {
+      clearTimeout(timer);
+      callerSignal?.removeEventListener('abort', forwardAbort);
+    });
+  }
+
   /** One attempt of the full-text fetch — the invoke + status/error mapping.
    * {@link fetchFullText} wraps this in a bounded transient-failure retry. */
-  private async invokeFullTextOnce(id: ItemId): Promise<FullTextResult> {
-    const { data, error } = await this.sb.functions.invoke('fulltext', {
-      body: { itemId: id },
-    });
+  private async invokeFullTextOnce(
+    id: ItemId,
+    signal?: AbortSignal,
+  ): Promise<FullTextResult> {
+    const invoked = await this.invokeWithTimeout('fulltext', { itemId: id }, signal);
+    if (invoked === 'timeout') {
+      // Transport hung past the ceiling — degrade to the retryable
+      // `unreachable`, same as any other invoke failure below.
+      return { status: 'unreachable', contentHtml: null };
+    }
+    const { data, error } = invoked;
     if (error) {
       // A 404 is TERMINAL, not transient — the `fulltext` function isn't
       // deployed yet, or it ran and RLS hid the item; neither improves by
@@ -1275,7 +1357,10 @@ export class SupabaseDataSource implements DataSource {
     };
   }
 
-  async getSummary(id: ItemId): Promise<SummaryResult> {
+  async getSummary(
+    id: ItemId,
+    opts?: { signal?: AbortSignal },
+  ): Promise<SummaryResult> {
     // Retry a TRANSIENT failure at least once before giving up. A transient
     // outcome is a statusless network blip / 5xx on invoke, or the server's own
     // `unreachable` envelope (a Gemini or allowlist-read hiccup) — none of which
@@ -1285,24 +1370,35 @@ export class SupabaseDataSource implements DataSource {
     // THROWN statusless errors) never engages — so the retry lives here. Terminal
     // outcomes (ok/empty/unavailable) return immediately; `unavailable` (the key
     // isn't set) won't flip in a few hundred ms, so it isn't retried either.
-    let result = await this.invokeSummaryOnce(id);
+    // A CANCELLED fetch (the caller's signal aborted) is not retried — see
+    // fetchFullText.
+    let result = await this.invokeSummaryOnce(id, opts?.signal);
     for (
       let attempt = 1;
-      attempt < SUMMARY_FETCH_ATTEMPTS && result.status === 'unreachable';
+      attempt < SUMMARY_FETCH_ATTEMPTS &&
+      result.status === 'unreachable' &&
+      !opts?.signal?.aborted;
       attempt++
     ) {
       await new Promise((r) => setTimeout(r, this.summaryRetryDelayMs));
-      result = await this.invokeSummaryOnce(id);
+      result = await this.invokeSummaryOnce(id, opts?.signal);
     }
     return result;
   }
 
   /** One attempt of the summary fetch — the invoke + status/error mapping.
    * {@link getSummary} wraps this in a bounded transient-failure retry. */
-  private async invokeSummaryOnce(id: ItemId): Promise<SummaryResult> {
-    const { data, error } = await this.sb.functions.invoke('summary', {
-      body: { itemId: id },
-    });
+  private async invokeSummaryOnce(
+    id: ItemId,
+    signal?: AbortSignal,
+  ): Promise<SummaryResult> {
+    const invoked = await this.invokeWithTimeout('summary', { itemId: id }, signal);
+    if (invoked === 'timeout') {
+      // Transport hung past the ceiling — degrade to the retryable
+      // `unreachable`, same as any other invoke failure below.
+      return { status: 'unreachable', summary: null };
+    }
+    const { data, error } = invoked;
     if (error) {
       // A 404 is TERMINAL, not transient — either the `summary` function isn't
       // deployed yet (the frontend auto-deploys ahead of the manual Edge Function
