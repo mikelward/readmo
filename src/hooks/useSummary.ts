@@ -49,11 +49,13 @@ export interface UseSummary {
  * still loading, so an off-list user fires no Edge call). The server enforces the
  * allowlist regardless; the client gate just avoids a pointless request.
  *
- * Generation is NOT automatic for every open. It fires on its own only when the
- * article was **pinned before opening** (`autoGenerate`) — the "I'll read this"
- * signal `useSummaryPrewarm` already warms on. For an unpinned article the reader
- * offers a **"Generate summary"** button instead (`canGenerate` / `generate`), so
- * a casual glance doesn't spend a Gemini/Jina call. A summary already cached
+ * Generation is NOT automatic for every open. It fires on its own only when
+ * `autoGenerate` is set — the article was **pinned before opening** (the "I'll
+ * read this" signal `useSummaryPrewarm` already warms on) and the caller's
+ * auto-summarize setting is on (ItemPage ANDs the two). Otherwise the reader
+ * offers a **"Generate summary"** button instead (`canGenerate` / `generate`),
+ * so a casual glance — or a pinned open with auto-summarize off — doesn't spend
+ * a Gemini/Jina call. A summary already cached
  * (warmed from a pin, or generated on an earlier open) still shows immediately
  * either way — the gate is on *fetching*, not on *displaying*. When `online` is
  * false we don't call and offer no button — there's no offline summary to serve.

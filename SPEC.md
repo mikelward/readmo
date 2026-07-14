@@ -1808,10 +1808,12 @@ negligible and off every critical path. See the External services table in
       all — when neither toggle applies (i.e. an off-list caller on an armed
       allowlist). When on, the summary for a pinned article is pre-warmed so it's
       ready before the reader opens it (see *AI article summaries* /
-      `useSummaryPrewarm`); when a family user turns it off, no pin pre-warm
-      fires from the client — the reader still generates on open, and the
-      server-side pin trigger (which the toggle does not reach — it's a
-      client-side control) still generates on pin. Both toggles are
+      `useSummaryPrewarm`); when a family user turns it off, the client
+      auto-generates nothing — no pin pre-warm fires, and opening a pinned
+      article offers the **"Generate summary" button** like an unpinned open
+      instead of summarizing automatically. The server-side pin trigger (which
+      the toggle does not reach — it's a client-side control) still generates on
+      pin, so the shared cache stays warm for other readers. Both toggles are
       per-account, synced. See *Spoiler-free sports headlines* and *AI article
       summaries*.
     - **Settings scope.** Reading-*behavior* settings are **per-account and
@@ -2487,9 +2489,11 @@ page's discipline is unchanged.
   - **Generation is not automatic on every open — pin before opening, or ask.**
     The reader's `useSummary` auto-generates only when the article was **pinned
     before it opened** (the "I'll read this" signal the pre-warm already acts on,
-    passed to `ArticleSummary` as `autoGenerate`). For an **unpinned** open it
-    offers a **"Generate summary" button** instead, so a casual glance doesn't
-    spend a Gemini/Jina call — the user asks and the summary generates on click.
+    passed to `ArticleSummary` as `autoGenerate`) **and the Auto generate
+    summaries setting is on**. Otherwise — an **unpinned** open, or any open
+    with the setting off — it offers a **"Generate summary" button** instead, so
+    a casual glance doesn't spend a Gemini/Jina call — the user asks and the
+    summary generates on click.
     Either way, a summary **already cached** (warmed by a pin, or generated on an
     earlier open) shows immediately: the gate is on *fetching*, not on
     *displaying*. Offline with nothing cached, there's no button (nothing to
@@ -2523,8 +2527,8 @@ page's discipline is unchanged.
     calls keep their "empty list = open" semantics), skips items that already
     have both artifacts cached, and is a no-op until the operator configures
     the Vault secrets (SETUP.md §9b). The **Auto generate
-    summaries** toggle (synced) governs only the client pre-warm below, not
-    this server-side trigger.
+    summaries** toggle (synced) governs the client's pre-warm below and the
+    reader's pinned auto-generation, not this server-side trigger.
   - **Pin is also a prefetch signal (incl. cross-device), generate-once.**
     `useSummaryPrewarm` pre-warms the summary for **every pinned item** — pinned
     on this device, synced from another device, or restored on boot — the summary

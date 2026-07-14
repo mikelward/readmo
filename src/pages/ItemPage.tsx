@@ -10,7 +10,7 @@ import { useWideViewport } from '../hooks/useWideViewport';
 import { useShareItem } from '../hooks/useShareItem';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { useFullTextAllowed, useCapabilities, canUseFullText } from '../hooks/useCapabilities';
-import { useHideSportsSpoilers } from '../hooks/useReadingPrefs';
+import { useAutoSummarizePinned, useHideSportsSpoilers } from '../hooks/useReadingPrefs';
 import { useMarkDoneOnOpenFeeds } from '../hooks/useSubscriptionFeeds';
 import { displayTitle } from '../lib/spoilerHeadline';
 import {
@@ -451,6 +451,12 @@ export function ItemPage() {
   // `item` is in hand below.
   const spoilerAllowed = canUseFullText(useCapabilities());
   const { hideSportsSpoilers } = useHideSportsSpoilers();
+  // The "Auto generate summaries for pinned articles" toggle gates the reader's
+  // pinned auto-generation too, not just the ahead-of-time pre-warm: with it
+  // off, a pinned open offers the "Generate summary" button like an unpinned
+  // one, rather than silently spending the call (and flashing "Summarizing…")
+  // on an open the user asked not to auto-summarize.
+  const { autoSummarizePinned } = useAutoSummarizePinned();
   const wantFull =
     !!resolved && !cachedFull && online && allowFull && (truncated || manualTrigger);
 
@@ -897,15 +903,15 @@ export function ItemPage() {
       {/* AI summary — directly after the title/byline, above the article. For an
           allowlisted user it shows the cached gist that rides the list row
           instantly (no spinner, works offline); failing that it generates
-          automatically only when the article was pinned before opening
-          (useSummaryPrewarm usually has it warmed already), otherwise it offers a
-          "Generate summary" button. The gating lives in useSummary, so it's
-          always mounted to keep hook order stable and renders nothing when
-          there's nothing to show. */}
+          automatically only when the article was pinned before opening AND the
+          auto-summarize setting is on (useSummaryPrewarm usually has it warmed
+          already), otherwise it offers a "Generate summary" button. The gating
+          lives in useSummary, so it's always mounted to keep hook order stable
+          and renders nothing when there's nothing to show. */}
       <ArticleSummary
         id={item.id}
         online={online}
-        autoGenerate={pinnedAtOpen}
+        autoGenerate={pinnedAtOpen && autoSummarizePinned}
         cachedSummary={cachedSummary}
       />
 
