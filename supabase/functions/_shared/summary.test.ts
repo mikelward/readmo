@@ -9,9 +9,30 @@ import {
   looksTruncatedHtml,
   parseGeminiText,
   pickStoredContent,
+  isSummaryOutcomeTransient,
   stripSummaryPreamble,
 } from './summary';
 import type { SummaryLeaseClient, SummaryOutcome } from './summary';
+
+describe('isSummaryOutcomeTransient', () => {
+  it('is transient for a blip a retry could resolve', () => {
+    expect(isSummaryOutcomeTransient({ status: 'unreachable' })).toBe(true);
+    // A Jina blip / stub-defer — worth another try even if full text fails.
+    expect(isSummaryOutcomeTransient({ status: 'empty', retryable: true })).toBe(true);
+    // Generated but the shared-row write failed — the fire-and-forget pin path
+    // doesn't display it, so it must retry to actually persist ai_summary.
+    expect(isSummaryOutcomeTransient({ status: 'ok', cached: false })).toBe(true);
+  });
+
+  it('is not transient for a cached ok or a terminal outcome', () => {
+    expect(isSummaryOutcomeTransient({ status: 'ok', cached: true })).toBe(false);
+    expect(isSummaryOutcomeTransient({ status: 'ok' })).toBe(false); // cached absent → done
+    // A non-retryable empty (no URL) and an unconfigured key are terminal.
+    expect(isSummaryOutcomeTransient({ status: 'empty' })).toBe(false);
+    expect(isSummaryOutcomeTransient({ status: 'empty', retryable: false })).toBe(false);
+    expect(isSummaryOutcomeTransient({ status: 'unavailable', retryable: true })).toBe(false);
+  });
+});
 
 describe('htmlToPlainText', () => {
   it('returns empty string for null/undefined/empty', () => {

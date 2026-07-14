@@ -103,6 +103,10 @@ interface FullTextResult {
   contentHtml: string | null;
   viaFallback?: boolean;
   retryable?: boolean;
+  /** Producer-declared: is this a transient blip a retry could resolve? Read by
+   * the pin-triggered caller (ensureFullTextForPin) so it doesn't guess from the
+   * HTTP status. Set on the wire by handle(); absent = terminal. */
+  transient?: boolean;
 }
 
 Deno.serve(async (req: Request) => {
@@ -180,7 +184,7 @@ async function handle(req: Request): Promise<Response> {
     // confirm the gate. `unreachable` is retryable and caches nothing, so an
     // allowlisted caller simply retries rather than being stranded or leaked to.
     console.error('fulltext: allowlist read failed — retryable unreachable:', err);
-    return json({ status: 'unreachable', contentHtml: null });
+    return json({ status: 'unreachable', contentHtml: null, transient: true });
   }
   if (caller.internal) {
     // The trigger names the pinning user; gate on THAT identity (the DB has no
@@ -201,7 +205,7 @@ async function handle(req: Request): Promise<Response> {
       // local query cache clears. Report the retryable `unreachable` instead;
       // only a CONFIRMED non-allowlisted user (below) gets `empty`.
       console.warn('fulltext: auth lookup failed — retryable unreachable:', authError);
-      return json({ status: 'unreachable', contentHtml: null });
+      return json({ status: 'unreachable', contentHtml: null, transient: true });
     }
     if (!isAllowed({ id: auth.user.id, email: auth.user.email }, allowlist)) {
       // Confirmed non-allowlisted caller. Report the silent `empty` outcome (the
@@ -236,7 +240,7 @@ async function handle(req: Request): Promise<Response> {
       .maybeSingle();
     if (pinError) {
       console.error(`fulltext: pin lookup for item ${itemId} failed:`, pinError);
-      return json({ status: 'unreachable', contentHtml: null });
+      return json({ status: 'unreachable', contentHtml: null, transient: true });
     }
     if (!pin) {
       console.warn(`fulltext: item ${itemId} not pinned by the named user — declining`);
@@ -249,7 +253,9 @@ async function handle(req: Request): Promise<Response> {
       .maybeSingle();
     if (error) {
       console.error(`fulltext: item lookup for ${itemId} failed:`, error);
-      return json({ error: error.message }, 400);
+      // A service-role item-lookup DB error is a transient blip (the request is
+      // well-formed), so tell the pin caller it's worth a retry.
+      return json({ error: error.message, transient: true }, 400);
     }
     item = data;
   } else {
@@ -260,7 +266,9 @@ async function handle(req: Request): Promise<Response> {
       .maybeSingle();
     if (error) {
       console.error(`fulltext: item lookup for ${itemId} failed:`, error);
-      return json({ error: error.message }, 400);
+      // A service-role item-lookup DB error is a transient blip (the request is
+      // well-formed), so tell the pin caller it's worth a retry.
+      return json({ error: error.message, transient: true }, 400);
     }
     item = data;
   }
@@ -353,7 +361,26 @@ async function handle(req: Request): Promise<Response> {
     pollIntervalMs: FULLTEXT_POLL_INTERVAL_MS,
     maxWaitMs: FULLTEXT_MAX_WAIT_MS,
   });
-  return json(outcome.result);
+  // Declare whether this outcome is TRANSIENT (a blip a retry could resolve), so
+  // the fire-and-forget pin-triggered caller reads one authoritative bit instead
+  // of guessing from the HTTP status. Transient = a failed fetch (`unreachable`,
+  // incl. the transient-Jina fallback) OR an `ok` whose `full_content_html` write
+  // blipped (`cached:false` — body released, row still empty; the interactive
+  // reader still renders the returned body, but the pin caller discards it and
+  // must retry). A paywall/teaser `empty`, an auth wall, and a persisted `ok` are
+  // terminal (false). Additive field; the reader ignores it.
+  return json({ ...outcome.result, transient: isFullTextOutcomeTransient(outcome) });
+}
+
+/** The fulltext producer's transient rule (see the handle() envelope). Unlike the
+ * summary, fulltext has no "transient empty" — every `empty` (paywall/teaser/gate
+ * skip) is terminal — so the rule is just: a failed fetch, or an `ok` that wasn't
+ * persisted. */
+function isFullTextOutcomeTransient(
+  outcome: GenerationOutcome<FullTextResult>,
+): boolean {
+  const { status } = outcome.result;
+  return status === 'unreachable' || (status === 'ok' && outcome.cached === false);
 }
 
 /** The generation-lease operations backed by the service-role Supabase client.
@@ -472,14 +499,28 @@ async function generateFullText(
       // Login/bot wall. Retry via Jina ONLY for public feeds (no secret_url),
       // so we never forward a possibly-tokenized item URL to a third party.
       console.log(`fulltext: item ${itemId} HTTP ${res.status} — trying Jina fallback`);
-      const jinaHtml = await maybeFetchViaJina(service, item.feed_id, item.url);
-      if (jinaHtml === null) {
+      const jina = await maybeFetchViaJina(service, item.feed_id, item.url);
+      if (jina.html === null) {
+        if (jina.transient) {
+          // Jina itself blipped (5xx/timeout/size-cap) — the page might extract on
+          // a retry, so report the RETRYABLE `unreachable` rather than the terminal
+          // `auth`. This is what lets the pin-triggered retry re-attempt a
+          // bot-blocked page whose Jina fallback merely hiccuped.
+          console.log(`fulltext: item ${itemId} — Jina fallback transiently failed`);
+          await recordAttempt(service, itemId, 'unreachable', {
+            httpStatus: res.status,
+            error: 'jina fallback transient failure',
+          });
+          return { result: { status: 'unreachable', contentHtml: null }, cached: false };
+        }
+        // Permanent: tokenized/secret URL, or Jina unconfigured — a wall we can't
+        // get past. Terminal `auth`.
         console.log(`fulltext: item ${itemId} — Jina unavailable or URL tokenized`);
         await recordAttempt(service, itemId, 'auth', { httpStatus: res.status });
         return { result: { status: 'auth', contentHtml: null }, cached: false };
       }
       console.log(`fulltext: item ${itemId} — Jina returned HTML`);
-      body = jinaHtml;
+      body = jina.html;
       viaFallback = true;
     } else if (res.status >= 400) {
       await recordAttempt(service, itemId, 'unreachable', { httpStatus: res.status });
@@ -558,34 +599,55 @@ async function generateFullText(
   return { result: okBody, cached: true };
 }
 
+/** The outcome of a bot-block Jina fallback. `html` is the fetched body, or null
+ * when we didn't get one. `transient` distinguishes WHY we got null: a PERMANENT
+ * skip (tokenized/secret URL, or Jina unconfigured) — a login/bot wall we can't
+ * get past — versus a TRANSIENT Jina failure (5xx/timeout/size-cap) that a later
+ * attempt might clear. The caller maps the two to `auth` (terminal) vs
+ * `unreachable` (retryable) so the pin-triggered retry doesn't give up on a blip. */
+interface JinaFallback {
+  html: string | null;
+  transient: boolean;
+}
+
 /** Fetch via Jina, but only for URLs we're reasonably sure carry no secret.
  * Two gates: (a) skip feeds that carry a secret_url (definitely private; the
  * server-only column is read via the service-role client), and (b) screen the
  * item URL itself with looksTokenized() — query strings, long hex/base64url
- * blobs, embedded credentials. Either trips → don't forward (return null). */
+ * blobs, embedded credentials. Either trips → don't forward (permanent skip). */
 async function maybeFetchViaJina(
   service: any,
   feedId: string,
   url: string,
-): Promise<string | null> {
-  if (looksTokenized(url)) return null; // URL looks secret-bearing → never forward
-  const { data: feed } = await service
+): Promise<JinaFallback> {
+  // URL looks secret-bearing → never forward (permanent, not a blip).
+  if (looksTokenized(url)) return { html: null, transient: false };
+  const { data: feed, error } = await service
     .from('feeds')
     .select('secret_url')
     .eq('id', feedId)
     .maybeSingle();
-  if (!feed || feed.secret_url) return null; // private/tokenized feed → skip
+  if (error) {
+    // A transient DB read error is NOT the same as a missing/private feed — don't
+    // let a blip here read as a permanent skip. Report it transient so the
+    // pin-triggered retry re-attempts rather than recording a terminal `auth`.
+    console.warn(`fulltext: feed secret_url lookup for ${feedId} failed:`, error);
+    return { html: null, transient: true };
+  }
+  // Private feed (carries a secret_url) or genuinely absent → skip (permanent).
+  if (!feed || feed.secret_url) return { html: null, transient: false };
   return fetchViaJina(url);
 }
 
 /** Fetch a page via Jina Reader (r.jina.ai) to bypass bot-blocking. The fetch
  * target is always the fixed host r.jina.ai (the article URL only appears in the
- * path), so there's no redirect-based SSRF here. Returns the raw HTML, or null
- * if Jina is unconfigured or the request fails / exceeds the size cap. The URL
- * has already been screened by maybeFetchViaJina. */
-async function fetchViaJina(target: string): Promise<string | null> {
+ * path), so there's no redirect-based SSRF here. Returns the raw HTML on success;
+ * a PERMANENT skip (`{ transient: false }`) when Jina is unconfigured; or a
+ * TRANSIENT failure (`{ transient: true }`) when the request fails / is non-2xx /
+ * exceeds the size cap. The URL has already been screened by maybeFetchViaJina. */
+async function fetchViaJina(target: string): Promise<JinaFallback> {
   const apiKey = Deno.env.get('JINA_API_KEY');
-  if (!apiKey) return null;
+  if (!apiKey) return { html: null, transient: false }; // unconfigured — permanent
 
   try {
     const res = await fetch(`https://r.jina.ai/${target}`, {
@@ -596,10 +658,17 @@ async function fetchViaJina(target: string): Promise<string | null> {
       },
       signal: AbortSignal.timeout(15_000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      // Only a rate-limit (429) or a server error (5xx) is worth retrying. A
+      // stable Jina 4xx — a bad target URL, a forbidden/unauthorized key, a quota
+      // rejection — is PERMANENT; marking it transient would make both the client
+      // and the pin path re-hit it forever instead of settling on `auth`.
+      const transient = res.status === 429 || res.status >= 500;
+      return { html: null, transient };
+    }
 
     const reader = res.body?.getReader();
-    if (!reader) return await res.text();
+    if (!reader) return { html: await res.text(), transient: false };
     const chunks: Uint8Array[] = [];
     let total = 0;
     for (;;) {
@@ -608,7 +677,9 @@ async function fetchViaJina(target: string): Promise<string | null> {
       total += value.byteLength;
       if (total > JINA_MAX_BYTES) {
         reader.cancel();
-        return null;
+        // Deterministic — the page is simply too big; a retry fetches the same
+        // oversized body, so this is permanent, not a blip.
+        return { html: null, transient: false };
       }
       chunks.push(value);
     }
@@ -618,9 +689,9 @@ async function fetchViaJina(target: string): Promise<string | null> {
       out.set(c, off);
       off += c.byteLength;
     }
-    return new TextDecoder().decode(out);
+    return { html: new TextDecoder().decode(out), transient: false };
   } catch {
-    return null;
+    return { html: null, transient: true }; // network / timeout / abort — transient
   }
 }
 

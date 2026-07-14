@@ -85,6 +85,7 @@ import {
   buildSummaryPrompt,
   clampSummaryText,
   coalesceSummaryGeneration,
+  isSummaryOutcomeTransient,
   parseGeminiText,
   pickStoredContent,
   stripSummaryPreamble,
@@ -95,6 +96,7 @@ import {
   resolveInternalCaller,
 } from '../_shared/internalCaller.ts';
 import type { InternalCaller } from '../_shared/internalCaller.ts';
+import { retryWhile } from '../_shared/retry.ts';
 import { jsonCors as json } from '../_shared/respond.ts';
 
 const MODEL = 'gemini-2.5-flash-lite';
@@ -346,6 +348,23 @@ async function handle(req: Request): Promise<Response> {
 // that's about to land.
 const FULLTEXT_KICK_TIMEOUT_MS = 60_000;
 
+// Transient-failure retry for the pin-triggered legs (both the full-text kick and
+// the summary generation). Each leg reports a single boolean: whether its outcome
+// was TRANSIENT — a passing blip a retry shortly could resolve. That bit is owned
+// by the PRODUCER (the summary outcome via isSummaryOutcomeTransient; the fulltext
+// function via the `transient` field on its envelope), so this retry consumes one
+// authoritative signal instead of reconstructing intent from HTTP codes or status
+// strings. Terminal outcomes (a paywall, a missing key, an allowlist denial, an
+// item that's gone) report false and stop. 3 attempts (1 + 2 retries) with
+// exponential backoff (1 s, 2 s), all inside waitUntil and off the user's path.
+// Its value is latency: the server's own attempt lands more often, so the summary
+// is ready before the reader opens rather than being regenerated lazily. The
+// stub-defer "full content first" fallback is the post-settle re-check in
+// runPinTriggeredWork, distinct from this transient retry.
+const PIN_RETRY_ATTEMPTS = 3;
+const PIN_RETRY_BASE_MS = 1_000;
+const pinRetrySleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /** The pin trigger's background work (runs under EdgeRuntime.waitUntil after the
  * 202 is sent). The full-text download and the summary generation run
  * CONCURRENTLY: they share no in-memory state and don't block each other —
@@ -355,17 +374,28 @@ const FULLTEXT_KICK_TIMEOUT_MS = 60_000;
  * could fall back to the freshly-stored full body when Jina failed. Parallelized
  * for latency; the accepted trade is that a Jina failure now falls back to the
  * stored feed body/stub rather than the just-downloaded full article — that path
- * defers with a retryable `empty` and re-checks on a later reader mount.) Every
- * leg is best-effort: the trigger is one-shot, and the client pre-warm / on-open
- * generation remain the retry paths. */
+ * defers with a retryable `empty` and re-checks on a later reader mount.) Each
+ * leg retries a TRANSIENT failure a couple of times with backoff (see
+ * PIN_RETRY_*); beyond that it's best-effort — the pg_net trigger is one-shot,
+ * and the client pre-warm / on-open generation remain the durable retry paths. */
 async function runPinTriggeredWork(
   service: any,
   caller: InternalCaller,
   itemId: string,
 ): Promise<void> {
+  // Each leg retries while it reports its outcome was TRANSIENT (see PIN_RETRY_*).
+  // The two legs still run concurrently and don't block each other; a failed
+  // attempt releases its lease, so the backoff sleep never holds the lease
+  // against a concurrent caller.
+  const retryCfg = {
+    attempts: PIN_RETRY_ATTEMPTS,
+    baseMs: PIN_RETRY_BASE_MS,
+    sleep: pinRetrySleep,
+  };
+  const retryWhileTransient = (t: boolean) => t;
   const results = await Promise.allSettled([
-    ensureFullTextForPin(caller, itemId),
-    generateSummaryForPin(service, itemId),
+    retryWhile(() => ensureFullTextForPin(caller, itemId), retryWhileTransient, retryCfg),
+    retryWhile(() => generateSummaryForPin(service, itemId), retryWhileTransient, retryCfg),
   ]);
   const [full, summary] = results;
   if (full.status === 'rejected') {
@@ -394,7 +424,10 @@ async function runPinTriggeredWork(
       .maybeSingle();
     if (data && !data.ai_summary && data.full_content_html) {
       console.log(`summary: item ${itemId} — pin-triggered: retrying summary now that full text landed`);
-      await generateSummaryForPin(service, itemId);
+      // Wrap in the same transient retry as the initial leg: this is where the
+      // no-Jina/stub path actually generates (from the now-landed full body), so
+      // a Gemini/cache-write blip here must retry too, not silently lose the warm.
+      await retryWhile(() => generateSummaryForPin(service, itemId), retryWhileTransient, retryCfg);
     }
   } catch (err) {
     console.error(`summary: item ${itemId} — pin-triggered fallback retry failed:`, err);
@@ -408,20 +441,32 @@ async function runPinTriggeredWork(
  * the Jina + Gemini pass. Runs CONCURRENTLY with the full-text download, so it
  * reads whatever body is stored now — Jina is its primary source anyway, and the
  * stored body is only the fallback. Best-effort (a throw surfaces as the summary
- * leg's rejection in runPinTriggeredWork). */
-async function generateSummaryForPin(service: any, itemId: string): Promise<void> {
+ * leg's rejection in runPinTriggeredWork).
+ *
+ * Returns whether the outcome was TRANSIENT (the caller retries iff true): a DB
+ * read error, or a transient generation outcome (`unreachable`, a retryable
+ * `empty` Jina-blip/stub-defer, or an uncached `ok` write-blip — see
+ * isSummaryOutcomeTransient). A gone/paused/URL-less/cached result and an unset
+ * key are terminal (false). */
+async function generateSummaryForPin(service: any, itemId: string): Promise<boolean> {
   const { data: item, error } = await service
     .from('items')
     .select('id, feed_id, url, title, content_html, full_content_html, ai_summary')
     .eq('id', itemId)
     .maybeSingle();
-  if (error || !item) {
+  if (error) {
+    // Transient DB read failure — worth a retry (the row is presumably there).
     console.error(`summary: item ${itemId} — pin-triggered re-read failed:`, error);
-    return;
+    return true;
+  }
+  if (!item) {
+    // Row genuinely gone (unpinned + swept between the trigger and here) — terminal.
+    console.warn(`summary: item ${itemId} — pin-triggered: item not found`);
+    return false;
   }
   if (item.ai_summary) {
     console.log(`summary: item ${itemId} — pin-triggered: summary already cached`);
-    return;
+    return false;
   }
   const { data: feed } = await service
     .from('feeds')
@@ -430,12 +475,12 @@ async function generateSummaryForPin(service: any, itemId: string): Promise<void
     .maybeSingle();
   if (feed?.paused) {
     console.log(`summary: item ${itemId} — pin-triggered: feed paused, declining`);
-    return;
+    return false;
   }
   const apiKey = Deno.env.get('GOOGLE_API_KEY');
   if (!apiKey) {
     console.warn('summary: pin-triggered: GOOGLE_API_KEY not set — skipping');
-    return;
+    return false;
   }
   const outcome = await coalesceSummaryGeneration({
     client: makeLeaseClient(service),
@@ -445,6 +490,7 @@ async function generateSummaryForPin(service: any, itemId: string): Promise<void
     generate: () => generateAndCache(service, apiKey, item, itemId),
   });
   console.log(`summary: item ${itemId} — pin-triggered generation: ${outcome.status}`);
+  return isSummaryOutcomeTransient(outcome);
 }
 
 /** Make sure the pinned article's full body is downloaded + cached, via one
@@ -453,11 +499,20 @@ async function generateSummaryForPin(service: any, itemId: string): Promise<void
  * pin, then applies its usual truncation gate, robots checks, SSRF-hardened
  * fetch, sanitization, and cache write). An HTTP hop rather than an import so
  * the whole reading-mode pipeline stays in one place. Best-effort: any failure
- * is logged and the summary still generates from what's stored. */
+ * is logged and the summary still generates from what's stored.
+ *
+ * Returns whether the outcome was TRANSIENT (the caller retries iff true). The
+ * `fulltext` function OWNS that judgment and reports it as the `transient` field
+ * on its envelope (a failed publisher fetch, its own DB-read blip, an uncached
+ * `ok` write-blip, or a transient Jina fallback → true; a paywall, an auth wall,
+ * a gone item → false). This hop just reads that bit — it doesn't second-guess it
+ * from HTTP codes. The only thing it decides itself is a bodyless TRANSPORT
+ * failure (network/timeout, or a platform 5xx with no envelope), which is
+ * transient by nature. */
 async function ensureFullTextForPin(
   caller: InternalCaller,
   itemId: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
     const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/fulltext`, {
       method: 'POST',
@@ -468,12 +523,19 @@ async function ensureFullTextForPin(
       body: JSON.stringify({ itemId, userId: caller.userId, email: caller.email }),
       signal: AbortSignal.timeout(FULLTEXT_KICK_TIMEOUT_MS),
     });
-    const rec = res.ok ? await res.json().catch(() => null) : null;
+    const rec = await res.json().catch(() => null);
     console.log(
-      `summary: item ${itemId} — pin-triggered full-text: HTTP ${res.status}, status ${rec?.status ?? 'n/a'}`,
+      `summary: item ${itemId} — pin-triggered full-text: HTTP ${res.status}, status ${rec?.status ?? 'n/a'}, transient ${rec?.transient ?? 'n/a'}`,
     );
+    // The function declared its own retryability — trust it.
+    if (typeof rec?.transient === 'boolean') return rec.transient;
+    // No usable envelope (a platform error / non-JSON body): a 5xx is a transient
+    // transport failure worth a retry; any other bodyless status is terminal.
+    return res.status >= 500;
   } catch (err) {
+    // Network / timeout / abort on the hop — transient.
     console.warn(`summary: item ${itemId} — pin-triggered full-text failed:`, err);
+    return true;
   }
 }
 
