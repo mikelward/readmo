@@ -1151,7 +1151,7 @@ describe('ItemList', () => {
     ).toBe(true);
   });
 
-  it('consolidates an in-session pin on a re-materializing refetch, then keeps a held row in the body through an unpin', async () => {
+  it('consolidates an in-session pin on a re-materializing refetch, then keeps the row in place through a later unpin', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
     const queryClient = new QueryClient({
@@ -1191,8 +1191,12 @@ describe('ItemList', () => {
       );
     });
 
-    // Unpin it. The cache is still pinned-first until the unpin's refetch lands;
-    // the row must drop back to its body slot, not stick at the top.
+    // Unpin it. The row is now a consolidated (load-time) pin sitting at the
+    // top. Unpinning is a local action, and SPEC's "nothing reorders under the
+    // reader on a local action" applies to BOTH directions: the row must hold
+    // its top slot until the next refetch consolidates the change, not drop
+    // back to its date slot under the reader's eye (the "unpinning a
+    // prior-session pin reorders it" bug).
     await user.click(
       within(
         document.querySelector(`[data-item-id="${target.id}"]`) as HTMLElement,
@@ -1208,12 +1212,87 @@ describe('ItemList', () => {
       );
     });
     const afterUnpin = screen.getAllByTestId('item-row');
-    expect(within(afterUnpin[0]).getByTestId('item-title')).not.toHaveTextContent(
+    expect(within(afterUnpin[0]).getByTestId('item-title')).toHaveTextContent(
       targetTitle!,
     );
-    expect(within(afterUnpin[3]).getByTestId('item-title')).toHaveTextContent(
-      targetTitle!,
+
+    // A re-materializing refetch finally consolidates the unpin: the row drops
+    // out of the lifted block and back to its date position in the body.
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
+    });
+    await waitFor(() => {
+      const after = screen.getAllByTestId('item-row');
+      expect(within(after[0]).getByTestId('item-title')).not.toHaveTextContent(
+        targetTitle!,
+      );
+    });
+  });
+
+  it('keeps a prior-session pin in place when it is unpinned this session', async () => {
+    // The reported bug: an item pinned in a PREVIOUS session loads pinned-first
+    // (lifted to the top). Unpinning it THIS session must not reorder the list —
+    // the row holds its top slot until the next refetch consolidates the change.
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    const page = await source.getHomeItems();
+    const target = page.items[3].item;
+    // Pin it BEFORE the list ever loads — a prior-session pin, so the first
+    // fetch already returns it lifted to the top (not an in-session pin).
+    source.stateStore.hydrate([
+      [target.id, { ...DEFAULT_ITEM_STATE, pinned: true, pinnedAt: 1000 }],
+    ]);
+    const viewKey = `home-prior-pin-${viewKeySeq++}`;
+    renderWithProviders(
+      <ItemList
+        viewKey={viewKey}
+        fetchPage={(cursor) => source.getHomeItems({ cursor })}
+        emptyLabel="x"
+      />,
+      { source, queryClient },
     );
+    await screen.findAllByTestId('item-row');
+    // It loads at the top of the list (the server's pinned-first order).
+    await waitFor(() => {
+      const rows = screen.getAllByTestId('item-row');
+      expect(within(rows[0]).getByTestId('item-title')).toHaveTextContent(
+        target.title,
+      );
+    });
+
+    // Unpin it this session. The list must NOT reorder — the row stays at the top.
+    await user.click(
+      within(
+        document.querySelector(`[data-item-id="${target.id}"]`) as HTMLElement,
+      ).getByTestId('pin-btn'),
+    );
+    await waitFor(() => {
+      const a = document.querySelector(
+        `[data-item-id="${target.id}"]`,
+      ) as HTMLElement;
+      expect(within(a).getByTestId('pin-btn')).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      );
+    });
+    const afterUnpin = screen.getAllByTestId('item-row');
+    expect(within(afterUnpin[0]).getByTestId('item-title')).toHaveTextContent(
+      target.title,
+    );
+
+    // Only a refetch consolidates the unpin — now the row leaves the top block.
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
+    });
+    await waitFor(() => {
+      const after = screen.getAllByTestId('item-row');
+      expect(within(after[0]).getByTestId('item-title')).not.toHaveTextContent(
+        target.title,
+      );
+    });
   });
 
   it('does not hold a pin applied by background hydration in the body', async () => {
@@ -5874,15 +5953,18 @@ describe('ItemList', () => {
       }
     });
 
-    it('re-seats a promoted pin into the body on a plain cross-device unpin', async () => {
-      // The hold above is ONLY for dismissals shown in place. A plain unpin
-      // (no Done/Hidden) has nothing to hold for — the row returns to the
-      // body window, as before.
+    it('holds a promoted pin at the section top on a plain cross-device unpin (no re-seat)', async () => {
+      // The list never re-seats a displayed row for an unpin — whether the
+      // reader unpinned it here or another device did (SPEC: nothing the reader
+      // can see moves unless the reader moved it here). A-2 loads pinned-first
+      // (it leads the section though its date would place it last); a resync
+      // that unpins it must drop the badge in place, NOT drop the row to the
+      // body. Consolidation waits for the next refetch.
       installIntersectionObserverMock();
       try {
         const { source, mk } = await makeRows();
         source.stateStore.hydrate([
-          ['A-0', { ...DEFAULT_ITEM_STATE, pinned: true, pinnedAt: 1000 }],
+          ['A-2', { ...DEFAULT_ITEM_STATE, pinned: true, pinnedAt: 1000 }],
         ]);
         const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2)];
         const fetchPage = vi.fn(() => Promise.resolve({ items: base, nextCursor: null }));
@@ -5901,24 +5983,81 @@ describe('ItemList', () => {
           [...document.querySelectorAll('[data-item-id]')].map((el) =>
             el.getAttribute('data-item-id'),
           );
-        expect(order()).toEqual(['A-0', 'A-1', 'A-2']);
+        // A-2 leads the section (pinned-first), ahead of the body rows.
+        expect(order()).toEqual(['A-2', 'A-0', 'A-1']);
 
+        // A cross-device unpin arrives via resync (hydrate — no local mutation).
         act(() => {
           source.stateStore.hydrate([
-            ['A-0', { ...DEFAULT_ITEM_STATE, pinned: false, pinnedAt: 2000 }],
+            ['A-2', { ...DEFAULT_ITEM_STATE, pinned: false, pinnedAt: 2000 }],
           ]);
         });
 
         await waitFor(() => {
-          const row = document.querySelector('[data-item-id="A-0"]') as HTMLElement;
+          const row = document.querySelector('[data-item-id="A-2"]') as HTMLElement;
           expect(within(row).getByTestId('pin-btn')).toHaveAttribute(
             'aria-pressed',
             'false',
           );
         });
-        // Not dismissed, not held — order comes from the sticky window as usual.
-        const row = document.querySelector('[data-item-id="A-0"]') as HTMLElement;
+        // The badge dropped in place; the row held its slot — not dismissed, not moved.
+        const row = document.querySelector('[data-item-id="A-2"]') as HTMLElement;
         expect(row.classList.contains('item-list__row--dismissed')).toBe(false);
+        expect(order()).toEqual(['A-2', 'A-0', 'A-1']);
+      } finally {
+        uninstallIntersectionObserverMock();
+      }
+    });
+
+    it('holds a promoted pin at the section top when the reader unpins it locally', async () => {
+      // Counterpart to the cross-device case above: a LOCAL unpin (the reader's
+      // own tap) of a section-leading pin must keep its promoted slot until the
+      // next refetch — nothing reorders under the reader on a local action. The
+      // pin loads pinned-first (A-2 hydrated before the fetch), so it leads the
+      // section even though its date would place it last.
+      installIntersectionObserverMock();
+      try {
+        const user = userEvent.setup();
+        const { source, mk } = await makeRows();
+        source.stateStore.hydrate([
+          ['A-2', { ...DEFAULT_ITEM_STATE, pinned: true, pinnedAt: 1000 }],
+        ]);
+        const base = [mk('A', 'Feed A', 0), mk('A', 'Feed A', 1), mk('A', 'Feed A', 2)];
+        const fetchPage = vi.fn(() =>
+          Promise.resolve({ items: base, nextCursor: null }),
+        );
+        renderWithProviders(
+          <ItemList
+            viewKey={`psm-local-unpin-${viewKeySeq++}`}
+            fetchPage={fetchPage}
+            emptyLabel="x"
+            groupByFeed
+            perFeedLimit={3}
+          />,
+          { source },
+        );
+        await screen.findAllByTestId('item-row');
+        const order = () =>
+          [...document.querySelectorAll('[data-item-id]')].map((el) =>
+            el.getAttribute('data-item-id'),
+          );
+        // A-2 leads the section (pinned-first), ahead of the body rows.
+        expect(order()).toEqual(['A-2', 'A-0', 'A-1']);
+
+        // The reader unpins it. It must hold the section-leading slot.
+        await user.click(
+          within(
+            document.querySelector('[data-item-id="A-2"]') as HTMLElement,
+          ).getByTestId('pin-btn'),
+        );
+        await waitFor(() => {
+          const el = document.querySelector('[data-item-id="A-2"]') as HTMLElement;
+          expect(within(el).getByTestId('pin-btn')).toHaveAttribute(
+            'aria-pressed',
+            'false',
+          );
+        });
+        expect(order()).toEqual(['A-2', 'A-0', 'A-1']);
       } finally {
         uninstallIntersectionObserverMock();
       }

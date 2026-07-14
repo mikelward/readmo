@@ -1306,19 +1306,21 @@ negligible and off every critical path. See the External services table in
      has subscriptions, so it gets the normal caught-up state, not the coach.
    - **`/folder/:name`** — a folder's merge. **`/feed/:feedId`** — one feed.
    - **Pinned prepended to the top** of every feed view, rendered once,
-     oldest-pinned first; **pinning a body row keeps its position** — the click
-     marks it pinned but doesn't yank it into the top block under the reader's
-     eye, so they don't lose their place. Consolidation re-groups in-body pins
-     into the top block, and — because pinned-first ordering is applied
-     server-side — it lands on the next **refetch**: a **pull-to-refresh**, a
-     **tab-focus** refresh, or a **fresh load**. A **Sweep** releases the
-     in-session hold, but since a mutation no longer refetches the view (see
-     *Feed views → A dismiss never refetches*) the actual re-group waits for one
-     of those refetches rather than snapping on the Sweep itself. (newshacker
-     consolidated on Sweep because Sweep refetched; readmo defers it so nothing
-     reorders under the reader on a local action.) (When grouping by feed —
-     below — pinned items lead **their own feed's section** rather than a global
-     top section.)
+     oldest-pinned first; **a local pin/unpin never moves the row** — the click
+     flips the badge but doesn't reorder the list under the reader's eye, in
+     *either* direction, so they don't lose their place. Pinning a body row
+     leaves it at its body position; **unpinning a pinned row that's currently in
+     the top block leaves it there** (rather than dropping it to its date slot).
+     Consolidation — in-body pins re-grouping into the top block, and unpinned
+     rows falling back into the body — is applied server-side, so it lands on the
+     next **refetch**: a **pull-to-refresh**, a **tab-focus** refresh, or a
+     **fresh load**. A **Sweep** releases the in-session hold, but since a
+     mutation no longer refetches the view (see *Feed views → A dismiss never
+     refetches*) the actual re-group waits for one of those refetches rather than
+     snapping on the Sweep itself. (newshacker consolidated on Sweep because
+     Sweep refetched; readmo defers it so nothing reorders under the reader on a
+     local action.) (When grouping by feed — below — pinned items lead **their
+     own feed's section** rather than a global top section.)
    - **Sort & grouping** (per-account, synced — see *Settings → Sort order*,
      *Group by feed*, and *Settings scope*; applied server-side so they hold
      across pages, not a client re-sort of loaded pages):
@@ -1500,6 +1502,20 @@ negligible and off every critical path. See the External services table in
      indicator (their lists don't re-materialize under the reader the same way).
    - **Refresh-failure strip** at the foot (**"Couldn't refresh." + Retry**),
      shown when a background refresh fails while rows are already on screen.
+   - **The list never moves a row the reader can see, unless the reader moved
+     it here.** This is the invariant behind every rule in this section. A change
+     the reader did **not** initiate in *this* tab — a poller insert, a
+     cross-device pin / unpin / dismiss, any background resync — may reorder or
+     remove a row **only while that row is off screen** (below the fold, scrolled
+     above the top, or in a collapsed section). A row that is **on screen** may
+     change its *appearance* — a pin badge appearing or disappearing, a
+     dismissal dimming and striking it through — but it **never changes
+     position**. Reordering something the reader can see is reserved for a
+     re-materialization the reader **asked for** (a pull-to-refresh, or a
+     return/focus past the freshness TTL — see below), where the **Refreshing**
+     state signals the churn. The reader's *own* action in this tab is the one
+     thing that may move a row (e.g. a swipe collapses its neighbors up) — and
+     even then a local **pin/unpin never moves the row** (above), only its badge.
    - **A stable set of articles.** The published set a feed view shows — which
      articles, in which order — is held **frozen** between reads. New items the
      poller adds, and cross-device changes the overlay can't express, do **not**

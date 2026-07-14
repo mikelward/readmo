@@ -49,10 +49,11 @@ describe('placeStayInBodyPins', () => {
     expect(out).toBe(list);
   });
 
-  it('anchors a held row to its body slot after it is unpinned (stale pinned-first cache)', () => {
-    // The reader unpinned a held row, but the cache is still pinned-first ('b'
-    // lifted to the front) until the unpin's refetch lands. The held id keeps
-    // sorting the row back to its date slot rather than leaving it at the top.
+  it('anchors an in-session body pin to its date slot after it is unpinned', () => {
+    // The reader pinned 'b' in-session (held in body) then unpinned it. Its
+    // resting place is the body, so it keeps sorting back to its date slot —
+    // it was never lifted, so no jump either way. (The stale pinned-first cache
+    // still shows 'b' at the front, hence the input order.)
     const list = [fi('b', 200), fi('a', 300), fi('c', 100)];
     const out = placeStayInBodyPins(list, {
       groupByFeed: false,
@@ -61,6 +62,38 @@ describe('placeStayInBodyPins', () => {
       isPinned: () => false, // 'b' is no longer pinned
     });
     expect(ids(out)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('keeps a just-unpinned lifted row at the top until refresh (stayLifted)', () => {
+    // 'p' was pinned in a prior session (lifted to the front). The reader
+    // unpins it this session: it must hold its lifted slot until the next
+    // refetch consolidates, not drop into the body under the reader's eye.
+    // Another row 'b' is pinned in-session (in `stay`), so the reorder path is
+    // active — this asserts stayLifted survives that pass.
+    const list = [fi('p', 50), fi('b', 200), fi('a', 300), fi('c', 100)];
+    const out = placeStayInBodyPins(list, {
+      groupByFeed: false,
+      sortAsc: false,
+      stay: new Set(['b']),
+      stayLifted: new Set(['p']), // 'p' unpinned but held lifted
+      isPinned: (id) => id === 'b', // 'p' is no longer pinned
+    });
+    // 'p' stays at the top; body re-sorts by date with 'b' in place.
+    expect(ids(out)).toEqual(['p', 'a', 'b', 'c']);
+  });
+
+  it('leaves a stayLifted-only hold as-is without reordering', () => {
+    // No in-session body pin, so the input is already correct (lifted-first).
+    // A stayLifted id alone must not trigger the reorder — same ref returned.
+    const list = [fi('p', 50), fi('a', 300), fi('c', 100)];
+    const out = placeStayInBodyPins(list, {
+      groupByFeed: false,
+      sortAsc: false,
+      stay: new Set(),
+      stayLifted: new Set(['p']),
+      isPinned: () => false,
+    });
+    expect(out).toBe(list);
   });
 
   it('returns the same reference when no held id is in the list', () => {
