@@ -12,15 +12,20 @@ import { isSummarySettled, summaryStaleTime, type SummaryResult } from '../lib/s
  * server is still generating it (the pin trigger downloads the full article
  * first, then summarizes, which can outlast a single invoke), or a transient
  * Jina/Gemini blip. Retry on an exponential backoff until the summary settles
- * into the cache (so it's there for offline), bounded so a genuinely-down
- * service doesn't poll forever. First retry ~2 s, doubling to a 30 s ceiling,
- * up to six attempts (~90 s of polling) — long enough to cover the server's
- * background generation, short enough not to hammer. An external trigger
- * (reconnect / foreground / a fresh pin) restarts the chain from attempt 0.
+ * into the cache (so it's there for offline), for as long as the item stays
+ * pinned and the app stays open: first retry ~2 s, doubling to a 60 s ceiling —
+ * fast enough to catch the server's background generation the moment it lands,
+ * and at the ceiling it's one tiny request per minute per unsettled pin (a
+ * server cache-hit envelope once generated, and only while unsettled pins
+ * exist), so a genuinely-down service costs a slow trickle, not a hammer. The
+ * loop deliberately never gives up: a pin is a promise that the summary will be
+ * on-device, and a chain that stops after N attempts leaves the pin cold in
+ * exactly the case the user notices — opening it after the outage clears. An
+ * external trigger (reconnect / foreground / a fresh pin) restarts the chain
+ * from attempt 0.
  */
 const SUMMARY_WARM_RETRY_BASE_MS = 2_000;
-const SUMMARY_WARM_RETRY_MAX_MS = 30_000;
-const SUMMARY_WARM_MAX_RETRIES = 6;
+const SUMMARY_WARM_RETRY_MAX_MS = 60_000;
 
 /**
  * Pre-warm the AI summary for pinned articles so it's ready before the reader
@@ -34,8 +39,8 @@ const SUMMARY_WARM_MAX_RETRIES = 6;
  * `summary` function from the database (the 0053/0054 pin trigger, which also
  * downloads the full article first), independent of this hook. What this hook
  * adds on top is the on-device React Query cache warm (so the open is
- * instant, not just cheap) and — while the app stays open — a bounded,
- * self-driving retry that keeps re-fetching an unsettled pin until the summary
+ * instant, not just cheap) and — while the app stays open — a self-driving
+ * retry that keeps re-fetching an unsettled pin until the summary
  * lands in the cache (durable for offline), not just when an external trigger
  * happens to re-fire. That last point is the fix for "the summary is there in
  * the background but the client never picks it up": the server may finish
@@ -67,7 +72,9 @@ const SUMMARY_WARM_MAX_RETRIES = 6;
  * resolves. The store subscriber warms only **newly-pinned** ids (so an
  * unrelated state emit during an outage doesn't re-fetch every unsettled pinned
  * summary); whole-set retries are left to the restore/reconnect/gate effect and
- * a bounded foreground-return (focus / visibility) retry.
+ * a once-per-return foreground (focus / visibility) retry — which also cancels a
+ * fetch left frozen by an app suspension so the fresh warm doesn't dedupe into a
+ * dead promise.
  * Warming is held off until the persisted React Query cache has **restored**
  * (like `useOfflineCacheLock`): prefetching against the not-yet-hydrated cache
  * would re-fetch every already-cached pinned summary on each boot. Mount once
@@ -143,7 +150,10 @@ export function useSummaryPrewarm(): void {
       void queryClient
         .prefetchQuery({
           queryKey: summaryQueryKey(id),
-          queryFn: () => ds.getSummary(id),
+          // Thread React Query's per-fetch signal through, so cancelling this
+          // query (the foreground-resume path below) aborts the actual invoke
+          // rather than only resetting query state.
+          queryFn: ({ signal }) => ds.getSummary(id, { signal }),
           staleTime: summaryStaleTime,
         })
         .then(() => {
@@ -153,11 +163,11 @@ export function useSummaryPrewarm(): void {
             cancelRetry(id);
             return;
           }
-          // Unsettled — keep polling on a bounded exponential backoff so a
-          // summary the server finishes generating moments later (or after a
-          // transient blip clears) lands in the cache without waiting for a
-          // reconnect / foreground trigger.
-          if (attempt >= SUMMARY_WARM_MAX_RETRIES) return; // ceiling — leave to external triggers
+          // Unsettled — keep polling on an exponential backoff (capped delay,
+          // no attempt ceiling) so a summary the server finishes generating
+          // moments later (or after a transient blip clears) lands in the cache
+          // without waiting for a reconnect / foreground trigger — however long
+          // that takes, as long as the pin and the page live.
           if (retryTimers.has(id)) return; // a retry is already queued for this id
           const delay = Math.min(
             SUMMARY_WARM_RETRY_BASE_MS * 2 ** attempt,
@@ -232,33 +242,56 @@ export function useSummaryPrewarm(): void {
 
   // Retry unsettled pins when the app returns to the FOREGROUND (tab focus /
   // visibility→visible), the same natural retry boundary `useStateSync` re-pulls
-  // on. The self-driving backoff (runWarm) already keeps retrying while the app
-  // stays open, but it's bounded — after it exhausts its attempts a pin sits
-  // unwarmed. A foreground return is a fresh, user-salient boundary that restarts
-  // the chain from attempt 0 (`warm` cancels any pending backoff and retries now),
-  // so a summary that only became available after the loop gave up is still picked
-  // up. Bounded, once-per-return (NOT per-emit — those are deliberately left to
-  // the backoff to avoid amplifying an outage); `warm` is idempotent, so
-  // already-warmed / offline / gated / restoring ids no-op and a settled summary
-  // is never re-fetched.
+  // on. The self-driving backoff (runWarm) keeps retrying while the app stays
+  // open, but its timers freeze while the page is hidden/suspended — a foreground
+  // return is a fresh, user-salient boundary that restarts the chain from
+  // attempt 0 (`warm` cancels any pending backoff and retries now) instead of
+  // waiting out whatever delay was pending when the app went to sleep. Bounded,
+  // once-per-return (NOT per-emit — those are deliberately left to the backoff to
+  // avoid amplifying an outage); `warm` is idempotent, so already-warmed /
+  // offline / gated / restoring ids no-op and a settled summary is never
+  // re-fetched.
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const rewarmPinned = () => {
+    const rewarmPinned = (cancelStuck: boolean) => {
       // A bare `focus` can fire on a still-hidden tab; only warm when actually
       // visible (mirrors useStateSync), so an occluded focus doesn't prefetch.
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-      for (const [id, s] of ds.stateStore.entries()) if (s.pinned) warm(id);
+      for (const [id, s] of ds.stateStore.entries()) {
+        if (!s.pinned || warmed.has(id)) continue;
+        // Coming back from HIDDEN: a fetch that was in flight when the app was
+        // suspended is likely a corpse — mobile browsers freeze the page
+        // mid-request, and after resume that fetch may never settle. Re-warming
+        // through it is useless: React Query dedupes the new prefetch into the
+        // same dead promise. Cancel it first so the warm below issues a genuinely
+        // fresh request (which, post-generation, is a fast server cache hit) —
+        // this is what makes "pin, lock the phone, come back, open" find the
+        // summary already cached instead of joining a dead fetch. Only on the
+        // hidden→visible transition — a desktop focus flip must not abort a
+        // healthy in-flight generation.
+        if (
+          cancelStuck &&
+          queryClient.getQueryState(summaryQueryKey(id))?.fetchStatus === 'fetching'
+        ) {
+          void queryClient
+            .cancelQueries({ queryKey: summaryQueryKey(id), exact: true })
+            .then(() => warm(id));
+        } else {
+          warm(id);
+        }
+      }
     };
+    const onFocus = () => rewarmPinned(false);
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') rewarmPinned();
+      if (document.visibilityState === 'visible') rewarmPinned(true);
     };
-    window.addEventListener('focus', rewarmPinned);
+    window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
-      window.removeEventListener('focus', rewarmPinned);
+      window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [ds, warm]);
+  }, [ds, warm, warmed, queryClient]);
 
   // Cancel every pending backoff timer on unmount, so a scheduled retry can't
   // fire against a torn-down tree (and no timer leaks across tests).

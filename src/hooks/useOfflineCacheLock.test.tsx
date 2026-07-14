@@ -171,8 +171,8 @@ describe('useOfflineCacheLock', () => {
 
   it('warms an unsettled summary at most once — no per-emit Edge amplification', async () => {
     // A pinned item whose summary is unsettled (transient unreachable) must not
-    // re-hit the summary Edge Function on every later state emit; the bounded
-    // retry-until-settled belongs to useSummaryPrewarm, not this warm.
+    // re-hit the summary Edge Function on every later state emit; the
+    // retry-until-settled backoff belongs to useSummaryPrewarm, not this warm.
     class UnsettledSummary extends MockDataSource {
       summaryCalls = 0;
       async getSummary() {
@@ -554,6 +554,68 @@ describe('useOfflineCacheLock', () => {
     // A later sync pass (favoriting it) retries and now caches the real detail.
     source.stateStore.set('item-1', 'favorite', true);
     await waitFor(() => expect(queryClient.getQueryData(['item', 'item-1'])).toBeTruthy());
+  });
+
+  it('retries an unwarmed item on the periodic sweep, with no store emit at all', async () => {
+    // The event triggers (emits, reconnect, gate resolve) aren't guaranteed to
+    // re-fire while the app just sits open. The minute sweep is the safety net:
+    // an item whose warm failed transiently fills in on its own.
+    vi.useFakeTimers();
+    try {
+      class FlakyDetailSource extends MockDataSource {
+        calls = 0;
+        async getItem(id: string) {
+          this.calls += 1;
+          return this.calls === 1 ? null : super.getItem(id);
+        }
+      }
+      const source = new FlakyDetailSource(`test-${Math.random()}`);
+      const qc = setup(source);
+
+      source.stateStore.set('item-1', 'pinned', true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(source.calls).toBe(1);
+      expect(qc.getQueryData(['item', 'item-1'])).toBeFalsy();
+
+      // No further emits, no reconnect, no focus — the sweep alone retries it.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(source.calls).toBeGreaterThan(1);
+      expect(qc.getQueryData(['item', 'item-1'])).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels a stuck full-text fetch on return to foreground and refetches fresh', async () => {
+    // A full-text fetch frozen by an app suspension may never settle after
+    // resume, and React Query dedupes any later prefetch into the same dead
+    // promise. The hidden→visible handler must cancel it and fetch fresh, so a
+    // pinned article's reading body is cached by the time it's opened.
+    class HangsFirstFullText extends MockDataSource {
+      ftCalls = 0;
+      async fetchFullText(id: string) {
+        this.ftCalls += 1;
+        if (this.ftCalls === 1) return new Promise<never>(() => {}); // frozen
+        return super.fetchFullText(id);
+      }
+    }
+    const source = new HangsFirstFullText(`test-${Math.random()}`);
+    const qc = setup(source);
+
+    source.stateStore.set('item-1', 'pinned', true);
+    await waitFor(() => expect(source.ftCalls).toBe(1));
+
+    // Return to the foreground (jsdom's visibilityState is 'visible').
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    await waitFor(() =>
+      expect(
+        (qc.getQueryData(['fulltext', 'item-1']) as { status?: string } | undefined)?.status,
+      ).toBe('ok'),
+    );
+    expect(source.ftCalls).toBe(2);
   });
 
   it('re-locks already-pinned (hydrated) items on mount', async () => {

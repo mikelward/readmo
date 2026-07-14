@@ -294,8 +294,12 @@ export interface DataSource {
    * reading-mode view for feeds that publish only a truncated stub. The server
    * extracts the article from its source page, sanitizes it, and caches it on
    * the shared item. Returns a typed outcome so the reader can render the right
-   * thing for a paywall/teaser/unreachable page rather than a hard failure. */
-  fetchFullText(id: ItemId): Promise<FullTextResult>;
+   * thing for a paywall/teaser/unreachable page rather than a hard failure.
+   * `opts.signal` (React Query's per-fetch signal, threaded by the queryFn)
+   * aborts the underlying request — so cancelling the query (the foreground-
+   * resume path in useOfflineCacheLock) frees the transport instead of leaving
+   * it running to the invoke timeout. */
+  fetchFullText(id: ItemId, opts?: { signal?: AbortSignal }): Promise<FullTextResult>;
   /** Fetch (or return the cached) one-sentence AI summary for an item — shown at
    * the top of the reader when an allowlisted user pins the article. The server
    * generates it from the item's already-stored sanitized body (no new publisher
@@ -303,8 +307,8 @@ export interface DataSource {
    * reader can stay silent on a soft failure (allowlist denial, not configured,
    * nothing to summarize) rather than showing a hard error. The pin is the
    * trigger (the reader only calls this for a pinned item) and the `allowlist`
-   * table is the server-enforced boundary. */
-  getSummary(id: ItemId): Promise<SummaryResult>;
+   * table is the server-enforced boundary. `opts.signal` as in fetchFullText. */
+  getSummary(id: ItemId, opts?: { signal?: AbortSignal }): Promise<SummaryResult>;
 
   // --- Subscriptions & organization ----------------------------------------
   getSubscriptions(): Promise<Array<{ subscription: Subscription; feed: Feed }>>;

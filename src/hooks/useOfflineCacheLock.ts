@@ -21,6 +21,11 @@ import type { FullTextResult } from '../lib/fullText';
 import type { FeedItem } from '../lib/types';
 import { extractProxiedImageUrls } from '../lib/extractProxiedImageUrls';
 
+/** How often the reconcile sweep re-warms locked-but-not-fully-cached items —
+ * the safety net behind the event triggers (see the sweep effect below). One
+ * scan a minute, and a fetch only for items still missing data. */
+const OFFLINE_WARM_SWEEP_MS = 60_000;
+
 /** Fire-and-forget fetch for each proxied image URL so the SW caches them. */
 function prefetchImages(html: string): void {
   for (const url of extractProxiedImageUrls(html)) {
@@ -148,7 +153,9 @@ export function useOfflineCacheLock(): void {
       void queryClient
         .prefetchQuery({
           queryKey: summaryQueryKey(id),
-          queryFn: () => ds.getSummary(id),
+          // Per-fetch signal threaded through so a query cancel aborts the
+          // actual invoke (see the foreground-resume effect below).
+          queryFn: ({ signal }) => ds.getSummary(id, { signal }),
           staleTime: summaryStaleTime,
           gcTime: Number.POSITIVE_INFINITY,
         })
@@ -158,7 +165,7 @@ export function useOfflineCacheLock(): void {
           // generating) must NOT be retried per state emit here: warmSummary runs
           // before the full-text `warmed` guard, so every bucketed-item emit would
           // otherwise re-hit the summary Edge Function during an outage. The
-          // bounded retry-until-settled is useSummaryPrewarm's job, and the lock's
+          // retry-until-settled backoff is useSummaryPrewarm's job, and the lock's
           // idle observer keeps this entry durable either way. (An unresolved
           // allowlist gate returns earlier without marking, so it still re-warms
           // once the gate resolves.)
@@ -254,7 +261,9 @@ export function useOfflineCacheLock(): void {
           // instead of leaving the offline cache stuck on the feed stub.
           await queryClient.prefetchQuery({
             queryKey: ['fulltext', id],
-            queryFn: () => ds.fetchFullText(id),
+            // Per-fetch signal threaded through so a query cancel aborts the
+            // actual invoke (see the foreground-resume effect below).
+            queryFn: ({ signal }) => ds.fetchFullText(id, { signal }),
             staleTime: fullTextStaleTime,
             gcTime: Number.POSITIVE_INFINITY,
           });
@@ -364,4 +373,55 @@ export function useOfflineCacheLock(): void {
     }
     for (const id of locks.keys()) warm(id);
   }, [fullTextGate, warm, locks, warmed, gateSkipped]);
+
+  // Periodic reconcile sweep: every minute, re-warm any locked item that isn't
+  // FULLY cached yet. The event triggers above (pin/favorite emits, reconnect,
+  // gate resolve) cover the common paths, but none of them is guaranteed to
+  // re-fire while the app just sits open — a getItem miss on a just-pinned item
+  // (RLS lag before its item_state row flushes) or a transient full-text
+  // `unreachable` would otherwise stay cold until the user happens to trigger
+  // another emit. The sweep is the safety net that makes the offline promise
+  // eventually-consistent while the app is open, and it's near-free: `warm`
+  // no-ops for every fully-warmed id (the common case, so the steady state is
+  // a Set scan), and the summary warm inside it stays one-shot (summaryWarmed).
+  useEffect(() => {
+    if (isRestoring || !online) return;
+    const sweep = setInterval(() => {
+      for (const id of locks.keys()) if (!warmed.has(id)) warm(id);
+    }, OFFLINE_WARM_SWEEP_MS);
+    return () => clearInterval(sweep);
+  }, [isRestoring, online, warm, locks, warmed]);
+
+  // Foreground return (hidden → visible): a body/full-text fetch that was in
+  // flight when the app was suspended is likely a corpse — mobile browsers
+  // freeze the page mid-request, and after resume that fetch may never settle.
+  // Re-warming through it is useless (React Query dedupes the new prefetch into
+  // the same dead promise), so cancel the stuck fetch first, then warm fresh.
+  // Mirrors useSummaryPrewarm's resume handling for the `['summary']` key; this
+  // covers `['item']` + `['fulltext']`, and deliberately NOT the summary key —
+  // double-cancelling could abort the prewarm's own just-restarted fetch.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (restoringRef.current || !onlineRef.current) return;
+      for (const id of locks.keys()) {
+        if (warmed.has(id)) continue;
+        const stuckKeys = [['item', id] as const, ['fulltext', id] as const].filter(
+          (key) => queryClient.getQueryState(key)?.fetchStatus === 'fetching',
+        );
+        if (stuckKeys.length > 0) {
+          void Promise.all(
+            stuckKeys.map((key) =>
+              queryClient.cancelQueries({ queryKey: key, exact: true }),
+            ),
+          ).then(() => warm(id));
+        } else {
+          warm(id);
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, [queryClient, warm, locks, warmed]);
 }
