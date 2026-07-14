@@ -261,12 +261,47 @@ describe('useSummaryPrewarm', () => {
     }
   });
 
-  it('never gives up on an unsettled pin: backs off to the delay ceiling and keeps polling', async () => {
-    // A pin is a promise that the summary will be on-device. The backoff caps
-    // its DELAY (60 s), not its attempts — a chain that stopped after N tries
-    // left the pin cold in exactly the case the user notices (opening it after
-    // an outage clears). At the ceiling this is one tiny request per minute per
-    // unsettled pin, only while the app is open.
+  it('polls tightly within the ~90 s window, so a mid-window summary is pulled promptly (not at open)', async () => {
+    // Regression for the on-open "Summarizing…" flash. The bug was a WIDE poll
+    // ceiling: a summary the server finished generating during a gap sat unpulled
+    // until the reader's live on-open fetch. The 5 s ceiling makes many attempts
+    // within the ~90 s window, catching a mid-window summary within ~5 s. Here it
+    // stays down until the 12th poll (~56 s in) and the tight poll pulls it
+    // without an open.
+    vi.useFakeTimers();
+    try {
+      class DownThenOk extends MockDataSource {
+        summaryCalls = 0;
+        async getSummary(): Promise<SummaryResult> {
+          this.summaryCalls += 1;
+          return this.summaryCalls < 12
+            ? { status: 'unreachable', summary: null }
+            : { status: 'ok', summary: 'Ready mid-window.' };
+        }
+      }
+      const source = new DownThenOk(`test-${Math.random()}`);
+      const qc = setup(source);
+
+      source.stateStore.set(ID, 'pinned', true);
+      await vi.advanceTimersByTimeAsync(90_000);
+
+      // The tight poll made far more than a wide ceiling's handful of attempts and
+      // pulled the summary the instant it became available.
+      expect(source.summaryCalls).toBeGreaterThan(7);
+      expect(qc.getQueryData(summaryQueryKey(ID))).toMatchObject({ status: 'ok' });
+
+      // Settled → the loop stops; no further polling.
+      const settledAt = source.summaryCalls;
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(source.summaryCalls).toBe(settledAt);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops polling after the ~90 s deadline so a genuinely-down service is not hammered forever', async () => {
+    // The window is bounded — after ~90 s a still-unsettled pin is left to an
+    // external trigger (reconnect / foreground) rather than polling indefinitely.
     vi.useFakeTimers();
     try {
       class AlwaysDown extends MockDataSource {
@@ -280,15 +315,92 @@ describe('useSummaryPrewarm', () => {
       setup(source);
 
       source.stateStore.set(ID, 'pinned', true);
-      // Attempts land at t ≈ 0, 2, 6, 14, 30, 62, 122, 182 s (delays 2, 4, 8,
-      // 16, 32, then the 60 s ceiling).
+      // Run past the whole ~90 s poll window.
       await vi.advanceTimersByTimeAsync(200_000);
-      expect(source.summaryCalls).toBe(8);
 
-      // Well past the old 6-attempt ceiling it is STILL polling, one per minute.
-      await vi.advanceTimersByTimeAsync(180_000);
-      expect(source.summaryCalls).toBe(11);
+      // 1 initial attempt + 18 bounded retries, then it stops.
+      expect(source.summaryCalls).toBe(19);
+
+      // Idle further — no more polling once the deadline passes.
+      await vi.advanceTimersByTimeAsync(200_000);
+      expect(source.summaryCalls).toBe(19);
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('flushes a pending warm when the tab goes HIDDEN, so a ready summary is grabbed before freeze', async () => {
+    // The symmetric half of the foreground flush: browsers freeze a hidden tab's
+    // timers, so the poll stalls the moment we background. Firing one pull on
+    // visibility→hidden grabs a summary that's ready right now (and persists it)
+    // before the freeze, instead of waiting for the next foreground open.
+    class FlakyOnce extends MockDataSource {
+      summaryCalls = 0;
+      async getSummary(): Promise<SummaryResult> {
+        this.summaryCalls += 1;
+        return this.summaryCalls === 1
+          ? { status: 'unreachable', summary: null }
+          : { status: 'ok', summary: 'Grabbed on hide.' };
+      }
+    }
+    const source = new FlakyOnce(`test-${Math.random()}`);
+    const qc = setup(source);
+
+    source.stateStore.set(ID, 'pinned', true);
+    await waitFor(() => expect(source.summaryCalls).toBe(1));
+    expect(qc.getQueryData(summaryQueryKey(ID))).toMatchObject({ status: 'unreachable' });
+
+    const original = Object.getOwnPropertyDescriptor(Document.prototype, 'visibilityState');
+    try {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'hidden',
+      });
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await waitFor(() =>
+        expect(qc.getQueryData(summaryQueryKey(ID))).toMatchObject({ status: 'ok' }),
+      );
+      expect(source.summaryCalls).toBe(2);
+    } finally {
+      if (original) Object.defineProperty(document, 'visibilityState', original);
+    }
+  });
+
+  it('does NOT keep polling in the background: the hidden pull is one-shot on an unsettled result', async () => {
+    // The hidden-edge flush is one last pull, not a license to run the poll loop
+    // in the background — desktop browsers only THROTTLE (not freeze) hidden
+    // timers, so an unsettled chain would keep hitting the Edge Function while the
+    // user is away. Pinning while hidden fires exactly ONE pull; an unsettled
+    // result schedules no retry until the tab is visible again.
+    vi.useFakeTimers();
+    const original = Object.getOwnPropertyDescriptor(Document.prototype, 'visibilityState');
+    try {
+      class AlwaysDown extends MockDataSource {
+        summaryCalls = 0;
+        async getSummary(): Promise<SummaryResult> {
+          this.summaryCalls += 1;
+          return { status: 'unreachable', summary: null };
+        }
+      }
+      const source = new AlwaysDown(`test-${Math.random()}`);
+      setup(source);
+
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'hidden',
+      });
+      source.stateStore.set(ID, 'pinned', true);
+
+      // The immediate (attempt 0) pull fires once…
+      await vi.advanceTimersByTimeAsync(0);
+      expect(source.summaryCalls).toBe(1);
+      // …but no backoff is scheduled while hidden, so it does not poll on.
+      await vi.advanceTimersByTimeAsync(400_000);
+      expect(source.summaryCalls).toBe(1);
+    } finally {
+      if (original) Object.defineProperty(document, 'visibilityState', original);
       vi.useRealTimers();
     }
   });
