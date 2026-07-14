@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
-import { useFullTextAllowed } from './useCapabilities';
+import { useFullTextAllowed, useCapabilities, canUseFullText } from './useCapabilities';
 import { summaryStaleTime, type SummaryResult } from '../lib/summary';
 import type { ItemId } from '../lib/types';
 
@@ -69,15 +69,30 @@ export function useSummary(
 ): UseSummary {
   const ds = useDataSource();
   const queryClient = useQueryClient();
+  // TWO gates, deliberately different (mirrors the spoiler-headline split in
+  // ItemPage): the FETCH gate is conservative and the DISPLAY gate is optimistic.
+  //  - `allowed` (conservative — `useFullTextAllowed`): closed until we KNOW the
+  //    caller is allowlisted. Gates whether we issue an Edge `getSummary` call, so
+  //    a not-yet-known / off-list user fires nothing (the "zero Edge calls"
+  //    promise). Also gates the generate button.
+  //  - `allowedDisplay` (optimistic — `canUseFullText(useCapabilities())`): open
+  //    while capabilities are still loading, closed only once we KNOW the caller is
+  //    denied. Gates whether an ALREADY-cached/seeded summary is shown. Using the
+  //    conservative gate here would blank a cached summary until caps resolve on a
+  //    cold boot — the 500 ms–1 s "Summarizing…" flash over a summary that's
+  //    actually already in hand. The summary is derived from an article the caller
+  //    can already read, so showing a cached one during the brief caps-load window
+  //    is safe; a resolved denial still drops it.
   const allowed = useFullTextAllowed();
+  const allowedDisplay = canUseFullText(useCapabilities());
   // A summary already delivered ON the item row (the allowlisted ride-along from
   // `feed_items`, 0058) — show it immediately with no Edge round-trip and no
-  // spinner, and don't fire the query at all. Gated on `allowed` like every
-  // other display path (a row summary persisted from when the caller WAS
-  // allowlisted must stop showing if they're later de-listed). Null → fall
-  // through to the normal on-demand `getSummary` flow below (just-pinned /
-  // old backend / non-cacheable), so this is a fast path, never the only one.
-  const rowSummary = allowed ? (opts.initialSummary ?? null) : null;
+  // spinner, and don't fire the query at all. Gated on the OPTIMISTIC display gate
+  // so it paints instantly on a cold boot too (a resolved de-list still drops it).
+  // Null → fall through to the normal on-demand `getSummary` flow below
+  // (just-pinned / old backend / non-cacheable), so this is a fast path, never the
+  // only one.
+  const rowSummary = allowedDisplay ? (opts.initialSummary ?? null) : null;
   // The item the user explicitly asked to summarize via the button. Stored as an
   // id (not a boolean + reset effect) so the trigger is keyed to *this* article:
   // `triggered` is derived and becomes false the instant `id` changes, in the
@@ -171,14 +186,15 @@ export function useSummary(
   }
 
   // Display gate (separate from the query `enabled`): a summary already cached in
-  // React Query must STOP being shown the moment the caller loses access — when
-  // the operator removes a now-armed allowlist member, `enabled` halts new calls
-  // but the persisted `ok` data would otherwise keep rendering the gated card.
-  // So drop cached data unless the caller is currently allowed, mirroring how
-  // ItemPage ignores cached full-text when `allowFull` is false. Gated on
-  // `allowed` only (NOT `online`), so a summary already on screen survives going
-  // offline — there's just nothing new to fetch.
-  const data: SummaryResult | undefined = allowed ? query.data : undefined;
+  // React Query must STOP being shown the moment the caller is KNOWN to have lost
+  // access — when the operator removes a now-armed allowlist member, `enabled`
+  // halts new calls but the persisted `ok` data would otherwise keep rendering the
+  // gated card. Uses the OPTIMISTIC gate (open while caps load, closed only on a
+  // resolved denial): a cached summary paints instantly on a cold boot instead of
+  // flashing "Summarizing…" until caps resolve, while a confirmed de-list still
+  // drops it — mirroring the spoiler headline. Gated on `allowedDisplay` only (NOT
+  // `online`), so a summary already on screen survives going offline.
+  const data: SummaryResult | undefined = allowedDisplay ? query.data : undefined;
   const fetching = query.isLoading || query.isFetching;
   // Loading covers the first generation AND a Retry after a transient failure
   // (the stale `unreachable` result is still cached while the refetch is in

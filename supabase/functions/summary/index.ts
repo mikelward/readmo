@@ -16,13 +16,13 @@
 //     explicit userId; a client passing userId with its own JWT stays on the
 //     user path. pg_net never reads the outcome, so this path answers as soon
 //     as the gates pass and runs in the background (EdgeRuntime.waitUntil):
-//     FIRST make sure the full article is downloaded + cached (one internal
-//     call to the `fulltext` function — truncation-gated there, mirroring the
-//     client's pinned prefetch), THEN generate the summary if it's still
-//     missing. Full text first on purpose: the pin should leave the article
-//     readable offline, and the stored full body is the summary's fallback
-//     text when Jina fails — sequencing keeps this one-shot kick from
-//     deferring on a feed stub.
+//     CONCURRENTLY (a) download + cache the full article (one internal call to
+//     the `fulltext` function — truncation-gated there, mirroring the client's
+//     pinned prefetch) and (b) generate the summary if it's still missing. The
+//     two legs single-flight independently (fulltext's fetch lease; the summary's
+//     Gemini lease) and converge only on the shared item row, so neither blocks
+//     the other. The summary fetches its own text via Jina, so it doesn't need
+//     the full-text step to finish first (the stored body is only its fallback).
 //
 // Trust + access:
 //   - User path: the caller's forwarded JWT scopes the item lookup through RLS
@@ -255,10 +255,10 @@ async function handle(req: Request): Promise<Response> {
     // The pin trigger's call is fire-and-forget: nothing reads the outcome, and
     // pg_net aborts the request at its timeout — well inside the fulltext +
     // Jina + Gemini work. So answer now (every gate above passed) and do the
-    // real work in the background: full-text download first, then the summary
-    // (see runPinTriggeredWork). Fall back to a synchronous run on a runtime
-    // without waitUntil (the request may then be aborted mid-work, which is no
-    // worse than the pre-trigger status quo).
+    // real work in the background: the full-text download and the summary run
+    // concurrently (see runPinTriggeredWork). Fall back to a synchronous run on a
+    // runtime without waitUntil (the request may then be aborted mid-work, which
+    // is no worse than the pre-trigger status quo).
     const work = runPinTriggeredWork(service, caller, itemId);
     if (globalThis.EdgeRuntime?.waitUntil) {
       globalThis.EdgeRuntime.waitUntil(work);
@@ -346,65 +346,105 @@ async function handle(req: Request): Promise<Response> {
 // that's about to land.
 const FULLTEXT_KICK_TIMEOUT_MS = 60_000;
 
-/** The pin trigger's background work (runs under EdgeRuntime.waitUntil after
- * the 202 is sent). Full text FIRST — the pin should leave the article fully
- * readable offline, and the stored full body is the summary's fallback text
- * when Jina fails — then the summary, if one is still missing. Every step is
- * best-effort: the trigger is one-shot, and the client pre-warm / on-open
+/** The pin trigger's background work (runs under EdgeRuntime.waitUntil after the
+ * 202 is sent). The full-text download and the summary generation run
+ * CONCURRENTLY: they share no in-memory state and don't block each other —
+ * `fulltext` single-flights its own publisher fetch (its lease) and the summary
+ * single-flights its Gemini call (coalesceSummaryGeneration), converging only on
+ * the shared item row. (Previously sequential — full text first so the summary
+ * could fall back to the freshly-stored full body when Jina failed. Parallelized
+ * for latency; the accepted trade is that a Jina failure now falls back to the
+ * stored feed body/stub rather than the just-downloaded full article — that path
+ * defers with a retryable `empty` and re-checks on a later reader mount.) Every
+ * leg is best-effort: the trigger is one-shot, and the client pre-warm / on-open
  * generation remain the retry paths. */
 async function runPinTriggeredWork(
   service: any,
   caller: InternalCaller,
   itemId: string,
 ): Promise<void> {
-  try {
-    await ensureFullTextForPin(caller, itemId);
+  const results = await Promise.allSettled([
+    ensureFullTextForPin(caller, itemId),
+    generateSummaryForPin(service, itemId),
+  ]);
+  const [full, summary] = results;
+  if (full.status === 'rejected') {
+    console.error(`summary: item ${itemId} — pin-triggered full-text leg failed:`, full.reason);
+  }
+  if (summary.status === 'rejected') {
+    console.error(`summary: item ${itemId} — pin-triggered summary leg failed:`, summary.reason);
+  }
 
-    // Re-read the item AFTER the full-text step: the row may now carry
-    // full_content_html (a better Gemini fallback than the pre-fulltext read),
-    // or a summary another caller cached while we fetched.
-    const { data: item, error } = await service
+  // Fallback re-attempt for the no-Jina path. Because the two legs run
+  // concurrently, if Jina was unavailable/screened (key unset, down, or a
+  // tokenized URL) AND the full body wasn't cached yet when the summary leg read
+  // the item, the summary deferred on the truncated feed stub (a retryable
+  // `empty`, uncached) — and nothing else re-invokes it server-side. Now that the
+  // full-text leg has settled, retry the summary ONCE if it's still missing AND a
+  // full body is now stored: that body is the summary's fallback text, restoring
+  // the guarantee the old full-text-first sequencing gave. A no-op cache hit when
+  // Jina already produced the summary (ai_summary set → generateSummaryForPin
+  // returns early), and skipped entirely when no full body was downloaded (the
+  // stub is all there is, so a retry can't do better).
+  try {
+    const { data } = await service
       .from('items')
-      .select('id, feed_id, url, title, content_html, full_content_html, ai_summary')
+      .select('ai_summary, full_content_html')
       .eq('id', itemId)
       .maybeSingle();
-    if (error || !item) {
-      console.error(`summary: item ${itemId} — pin-triggered re-read failed:`, error);
-      return;
+    if (data && !data.ai_summary && data.full_content_html) {
+      console.log(`summary: item ${itemId} — pin-triggered: retrying summary now that full text landed`);
+      await generateSummaryForPin(service, itemId);
     }
-    if (item.ai_summary) {
-      console.log(`summary: item ${itemId} — pin-triggered: summary already cached`);
-      return;
-    }
-
-    // Same generation guards as the user path (which this call bypassed by
-    // returning its 202 before them).
-    const { data: feed } = await service
-      .from('feeds')
-      .select('paused')
-      .eq('id', item.feed_id)
-      .maybeSingle();
-    if (feed?.paused) {
-      console.log(`summary: item ${itemId} — pin-triggered: feed paused, declining`);
-      return;
-    }
-    const apiKey = Deno.env.get('GOOGLE_API_KEY');
-    if (!apiKey) {
-      console.warn('summary: pin-triggered: GOOGLE_API_KEY not set — skipping');
-      return;
-    }
-
-    const outcome = await coalesceSummaryGeneration({
-      client: makeLeaseClient(service),
-      itemId,
-      now: () => Date.now(),
-      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-      generate: () => generateAndCache(service, apiKey, item, itemId),
-    });
-    console.log(`summary: item ${itemId} — pin-triggered generation: ${outcome.status}`);
   } catch (err) {
-    console.error(`summary: item ${itemId} — pin-triggered work failed:`, err);
+    console.error(`summary: item ${itemId} — pin-triggered fallback retry failed:`, err);
   }
+}
+
+/** Generate + cache the AI summary for a just-pinned item, if one isn't already
+ * cached. Same generation guards as the user path (which the pin trigger's call
+ * bypassed by returning its 202 before them): re-read the item, skip if it's
+ * already summarized / the feed is paused / the key is unset, then single-flight
+ * the Jina + Gemini pass. Runs CONCURRENTLY with the full-text download, so it
+ * reads whatever body is stored now — Jina is its primary source anyway, and the
+ * stored body is only the fallback. Best-effort (a throw surfaces as the summary
+ * leg's rejection in runPinTriggeredWork). */
+async function generateSummaryForPin(service: any, itemId: string): Promise<void> {
+  const { data: item, error } = await service
+    .from('items')
+    .select('id, feed_id, url, title, content_html, full_content_html, ai_summary')
+    .eq('id', itemId)
+    .maybeSingle();
+  if (error || !item) {
+    console.error(`summary: item ${itemId} — pin-triggered re-read failed:`, error);
+    return;
+  }
+  if (item.ai_summary) {
+    console.log(`summary: item ${itemId} — pin-triggered: summary already cached`);
+    return;
+  }
+  const { data: feed } = await service
+    .from('feeds')
+    .select('paused')
+    .eq('id', item.feed_id)
+    .maybeSingle();
+  if (feed?.paused) {
+    console.log(`summary: item ${itemId} — pin-triggered: feed paused, declining`);
+    return;
+  }
+  const apiKey = Deno.env.get('GOOGLE_API_KEY');
+  if (!apiKey) {
+    console.warn('summary: pin-triggered: GOOGLE_API_KEY not set — skipping');
+    return;
+  }
+  const outcome = await coalesceSummaryGeneration({
+    client: makeLeaseClient(service),
+    itemId,
+    now: () => Date.now(),
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    generate: () => generateAndCache(service, apiKey, item, itemId),
+  });
+  console.log(`summary: item ${itemId} — pin-triggered generation: ${outcome.status}`);
 }
 
 /** Make sure the pinned article's full body is downloaded + cached, via one

@@ -14,6 +14,9 @@
 // same code runs under vitest (node) for unit tests; the `Deno.env` / network
 // bits live in summary/index.ts.
 
+import { coalesceGeneration } from './coalesce.ts';
+import type { GenerationLeaseClient } from './coalesce.ts';
+
 /** Cap the article text we hand to the model. A short summary doesn't
  * need the whole body, and a giant input just burns tokens. Matches the order
  * of magnitude newshacker clamps to. */
@@ -360,54 +363,37 @@ export interface CoalesceDeps {
 /**
  * Single-flight a summary generation across concurrent callers for one item.
  *
- * The elected generator runs {@link CoalesceDeps.generate}; every other
- * concurrent caller waits and returns the generator's result the moment it's
- * cached. Falls back to self-generating if the lease can't be won and no result
- * appears before the deadline (a wedged/dead holder), so a caller is never worse
- * off than the no-lease behavior.
+ * A thin summary-shaped adapter over the shared {@link coalesceGeneration} lease
+ * (the same mechanism the `fulltext` function uses): the elected generator runs
+ * {@link CoalesceDeps.generate}; every other concurrent caller waits and returns
+ * the generator's cached `ai_summary` the moment it lands. The summary's cached
+ * artifact is the summary string, surfaced as an `ok` {@link SummaryOutcome}.
  */
 export async function coalesceSummaryGeneration(deps: CoalesceDeps): Promise<SummaryOutcome> {
-  const { client, itemId, generate, now, sleep } = deps;
-  const leaseTtlMs = deps.leaseTtlMs ?? SUMMARY_LEASE_TTL_MS;
-  const pollIntervalMs = deps.pollIntervalMs ?? SUMMARY_POLL_INTERVAL_MS;
-  const maxWaitMs = deps.maxWaitMs ?? SUMMARY_MAX_WAIT_MS;
-  const deadline = now() + maxWaitMs;
-
-  for (;;) {
-    const nowIso = new Date(now()).toISOString();
-    const staleBeforeIso = new Date(now() - leaseTtlMs).toISOString();
-    const won = await client.claimLease(itemId, staleBeforeIso, nowIso);
-    if (won) {
-      let outcome: SummaryOutcome;
-      try {
-        outcome = await generate();
-      } catch (err) {
-        // Generator threw before returning an outcome (an unexpected
-        // Supabase/Jina/cache exception, not a soft-failure return). Release the
-        // lease so waiters/retries reclaim at once instead of blocking on the
-        // full TTL, then re-throw so the handler still reports the failure.
-        await client.releaseLease(itemId, nowIso);
-        throw err;
-      }
-      if (!outcome.cached) {
-        // Nothing was persisted (empty/unreachable/unavailable, or an `ok` whose
-        // write failed) — release so a waiter or a later mount retries at once
-        // instead of blocking on the full TTL.
-        await client.releaseLease(itemId, nowIso);
-      }
-      return outcome;
-    }
-
-    // Lost the claim: another caller holds a fresh lease, or the summary was
-    // written between our cache read and here. Poll for their result.
-    for (;;) {
-      const { aiSummary, leaseAt } = await client.readState(itemId);
-      if (aiSummary) return { status: 'ok', summary: aiSummary, cached: true };
-      const leaseFresh = leaseAt != null && Date.parse(leaseAt) >= now() - leaseTtlMs;
-      if (!leaseFresh) break; // holder failed/died → reclaim (outer loop)
-      if (now() >= deadline) return generate(); // wedged holder → self-generate
-      await sleep(pollIntervalMs);
-    }
-    if (now() >= deadline) return generate();
-  }
+  const client: GenerationLeaseClient<SummaryOutcome> = {
+    claimLease: (itemId, staleBeforeIso, nowIso) =>
+      deps.client.claimLease(itemId, staleBeforeIso, nowIso),
+    async readState(itemId) {
+      const { aiSummary, leaseAt } = await deps.client.readState(itemId);
+      return {
+        result: aiSummary ? { status: 'ok', summary: aiSummary, cached: true } : null,
+        leaseAt,
+      };
+    },
+    releaseLease: (itemId, claimStamp) => deps.client.releaseLease(itemId, claimStamp),
+  };
+  const { result } = await coalesceGeneration<SummaryOutcome>({
+    client,
+    itemId: deps.itemId,
+    generate: async () => {
+      const outcome = await deps.generate();
+      return { result: outcome, cached: outcome.cached ?? false };
+    },
+    now: deps.now,
+    sleep: deps.sleep,
+    leaseTtlMs: deps.leaseTtlMs ?? SUMMARY_LEASE_TTL_MS,
+    pollIntervalMs: deps.pollIntervalMs ?? SUMMARY_POLL_INTERVAL_MS,
+    maxWaitMs: deps.maxWaitMs ?? SUMMARY_MAX_WAIT_MS,
+  });
+  return result;
 }

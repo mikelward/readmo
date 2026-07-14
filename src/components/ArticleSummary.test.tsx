@@ -78,6 +78,48 @@ describe('ArticleSummary', () => {
     expect(screen.queryByTestId('article-summary-loading')).not.toBeInTheDocument();
   });
 
+  it('paints an already-cached summary while capabilities are still loading (no flash)', async () => {
+    // Cold boot: capabilities haven't resolved yet, but the pinned summary is
+    // already in the React Query cache (prewarmed / offline-lock warmed). The
+    // OPTIMISTIC display gate shows it immediately instead of blanking to
+    // "Summarizing…" until caps resolve (the 500 ms–1 s flash). The conservative
+    // FETCH gate still fires nothing while caps load.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    let called = false;
+    source.getSummary = async (): Promise<SummaryResult> => {
+      called = true;
+      return { status: 'ok', summary: 'should not be fetched' };
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    // Summary cached; capabilities deliberately NOT set (still loading).
+    queryClient.setQueryData(['summary', ITEM_ID], { status: 'ok', summary: 'Prewarmed gist.' });
+    baseRender(<ArticleSummary id={ITEM_ID} online autoGenerate />, { source, queryClient });
+    // Painted instantly from cache — no spinner, and no Edge call.
+    expect(screen.getByTestId('article-summary-body').textContent).toBe('Prewarmed gist.');
+    expect(screen.queryByTestId('article-summary-loading')).not.toBeInTheDocument();
+    expect(called).toBe(false);
+  });
+
+  it('drops a cached summary once capabilities resolve to a denial', async () => {
+    // The optimistic gate is open only while caps are UNKNOWN; a resolved denial
+    // (armed allowlist, off-list) still hides a cached summary — same boundary the
+    // conservative gate enforced, just without the cold-boot flash.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    queryClient.setQueryData(['summary', ITEM_ID], { status: 'ok', summary: 'Gated gist.' });
+    queryClient.setQueryData(CAPABILITIES_QUERY_KEY, {
+      family: false,
+      admin: false,
+      allowlistArmed: true,
+    });
+    baseRender(<ArticleSummary id={ITEM_ID} online autoGenerate />, { source, queryClient });
+    expect(screen.queryByTestId('article-summary-body')).toBeNull();
+  });
+
   it('shows the row summary even offline (it is bundled with the pinned item)', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     let called = false;
