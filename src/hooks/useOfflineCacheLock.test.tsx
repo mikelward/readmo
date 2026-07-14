@@ -6,15 +6,27 @@ import { MockDataSource } from '../lib/data/MockDataSource';
 import { _resetNetworkStatusForTests } from '../lib/networkStatus';
 import { useOfflineCacheLock } from './useOfflineCacheLock';
 import type { Capabilities } from '../lib/data/DataSource';
+import { AUTO_SUMMARIZE_PINNED_KEY } from '../lib/settingsSync';
 
 function setNavigatorOnline(value: boolean) {
   Object.defineProperty(window.navigator, 'onLine', { configurable: true, value });
+}
+
+/** Counts getSummary calls so the summary-warm tests can assert the gates
+ * (pinned-only, opt-out, allowlist) skip the Edge call entirely. */
+class CountingSummary extends MockDataSource {
+  summaryCalls = 0;
+  async getSummary(id: string) {
+    this.summaryCalls += 1;
+    return super.getSummary(id);
+  }
 }
 
 afterEach(() => {
   setNavigatorOnline(true);
   _resetNetworkStatusForTests();
   window.localStorage.removeItem('readmo:mock-signed-in');
+  window.localStorage.removeItem(AUTO_SUMMARIZE_PINNED_KEY);
 });
 
 function Harness() {
@@ -107,6 +119,85 @@ describe('useOfflineCacheLock', () => {
     const qc = setup(source);
     source.stateStore.set('item-3', 'favorite', true);
     await waitFor(() => expect(qc.getQueryData(['item', 'item-3'])).toBeTruthy());
+  });
+
+  it('warms a pinned item’s AI summary into the cache', async () => {
+    // The reliability fix: the offline lock now FETCHES the summary for a pinned
+    // item (not just retains it), so it's cached before the reader opens — no
+    // on-open "Summarizing…".
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const qc = setup(source);
+    source.stateStore.set('item-1', 'pinned', true);
+    await waitFor(() =>
+      expect(qc.getQueryData(['summary', 'item-1'])).toMatchObject({ status: 'ok' }),
+    );
+  });
+
+  it('does not warm the summary for a favorite-only item (pinned-only)', async () => {
+    // A favorite has no server-side pin trigger, so warming its summary would spend
+    // a Gemini call the auto-summarize design keeps to pins. The detail still warms.
+    const source = new CountingSummary(`test-${Math.random()}`);
+    const qc = setup(source);
+    source.stateStore.set('item-3', 'favorite', true);
+    await waitFor(() => expect(qc.getQueryData(['item', 'item-3'])).toBeTruthy());
+    expect(source.summaryCalls).toBe(0);
+    expect(qc.getQueryData(['summary', 'item-3'])).toBeUndefined();
+  });
+
+  it('does not warm the summary when the auto-summarize opt-out is off', async () => {
+    // The family-only "Auto generate summaries for pinned articles" toggle, off.
+    // Full text still warms (not gated on it); the summary warm is skipped.
+    window.localStorage.setItem(AUTO_SUMMARIZE_PINNED_KEY, '0');
+    const source = new CountingSummary(`test-${Math.random()}`);
+    const qc = setup(source);
+    source.stateStore.set('item-1', 'pinned', true);
+    await waitFor(() => expect(qc.getQueryData(['fulltext', 'item-1'])).toBeTruthy());
+    expect(source.summaryCalls).toBe(0);
+    expect(qc.getQueryData(['summary', 'item-1'])).toBeUndefined();
+  });
+
+  it('skips the summary warm entirely for an off-allowlist user', async () => {
+    // Armed allowlist, off-list → the summary Edge call is never issued (same gate
+    // as the full-text warm), so a non-family user makes zero summary requests.
+    const source = new CountingSummary(`test-${Math.random()}`);
+    const qc = setup(source);
+    qc.setQueryData(['capabilities'], { family: false, admin: false, allowlistArmed: true });
+    source.stateStore.set('item-1', 'pinned', true);
+    source.stateStore.set('item-2', 'pinned', true); // a second emit would re-warm
+    await waitFor(() => expect(qc.getQueryData(['item', 'item-2'])).toBeTruthy());
+    expect(source.summaryCalls).toBe(0);
+    expect(qc.getQueryData(['summary', 'item-1'])).toBeUndefined();
+  });
+
+  it('warms an unsettled summary at most once — no per-emit Edge amplification', async () => {
+    // A pinned item whose summary is unsettled (transient unreachable) must not
+    // re-hit the summary Edge Function on every later state emit; the bounded
+    // retry-until-settled belongs to useSummaryPrewarm, not this warm.
+    class UnsettledSummary extends MockDataSource {
+      summaryCalls = 0;
+      async getSummary() {
+        this.summaryCalls += 1;
+        return { status: 'unreachable' as const, summary: null };
+      }
+    }
+    const source = new UnsettledSummary(`test-${Math.random()}`);
+    setup(source);
+    source.stateStore.set('item-1', 'pinned', true);
+    await waitFor(() => expect(source.summaryCalls).toBe(1));
+    // Flush the prefetch's `.then` (summaryWarmed.add) before more emits.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // Further emits on the same pinned item must not re-issue getSummary.
+    await act(async () => {
+      source.stateStore.set('item-1', 'favorite', true);
+      source.stateStore.set('item-1', 'opened', true);
+      source.stateStore.set('item-1', 'favorite', false);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(source.summaryCalls).toBe(1);
   });
 
   it('warms a pin made while offline once connectivity returns', async () => {

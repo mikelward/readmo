@@ -2355,6 +2355,17 @@ page's discipline is unchanged.
     precedence, `*`/`$` wildcards, and path normalization are handled by a vetted
     implementation. Cost/reliability (guardrail #5): negligible — an in-process
     pure-JS dependency, no new external call beyond the one robots.txt fetch.
+  - **Concurrent requests are single-flighted (a fetch lease).** Two misses for
+    the same item that overlap — the pin trigger's internal call racing the
+    reader's on-open fetch, or the same article open on phone + desktop — would
+    otherwise each hit the publisher. So the `fulltext` function leases the
+    download the same way the summary leases generation: one caller fetches +
+    extracts + caches, the rest wait and return its body the instant it lands, so
+    N concurrent misses cost **one** publisher fetch on the happy path. The lease
+    is a durable row marker (no migration, no new column) that a failed/dead
+    fetcher releases or ages out of, so a caller is never worse off than the
+    no-lease behavior. Shared coalescing logic with the summary
+    (`_shared/coalesce.ts`), unit-tested there.
   - **Every attempt is recorded** for operator visibility: on each terminal
     outcome the function upserts `{ status, http_status, error, robots_rule,
     attempted_at }` to the server-only `item_fulltext_status` table (keyed on
@@ -2486,19 +2497,20 @@ page's discipline is unchanged.
     reading warms the summary via the pre-warm subscriber, so it appears without a
     button too.
   - **A pin triggers the work server-side the moment it syncs — full article
-    first, then the summary.** The pin's server write fires the `summary`
+    and summary concurrently.** The pin's server write fires the `summary`
     function **from the database** (the pin trigger), so a pinned article is
     made ready even when the app closes or loses the network right after the
     pin — the client pre-warm and pinned prefetch are best-effort (their
     in-flight calls die with the page), and this is the guarantee behind them.
-    A pin made offline triggers when it syncs. The server-side work is:
-    **(1) download + cache the full article** (the reading-mode extraction, via
-    an internal call to `fulltext` — applied only when the feed body looks
-    truncated, the same gate as the client's pinned prefetch, and subject to
-    all of reading mode's usual checks: robots, SSRF hardening, sanitization,
-    paused feeds), then **(2) generate the AI summary** if one still isn't
-    cached — in that order, so the summary's fallback text is the full body
-    rather than a feed stub. The trigger **requires the pinning user to be on
+    A pin made offline triggers when it syncs. The server-side work runs
+    **two legs concurrently**: **(a) download + cache the full article** (the
+    reading-mode extraction, via an internal call to `fulltext` — applied only
+    when the feed body looks truncated, the same gate as the client's pinned
+    prefetch, and subject to all of reading mode's usual checks: robots, SSRF
+    hardening, sanitization, paused feeds), and **(b) generate the AI summary**
+    if one still isn't cached. The summary fetches its own text via Jina, so it
+    doesn't wait on the full-text leg (the stored body is only its fallback);
+    running them in parallel gets both ready sooner. The trigger **requires the pinning user to be on
     the allowlist — an empty allowlist triggers for no one** (the same
     cost-guard convention as the poller's spoiler-title pass; client-initiated
     calls keep their "empty list = open" semantics), skips items that already
@@ -2526,6 +2538,15 @@ page's discipline is unchanged.
     see *Settings → Smart features*): a family user who turns it off warms
     nothing ahead of time, though the reader's on-open `useSummary` still
     generates the summary for whatever article is opened.
+    The **offline cache lock** (which already warms each pinned item's body +
+    full text) also **durably warms the summary for pinned items** on the same
+    reliable triggers — pin, boot, reconnect, allowlist-gate resolve — so a
+    pinned article's gist is dependably cached before it's opened, the same way
+    the article body is; both this and the pre-warm above share the `['summary',
+    id]` key. And an **already-cached summary paints instantly** on open: the
+    reader shows it on the *optimistic* allowlist gate (open while capabilities
+    are still loading), so a cold boot doesn't flash "Summarizing…" over a
+    summary that's actually already in hand — a confirmed de-list still hides it.
     **Cross-device warming is cheap because the summary is cached server-side**: a
     warm of an already-generated summary is a *server cache hit* (the `summary`
     Edge Function short-circuits on `items.ai_summary` — no Jina, no Gemini), and
@@ -2660,8 +2681,8 @@ page's discipline is unchanged.
     poller on content change, so the lease neither leaks nor outlives an edit.
     Purely additive to the deployed backend — an old summary function running
     during the deploy window just ignores the lease (at most one redundant call).
-    The coalescing logic (`coalesceSummaryGeneration`) is unit-tested in
-    `_shared/summary.ts`.
+    The coalescing logic is the generic `coalesceGeneration` (`_shared/coalesce.ts`,
+    shared with `fulltext`'s fetch lease), unit-tested there.
   - **Outcomes** (the function returns `{ status, summary, retryable? }`): `ok`
     (the summary string), `empty` (nothing to summarize, or the silent
     allowlist denial — flagged `retryable` so a later allowlist change

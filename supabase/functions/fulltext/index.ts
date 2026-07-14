@@ -80,10 +80,30 @@ import {
   resolveInternalCaller,
 } from '../_shared/internalCaller.ts';
 import { looksTruncatedHtml } from '../_shared/summary.ts';
+import { coalesceGeneration } from '../_shared/coalesce.ts';
+import type { GenerationLeaseClient, GenerationOutcome } from '../_shared/coalesce.ts';
 import { jsonCors as json } from '../_shared/respond.ts';
 
 const JINA_MAX_BYTES = 4 * 1024 * 1024; // 4 MiB
 const FETCH_MAX_BYTES = 8 * 1024 * 1024; // 8 MiB — article pages can be large
+
+// Single-flight lease timings (see coalesceGeneration). The lease TTL must exceed
+// the worst-case in-lease work: safeFetch (≤12 s) + a redirect robots re-check
+// (≤5 s) + the Jina bot-block fallback (≤15 s) + extraction ≈ 32 s. 60 s leaves
+// headroom so a slow-but-alive fetch isn't preempted; a waiter blocks up to ~45 s
+// before self-generating.
+const FULLTEXT_LEASE_TTL_MS = 60_000;
+const FULLTEXT_POLL_INTERVAL_MS = 750;
+const FULLTEXT_MAX_WAIT_MS = 45_000;
+
+/** The `fulltext` function's cached artifact + wire envelope: the extracted body
+ * (or a soft-failure status). Mirrors the JSON response the reader reads. */
+interface FullTextResult {
+  status: 'ok' | 'empty' | 'auth' | 'unreachable';
+  contentHtml: string | null;
+  viaFallback?: boolean;
+  retryable?: boolean;
+}
 
 Deno.serve(async (req: Request) => {
   // Top-level guard so an unexpected throw produces an Edge Function log
@@ -313,6 +333,103 @@ async function handle(req: Request): Promise<Response> {
     return json({ status: 'empty', contentHtml: null });
   }
 
+  // Single-flight the publisher fetch + extract + cache. Concurrent callers for
+  // the same item — the pin-trigger internal call racing the reader's on-open
+  // fetch, the same article open on phone + desktop — would otherwise EACH hit
+  // the publisher. Only the elected caller fetches; the rest wait and return its
+  // cached body the instant it lands (N misses → one fetch on the happy path).
+  // The lease reuses `full_content_fetched_at` as the in-flight marker while
+  // `full_content_html` is null — the same durable-row-marker pattern the summary
+  // uses on `ai_summary_generated_at`, needing no migration: this function is the
+  // only writer of the column and the poller never resets it, so the marker
+  // neither leaks nor outlives an edit. See coalesceGeneration.
+  const outcome = await coalesceGeneration<FullTextResult>({
+    client: makeFullTextLeaseClient(service),
+    itemId,
+    generate: () => generateFullText(service, item, itemId),
+    now: () => Date.now(),
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    leaseTtlMs: FULLTEXT_LEASE_TTL_MS,
+    pollIntervalMs: FULLTEXT_POLL_INTERVAL_MS,
+    maxWaitMs: FULLTEXT_MAX_WAIT_MS,
+  });
+  return json(outcome.result);
+}
+
+/** The generation-lease operations backed by the service-role Supabase client.
+ * The lease is `items.full_content_fetched_at` interpreted as "a download is in
+ * flight" while `full_content_html` is still null (mirrors the summary's
+ * `makeLeaseClient`). A caller that WINS the claim runs the real fetch; the rest
+ * poll `full_content_html` and return it the instant it lands. */
+function makeFullTextLeaseClient(service: any): GenerationLeaseClient<FullTextResult> {
+  return {
+    async claimLease(itemId, staleBeforeIso, nowIso) {
+      // Atomic claim: stamp the marker iff the body is still null AND no fresh
+      // marker exists (null, or older than the TTL cutoff). One concurrent
+      // caller's UPDATE matches the row; the rest match zero rows and go wait.
+      const { data, error } = await service
+        .from('items')
+        .update({ full_content_fetched_at: nowIso })
+        .eq('id', itemId)
+        .is('full_content_html', null)
+        // Quote the timestamp: its ':'/'.' are reserved in the or() logic-tree
+        // grammar, so an unquoted value could misparse.
+        .or(`full_content_fetched_at.is.null,full_content_fetched_at.lt."${staleBeforeIso}"`)
+        .select('id');
+      if (error) {
+        // Lease infra failed — fail OPEN to a fetch so the caller still gets a
+        // body (worst case a redundant publisher fetch during a DB hiccup).
+        console.error(`fulltext: lease claim for item ${itemId} failed, fetching anyway:`, error);
+        return true;
+      }
+      return (data?.length ?? 0) > 0;
+    },
+    async readState(itemId) {
+      const { data } = await service
+        .from('items')
+        .select('full_content_html, full_content_via_fallback, full_content_fetched_at')
+        .eq('id', itemId)
+        .maybeSingle();
+      const html = data?.full_content_html ?? null;
+      return {
+        result: html
+          ? {
+              status: 'ok',
+              contentHtml: html,
+              ...(data?.full_content_via_fallback ? { viaFallback: true } : {}),
+            }
+          : null,
+        leaseAt: data?.full_content_fetched_at ?? null,
+      };
+    },
+    async releaseLease(itemId, claimStamp) {
+      // Reset the marker to null ONLY if we still hold it (exact stamp match) and
+      // no body landed — never clobber a written body or a re-claimed marker.
+      const { error } = await service
+        .from('items')
+        .update({ full_content_fetched_at: null })
+        .eq('id', itemId)
+        .is('full_content_html', null)
+        .eq('full_content_fetched_at', claimStamp);
+      if (error) {
+        console.error(`fulltext: lease release for item ${itemId} failed:`, error);
+      }
+    },
+  };
+}
+
+/** Run the actual publisher fetch (+ redirect robots re-check + Jina bot-block
+ * fallback) → Readability extraction → sanitize → cache write for one item, and
+ * record the download attempt. Called only by the elected generator (or the
+ * last-resort fallback) inside coalesceGeneration. `cached: true` iff the body
+ * was persisted to `full_content_html` — so waiters can read it and the lease is
+ * kept; every soft failure (and an `ok` whose write failed) returns `cached:
+ * false` so the lease releases and a waiter regenerates. */
+async function generateFullText(
+  service: any,
+  item: { feed_id: string; url: string; title: string | null },
+  itemId: string,
+): Promise<GenerationOutcome<FullTextResult>> {
   console.log(`fulltext: fetching item ${itemId} (${redactUrl(item.url)})`);
   let body: string;
   let finalUrl = item.url;
@@ -348,7 +465,7 @@ async function handle(req: Request): Promise<Response> {
           error: `redirect destination ${robotsReason(finalRobots.matchedUserAgent)}`,
           robotsRule: finalRobots.rule,
         });
-        return json({ status: 'empty', contentHtml: null });
+        return { result: { status: 'empty', contentHtml: null }, cached: false };
       }
     }
     if (res.status === 401 || res.status === 403) {
@@ -359,14 +476,14 @@ async function handle(req: Request): Promise<Response> {
       if (jinaHtml === null) {
         console.log(`fulltext: item ${itemId} — Jina unavailable or URL tokenized`);
         await recordAttempt(service, itemId, 'auth', { httpStatus: res.status });
-        return json({ status: 'auth', contentHtml: null });
+        return { result: { status: 'auth', contentHtml: null }, cached: false };
       }
       console.log(`fulltext: item ${itemId} — Jina returned HTML`);
       body = jinaHtml;
       viaFallback = true;
     } else if (res.status >= 400) {
       await recordAttempt(service, itemId, 'unreachable', { httpStatus: res.status });
-      return json({ status: 'unreachable', contentHtml: null });
+      return { result: { status: 'unreachable', contentHtml: null }, cached: false };
     } else {
       body = new TextDecoder().decode(res.body);
       finalUrl = res.url;
@@ -381,7 +498,7 @@ async function handle(req: Request): Promise<Response> {
       httpStatus: directHttp,
       error: err instanceof Error ? err.message : String(err),
     });
-    return json({ status: 'unreachable', contentHtml: null });
+    return { result: { status: 'unreachable', contentHtml: null }, cached: false };
   }
 
   // Pass the item's title so a body heading that just repeats the headline the
@@ -393,7 +510,7 @@ async function handle(req: Request): Promise<Response> {
       httpStatus: directHttp,
       error: 'no article body extracted (paywall/teaser?)',
     });
-    return json({ status: 'empty', contentHtml: null });
+    return { result: { status: 'empty', contentHtml: null }, cached: false };
   }
 
   // Sanitize the extracted body before it is stored OR returned (guardrail #6).
@@ -404,7 +521,7 @@ async function handle(req: Request): Promise<Response> {
       httpStatus: directHttp,
       error: 'sanitized body empty',
     });
-    return json({ status: 'empty', contentHtml: null });
+    return { result: { status: 'empty', contentHtml: null }, cached: false };
   }
   console.log(`fulltext: item ${itemId} — extracted ${clean.length} chars, caching`);
 
@@ -423,20 +540,22 @@ async function handle(req: Request): Promise<Response> {
   await recordAttempt(service, itemId, 'ok', {
     httpStatus: viaFallback ? null : directHttp,
   });
-  const okBody = {
+  const okBody: FullTextResult = {
     status: 'ok',
     contentHtml: clean,
     ...(viaFallback ? { viaFallback: true } : {}),
   };
   if (writeError) {
     // The extraction still succeeded for this caller; surface it even if the
-    // cache write failed (next caller just re-extracts). Log so a persistently
-    // failing cache write doesn't stay invisible.
+    // cache write failed (next caller just re-extracts). `cached` stays false so
+    // the coalescer releases the lease and a waiter regenerates rather than
+    // blocking on a body that never landed. Log so a persistently failing cache
+    // write doesn't stay invisible.
     console.error(`fulltext: cache write for item ${itemId} failed:`, writeError);
-    return json(okBody);
+    return { result: okBody, cached: false };
   }
 
-  return json(okBody);
+  return { result: okBody, cached: true };
 }
 
 /** Fetch via Jina, but only for URLs we're reasonably sure carry no secret.

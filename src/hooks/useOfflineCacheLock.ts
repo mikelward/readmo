@@ -8,7 +8,9 @@ import { useDataSource } from '../lib/data/context';
 import { useOnlineStatus } from './useOnlineStatus';
 import { useAuth } from './useAuth';
 import { fullTextStaleTime, isFullTextSettled, looksTruncated } from '../lib/fullText';
+import { summaryStaleTime } from '../lib/summary';
 import { summaryQueryKey } from './useSummary';
+import { useAutoSummarizePinned } from './useReadingPrefs';
 import {
   CAPABILITIES_QUERY_KEY,
   canUseFullText,
@@ -65,6 +67,10 @@ export function useOfflineCacheLock(): void {
   // refetch every saved item on boot (the `hadDetail` check + staleTime guard
   // only help once the persisted entries are actually back).
   const isRestoring = useIsRestoring();
+  // The family-only "Auto generate summaries for pinned articles" opt-out (on by
+  // default). When off, the summary warm below is skipped — same gate as
+  // useSummaryPrewarm, so turning it off warms no summaries ahead of time.
+  const { autoSummarizePinned } = useAutoSummarizePinned();
 
   // Connectivity / restore state read at warm time without re-running the lock
   // effect (which would tear down every observer) on each change.
@@ -72,6 +78,8 @@ export function useOfflineCacheLock(): void {
   onlineRef.current = online;
   const restoringRef = useRef(isRestoring);
   restoringRef.current = isRestoring;
+  const autoSummarizeRef = useRef(autoSummarizePinned);
+  autoSummarizeRef.current = autoSummarizePinned;
   // Shared across the lock effect and the reconnect effect.
   const locks = useRef(new Map<string, () => void>()).current; // id -> release
   const warmed = useRef(new Set<string>()).current; // ids whose data is cached
@@ -79,6 +87,10 @@ export function useOfflineCacheLock(): void {
   // this user (not a settled fetch). If membership later flips to family we
   // un-warm and re-warm these so their full-text body fills the offline bucket.
   const gateSkipped = useRef(new Set<string>()).current;
+  // Ids whose AI summary has been warmed to a SETTLED result — tracked separately
+  // from `warmed` (the full-text marker) so the summary warm runs independently:
+  // an item whose full text has settled may still be missing its summary.
+  const summaryWarmed = useRef(new Set<string>()).current;
   // Tri-state reading-mode gate for the fulltext prefetch, derived from the
   // capabilities query:
   //   'allowed' — issue the fulltext call.
@@ -109,6 +121,53 @@ export function useOfflineCacheLock(): void {
       ? 'unknown'
       : 'allowed'; // disabled (signed out, old backend) → no gate to wait on
 
+  // Warm a PINNED item's AI summary into `['summary', id]`, durably (gcTime
+  // Infinity, like the full-text prefetch), so it's cached before the reader opens
+  // — no on-open "Summarizing…". Runs on the same reliable triggers as the
+  // full-text warm (pin/favorite sync, boot restore, reconnect, gate resolve),
+  // which is what makes the summary as dependable as the article body; the reader
+  // and useSummaryPrewarm (its fresh-pin unsettled backoff) share this key, so
+  // whoever fills it first wins. Separate from `warm`'s `warmed` gate on purpose.
+  const warmSummary = useCallback(
+    (id: string) => {
+      if (restoringRef.current || !onlineRef.current || summaryWarmed.has(id)) return;
+      // Family opt-out.
+      if (!autoSummarizeRef.current) return;
+      // PINNED-only: a pin is what fires server-side generation (0053/0054), so
+      // warming a pinned summary is a cheap cache hit. A favorite-only item has no
+      // server generation, so warming it would spend a Gemini call the
+      // auto-summarize design deliberately keeps to pins — skip it.
+      if (!ds.stateStore.get(id).pinned) return;
+      // Allowlist gate, read live from the cache (same as the full-text warm).
+      // Denied → no call, no mark (a cheap re-check next trigger). Unknown (caps
+      // unresolved) → hold off until the gate resolves, so an off-list user makes
+      // zero Edge calls.
+      const caps = queryClient.getQueryData<Capabilities>(CAPABILITIES_QUERY_KEY);
+      if (caps && !canUseFullText(caps)) return;
+      if (!caps && capsUnresolvedRef.current) return;
+      void queryClient
+        .prefetchQuery({
+          queryKey: summaryQueryKey(id),
+          queryFn: () => ds.getSummary(id),
+          staleTime: summaryStaleTime,
+          gcTime: Number.POSITIVE_INFINITY,
+        })
+        .then(() => {
+          // Mark warmed after ONE attempt regardless of the outcome. An unsettled
+          // result (transient unreachable/unavailable, or the server still
+          // generating) must NOT be retried per state emit here: warmSummary runs
+          // before the full-text `warmed` guard, so every bucketed-item emit would
+          // otherwise re-hit the summary Edge Function during an outage. The
+          // bounded retry-until-settled is useSummaryPrewarm's job, and the lock's
+          // idle observer keeps this entry durable either way. (An unresolved
+          // allowlist gate returns earlier without marking, so it still re-warms
+          // once the gate resolves.)
+          summaryWarmed.add(id);
+        });
+    },
+    [ds, queryClient, summaryWarmed],
+  );
+
   // Populate an item's reader queries (idempotent). No-op when offline or
   // already warmed. An id is only marked warmed once it's FULLY cached — detail
   // present, and for a truncated feed a *terminal* full-text result (ok/empty/
@@ -116,7 +175,11 @@ export function useOfflineCacheLock(): void {
   // unwarmed so a later sync / reconnect retries it.
   const warm = useCallback(
     (id: string) => {
-      if (restoringRef.current || !onlineRef.current || warmed.has(id)) return;
+      if (restoringRef.current || !onlineRef.current) return;
+      // AI summary warm — independent of the full-text `warmed` gate below (an
+      // item whose full text has settled might still be missing its summary).
+      warmSummary(id);
+      if (warmed.has(id)) return;
       // Was the detail already cached before this warm? If not, a successful
       // fetch newly makes the item renderable, so the /offline list (which can
       // assemble from per-item caches) should refresh.
@@ -200,7 +263,7 @@ export function useOfflineCacheLock(): void {
           if (ft && isFullTextSettled(ft)) warmed.add(id);
         });
     },
-    [ds, queryClient, warmed, gateSkipped],
+    [ds, queryClient, warmed, gateSkipped, warmSummary],
   );
 
   // Lock/unlock cache entries as items enter/leave the offline buckets.
@@ -223,14 +286,14 @@ export function useOfflineCacheLock(): void {
             enabled: false,
           }),
           // Retain the AI summary too, so a pinned article's gist survives
-          // offline like its body. The ride-along (0058) delivers it on the feed
-          // row, and `useSummary` seeds it into `['summary', id]` on open (or the
-          // prewarm fetches it); this lock just keeps that entry alive, since the
-          // feed-list cache it came from isn't GC-locked — without it an offline
-          // open past the GC window would keep the body and lose the summary. Holds
-          // whatever's seeded/prewarmed; population stays the reader's/prewarm's
-          // job (never fetches — disabled). A favorite that's never been opened
-          // online has nothing to retain here yet; its gist lands on first open.
+          // offline like its body, since the feed-list cache it came from isn't
+          // GC-locked — without this an offline open past the GC window would keep
+          // the body and lose the summary. This observer only RETAINS (never
+          // fetches — disabled); population comes from `warmSummary` above (for a
+          // pinned item), the ride-along seed / reader `useSummary`, and
+          // `useSummaryPrewarm` — whichever fills the shared key first. A favorite
+          // that's never been opened online has nothing to retain here yet (the
+          // summary warm is pinned-only); its gist lands on first open.
           new QueryObserver(queryClient, {
             queryKey: summaryQueryKey(id),
             queryFn: () => ds.getSummary(id),
@@ -249,6 +312,7 @@ export function useOfflineCacheLock(): void {
       release();
       locks.delete(id);
       warmed.delete(id);
+      summaryWarmed.delete(id);
       queryClient.removeQueries({ queryKey: summaryQueryKey(id), exact: true });
       queryClient.removeQueries({ queryKey: ['fulltext', id], exact: true });
       queryClient.removeQueries({ queryKey: ['item', id], exact: true });
@@ -274,8 +338,9 @@ export function useOfflineCacheLock(): void {
       for (const release of locks.values()) release();
       locks.clear();
       warmed.clear();
+      summaryWarmed.clear();
     };
-  }, [ds, queryClient, warm, locks, warmed]);
+  }, [ds, queryClient, warm, locks, warmed, summaryWarmed]);
 
   // Warm locked items once it's both safe and useful: after the persisted cache
   // has been restored (so hydrated copies are seen, not refetched) and while
