@@ -22,6 +22,21 @@ class CountingSummary extends MockDataSource {
   }
 }
 
+class CompleteFeedFullText extends MockDataSource {
+  fullTextCalls = 0;
+  async getItem(id: string) {
+    const fi = await super.getItem(id);
+    if (fi) {
+      fi.item = { ...fi.item, contentHtml: `<p>${'Complete feed paragraph. '.repeat(40)}</p>` };
+    }
+    return fi;
+  }
+  async fetchFullText(id: string) {
+    this.fullTextCalls += 1;
+    return super.fetchFullText(id);
+  }
+}
+
 afterEach(() => {
   setNavigatorOnline(true);
   _resetNetworkStatusForTests();
@@ -119,6 +134,28 @@ describe('useOfflineCacheLock', () => {
     const qc = setup(source);
     source.stateStore.set('item-3', 'favorite', true);
     await waitFor(() => expect(qc.getQueryData(['item', 'item-3'])).toBeTruthy());
+  });
+
+  it('prefetches full text for pinned items even when the feed body looks complete', async () => {
+    const source = new CompleteFeedFullText(`test-${Math.random()}`);
+    const qc = setup(source);
+
+    source.stateStore.set('item-1', 'pinned', true);
+
+    await waitFor(() => expect(qc.getQueryData(['item', 'item-1'])).toBeTruthy());
+    await waitFor(() => expect(qc.getQueryData(['fulltext', 'item-1'])).toBeTruthy());
+    expect(source.fullTextCalls).toBe(1);
+  });
+
+  it('does not prefetch full text for favorite-only items whose feed body looks complete', async () => {
+    const source = new CompleteFeedFullText(`test-${Math.random()}`);
+    const qc = setup(source);
+
+    source.stateStore.set('item-1', 'favorite', true);
+
+    await waitFor(() => expect(qc.getQueryData(['item', 'item-1'])).toBeTruthy());
+    expect(qc.getQueryData(['fulltext', 'item-1'])).toBeUndefined();
+    expect(source.fullTextCalls).toBe(0);
   });
 
   it('warms a pinned item’s AI summary into the cache', async () => {
@@ -248,6 +285,76 @@ describe('useOfflineCacheLock', () => {
         (qc.getQueryData(['fulltext', 'item-1']) as { status?: string } | undefined)?.status,
       ).toBe('ok'),
     );
+  });
+
+  it('keeps retrying a pinned full-text warm until the body settles', async () => {
+    // Pinning should make the later reader open instant even if the server-side
+    // pin trigger is still extracting the full article when the first client warm
+    // checks. The warmer polls on a bounded backoff instead of waiting for an
+    // unrelated state emit/reconnect.
+    vi.useFakeTimers();
+    try {
+      class NotReadyThenFullText extends MockDataSource {
+        ftCalls = 0;
+        async fetchFullText(id: string) {
+          this.ftCalls += 1;
+          return this.ftCalls < 3
+            ? ({ status: 'unreachable', contentHtml: null } as const)
+            : super.fetchFullText(id);
+        }
+      }
+      const source = new NotReadyThenFullText(`test-${Math.random()}`);
+      const qc = setup(source);
+
+      source.stateStore.set('item-1', 'pinned', true);
+      await vi.advanceTimersByTimeAsync(0);
+      await Promise.resolve();
+      expect(source.ftCalls).toBe(1);
+      expect(
+        (qc.getQueryData(['fulltext', 'item-1']) as { status?: string } | undefined)?.status,
+      ).toBe('unreachable');
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(source.ftCalls).toBe(2);
+
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(source.ftCalls).toBe(3);
+      expect(
+        (qc.getQueryData(['fulltext', 'item-1']) as { status?: string } | undefined)?.status,
+      ).toBe('ok');
+
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(source.ftCalls).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels a pending pinned full-text retry when the item is unpinned', async () => {
+    vi.useFakeTimers();
+    try {
+      class AlwaysUnreachableFullText extends MockDataSource {
+        ftCalls = 0;
+        async fetchFullText() {
+          this.ftCalls += 1;
+          return { status: 'unreachable', contentHtml: null } as const;
+        }
+      }
+      const source = new AlwaysUnreachableFullText(`test-${Math.random()}`);
+      setup(source);
+
+      source.stateStore.set('item-1', 'pinned', true);
+      await vi.advanceTimersByTimeAsync(0);
+      await Promise.resolve();
+      expect(source.ftCalls).toBe(1);
+
+      source.stateStore.set('item-1', 'pinned', false);
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      expect(source.ftCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('re-prefetches a retryable allowlist denial after the gate later opens', async () => {
@@ -565,7 +672,7 @@ describe('useOfflineCacheLock', () => {
     await waitFor(() => expect(qc.getQueryData(['item', 'item-2'])).toBeTruthy());
   });
 
-  it('does not fetch the full body for an item whose feed body is complete', async () => {
+  it('does not fetch the full body for a favorite-only item whose feed body is complete', async () => {
     class LongBodySource extends MockDataSource {
       async getItem(id: string) {
         const fi = await super.getItem(id);
@@ -578,9 +685,9 @@ describe('useOfflineCacheLock', () => {
     const source = new LongBodySource(`test-${Math.random()}`);
     const qc = setup(source);
 
-    source.stateStore.set('item-1', 'pinned', true);
+    source.stateStore.set('item-1', 'favorite', true);
     await waitFor(() => expect(qc.getQueryData(['item', 'item-1'])).toBeTruthy());
-    // Body is long enough → not truncated → no full-text fetch.
+    // Favorite-only body is long enough → not truncated → no full-text fetch.
     expect(qc.getQueryData(['fulltext', 'item-1'])).toBeUndefined();
   });
 });

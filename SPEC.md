@@ -3280,9 +3280,10 @@ uid the page announces to the worker; the fonts cache alone stays shared.
 - **Offline reader cache (`useOfflineCacheLock`).** Mounted once at the app root,
   it tracks the offline buckets (**pinned OR favorited**, matching `/offline`)
   via the shared item-state store and, while an item is bucketed, holds its
-  reader queries — `['item', id]` (detail + sanitized feed body) and, for
-  truncated feeds, `['fulltext', id]` (the extracted reading body) — in the
-  persisted cache so the item reads offline. An idle (`enabled:false`)
+  reader queries — `['item', id]` (detail + sanitized feed body) and
+  `['fulltext', id]` (the extracted reading body for pinned items, and for
+  favorite-only items when the feed body looks truncated) — in the persisted
+  cache so the item reads offline. An idle (`enabled:false`)
   `QueryObserver` per query blocks GC while bucketed and re-locks from hydrated
   state on mount (so a reload doesn't drop them); an entry is evicted only once
   the item is in NO bucket (so unpinning an item that's still favorited keeps its
@@ -3317,7 +3318,10 @@ uid the page announces to the worker; the fonts cache alone stays shared.
 - **The server prepares pinned articles too.** For an allowlisted user, a pin's
   sync write also triggers the full-article download and AI summary
   **server-side** (see *AI article summaries*), so the shared item carries both
-  even if this device's prefetch dies with the page — the next warm (this
+  even if this device's prefetch dies with the page. While this device stays
+  open, a pinned article whose full text or summary is still being prepared keeps
+  warming in the background until it settles (bounded, retrying softly), so
+  opening it later should be cache-instant; if the page dies, the next warm (this
   device or another) is then a cheap cache hit.
 
 ### Offline UX (mirrors newshacker)

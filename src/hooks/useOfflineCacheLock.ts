@@ -21,6 +21,10 @@ import type { FullTextResult } from '../lib/fullText';
 import type { FeedItem } from '../lib/types';
 import { extractProxiedImageUrls } from '../lib/extractProxiedImageUrls';
 
+const FULL_TEXT_WARM_RETRY_BASE_MS = 2_000;
+const FULL_TEXT_WARM_RETRY_MAX_MS = 30_000;
+const FULL_TEXT_WARM_MAX_RETRIES = 6;
+
 /** Fire-and-forget fetch for each proxied image URL so the SW caches them. */
 function prefetchImages(html: string): void {
   for (const url of extractProxiedImageUrls(html)) {
@@ -91,6 +95,9 @@ export function useOfflineCacheLock(): void {
   // from `warmed` (the full-text marker) so the summary warm runs independently:
   // an item whose full text has settled may still be missing its summary.
   const summaryWarmed = useRef(new Set<string>()).current;
+  // Pending full-text retries for pinned items whose first warm hit a transient
+  // result while the server-side pin trigger was still fetching/extracting.
+  const fullTextRetryTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>()).current;
   // Tri-state reading-mode gate for the fulltext prefetch, derived from the
   // capabilities query:
   //   'allowed' — issue the fulltext call.
@@ -120,6 +127,37 @@ export function useOfflineCacheLock(): void {
     : capsUnresolved
       ? 'unknown'
       : 'allowed'; // disabled (signed out, old backend) → no gate to wait on
+
+  const cancelFullTextRetry = useCallback(
+    (id: string) => {
+      const timer = fullTextRetryTimers.get(id);
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        fullTextRetryTimers.delete(id);
+      }
+    },
+    [fullTextRetryTimers],
+  );
+
+  const warmRef = useRef<(id: string, fullTextAttempt?: number) => void>(() => {});
+
+  const scheduleFullTextRetry = useCallback(
+    (id: string, attempt: number) => {
+      if (attempt >= FULL_TEXT_WARM_MAX_RETRIES) return;
+      if (fullTextRetryTimers.has(id)) return;
+      const delay = Math.min(
+        FULL_TEXT_WARM_RETRY_BASE_MS * 2 ** attempt,
+        FULL_TEXT_WARM_RETRY_MAX_MS,
+      );
+      const timer = setTimeout(() => {
+        fullTextRetryTimers.delete(id);
+        if (!ds.stateStore.get(id).pinned || warmed.has(id)) return;
+        warmRef.current(id, attempt + 1);
+      }, delay);
+      fullTextRetryTimers.set(id, timer);
+    },
+    [ds, warmed, fullTextRetryTimers],
+  );
 
   // Warm a PINNED item's AI summary into `['summary', id]`, durably (gcTime
   // Infinity, like the full-text prefetch), so it's cached before the reader opens
@@ -174,7 +212,7 @@ export function useOfflineCacheLock(): void {
   // auth). A detail miss or a transient `unreachable` full-text leaves it
   // unwarmed so a later sync / reconnect retries it.
   const warm = useCallback(
-    (id: string) => {
+    (id: string, fullTextAttempt = 0) => {
       if (restoringRef.current || !onlineRef.current) return;
       // AI summary warm — independent of the full-text `warmed` gate below (an
       // item whose full text has settled might still be missing its summary).
@@ -219,8 +257,9 @@ export function useOfflineCacheLock(): void {
           // so its images are cached even when looksTruncated returns false.
           if (fi.item.fullContentHtml) prefetchImages(fi.item.fullContentHtml);
 
-          if (!looksTruncated(fi.item)) {
-            warmed.add(id); // nothing more to fetch
+          const pinned = ds.stateStore.get(id).pinned;
+          if (!pinned && !looksTruncated(fi.item)) {
+            warmed.add(id); // nothing more to fetch for favorite-only complete feeds
             return;
           }
           // Reading mode is allowlist-gated. Read the capability VALUE live from
@@ -247,7 +286,10 @@ export function useOfflineCacheLock(): void {
           if (!caps && capsUnresolvedRef.current) return;
           // Allowed → this id is no longer a gated skip.
           gateSkipped.delete(id);
-          // Truncated feed: also need the extracted reading body. Only mark
+          // Pinned articles always prefetch the extracted reading body so an
+          // allowlisted saved-for-later open has the full article immediately;
+          // favorite-only articles do so only when the feed body looks truncated.
+          // Only mark
           // warmed on a SETTLED result — a transient `unreachable`, or a
           // retryable allowlist denial that a later allowlist change could flip,
           // stays unwarmed so a later reconnect/state-sync re-prefetches it
@@ -260,11 +302,25 @@ export function useOfflineCacheLock(): void {
           });
           const ft = queryClient.getQueryData<FullTextResult>(['fulltext', id]);
           if (ft?.contentHtml) prefetchImages(ft.contentHtml);
-          if (ft && isFullTextSettled(ft)) warmed.add(id);
+          if (ft && isFullTextSettled(ft)) {
+            warmed.add(id);
+            cancelFullTextRetry(id);
+          } else if (pinned) {
+            scheduleFullTextRetry(id, fullTextAttempt);
+          }
         });
     },
-    [ds, queryClient, warmed, gateSkipped, warmSummary],
+    [
+      ds,
+      queryClient,
+      warmed,
+      gateSkipped,
+      warmSummary,
+      cancelFullTextRetry,
+      scheduleFullTextRetry,
+    ],
   );
+  warmRef.current = warm;
 
   // Lock/unlock cache entries as items enter/leave the offline buckets.
   useEffect(() => {
@@ -313,6 +369,8 @@ export function useOfflineCacheLock(): void {
       locks.delete(id);
       warmed.delete(id);
       summaryWarmed.delete(id);
+      gateSkipped.delete(id);
+      cancelFullTextRetry(id);
       queryClient.removeQueries({ queryKey: summaryQueryKey(id), exact: true });
       queryClient.removeQueries({ queryKey: ['fulltext', id], exact: true });
       queryClient.removeQueries({ queryKey: ['item', id], exact: true });
@@ -336,11 +394,24 @@ export function useOfflineCacheLock(): void {
     return () => {
       unsubscribe();
       for (const release of locks.values()) release();
+      for (const timer of fullTextRetryTimers.values()) clearTimeout(timer);
+      fullTextRetryTimers.clear();
       locks.clear();
       warmed.clear();
       summaryWarmed.clear();
+      gateSkipped.clear();
     };
-  }, [ds, queryClient, warm, locks, warmed, summaryWarmed]);
+  }, [
+    ds,
+    queryClient,
+    warm,
+    locks,
+    warmed,
+    summaryWarmed,
+    gateSkipped,
+    cancelFullTextRetry,
+    fullTextRetryTimers,
+  ]);
 
   // Warm locked items once it's both safe and useful: after the persisted cache
   // has been restored (so hydrated copies are seen, not refetched) and while
