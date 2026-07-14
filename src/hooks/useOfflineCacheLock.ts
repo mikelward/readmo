@@ -8,7 +8,8 @@ import { useDataSource } from '../lib/data/context';
 import { useOnlineStatus } from './useOnlineStatus';
 import { useAuth } from './useAuth';
 import { fullTextStaleTime, isFullTextSettled, looksTruncated } from '../lib/fullText';
-import { summaryStaleTime } from '../lib/summary';
+import { summaryStaleTime, isSummarySettled } from '../lib/summary';
+import type { SummaryResult } from '../lib/summary';
 import { summaryQueryKey } from './useSummary';
 import { useAutoSummarizePinned } from './useReadingPrefs';
 import {
@@ -89,8 +90,15 @@ export function useOfflineCacheLock(): void {
   const gateSkipped = useRef(new Set<string>()).current;
   // Ids whose AI summary has been warmed to a SETTLED result — tracked separately
   // from `warmed` (the full-text marker) so the summary warm runs independently:
-  // an item whose full text has settled may still be missing its summary.
+  // an item whose full text has settled may still be missing its summary. An
+  // UNsettled warm (a transient `unreachable` — e.g. the warm raced the just-fired
+  // server generation and timed out) is deliberately NOT marked, so a later warm
+  // trigger re-attempts it (by then a fast cache hit).
   const summaryWarmed = useRef(new Set<string>()).current;
+  // Ids with a summary warm currently in flight — an in-flight guard so repeated
+  // store emits don't stack concurrent getSummary calls while one is running
+  // (which is how an unsettled-but-retried warm avoids amplifying).
+  const summaryWarming = useRef(new Set<string>()).current;
   // Tri-state reading-mode gate for the fulltext prefetch, derived from the
   // capabilities query:
   //   'allowed' — issue the fulltext call.
@@ -130,7 +138,13 @@ export function useOfflineCacheLock(): void {
   // whoever fills it first wins. Separate from `warm`'s `warmed` gate on purpose.
   const warmSummary = useCallback(
     (id: string) => {
-      if (restoringRef.current || !onlineRef.current || summaryWarmed.has(id)) return;
+      if (
+        restoringRef.current ||
+        !onlineRef.current ||
+        summaryWarmed.has(id) ||
+        summaryWarming.has(id)
+      )
+        return;
       // Family opt-out.
       if (!autoSummarizeRef.current) return;
       // PINNED-only: a pin is what fires server-side generation (0053/0054), so
@@ -145,6 +159,7 @@ export function useOfflineCacheLock(): void {
       const caps = queryClient.getQueryData<Capabilities>(CAPABILITIES_QUERY_KEY);
       if (caps && !canUseFullText(caps)) return;
       if (!caps && capsUnresolvedRef.current) return;
+      summaryWarming.add(id);
       void queryClient
         .prefetchQuery({
           queryKey: summaryQueryKey(id),
@@ -153,19 +168,24 @@ export function useOfflineCacheLock(): void {
           gcTime: Number.POSITIVE_INFINITY,
         })
         .then(() => {
-          // Mark warmed after ONE attempt regardless of the outcome. An unsettled
-          // result (transient unreachable/unavailable, or the server still
-          // generating) must NOT be retried per state emit here: warmSummary runs
-          // before the full-text `warmed` guard, so every bucketed-item emit would
-          // otherwise re-hit the summary Edge Function during an outage. The
-          // bounded retry-until-settled is useSummaryPrewarm's job, and the lock's
-          // idle observer keeps this entry durable either way. (An unresolved
-          // allowlist gate returns earlier without marking, so it still re-warms
-          // once the gate resolves.)
-          summaryWarmed.add(id);
+          summaryWarming.delete(id);
+          // Mark warmed ONLY when the result is SETTLED (a real `ok`, or a terminal
+          // `empty`/`unavailable`). An unsettled `unreachable` — the warm's
+          // getSummary raced the just-fired server generation and timed out, or a
+          // transient Gemini/network blip — is left UNMARKED so a later warm
+          // trigger (a store change, reconnect, or gate resolve) re-attempts it; by
+          // then the server has finished and getSummary is a fast cache hit. Without
+          // this, a pinned article would sit on a stale cached `unreachable` and the
+          // reader would re-fetch it on open (the "Summarizing…" second). The
+          // `summaryWarming` in-flight guard above keeps rapid store emits from
+          // stacking concurrent fetches while one is running, so the retry doesn't
+          // amplify. (A denied/unknown allowlist gate returned earlier without a
+          // fetch, so it re-warms once the gate resolves.)
+          const data = queryClient.getQueryData<SummaryResult>(summaryQueryKey(id));
+          if (data && isSummarySettled(data)) summaryWarmed.add(id);
         });
     },
-    [ds, queryClient, summaryWarmed],
+    [ds, queryClient, summaryWarmed, summaryWarming],
   );
 
   // Populate an item's reader queries (idempotent). No-op when offline or
@@ -313,6 +333,7 @@ export function useOfflineCacheLock(): void {
       locks.delete(id);
       warmed.delete(id);
       summaryWarmed.delete(id);
+      summaryWarming.delete(id);
       queryClient.removeQueries({ queryKey: summaryQueryKey(id), exact: true });
       queryClient.removeQueries({ queryKey: ['fulltext', id], exact: true });
       queryClient.removeQueries({ queryKey: ['item', id], exact: true });
@@ -339,8 +360,9 @@ export function useOfflineCacheLock(): void {
       locks.clear();
       warmed.clear();
       summaryWarmed.clear();
+      summaryWarming.clear();
     };
-  }, [ds, queryClient, warm, locks, warmed, summaryWarmed]);
+  }, [ds, queryClient, warm, locks, warmed, summaryWarmed, summaryWarming]);
 
   // Warm locked items once it's both safe and useful: after the persisted cache
   // has been restored (so hydrated copies are seen, not refetched) and while

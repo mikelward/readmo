@@ -169,35 +169,79 @@ describe('useOfflineCacheLock', () => {
     expect(qc.getQueryData(['summary', 'item-1'])).toBeUndefined();
   });
 
-  it('warms an unsettled summary at most once — no per-emit Edge amplification', async () => {
-    // A pinned item whose summary is unsettled (transient unreachable) must not
-    // re-hit the summary Edge Function on every later state emit; the bounded
-    // retry-until-settled belongs to useSummaryPrewarm, not this warm.
-    class UnsettledSummary extends MockDataSource {
+  it('retries an unsettled summary on a later trigger until it settles, then caches it', async () => {
+    // The reliability guarantee: a pinned summary whose first warm comes back
+    // unsettled (a transient `unreachable` — e.g. the warm raced the just-fired
+    // server generation and timed out) must NOT stick. A later store emit
+    // re-attempts it, and once it settles the durable `ok` is cached — so opening
+    // the article is instant, not a "Summarizing…" re-fetch.
+    class FlakySummary extends MockDataSource {
       summaryCalls = 0;
-      async getSummary() {
+      async getSummary(id: string) {
         this.summaryCalls += 1;
-        return { status: 'unreachable' as const, summary: null };
+        if (this.summaryCalls === 1) return { status: 'unreachable' as const, summary: null };
+        return { status: 'ok' as const, summary: `gist ${id}` };
       }
     }
-    const source = new UnsettledSummary(`test-${Math.random()}`);
-    setup(source);
+    const source = new FlakySummary(`test-${Math.random()}`);
+    const qc = setup(source);
     source.stateStore.set('item-1', 'pinned', true);
+    // First attempt: unreachable → not marked, in-flight guard cleared.
     await waitFor(() => expect(source.summaryCalls).toBe(1));
-    // Flush the prefetch's `.then` (summaryWarmed.add) before more emits.
     await act(async () => {
       await Promise.resolve();
     });
-    // Further emits on the same pinned item must not re-issue getSummary.
+    // A later emit re-attempts and this time settles to a cached ok.
+    await act(async () => {
+      source.stateStore.set('item-1', 'opened', true);
+    });
+    await waitFor(() =>
+      expect(qc.getQueryData(['summary', 'item-1'])).toMatchObject({ status: 'ok' }),
+    );
+    // Settled now → further emits don't re-warm.
+    const settledCalls = source.summaryCalls;
+    await act(async () => {
+      source.stateStore.set('item-1', 'favorite', true);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(source.summaryCalls).toBe(settledCalls);
+  });
+
+  it('does not stack concurrent summary warms while one is in flight', async () => {
+    // The in-flight guard: repeated store emits while a warm's getSummary is still
+    // running must not launch parallel Edge calls — only one is in flight at a time.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    class GatedSummary extends MockDataSource {
+      summaryCalls = 0;
+      async getSummary(id: string) {
+        this.summaryCalls += 1;
+        await gate;
+        return { status: 'ok' as const, summary: `gist ${id}` };
+      }
+    }
+    const source = new GatedSummary(`test-${Math.random()}`);
+    const qc = setup(source);
+    source.stateStore.set('item-1', 'pinned', true);
+    await waitFor(() => expect(source.summaryCalls).toBe(1));
+    // More emits while the first getSummary is still held open — no new calls.
     await act(async () => {
       source.stateStore.set('item-1', 'favorite', true);
       source.stateStore.set('item-1', 'opened', true);
-      source.stateStore.set('item-1', 'favorite', false);
-    });
-    await act(async () => {
-      await Promise.resolve();
     });
     expect(source.summaryCalls).toBe(1);
+    // Release → it settles and caches.
+    await act(async () => {
+      release();
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(qc.getQueryData(['summary', 'item-1'])).toMatchObject({ status: 'ok' }),
+    );
   });
 
   it('warms a pin made while offline once connectivity returns', async () => {
