@@ -1,24 +1,37 @@
 import type { FeedItem, ItemId } from './types';
 
+const EMPTY_SET: ReadonlySet<ItemId> = new Set();
+
 /**
  * Re-place *in-session* pins at their natural feed position instead of the
- * data source's pinned-first lift.
+ * data source's pinned-first lift — and hold a *just-unpinned* server pin in
+ * its lifted slot so neither direction moves a row under the reader.
  *
  * The data source orders every pinned item to the top of its section (oldest-
  * pinned first), which is the right resting state on a fresh load / pull-to-
- * refresh. But pinning a row the reader is *currently looking at* shouldn't
- * yank it to the top under their eye (SPEC.md *Feed views*: "pinning a body row
- * keeps its position"). `ItemList` tracks those just-pinned ids (`stay`) and
- * passes them here so the row stays where it was; everything else keeps the
- * data source's order.
+ * refresh. But a local pin/unpin the reader is *currently looking at* shouldn't
+ * yank the row (SPEC.md *Feed views*: "pinning a body row keeps its position";
+ * the list never moves a row the reader can see for a state change —
+ * consolidation waits for the next refetch). `ItemList` tracks two id sets and
+ * passes them here:
+ *   - `stay`: rows pinned in-session while in the body — keep their body slot
+ *     instead of lifting to the top block.
+ *   - `stayLifted`: rows that occupy the server's lifted prefix (the caller
+ *     passes the load-time-pinned set) — keep their lifted slot even once
+ *     `isPinned` reports them unpinned, instead of dropping into the body. The
+ *     cache stays pinned-first until the next refetch lands, so the input
+ *     already carries these at the front; this just stops treating a since-
+ *     unpinned one (locally or from another device) as a body row until then.
  *
  * Pins NOT in `stay` keep their lifted, oldest-pinned-first prefix (the input
- * already arrives in that order). In-session pins fall back into the body and
- * are re-sorted by publish date alongside the unpinned rows, landing exactly
+ * already arrives in that order). In-session `stay` pins fall back into the body
+ * and are re-sorted by publish date alongside the unpinned rows, landing exactly
  * where their date places them — i.e. where they already sat before the pin.
  *
- * Returns `list` unchanged (same reference) whenever no in-session pin is
+ * Returns `list` unchanged (same reference) whenever no in-session `stay` pin is
  * actually present, so the common case preserves identity for downstream memos.
+ * (A `stayLifted`-only hold needs no reorder — the input is already lifted-first
+ * — so it doesn't force the work either.)
  *
  * When grouping by feed the reorder is applied per contiguous feed run, so
  * sections stay self-contained and in their existing order.
@@ -31,18 +44,22 @@ export function placeStayInBodyPins(
     sortAsc: boolean;
     /** Ids the reader pinned in-session while the row was in the loaded feed. */
     stay: ReadonlySet<ItemId>;
+    /**
+     * Ids the reader unpinned in-session that sit in the server's lifted prefix.
+     * Held in their lifted slot (not re-sorted into the body) until refresh.
+     */
+    stayLifted?: ReadonlySet<ItemId>;
     isPinned: (id: ItemId) => boolean;
   },
 ): FeedItem[] {
   const { groupByFeed, sortAsc, stay, isPinned } = opts;
+  const stayLifted = opts.stayLifted ?? EMPTY_SET;
   if (stay.size === 0) return list;
 
-  // Only do any work if a held id is actually in the list — otherwise the data
-  // source's order is already what we want and we keep the same ref. We don't
-  // require the held id to still be pinned: when the reader unpins a held row,
-  // the cache stays pinned-first until the unpin's refetch lands, so the row
-  // must keep being sorted back into the body (as an ordinary unpinned row) for
-  // that round-trip rather than snapping to the stale top.
+  // Only do any work if a held (`stay`) id is actually in the list — otherwise
+  // the data source's order is already what we want and we keep the same ref.
+  // We don't require the held id to still be pinned: an in-session pin the
+  // reader has since unpinned still sorts back into the body at its date slot.
   let active = false;
   for (const fi of list) {
     if (stay.has(fi.item.id)) {
@@ -70,8 +87,11 @@ export function placeStayInBodyPins(
     const lifted: FeedItem[] = [];
     const body: FeedItem[] = [];
     for (const fi of section) {
-      // A pin keeps its top-block slot only when it's NOT an in-session pin.
-      if (isPinned(fi.item.id) && !stay.has(fi.item.id)) lifted.push(fi);
+      const id = fi.item.id;
+      // A row keeps its top-block slot when it's a pin the reader hasn't held in
+      // body — OR a server pin the reader unpinned in-session (`stayLifted`),
+      // which holds its lifted place until refresh rather than dropping to body.
+      if ((isPinned(id) || stayLifted.has(id)) && !stay.has(id)) lifted.push(fi);
       else body.push(fi);
     }
     // `lifted` keeps the input's oldest-pinned-first order; the body (now

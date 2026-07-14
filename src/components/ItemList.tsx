@@ -1106,28 +1106,27 @@ export function ItemList({
   }, [items, displayedByFeed]);
   const itemIdsRef = useRef(itemIds);
   itemIdsRef.current = itemIds;
-  // A pin counts as in-session only when the reader does it themselves. We
-  // listen on the store's *mutation* channel (set / hide / sweep / undo) rather
-  // than the general subscribe, so a background hydrate or cross-device sync —
-  // which flips pre-existing server pins to pinned via hydrate(), emitting no
-  // diff — is never mistaken for the reader pinning a row. A fresh pin on a row
-  // in the loaded window is held at its place.
+  // Pinning a BODY row shouldn't yank it to the top under the reader's eye
+  // (SPEC.md *Feed views*: "pinning a body row keeps its position"). We hold
+  // such a row at its body slot for the session. We listen on the store's
+  // *mutation* channel (set / hide / sweep / undo) rather than the general
+  // subscribe, so a background hydrate or cross-device sync — which flips
+  // pre-existing server pins to pinned via hydrate(), emitting no diff — is
+  // never mistaken for the reader pinning a row.
   //
-  // An UNPIN holds the row too (any local pinned-state change, either
-  // direction): the feed cache stays pinned-first until the next
-  // re-materialization, so an unpinned row must be anchored back to its body
-  // slot for that round-trip rather than lingering at the stale top
-  // (placeStayInBodyPins re-sorts a held row by date whether or not it's still
-  // pinned). This can't rely on the id remaining in the set from pin time —
-  // the re-materialization reset (above) clears the set, so a
-  // pin-consolidate-then-unpin sequence must re-add it here. The id is cleared
-  // when it leaves the window (the GC effect below) or on the next
-  // consolidation (PTR / TTL re-materialization / view change) — by which
-  // point the cache no longer lifts it anyway.
+  // A row already in the server's LIFTED prefix (`basePinnedRef` — pinned when
+  // it entered the loaded set) is deliberately SKIPPED here: it's held in its
+  // lifted place by the `basePinnedRef`-as-`stayLifted` pass below, so it stays
+  // put whether it's unpinned, or unpinned-then-repinned. Adding it to the
+  // body-hold set instead would drop it to its date slot the instant it was
+  // unpinned — the "unpinning a lifted pin reorders it" bug. The set is cleared
+  // when the id leaves the window (the GC effect below) or on the next
+  // consolidation (PTR / TTL re-materialization / view change / Sweep).
   useEffect(() => {
     return ds.stateStore.subscribeMutations((id, changed) => {
       if (changed.pinned === undefined) return;
       if (!itemIdsRef.current.has(id)) return;
+      if (basePinnedRef.current.has(id)) return;
       setStayInBodyIds((cur) => (cur.has(id) ? cur : new Set(cur).add(id)));
     });
   }, [ds]);
@@ -1146,8 +1145,8 @@ export function ItemList({
       }
     });
   }, [ds]);
-  // As the loaded window changes (pagination, refetch), drop stay ids that left
-  // it — a held pin that's no longer displayed has nothing to anchor.
+  // As the loaded window changes (pagination, refetch), drop held ids that left
+  // it — a held body pin that's no longer displayed has nothing to anchor.
   useEffect(() => {
     // Reconciles against the async-loaded window; the functional updater
     // returns the same set when nothing changed, so it can't cascade renders.
@@ -1481,6 +1480,13 @@ export function ItemList({
         groupByFeed,
         sortAsc: itemSort === 'oldest',
         stay: stayInBodyIds,
+        // Every row in the server's lifted prefix (`basePinnedRef` — pinned when
+        // it entered the frozen set) keeps its lifted slot even once unpinned,
+        // until the next refetch consolidates. This holds a prior-session pin in
+        // place whether the reader unpins it here OR another device does — the
+        // list never re-seats a displayed row for an unpin (SPEC: the list never
+        // moves a row the reader can see unless the reader moved it here).
+        stayLifted: basePinnedRef.current,
         isPinned: (id) => ds.stateStore.get(id).pinned,
       });
     }
@@ -1531,18 +1537,17 @@ export function ItemList({
           return true;
         }
         if (promotedPinsRef.current.has(id)) {
-          // A promoted pin that just flipped to Done|Hidden (a reverse-pull /
-          // cross-device dismissal, whose exclusivity closure also unpinned
-          // it) keeps its section-leading slot: the row is being shown struck
-          // IN PLACE by the visibleItems overlay, and re-seating it into the
-          // body window would move it mid-gaze — the exact jump the
-          // dismissed-in-place rule exists to prevent. The hold is display-
-          // only and ends when the row stops being displayed (off-screen
-          // commit, or a rebuild that drops it from the loaded set); a plain
-          // unpin (no dismissal to hold for) releases immediately and the row
-          // re-seats into the body as before.
-          if (!st.pinned && (st.done || st.hidden)) return true;
-          promotedPinsRef.current.delete(id);
+          // Once a row has led its section (been promoted), an UNPIN keeps its
+          // slot until the next refetch consolidates — the list never re-seats a
+          // displayed row for an unpin (SPEC: the list never moves a row the
+          // reader can see unless the reader moved it here). This holds whether
+          // the reader unpinned it in this tab OR another device did, and
+          // whether the unpin also carried a Done|Hidden (a reverse-pull /
+          // cross-device dismissal shown struck IN PLACE by the visibleItems
+          // overlay). The hold is display-only and ends when the row stops being
+          // displayed (off-screen commit, or a rebuild/refetch that resets this
+          // set — the point at which the row is free to move).
+          if (!st.pinned) return true;
         }
         return false;
       };
