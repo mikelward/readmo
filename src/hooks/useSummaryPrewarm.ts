@@ -12,25 +12,33 @@ import { isSummarySettled, summaryStaleTime, type SummaryResult } from '../lib/s
  * server is still generating it (the pin trigger downloads the full article
  * first, then summarizes, which can outlast a single invoke), or a transient
  * Jina/Gemini blip. Retry on an exponential backoff until the summary settles
- * into the cache (so it's there for offline), for as long as the item stays
- * pinned and the app stays open: first retry ~2 s, doubling to a 60 s ceiling —
- * fast enough to catch the server's background generation the moment it lands,
- * and at the ceiling it's one tiny request per minute per unsettled pin (a
- * server cache-hit envelope once generated, and only while unsettled pins
- * exist), so a genuinely-down service costs a slow trickle, not a hammer. The
- * loop deliberately never gives up on an UNSETTLED outcome: a pin is a promise
- * that the summary will be on-device, and a chain that stops after N attempts
- * leaves the pin cold in exactly the case the user notices — opening it after
- * the outage clears. What counts as unsettled is the SERVER's call, via the
- * envelope (`isSummarySettled`): an outcome polling can't change — notably the
- * not-configured `unavailable` (GOOGLE_API_KEY unset) — comes back without the
- * `retryable` flag and SETTLES, stopping the chain after one attempt, so an
- * unconfigured deployment never has pinned items polling the Edge Function
- * forever. An external trigger (reconnect / foreground / a fresh pin) restarts
- * the chain from attempt 0.
+ * into the cache (so it's there for offline), then stop.
+ *
+ * The property that matters for "the summary must be pulled as soon as it lands
+ * on the server" is a SHORT ceiling, so the gap between the server writing the
+ * summary and us pulling it stays small (≤ the ceiling): first retry ~2 s,
+ * doubling to a 5 s ceiling, then a steady 5 s poll over a ~90 s window. Each
+ * poll is a cheap cache-check once generated (a `getSummary` on a populated
+ * `ai_summary` is a server cache hit — no Jina, no Gemini), and the loop STOPS
+ * the instant the result settles. What counts as unsettled is the SERVER's call,
+ * via the envelope (`isSummarySettled`): an outcome polling can't change —
+ * notably the not-configured `unavailable` (GOOGLE_API_KEY unset) — comes back
+ * without the `retryable` flag and SETTLES after one attempt, so an unconfigured
+ * deployment never polls the Edge Function.
+ *
+ * After ~90 s a still-unsettled pin gives up polling — long enough to cover the
+ * server's background generation, bounded so a genuinely-down service isn't
+ * hammered while the user is away. An external trigger (reconnect / foreground /
+ * a fresh pin) restarts the chain from attempt 0, so a summary that lands after
+ * the deadline is still picked up on the next return.
  */
 const SUMMARY_WARM_RETRY_BASE_MS = 2_000;
-const SUMMARY_WARM_RETRY_MAX_MS = 60_000;
+const SUMMARY_WARM_RETRY_MAX_MS = 5_000;
+// ~90 s window at the 5 s ceiling: attempts fire at ~0/2/6/11/16/… s — two ramp
+// delays (2 s, 4 s) then a steady 5 s cadence — so attempt n≥2 lands at
+// 6 + (n−2)·5 s. 18 retries → last attempt ~86 s, i.e. the loop gives up around
+// ~90 s, just polling far more often within the window than a wide ceiling would.
+const SUMMARY_WARM_MAX_RETRIES = 18;
 
 /**
  * Pre-warm the AI summary for pinned articles so it's ready before the reader
@@ -168,13 +176,22 @@ export function useSummaryPrewarm(): void {
             cancelRetry(id);
             return;
           }
-          // Unsettled — keep polling on an exponential backoff (capped delay,
-          // no attempt ceiling) so a summary the server finishes generating
-          // moments later (or after a transient blip clears) lands in the cache
-          // without waiting for a reconnect / foreground trigger — however long
-          // that takes, as long as the pin and the page live. Outcomes polling
-          // can't change never reach here: the server ships them without the
-          // `retryable` flag, so they SETTLE above (see isSummarySettled).
+          // Unsettled — keep polling on an exponential backoff (5 s ceiling) so a
+          // summary the server finishes generating moments later (or after a
+          // transient blip clears) lands in the cache within ~5 s, without waiting
+          // for a reconnect / foreground trigger. Outcomes polling can't change
+          // never reach here: the server ships them without the `retryable` flag,
+          // so they SETTLE above (see isSummarySettled).
+          if (attempt >= SUMMARY_WARM_MAX_RETRIES) return; // ~90 s deadline — leave to external triggers
+          // Don't schedule further polls while the tab is HIDDEN. Desktop browsers
+          // only THROTTLE (not freeze) background timers, so an unsettled chain
+          // would keep hitting the Edge Function while the user is away — a service
+          // outage would rack up calls. The hidden-edge flush (visibility effect
+          // below) is meant to be ONE last pull before the tab freezes; the
+          // foreground-return flush restarts the chain from attempt 0. Reading
+          // visibilityState live here also halts an in-flight chain the moment the
+          // tab hides, not just the hidden-edge pull.
+          if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
           if (retryTimers.has(id)) return; // a retry is already queued for this id
           const delay = Math.min(
             SUMMARY_WARM_RETRY_BASE_MS * 2 ** attempt,
@@ -247,14 +264,22 @@ export function useSummaryPrewarm(): void {
     for (const [id, s] of ds.stateStore.entries()) if (s.pinned) warm(id);
   }, [isRestoring, online, allowed, autoSummarizePinned, ds, warm]);
 
-  // Retry unsettled pins when the app returns to the FOREGROUND (tab focus /
-  // visibility→visible), the same natural retry boundary `useStateSync` re-pulls
-  // on. The self-driving backoff (runWarm) keeps retrying while the app stays
-  // open, but its timers freeze while the page is hidden/suspended — a foreground
-  // return is a fresh, user-salient boundary that restarts the chain from
-  // attempt 0 (`warm` cancels any pending backoff and retries now) instead of
-  // waiting out whatever delay was pending when the app went to sleep. Bounded,
-  // once-per-return (NOT per-emit — those are deliberately left to the backoff to
+  // Flush pending summary warms on EITHER edge of a focus-change boundary — the
+  // general "flush pending work when focus changes" principle. The self-driving
+  // backoff keeps polling while the app stays open, but its timers freeze while
+  // the page is hidden/suspended, so flush on both transitions:
+  //   - visibility→VISIBLE (or a window focus on a visible tab): a fresh,
+  //     user-salient boundary that restarts each pin's chain from attempt 0
+  //     (`warm` cancels any pending backoff and retries now) instead of waiting
+  //     out whatever delay was pending when the app went to sleep — and cancels a
+  //     fetch left frozen by the suspension (a corpse) so the fresh warm isn't
+  //     deduped into a dead promise.
+  //   - visibility→HIDDEN: the symmetric half — fire one last pull as we go
+  //     background, so a summary that's ready right now is grabbed and persisted
+  //     before the tab's timers freeze; without it, that pull would wait for the
+  //     next (now-frozen) backoff tick and miss until the next foreground open.
+  //     One-shot: runWarm suppresses backoff scheduling while hidden.
+  // Bounded, once-per-transition (NOT per-emit — those are left to the backoff to
   // avoid amplifying an outage); `warm` is idempotent, so already-warmed /
   // offline / gated / restoring ids no-op and a settled summary is never
   // re-fetched.
@@ -289,8 +314,17 @@ export function useSummaryPrewarm(): void {
       }
     };
     const onFocus = () => rewarmPinned(false);
+    // Going HIDDEN: one last pull before the freeze. rewarmPinned bails on hidden
+    // (its guard is for an occluded focus), so warm directly here — runWarm's
+    // hidden check makes it a genuine one-shot with no background rescheduling.
+    const flushOnHide = () => {
+      for (const [id, s] of ds.stateStore.entries()) {
+        if (s.pinned && !warmed.has(id)) warm(id);
+      }
+    };
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') rewarmPinned(true);
+      else flushOnHide();
     };
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibilityChange);
