@@ -141,6 +141,17 @@ const SUMMARY_FETCH_ATTEMPTS = 2;
  * momentary blip, short enough not to make the reader's first open feel stuck. */
 const SUMMARY_FETCH_RETRY_DELAY_MS = 800;
 
+/** Total attempts for a full-text (reading-mode) fetch, mirroring the summary
+ * policy above: a transient `unreachable` — a network blip / 5xx on invoke, or
+ * the server's own `unreachable` envelope — is retried once before we return it,
+ * so a single blip no longer drops the reader to the feed body until the next
+ * open. See fetchFullText. */
+const FULLTEXT_FETCH_ATTEMPTS = 2;
+
+/** Delay between those full-text fetch attempts. Same short backoff as the
+ * summary retry, for the same reason. */
+const FULLTEXT_FETCH_RETRY_DELAY_MS = 800;
+
 /** How long a feed/library read on a still-empty store will WAIT for the first
  * item_state hydration before rendering anyway (with default per-row flags / a
  * library that self-heals on the hydration's store emit). Bounds the cold-cache
@@ -326,6 +337,9 @@ export class SupabaseDataSource implements DataSource {
   /** Delay between summary-fetch retries (see getSummary). A mutable field rather
    * than the const directly so tests can zero it and not wait on a real timer. */
   summaryRetryDelayMs = SUMMARY_FETCH_RETRY_DELAY_MS;
+  /** Delay between full-text fetch retries (see fetchFullText). Mutable for the
+   * same reason as {@link summaryRetryDelayMs} — tests zero it. */
+  fullTextRetryDelayMs = FULLTEXT_FETCH_RETRY_DELAY_MS;
 
   constructor(stateKey = 'readmo:item-state', client?: SupabaseClient) {
     this.sb = client ?? getSupabase();
@@ -1190,13 +1204,48 @@ export class SupabaseDataSource implements DataSource {
   }
 
   async fetchFullText(id: ItemId): Promise<FullTextResult> {
+    // Retry a TRANSIENT failure once before giving up, mirroring getSummary: a
+    // full-text fetch RESOLVES `unreachable` (a React Query success, not a
+    // throw), so the client retry policy never engages — the retry has to live
+    // here. `unreachable` (a network blip / 5xx on invoke, or the server's own
+    // unreachable envelope) may clear on the next attempt; terminal outcomes
+    // (ok/empty/auth) return immediately since re-fetching can't change them.
+    let result = await this.invokeFullTextOnce(id);
+    for (
+      let attempt = 1;
+      attempt < FULLTEXT_FETCH_ATTEMPTS && result.status === 'unreachable';
+      attempt++
+    ) {
+      await new Promise((r) => setTimeout(r, this.fullTextRetryDelayMs));
+      result = await this.invokeFullTextOnce(id);
+    }
+    return result;
+  }
+
+  /** One attempt of the full-text fetch — the invoke + status/error mapping.
+   * {@link fetchFullText} wraps this in a bounded transient-failure retry. */
+  private async invokeFullTextOnce(id: ItemId): Promise<FullTextResult> {
     const { data, error } = await this.sb.functions.invoke('fulltext', {
       body: { itemId: id },
     });
-    // Any invoke failure (signed-out, item not visible, function error) degrades
-    // to "unreachable" so the reader simply falls back to the feed body rather
-    // than surfacing an error — reading mode is a progressive enhancement.
-    if (error) return { status: 'unreachable', contentHtml: null };
+    if (error) {
+      // A 404 is TERMINAL, not transient — the `fulltext` function isn't
+      // deployed yet, or it ran and RLS hid the item; neither improves by
+      // retrying. Map it to a plain `empty` (terminal in fullTextStaleTime) so
+      // the reader falls back to the feed body and STOPS re-invoking a
+      // capability it can't reach, rather than retrying every open during a
+      // deploy gap. (Same reasoning as getSummary's 404 handling.)
+      if (
+        error instanceof FunctionsHttpError &&
+        (error.context as Response | undefined)?.status === 404
+      ) {
+        return { status: 'empty', contentHtml: null };
+      }
+      // Any other invoke failure (signed-out, item not visible, network, 5xx)
+      // degrades to "unreachable" so the reader falls back to the feed body and
+      // re-checks on the next open — reading mode is a progressive enhancement.
+      return { status: 'unreachable', contentHtml: null };
+    }
     const rec = data as
       | {
           status?: string;

@@ -1930,6 +1930,74 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(await env.ds.fetchFullText('i1')).toEqual({ status: 'unreachable', contentHtml: null });
   });
 
+  it('fetchFullText retries once on a transient failure, then returns the success', async () => {
+    // A single network blip must not drop the reader to the feed body until the
+    // next open: fetchFullText resolves (never throws) so React Query can't retry
+    // it — the retry lives in fetchFullText itself. First call errors →
+    // `unreachable`, the retry succeeds → `ok`.
+    const env = setup();
+    env.ds.fullTextRetryDelayMs = 0; // no real wait in the test
+    env.fake.invokeResultQueue.push(
+      { data: null, error: new Error('blip') },
+      { data: { status: 'ok', contentHtml: '<p>Full article</p>' }, error: null },
+    );
+    expect(await env.ds.fetchFullText('i1')).toEqual({
+      status: 'ok',
+      contentHtml: '<p>Full article</p>',
+    });
+    expect(env.fake.invokeCalls.filter((c) => c.name === 'fulltext')).toHaveLength(2);
+  });
+
+  it('fetchFullText retries a server-reported `unreachable`, then returns the success', async () => {
+    // The 200 `{ status: 'unreachable' }` envelope is transient too — retry it
+    // the same as a network blip.
+    const env = setup();
+    env.ds.fullTextRetryDelayMs = 0;
+    env.fake.invokeResultQueue.push(
+      { data: { status: 'unreachable', contentHtml: null }, error: null },
+      { data: { status: 'ok', contentHtml: '<p>Full article</p>' }, error: null },
+    );
+    expect(await env.ds.fetchFullText('i1')).toEqual({
+      status: 'ok',
+      contentHtml: '<p>Full article</p>',
+    });
+    expect(env.fake.invokeCalls.filter((c) => c.name === 'fulltext')).toHaveLength(2);
+  });
+
+  it('fetchFullText gives up after the retry and returns the transient outcome', async () => {
+    // Bounded: a persistently-down service is retried ONCE and then the
+    // `unreachable` is returned (the reader shows the feed body, re-checks next
+    // open) — never a hot loop.
+    const env = setup();
+    env.ds.fullTextRetryDelayMs = 0;
+    env.fake.invokeResult.current = { data: null, error: new Error('still down') };
+    expect(await env.ds.fetchFullText('i1')).toEqual({ status: 'unreachable', contentHtml: null });
+    expect(env.fake.invokeCalls.filter((c) => c.name === 'fulltext')).toHaveLength(2);
+  });
+
+  it('fetchFullText does NOT retry a terminal `empty`', async () => {
+    // A terminal outcome (ok/empty/auth) won't change on a retry, so return it
+    // immediately rather than delaying the fall-back-to-feed-body.
+    const env = setup();
+    env.ds.fullTextRetryDelayMs = 0;
+    env.fake.invokeResult.current = { data: { status: 'empty', contentHtml: null }, error: null };
+    expect(await env.ds.fetchFullText('i1')).toEqual({ status: 'empty', contentHtml: null });
+    expect(env.fake.invokeCalls.filter((c) => c.name === 'fulltext')).toHaveLength(1);
+  });
+
+  it('fetchFullText maps a 404 (function not deployed / item hidden) to a terminal empty', async () => {
+    // Frontend deployed ahead of the manual `fulltext` Edge Function deploy, or
+    // RLS hid the item: a 404 that retrying can't fix. Map to a terminal `empty`
+    // (cached in fullTextStaleTime) so the reader stops re-invoking — and, being
+    // terminal, it is NOT retried.
+    const env = setup();
+    env.ds.fullTextRetryDelayMs = 0;
+    const res = new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
+    env.fake.invokeResult.current = { data: null, error: new FunctionsHttpError(res) };
+    expect(await env.ds.fetchFullText('i1')).toEqual({ status: 'empty', contentHtml: null });
+    expect(env.fake.invokeCalls.filter((c) => c.name === 'fulltext')).toHaveLength(1);
+  });
+
   it('getSummary invokes the summary function and maps an ok result', async () => {
     const env = setup();
     env.fake.invokeResult.current = {
