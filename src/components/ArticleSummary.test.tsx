@@ -433,6 +433,35 @@ describe('ArticleSummary', () => {
     expect(screen.queryByTestId('article-summary-retry')).not.toBeInTheDocument();
   });
 
+  it('re-offers the Generate button over a cached `unavailable` (key configured later)', async () => {
+    // An `unavailable` cached while GOOGLE_API_KEY was unset must not freeze the
+    // article summaryless forever: on a later unpinned open the Generate button
+    // comes back (matching the first-open behavior an unconfigured deployment
+    // shows anyway), so once the operator sets the key one click recovers it.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    let called = false;
+    source.getSummary = async (): Promise<SummaryResult> => {
+      called = true;
+      return { status: 'ok', summary: 'Works now that the key is set.' };
+    };
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(['summary', ITEM_ID], {
+      status: 'unavailable',
+      summary: null,
+    } satisfies SummaryResult);
+    renderWithProviders(
+      <ArticleSummary id={ITEM_ID} online autoGenerate={false} />,
+      { source, queryClient },
+    );
+
+    const button = await screen.findByTestId('article-summary-generate');
+    expect(called).toBe(false); // the button itself spends nothing
+    await userEvent.click(button);
+    const body = await screen.findByTestId('article-summary-body');
+    expect(body.textContent).toBe('Works now that the key is set.');
+    expect(called).toBe(true);
+  });
+
   it('stays silent when the service is not configured (unavailable)', async () => {
     // `unavailable` (GOOGLE_API_KEY unset) is an operator condition, not a
     // user-actionable one — Retry would not help, so the card stays silent by

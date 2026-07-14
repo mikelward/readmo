@@ -18,11 +18,16 @@ import { isSummarySettled, summaryStaleTime, type SummaryResult } from '../lib/s
  * and at the ceiling it's one tiny request per minute per unsettled pin (a
  * server cache-hit envelope once generated, and only while unsettled pins
  * exist), so a genuinely-down service costs a slow trickle, not a hammer. The
- * loop deliberately never gives up: a pin is a promise that the summary will be
- * on-device, and a chain that stops after N attempts leaves the pin cold in
- * exactly the case the user notices — opening it after the outage clears. An
- * external trigger (reconnect / foreground / a fresh pin) restarts the chain
- * from attempt 0.
+ * loop deliberately never gives up on an UNSETTLED outcome: a pin is a promise
+ * that the summary will be on-device, and a chain that stops after N attempts
+ * leaves the pin cold in exactly the case the user notices — opening it after
+ * the outage clears. What counts as unsettled is the SERVER's call, via the
+ * envelope (`isSummarySettled`): an outcome polling can't change — notably the
+ * not-configured `unavailable` (GOOGLE_API_KEY unset) — comes back without the
+ * `retryable` flag and SETTLES, stopping the chain after one attempt, so an
+ * unconfigured deployment never has pinned items polling the Edge Function
+ * forever. An external trigger (reconnect / foreground / a fresh pin) restarts
+ * the chain from attempt 0.
  */
 const SUMMARY_WARM_RETRY_BASE_MS = 2_000;
 const SUMMARY_WARM_RETRY_MAX_MS = 60_000;
@@ -67,9 +72,9 @@ const SUMMARY_WARM_RETRY_MAX_MS = 60_000;
  * useAutoSummarizePinned), so an off-list user fires no Edge call and a family
  * user who turned it off warms nothing (the server re-checks regardless). An
  * item is
- * marked warmed only on a **settled** outcome, so a transient `unreachable`/
- * `unavailable` stays unwarmed and retries on reconnect / once the allowlist gate
- * resolves. The store subscriber warms only **newly-pinned** ids (so an
+ * marked warmed only on a **settled** outcome, so a transient `unreachable` or
+ * a retryable-flagged result stays unwarmed and retries on reconnect / once the
+ * allowlist gate resolves. The store subscriber warms only **newly-pinned** ids (so an
  * unrelated state emit during an outage doesn't re-fetch every unsettled pinned
  * summary); whole-set retries are left to the restore/reconnect/gate effect and
  * a once-per-return foreground (focus / visibility) retry — which also cancels a
@@ -167,7 +172,9 @@ export function useSummaryPrewarm(): void {
           // no attempt ceiling) so a summary the server finishes generating
           // moments later (or after a transient blip clears) lands in the cache
           // without waiting for a reconnect / foreground trigger — however long
-          // that takes, as long as the pin and the page live.
+          // that takes, as long as the pin and the page live. Outcomes polling
+          // can't change never reach here: the server ships them without the
+          // `retryable` flag, so they SETTLE above (see isSummarySettled).
           if (retryTimers.has(id)) return; // a retry is already queued for this id
           const delay = Math.min(
             SUMMARY_WARM_RETRY_BASE_MS * 2 ** attempt,

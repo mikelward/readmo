@@ -11,9 +11,18 @@ describe('isSummarySettled', () => {
     expect(isSummarySettled({ status: 'empty', summary: null })).toBe(true);
   });
 
-  it('treats transient unreachable/unavailable as unsettled', () => {
+  it('treats transient unreachable as unsettled', () => {
     expect(isSummarySettled({ status: 'unreachable', summary: null })).toBe(false);
-    expect(isSummarySettled({ status: 'unavailable', summary: null })).toBe(false);
+  });
+
+  it('treats an unflagged `unavailable` (key unset) as settled — polling cannot set an API key', () => {
+    expect(isSummarySettled({ status: 'unavailable', summary: null })).toBe(true);
+  });
+
+  it('treats a retryable-flagged `unavailable` (older backend) as unsettled', () => {
+    expect(
+      isSummarySettled({ status: 'unavailable', summary: null, retryable: true }),
+    ).toBe(false);
   });
 
   it('treats a retryable-flagged result as unsettled (e.g. allowlist denial)', () => {
@@ -35,9 +44,19 @@ describe('summaryStaleTime', () => {
     expect(summaryStaleTime(q({ status: 'empty', summary: null }))).toBe(Infinity);
   });
 
-  it('keeps transient unreachable/unavailable stale for retry', () => {
+  it('keeps transient unreachable stale for retry', () => {
     expect(summaryStaleTime(q({ status: 'unreachable', summary: null }))).toBe(0);
+  });
+
+  it('keeps `unavailable` stale (flagged or not) so explicit triggers can recover it', () => {
+    // Settled (no polling loop) but stale: an Infinity-fresh `unavailable` on a
+    // pinned item would be GC-locked forever and never re-check after the
+    // operator sets the key. Stale means a boot warm / pinned open / Generate
+    // click re-checks once and recovers.
     expect(summaryStaleTime(q({ status: 'unavailable', summary: null }))).toBe(0);
+    expect(
+      summaryStaleTime(q({ status: 'unavailable', summary: null, retryable: true })),
+    ).toBe(0);
   });
 
   it('keeps a retryable-flagged result stale (e.g. an allowlist denial)', () => {
