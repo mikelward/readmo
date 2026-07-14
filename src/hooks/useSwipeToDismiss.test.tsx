@@ -3,8 +3,8 @@ import { act, renderHook } from '@testing-library/react';
 import { useSwipeToDismiss } from './useSwipeToDismiss';
 
 // Threshold and timing in the hook (kept in sync with the source):
-//   EXIT_DURATION_MS = 200; SWIPE_RATIO = 0.25; SWIPE_MIN_PX = 56;
-// A 500-wide row → SWIPE_RATIO threshold = 125px ≥ SWIPE_MIN_PX, so 200px past
+//   EXIT_DURATION_MS = 200; SWIPE_RATIO = 0.2; SWIPE_MIN_PX = 48;
+// A 500-wide row → SWIPE_RATIO threshold = 100px ≥ SWIPE_MIN_PX, so 200px past
 // start commits the swipe.
 
 function makePointerEvent(
@@ -101,6 +101,68 @@ describe('useSwipeToDismiss', () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  // Boundary tests pinning the lighter commit threshold. On the default
+  // 500px row the threshold is max(SWIPE_MIN_PX 48, 500·SWIPE_RATIO 0.2) =
+  // 100px. Both cases sit inside the 100px..125px band, so they'd behave the
+  // opposite way under the old max(56, 25%) = 125px threshold — guarding the
+  // change against a silent revert.
+  it('commits a swipe just past the lighter threshold (would snap back under the old 125px)', () => {
+    const onSwipeLeft = vi.fn();
+    const { result } = renderHook(() => useSwipeToDismiss({ onSwipeLeft }));
+
+    // 105px left of start: ≥ new 100px threshold, < old 125px.
+    act(() => {
+      result.current.handlers.onPointerDown(
+        makePointerEvent('pointerdown', { clientX: 400, clientY: 24 }),
+      );
+    });
+    act(() => {
+      result.current.handlers.onPointerMove(
+        makePointerEvent('pointermove', { clientX: 295, clientY: 24 }),
+      );
+    });
+    act(() => {
+      result.current.handlers.onPointerUp(
+        makePointerEvent('pointerup', { clientX: 295, clientY: 24 }),
+      );
+    });
+    expect(result.current.isDismissing).toBe(true);
+
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+    expect(onSwipeLeft).toHaveBeenCalledTimes(1);
+  });
+
+  it('snaps back below the lighter threshold (no commit)', () => {
+    const onSwipeLeft = vi.fn();
+    const { result } = renderHook(() => useSwipeToDismiss({ onSwipeLeft }));
+
+    // 95px left of start: < new 100px threshold, so the swipe does not commit.
+    act(() => {
+      result.current.handlers.onPointerDown(
+        makePointerEvent('pointerdown', { clientX: 400, clientY: 24 }),
+      );
+    });
+    act(() => {
+      result.current.handlers.onPointerMove(
+        makePointerEvent('pointermove', { clientX: 305, clientY: 24 }),
+      );
+    });
+    act(() => {
+      result.current.handlers.onPointerUp(
+        makePointerEvent('pointerup', { clientX: 305, clientY: 24 }),
+      );
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+    expect(onSwipeLeft).not.toHaveBeenCalled();
+    expect(result.current.isDismissing).toBe(false);
+    expect(result.current.offset).toBe(0);
   });
 
   it('snaps back to rest after a non-dismissal swipe (default)', () => {
