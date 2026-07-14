@@ -1,16 +1,25 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { ReactElement } from 'react';
-import { screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders as baseRender } from '../test/renderWithProviders';
 import { ArticleSummary } from './ArticleSummary';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import { CAPABILITIES_QUERY_KEY } from '../hooks/useCapabilities';
+import {
+  AUTO_SUMMARIZE_PINNED_KEY,
+  resetReadingPrefsCacheForTest,
+} from '../hooks/useReadingPrefs';
 import type { SummaryResult } from '../lib/summary';
 import type { Capabilities } from '../lib/data/DataSource';
 
 const ITEM_ID = 'item-1';
+
+afterEach(() => {
+  window.localStorage.removeItem(AUTO_SUMMARIZE_PINNED_KEY);
+  resetReadingPrefsCacheForTest();
+});
 
 // useFullTextAllowed is closed until capabilities RESOLVE to allowed (a
 // signed-out caller is never allowlisted), so seed a disarmed (open-to-all)
@@ -272,6 +281,166 @@ describe('ArticleSummary', () => {
     );
     expect(screen.queryByTestId('article-summary-error')).not.toBeInTheDocument();
     expect(screen.getByTestId('article-summary-body')).toHaveTextContent('Retained gist.');
+  });
+
+  it('sets a viaRow seed aside for the Generate button when auto-summarize is off', async () => {
+    // The seed-revalidation leg is an AUTOMATIC call — usually a cheap cache
+    // hit, but it regenerates for real after a publisher edit nulls the server
+    // cache. With the setting off it must not fire, and the seed itself is set
+    // aside (a gist with no refresh path could go stale with no way out): the
+    // card offers the Generate button instead. The cache entry is untouched —
+    // off never deletes — and the button still works as the explicit ask.
+    window.localStorage.setItem(AUTO_SUMMARIZE_PINNED_KEY, '0');
+    resetReadingPrefsCacheForTest();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    let called = false;
+    source.getSummary = async (): Promise<SummaryResult> => {
+      called = true;
+      return { status: 'ok', summary: 'Freshly asked-for gist.' };
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    queryClient.setQueryData(['summary', ITEM_ID], {
+      status: 'ok',
+      summary: 'A retained gist.',
+      viaRow: true,
+    });
+    renderWithProviders(
+      <ArticleSummary id={ITEM_ID} online autoGenerate={false} />,
+      { source, queryClient },
+    );
+
+    // The seed is NOT displayed — the button is offered instead.
+    const button = await screen.findByTestId('article-summary-generate');
+    expect(screen.queryByTestId('article-summary-body')).not.toBeInTheDocument();
+    // Deterministic no-fetch check (no timing sleep — see AGENTS.md testing
+    // rules): with the setting off the query is never ENABLED, so once effects
+    // have flushed its fetchStatus is 'idle' — there is no scheduled fetch to
+    // wait out. The transient-failure sibling test above is the counterfactual:
+    // same seed setup with the setting on, and getSummary has fired by this
+    // point in the test.
+    await act(async () => {});
+    expect(queryClient.getQueryState(['summary', ITEM_ID])?.fetchStatus).toBe('idle');
+    expect(called).toBe(false);
+    // The set-aside seed is still cached, untouched — off never purges.
+    expect(queryClient.getQueryData(['summary', ITEM_ID])).toEqual({
+      status: 'ok',
+      summary: 'A retained gist.',
+      viaRow: true,
+    });
+
+    // The explicit ask still works (and, post-generation, is a server cache hit).
+    await userEvent.click(button);
+    expect(await screen.findByTestId('article-summary-body')).toHaveTextContent(
+      'Freshly asked-for gist.',
+    );
+    expect(called).toBe(true);
+  });
+
+  it('keeps showing a retained seed OFFLINE even when auto-summarize is off', async () => {
+    // Offline there is no Generate button to swap in (canGenerate requires
+    // online), so setting the seed aside would show nothing despite usable
+    // cached text. The retained gist keeps displaying — stale beats empty —
+    // exactly like the setting-on offline open.
+    window.localStorage.setItem(AUTO_SUMMARIZE_PINNED_KEY, '0');
+    resetReadingPrefsCacheForTest();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    let called = false;
+    source.getSummary = async (): Promise<SummaryResult> => {
+      called = true;
+      return { status: 'ok', summary: 'x' };
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    queryClient.setQueryData(['summary', ITEM_ID], {
+      status: 'ok',
+      summary: 'A retained gist.',
+      viaRow: true,
+    });
+    renderWithProviders(
+      <ArticleSummary id={ITEM_ID} online={false} autoGenerate={false} />,
+      { source, queryClient },
+    );
+    expect(await screen.findByTestId('article-summary-body')).toHaveTextContent(
+      'A retained gist.',
+    );
+    expect(screen.queryByTestId('article-summary-generate')).not.toBeInTheDocument();
+    expect(called).toBe(false);
+  });
+
+  it('keeps showing the seed while capabilities are unresolved, even with auto-summarize off', async () => {
+    // Cold boot with the setting off: capabilities haven't resolved, so the
+    // conservative gate keeps `allowed` false and the Generate button cannot
+    // render — setting the seed aside would blank the card despite usable
+    // cached text. The gist keeps displaying until the gate resolves.
+    window.localStorage.setItem(AUTO_SUMMARIZE_PINNED_KEY, '0');
+    resetReadingPrefsCacheForTest();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    let called = false;
+    source.getSummary = async (): Promise<SummaryResult> => {
+      called = true;
+      return { status: 'ok', summary: 'x' };
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    // Seed cached; capabilities deliberately NOT seeded (still loading).
+    queryClient.setQueryData(['summary', ITEM_ID], {
+      status: 'ok',
+      summary: 'A retained gist.',
+      viaRow: true,
+    });
+    baseRender(<ArticleSummary id={ITEM_ID} online autoGenerate={false} />, {
+      source,
+      queryClient,
+    });
+    expect(screen.getByTestId('article-summary-body').textContent).toBe('A retained gist.');
+    expect(screen.queryByTestId('article-summary-generate')).not.toBeInTheDocument();
+    expect(called).toBe(false);
+  });
+
+  it('shows the preserved seed (not a blank card) when an opted-out Generate fails transiently', async () => {
+    // Opted-out reader, retained seed, taps Generate, the fetch hits a
+    // transient `unreachable`: the queryFn preserves the seed (stale beats
+    // empty), and the explicit ask ends the set-aside — so the card shows the
+    // preserved gist rather than blanking with no button and no Retry. Same
+    // silent-preserve outcome the setting-on revalidation path has always had.
+    window.localStorage.setItem(AUTO_SUMMARIZE_PINNED_KEY, '0');
+    resetReadingPrefsCacheForTest();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    source.getSummary = async (): Promise<SummaryResult> => ({
+      status: 'unreachable',
+      summary: null,
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    queryClient.setQueryData(['summary', ITEM_ID], {
+      status: 'ok',
+      summary: 'A retained gist.',
+      viaRow: true,
+    });
+    renderWithProviders(
+      <ArticleSummary id={ITEM_ID} online autoGenerate={false} />,
+      { source, queryClient },
+    );
+
+    await userEvent.click(await screen.findByTestId('article-summary-generate'));
+
+    expect(await screen.findByTestId('article-summary-body')).toHaveTextContent(
+      'A retained gist.',
+    );
+    expect(screen.queryByTestId('article-summary-error')).not.toBeInTheDocument();
+    // The preserved seed survived the failed request in the cache too.
+    await waitFor(() =>
+      expect(queryClient.getQueryData(['summary', ITEM_ID])).toEqual({
+        status: 'ok',
+        summary: 'A retained gist.',
+        viaRow: true,
+      }),
+    );
   });
 
   it('serves a retained viaRow seed offline when the feed row is gone (stale beats empty)', async () => {

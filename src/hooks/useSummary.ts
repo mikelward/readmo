@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
+import { useAutoSummarizePinned } from './useReadingPrefs';
 import { useFullTextAllowed, useCapabilities, canUseFullText } from './useCapabilities';
 import { summaryStaleTime, type SummaryResult } from '../lib/summary';
 import type { ItemId } from '../lib/types';
@@ -111,7 +112,19 @@ export function useSummary(
   // favorite would show the seed forever without re-checking the server, so a
   // publisher edit would never self-heal. (Offline the query is still disabled
   // via `opts.online`, so the seed is served as-is.)
+  //
+  // Gated on the auto-summarize setting like every other AUTOMATIC call: with
+  // it off, the user opted out of the client spending on their behalf, and this
+  // revalidation — usually a cheap cache hit — regenerates for real after a
+  // publisher edit nulls the server cache. With the setting off the seed is
+  // also SET ASIDE for display (see `data` below): a seed with no refresh path
+  // could go stale with no way out, so the card offers the Generate button
+  // instead. Nothing is deleted — the cache entry stays (the text is also still
+  // cached server-side), so a Generate tap is an instant cache hit and flipping
+  // the setting back on restores seed display + revalidation wholesale.
+  const { autoSummarizePinned } = useAutoSummarizePinned();
   const seededViaRow =
+    autoSummarizePinned &&
     queryClient.getQueryData<SummaryResult>(summaryQueryKey(id))?.viaRow === true;
   // Never fetch when the row already carries the summary — the query hook still
   // mounts below (stable hook order), it just stays disabled.
@@ -199,7 +212,42 @@ export function useSummary(
   // flashing "Summarizing…" until caps resolve, while a confirmed de-list still
   // drops it — mirroring the spoiler headline. Gated on `allowedDisplay` only (NOT
   // `online`), so a summary already on screen survives going offline.
-  const data: SummaryResult | undefined = allowedDisplay ? query.data : undefined;
+  //
+  // With auto-summarize OFF, a retained viaRow SEED is set aside too (treated as
+  // nothing-to-show): its refresh path is gated off above, so displaying it
+  // would strand a possibly-stale gist with no way to update it — instead the
+  // card falls through to the Generate button (see canGenerate). The entry
+  // itself is untouched in the cache, so nothing is lost; a real fetched
+  // summary (non-viaRow ok, e.g. from an earlier Generate) still displays.
+  //
+  // The set-aside only applies while the swap it exists for — gist out, button
+  // in — can actually complete, so it mirrors every non-data condition of
+  // `canGenerate` below. Hiding the seed when the button can't render would
+  // blank the card despite usable cached text:
+  //  - Once the user TAPS Generate (`triggered`), it ends for this open: they
+  //    explicitly asked, so the card shows whatever the request yields —
+  //    including the seed the queryFn preserves when the fetch fails
+  //    transiently (stale beats a blank card; the same silent-preserve outcome
+  //    the setting-on revalidation path has always had).
+  //  - OFFLINE it doesn't apply: canGenerate requires online, so the retained
+  //    gist keeps displaying, exactly like the setting-on offline open.
+  //  - While the caller isn't KNOWN to be allowed (`allowed` — capabilities
+  //    still loading on a cold boot, or the caps read failed), canGenerate is
+  //    closed too, so the seed keeps displaying until the gate resolves; a
+  //    resolved DENIAL then hides it via `allowedDisplay` like any cached
+  //    summary. (Same no-blank-flash philosophy as the optimistic display
+  //    gate.) `!opts.autoGenerate` matches canGenerate's remaining condition —
+  //    always true in production when the setting is off (ItemPage ANDs it),
+  //    but kept so the pair can't drift apart.
+  const seedSetAside =
+    !autoSummarizePinned &&
+    !triggered &&
+    allowed &&
+    opts.online &&
+    !opts.autoGenerate &&
+    query.data?.viaRow === true;
+  const data: SummaryResult | undefined =
+    allowedDisplay && !seedSetAside ? query.data : undefined;
   const fetching = query.isLoading || query.isFetching;
   // Loading covers the first generation AND a Retry after a transient failure
   // (the stale `unreachable` result is still cached while the refetch is in
@@ -232,13 +280,17 @@ export function useSummary(
     // while the key was unconfigured) still gets the button: it's the explicit
     // recovery path once the operator sets the key, matching the first-open
     // behavior an unconfigured deployment shows anyway (data was undefined →
-    // button). `triggered` still drops it for this open after a click.
+    // button). A seed SET ASIDE by the auto-summarize opt-out gets it too —
+    // it's the explicit way to refresh a gist whose automatic refresh the user
+    // switched off. `triggered` still drops it for this open after a click.
     canGenerate:
       allowed &&
       opts.online &&
       !opts.autoGenerate &&
       !triggered &&
-      (query.data === undefined || query.data.status === 'unavailable') &&
+      (query.data === undefined ||
+        query.data.status === 'unavailable' ||
+        seedSetAside) &&
       !loading,
     generate: () => setTriggeredId(id),
   };
