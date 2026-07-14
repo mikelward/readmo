@@ -1809,9 +1809,17 @@ negligible and off every critical path. See the External services table in
       allowlist). When on, the summary for a pinned article is pre-warmed so it's
       ready before the reader opens it (see *AI article summaries* /
       `useSummaryPrewarm`); when a family user turns it off, the client
-      auto-generates nothing — no pin pre-warm fires, and opening a pinned
-      article offers the **"Generate summary" button** like an unpinned open
-      instead of summarizing automatically. The server-side pin trigger (which
+      auto-generates nothing — no pin pre-warm fires, opening a pinned article
+      offers the **"Generate summary" button** like an unpinned open instead of
+      summarizing automatically, and a **retained copy** of an earlier
+      row-delivered gist is **set aside in favor of that button too**: its
+      automatic refresh is what the setting switched off, so displaying it
+      would strand a possibly-stale gist with no way to update it. Nothing is
+      deleted — the text stays cached on the server and on the device, so a
+      Generate tap is an instant cache hit and turning the setting back on
+      restores everything as it was. A gist arriving **fresh on the current
+      list row** still displays (it's current by construction). The
+      server-side pin trigger (which
       the toggle does not reach — it's a client-side control) still generates on
       pin, so the shared cache stays warm for other readers. Both toggles are
       per-account, synced. See *Spoiler-free sports headlines* and *AI article
