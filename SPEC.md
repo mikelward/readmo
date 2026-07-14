@@ -2510,7 +2510,14 @@ page's discipline is unchanged.
     hardening, sanitization, paused feeds), and **(b) generate the AI summary**
     if one still isn't cached. The summary fetches its own text via Jina, so it
     doesn't wait on the full-text leg (the stored body is only its fallback);
-    running them in parallel gets both ready sooner. The trigger **requires the pinning user to be on
+    running them in parallel gets both ready sooner. **A transient generation
+    failure is retried** so a passing Jina/Gemini/publisher blip doesn't leave the
+    pin ungenerated; terminal outcomes (a paywall, a missing key, an allowlist
+    denial) are not. If Jina was unavailable and only a stub was cached when the
+    summary ran, the summary still **falls back to the full article** once its
+    download lands, rather than summarizing the stub. Beyond those, generation
+    stays best-effort — the pin trigger is one-shot; the client pre-warm / on-open
+    path is the durable retry. The trigger **requires the pinning user to be on
     the allowlist — an empty allowlist triggers for no one** (the same
     cost-guard convention as the poller's spoiler-title pass; client-initiated
     calls keep their "empty list = open" semantics), skips items that already

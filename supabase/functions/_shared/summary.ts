@@ -329,6 +329,31 @@ export interface SummaryOutcome {
   cached?: boolean;
 }
 
+/**
+ * Whether a summary generation outcome is TRANSIENT — a passing blip that a
+ * retry shortly could still turn into a persisted summary. This is the single
+ * authoritative rule the pin-triggered retry consumes; it reads the whole
+ * outcome (which the summary leg has in-process, losslessly) rather than
+ * reconstructing intent from a flattened proxy. Transient when:
+ *   - a generation failure (`unreachable`);
+ *   - a **retryable `empty`** — a Jina blip or a stub-defer that could succeed
+ *     once Jina recovers or the concurrent full-text leg lands the body; or
+ *   - an **uncached `ok`** (`{ status: 'ok', cached: false }`) — generated but
+ *     the shared-row write blipped, so `ai_summary` is still null and the
+ *     fire-and-forget pin path (which discards the text) must retry to persist.
+ * NOT transient: a cached `ok` (done), a non-retryable `empty` (no URL), and
+ * `unavailable` (key unset) — retrying can't help or isn't needed.
+ */
+export function isSummaryOutcomeTransient(outcome: {
+  status: string;
+  retryable?: boolean;
+  cached?: boolean;
+}): boolean {
+  if (outcome.status === 'ok') return outcome.cached === false;
+  if (outcome.status === 'empty') return outcome.retryable === true;
+  return outcome.status === 'unreachable';
+}
+
 /** The DB operations the coalescer needs, injected so it's unit-testable without
  * Deno/Supabase. The real implementation lives in summary/index.ts. */
 export interface SummaryLeaseClient {
