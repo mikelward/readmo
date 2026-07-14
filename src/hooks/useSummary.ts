@@ -138,8 +138,8 @@ export function useSummary(
       return result;
     },
     enabled,
-    // Terminal outcomes (ok/empty) are cached forever; a transient
-    // unreachable/unavailable, a retryable allowlist denial, or a provisional
+    // Terminal outcomes (ok/empty/unflagged-unavailable) are cached forever; a
+    // transient unreachable, a retryable allowlist denial, or a provisional
     // viaRow seed — stays stale so the next open revalidates it.
     staleTime: summaryStaleTime,
   });
@@ -226,13 +226,17 @@ export function useSummary(
     // auto-generate (not pinned before opening), the user hasn't asked yet, and
     // there's nothing cached or in flight to show. The moment anything caches —
     // an `ok` summary warmed by a later pin, or a soft-failure result — or a
-    // generation starts, the button drops.
+    // generation starts, the button drops. A cached `unavailable` (generated
+    // while the key was unconfigured) still gets the button: it's the explicit
+    // recovery path once the operator sets the key, matching the first-open
+    // behavior an unconfigured deployment shows anyway (data was undefined →
+    // button). `triggered` still drops it for this open after a click.
     canGenerate:
       allowed &&
       opts.online &&
       !opts.autoGenerate &&
       !triggered &&
-      query.data === undefined &&
+      (query.data === undefined || query.data.status === 'unavailable') &&
       !loading,
     generate: () => setTriggeredId(id),
   };

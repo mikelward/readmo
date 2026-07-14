@@ -293,6 +293,55 @@ describe('useSummaryPrewarm', () => {
     }
   });
 
+  it('settles on a non-retryable `unavailable` (key unset) — no endless polling', async () => {
+    // The server marks the not-configured `unavailable` NON-retryable (polling
+    // can't set an API key), and the client honors that: one attempt, settled,
+    // chain stops. Without this, an unconfigured deployment would have every
+    // pinned item hitting the Edge Function once a minute forever.
+    vi.useFakeTimers();
+    try {
+      class KeyUnset extends MockDataSource {
+        summaryCalls = 0;
+        async getSummary(): Promise<SummaryResult> {
+          this.summaryCalls += 1;
+          return { status: 'unavailable', summary: null };
+        }
+      }
+      const source = new KeyUnset(`test-${Math.random()}`);
+      setup(source);
+
+      source.stateStore.set(ID, 'pinned', true);
+      await vi.advanceTimersByTimeAsync(400_000);
+      expect(source.summaryCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps re-checking an `unavailable` still flagged retryable (older backend)', async () => {
+    // Backwards compat (guardrail #11): a not-yet-redeployed backend still ships
+    // `unavailable` with `retryable: true`; the client keeps its old re-check
+    // behavior for that shape rather than freezing it as terminal.
+    vi.useFakeTimers();
+    try {
+      class OldBackend extends MockDataSource {
+        summaryCalls = 0;
+        async getSummary(): Promise<SummaryResult> {
+          this.summaryCalls += 1;
+          return { status: 'unavailable', summary: null, retryable: true };
+        }
+      }
+      const source = new OldBackend(`test-${Math.random()}`);
+      setup(source);
+
+      source.stateStore.set(ID, 'pinned', true);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(source.summaryCalls).toBeGreaterThan(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('cancels a stuck in-flight fetch on return to foreground and refetches fresh', async () => {
     // A fetch that was in flight when the app was suspended can be a corpse
     // that never settles after resume — and React Query dedupes any later

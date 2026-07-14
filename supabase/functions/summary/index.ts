@@ -65,8 +65,10 @@
 //                 body) — flagged `retryable`, with NO Gemini call spent, so a
 //                 later mount re-checks once Jina/full text lands; OR the
 //                 allowlist denial (also `retryable`).
-//   unavailable — the Gemini key isn't configured (`retryable:true`: re-checks
-//                 once the operator sets GOOGLE_API_KEY).
+//   unavailable — the Gemini key isn't configured. NOT retryable: polling can't
+//                 set an API key, so the client treats it as terminal instead of
+//                 re-polling an unconfigured deployment (new generations work as
+//                 soon as the operator sets GOOGLE_API_KEY).
 //   unreachable — a transient failure (allowlist read, auth lookup, or the Gemini
 //                 call failed); retryable.
 // Hard errors keep their HTTP status: 400 (bad request), 401 (no JWT — platform),
@@ -317,10 +319,15 @@ async function handle(req: Request): Promise<Response> {
 
   const apiKey = Deno.env.get('GOOGLE_API_KEY');
   if (!apiKey) {
-    // Not configured. Retryable so the reader re-checks once the operator sets
-    // the secret, rather than caching "no summary" forever.
+    // Not configured — deliberately NOT retryable: only the operator setting
+    // the secret can change this, and a retryable flag here had the client's
+    // retry-until-settled prewarm polling the function once a minute per pinned
+    // item on an unconfigured deployment (Codex P2 on #506). The client treats
+    // an unflagged `unavailable` as settled (no polling loop) but keeps it
+    // stale, so once the key IS set, a saved article recovers on its next
+    // boot/open/Generate rather than waiting on cache eviction.
     console.warn('summary: GOOGLE_API_KEY not set — unavailable');
-    return json({ status: 'unavailable', summary: null, retryable: true });
+    return json({ status: 'unavailable', summary: null });
   }
 
   // Single-flight the generation: only one concurrent caller runs the Jina +
