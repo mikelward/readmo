@@ -173,53 +173,6 @@ export function SettingsPage() {
         </div>
       </section>
 
-      {/* Read later — pick one service the reader's ⋮ "Save to …" opens (None by
-          default: save is opt-in), and optionally auto-save on favorite. */}
-      <section className="settings__section">
-        <h2 className="settings__heading">Read later</h2>
-        <h3 className="settings__subheading">Save to</h3>
-        <div
-          className="settings__theme"
-          role="radiogroup"
-          aria-label="Save to"
-        >
-          {saveServiceOptions.map(({ value, label }) => (
-            <button
-              key={value ?? 'none'}
-              type="button"
-              role="radio"
-              aria-checked={saveService === value}
-              className={
-                'settings__theme-btn' + (saveService === value ? ' is-active' : '')
-              }
-              onClick={() => setSaveService(value)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {saveService ? (
-          <ul className="settings__toggles">
-            <li className="settings__toggle">
-              <label className="settings__toggle-label">
-                <input
-                  type="checkbox"
-                  className="settings__toggle-check"
-                  checked={autoSaveOnFavorite}
-                  onChange={(e) => setAutoSaveOnFavorite(e.target.checked)}
-                />
-                <span className="settings__toggle-text">
-                  <span className="settings__toggle-title">
-                    Auto-save on favorite
-                  </span>
-                </span>
-              </label>
-            </li>
-          </ul>
-        ) : null}
-      </section>
-
       {/* Appearance — how things look/lay out. The four theme controls are folded
           under one heading (instead of one section each), followed by the minor
           display settings further down: the toolbar position, then the Feed
@@ -383,6 +336,53 @@ export function SettingsPage() {
           </ul>
         </section>
       ) : null}
+
+      {/* Read later — pick one service the reader's ⋮ "Save to …" opens (None by
+          default: save is opt-in), and optionally auto-save on favorite. */}
+      <section className="settings__section">
+        <h2 className="settings__heading">Read later</h2>
+        <h3 className="settings__subheading">Save to</h3>
+        <div
+          className="settings__theme"
+          role="radiogroup"
+          aria-label="Save to"
+        >
+          {saveServiceOptions.map(({ value, label }) => (
+            <button
+              key={value ?? 'none'}
+              type="button"
+              role="radio"
+              aria-checked={saveService === value}
+              className={
+                'settings__theme-btn' + (saveService === value ? ' is-active' : '')
+              }
+              onClick={() => setSaveService(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {saveService ? (
+          <ul className="settings__toggles">
+            <li className="settings__toggle">
+              <label className="settings__toggle-label">
+                <input
+                  type="checkbox"
+                  className="settings__toggle-check"
+                  checked={autoSaveOnFavorite}
+                  onChange={(e) => setAutoSaveOnFavorite(e.target.checked)}
+                />
+                <span className="settings__toggle-text">
+                  <span className="settings__toggle-title">
+                    Auto-save on favorite
+                  </span>
+                </span>
+              </label>
+            </li>
+          </ul>
+        ) : null}
+      </section>
 
       {/* newshacker link — only relevant to a signed-in account (the token acts
           as that account). Hidden when signed out or unsupported by the source. */}

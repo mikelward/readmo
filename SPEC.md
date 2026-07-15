@@ -1774,10 +1774,11 @@ negligible and off every critical path. See the External services table in
    on titles for MVP; body search deferred). Search-glass in the header
    right-actions group, suppressed on `/search`. Same placement.
 
-10. **Settings** — `/settings`: grouped into three purpose-named sections —
+10. **Settings** — `/settings`: grouped into four purpose-named sections —
     **Reading** (how the list behaves), **Appearance** (how it looks/lays out),
-    and **Smart features** (the AI-assisted extras) — plus **Account**/sign-out
-    and an **About** link. The ordering puts the most-used behavioral settings up
+    **Smart features** (the AI-assisted extras), and **Read later** (the save-to
+    service + auto-save on favorite) — plus **Account**/sign-out and an **About**
+    link. The ordering puts the most-used behavioral settings up
     top and the minor/visual ones lower; the four theme pickers are folded under
     one **Appearance** heading (sub-labeled `settings__subheading`) rather than a
     section each. Reached from the **account menu** (top-right avatar → Settings).
@@ -1825,6 +1826,13 @@ negligible and off every critical path. See the External services table in
       pin, so the shared cache stays warm for other readers. Both toggles are
       per-account, synced. See *Spoiler-free sports headlines* and *AI article
       summaries*.
+    - **Read later** (placed after *Smart features*) — the **Save to** picker
+      (`readmo:save-service`): **None** (the default — saving is opt-in), or one
+      of **Instapaper** / **Raindrop** / **Readwise Reader**. At most one service
+      is chosen, and the reader's ⋮ *Save to…* entry follows it (nothing when
+      None — see *Article actions*). Once a service is chosen, an **Auto-save on
+      favorite** toggle (`readmo:auto-save-on-favorite`, **off by default**)
+      appears below it. Both per-device (see *Settings scope*).
     - **Settings scope.** Reading-*behavior* settings are **per-account and
       sync across devices**: Sort order, Group by feed, Mark Done as you
       scroll, both Feed icons toggles, Hide sports spoilers, and Auto generate
