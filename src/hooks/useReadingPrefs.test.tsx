@@ -10,6 +10,8 @@ import {
   ITEM_SORT_KEY,
   LIST_LAYOUT_KEY,
   SHOW_ROW_FAVICON_KEY,
+  SAVE_SERVICE_KEY,
+  AUTO_SAVE_ON_FAVORITE_KEY,
   resetReadingPrefsCacheForTest,
   useBottomBarPosition,
   useDebugScrollJumps,
@@ -19,6 +21,8 @@ import {
   useItemSort,
   useListLayout,
   useShowRowFavicon,
+  useSaveService,
+  useAutoSaveOnFavorite,
 } from './useReadingPrefs';
 
 function HideOnScrollProbe() {
@@ -366,6 +370,74 @@ describe('useReadingPrefs', () => {
       act(() => screen.getByRole('button').click());
       expect(screen.getByRole('button')).toHaveTextContent('excerpt');
       expect(window.localStorage.getItem(LIST_LAYOUT_KEY)).toBe('excerpt');
+    });
+  });
+
+  describe('save service', () => {
+    function SaveServiceProbe() {
+      const { saveService, setSaveService } = useSaveService();
+      return (
+        <button
+          type="button"
+          onClick={() =>
+            setSaveService(saveService === null ? 'raindrop' : null)
+          }
+        >
+          {saveService ?? 'none'}
+        </button>
+      );
+    }
+
+    it('defaults to None (null)', () => {
+      render(<SaveServiceProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent('none');
+    });
+
+    it('persists a chosen service and clears back to None', () => {
+      render(<SaveServiceProbe />);
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('raindrop');
+      expect(window.localStorage.getItem(SAVE_SERVICE_KEY)).toBe('raindrop');
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('none');
+      expect(window.localStorage.getItem(SAVE_SERVICE_KEY)).toBe('');
+    });
+
+    it('reads None for an unknown persisted id', () => {
+      window.localStorage.setItem(SAVE_SERVICE_KEY, 'pocket');
+      resetReadingPrefsCacheForTest();
+      render(<SaveServiceProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent('none');
+    });
+  });
+
+  describe('auto-save on favorite', () => {
+    function AutoSaveProbe() {
+      const { autoSaveOnFavorite, setAutoSaveOnFavorite } =
+        useAutoSaveOnFavorite();
+      return (
+        <button
+          type="button"
+          onClick={() => setAutoSaveOnFavorite(!autoSaveOnFavorite)}
+        >
+          {autoSaveOnFavorite ? 'on' : 'off'}
+        </button>
+      );
+    }
+
+    it('defaults to off', () => {
+      render(<AutoSaveProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent('off');
+    });
+
+    it('persists turning it on and back off', () => {
+      render(<AutoSaveProbe />);
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('on');
+      expect(window.localStorage.getItem(AUTO_SAVE_ON_FAVORITE_KEY)).toBe('1');
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('off');
+      expect(window.localStorage.getItem(AUTO_SAVE_ON_FAVORITE_KEY)).toBe('0');
     });
   });
 });

@@ -13,6 +13,8 @@ import {
   LIST_LAYOUT_KEY,
   SHOW_ROW_FAVICON_KEY,
   SHOW_GROUP_FAVICON_KEY,
+  SAVE_SERVICE_KEY,
+  AUTO_SAVE_ON_FAVORITE_KEY,
   resetReadingPrefsCacheForTest,
 } from '../hooks/useReadingPrefs';
 import { SettingsPage } from './SettingsPage';
@@ -366,5 +368,66 @@ describe('SettingsPage — Article layout', () => {
     expect(
       within(group()).getByRole('radio', { name: 'Large thumbnail' }),
     ).toHaveAttribute('aria-checked', 'true');
+  });
+});
+
+describe('SettingsPage — Read later', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+  afterEach(() => {
+    localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+
+  const saveGroup = () => screen.getByRole('radiogroup', { name: 'Save to' });
+
+  it('offers None + one option per service, defaulting to None', () => {
+    renderWithProviders(<SettingsPage />);
+    const group = saveGroup();
+    for (const label of ['None', 'Instapaper', 'Raindrop', 'Readwise Reader']) {
+      expect(within(group).getByRole('radio', { name: label })).toBeInTheDocument();
+    }
+    expect(within(group).getByRole('radio', { name: 'None' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+  });
+
+  it('persists choosing a single save service', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    await user.click(within(saveGroup()).getByRole('radio', { name: 'Raindrop' }));
+    expect(window.localStorage.getItem(SAVE_SERVICE_KEY)).toBe('raindrop');
+    expect(
+      within(saveGroup()).getByRole('radio', { name: 'Raindrop' }),
+    ).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('hides the auto-save-on-favorite toggle until a service is chosen', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    expect(
+      screen.queryByRole('checkbox', { name: 'Auto-save on favorite' }),
+    ).toBeNull();
+    await user.click(within(saveGroup()).getByRole('radio', { name: 'Instapaper' }));
+    expect(
+      screen.getByRole('checkbox', { name: 'Auto-save on favorite' }),
+    ).toBeInTheDocument();
+  });
+
+  it('persists the auto-save-on-favorite toggle', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(SAVE_SERVICE_KEY, 'instapaper');
+    resetReadingPrefsCacheForTest();
+    renderWithProviders(<SettingsPage />);
+    const toggle = screen.getByRole('checkbox', { name: 'Auto-save on favorite' });
+    expect(toggle).not.toBeChecked();
+    await user.click(toggle);
+    expect(window.localStorage.getItem(AUTO_SAVE_ON_FAVORITE_KEY)).toBe('1');
+    expect(
+      screen.getByRole('checkbox', { name: 'Auto-save on favorite' }),
+    ).toBeChecked();
   });
 });

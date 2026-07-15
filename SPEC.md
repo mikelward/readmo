@@ -1836,7 +1836,9 @@ negligible and off every critical path. See the External services table in
       everything under Appearance (color theme, dark/light mode, text size,
       font), the **Bottom toolbar** position and **Article layout** default
       (screen-size calls — the synced per-feed *Card style* override rides the
-      subscription instead), and the `/debug` diagnostics toggle. Like all
+      subscription instead), the **Read later** save-service choice and its
+      **Auto-save on favorite** toggle (see *Article actions*), and the
+      `/debug` diagnostics toggle. Like all
       per-account data, the synced settings are purged from the device on
       sign-out or account switch (guardrail #8) and re-hydrated from the
       server on the next sign-in — until the first hydration lands, a fresh
@@ -2930,9 +2932,9 @@ immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
 - Bottom bar swaps the primary slot to **Back to top** (neutral, stretched) so
   Pin/Done/⋮ land at the same x-position — handy right where you finish reading,
   since this bar is the relative footer at the article's end.
-- **More ⋮** overflow: Favorite/Share (when not inline), **Save to Instapaper** /
-  **Save to Raindrop** / **Save to Readwise Reader**, **Open feed**, **Copy
-  link**, **Mute feed**. This is the **shared `ItemRowMenu`** component (the same
+- **More ⋮** overflow: Favorite/Share (when not inline), **Save to _<your
+  service>_** (only when a save service is chosen — see below), **Open feed**,
+  **Copy link**, **Mute feed**. This is the **shared `ItemRowMenu`** component (the same
   one the feed list rows use, and the mirror of newshacker's thread ⋮) — lifted
   to the reader page so the top and bottom bars drive one instance. Anchored
   dropdown next to the ⋮ button (sheet fallback when no anchor), 44px touch /
@@ -2944,17 +2946,26 @@ immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
   traffic; there's no on-site discussion page to prefer — the one place Readmo
   differs from newshacker, which shared its own `/item/:id`). Web Share API +
   clipboard fallback + "Link copied" toast.
-- **Save to a read-later service** (Instapaper, Raindrop, Readwise Reader) opens that
-  service's own "save this page" page for the article in a new tab, prompting
-  login there if needed — a plain deep link like *Open on newshacker*, so **$0,
-  no API call, no stored credentials** (see *External services*: none added).
-  Always in the menu (both viewports); omitted for an item with no safe http(s)
-  URL to save. Saves the article's real headline (the read-later app shows the
-  article's own content, so the list-only spoiler-free rewrite is moot there).
-  Readmo-additive (newshacker has no read-later save). Pocket is intentionally
-  absent (Mozilla shut it down in July 2025). On mobile, Share → the native
-  share sheet already reaches any installed read-later app; these give an
-  explicit per-service link that also works on desktop.
+- **Save to a read-later service** opens the chosen service's own "save this
+  page" page for the article in a new tab, prompting login there if needed — a
+  plain deep link like *Open on newshacker*, so **$0, no API call, no stored
+  credentials** (see *External services*: none added). The reader offers **at
+  most one** service, picked in **Settings → Read later** (choices: **None**,
+  **Instapaper**, **Raindrop**, **Readwise Reader**). **None is the default** —
+  saving is opt-in, so the menu shows no save entry until a service is chosen.
+  The entry is omitted for an item with no safe http(s) URL to save. Saves the
+  article's real headline (the read-later app shows the article's own content, so
+  the list-only spoiler-free rewrite is moot there). Readmo-additive (newshacker
+  has no read-later save). Pocket is intentionally absent (Mozilla shut it down in
+  July 2025). On mobile, Share → the native share sheet already reaches any
+  installed read-later app; this gives an explicit link that also works on desktop.
+- **Auto-save on favorite** (Settings → Read later; shown only once a save
+  service is chosen, **default off**): when on, favoriting an article also opens
+  the chosen service's save page in a new tab — the same deep link, fired in the
+  same gesture as the favorite (button, ⋮ menu, or `f`), so it isn't
+  popup-blocked. Only favoriting saves; unfavoriting never does. The save-service
+  choice and this toggle are **per-device** (like the toolbar position and list
+  layout), not synced.
 
 ---
 
