@@ -123,34 +123,6 @@ constraint is documented in more detail.
   Revisit if a publisher complains, or when we next touch the poller's
   politeness logic (it already honors `Retry-After`/`ttl`).
 
-## AI summaries
-
-- **Speed up the pin-triggered summary: don't serialize it behind the full-text
-  download.** The pin trigger's server-side work (`runPinTriggeredWork` in
-  `supabase/functions/summary/index.ts`) currently does the full-article
-  download FIRST and only THEN generates the summary. For a truncated feed the
-  download is a live publisher fetch (≈12–30 s: 12 s direct + 15 s Jina fallback
-  + robots + extraction), so the summary lands tens of seconds after the pin
-  even though the summary itself is a ~5 s Jina+Gemini call. The full body is
-  only the summary's *fallback* when its own Jina fetch fails, so the common
-  path pays that latency for nothing. Options to weigh:
-  - **Run them in parallel.** Kick off the full-text download and the summary
-    generation concurrently; the summary lands in ~one Jina+Gemini pass. Preserve
-    the "Jina down + only a feed stub" fallback with a single retry once the full
-    body lands (re-read the row, regenerate only if the first attempt deferred
-    with a retryable `empty`). Most latency win, keeps the reading-mode fetch
-    split intact.
-  - **Use Jina for both.** The summary already fetches via Jina (markdown); the
-    full-text/reading-mode path deliberately does NOT — it fetches first-party
-    via `safeFetch` and honors robots because it STORES and SERVES the body
-    (copyright posture; see the file-level comment in `summary/index.ts` and
-    `fulltext/index.ts`). Sharing one Jina fetch would be simpler/faster but
-    changes reading mode's provenance to a third-party reader and drops the
-    robots/first-party posture — a real trade, discuss before adopting.
-  - Update SPEC.md *AI article summaries* ("full article first, then the
-    summary") in the same change, since it documents the current ordering and
-    its rationale.
-
 ## Server RPCs
 
 - **Server-side subscription-scoped feed RPC for very large libraries.** Home/
