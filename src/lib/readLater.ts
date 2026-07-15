@@ -14,15 +14,21 @@ export interface ReadLaterTarget {
   service: ReadLaterService;
   /** Menu label, e.g. "Save to Instapaper". */
   label: string;
-  /** The save URL to open, or null when the article has no safe http(s) URL
-   *  to save (the target is then omitted from the menu). */
-  href: string | null;
+  /** The save URL to open. */
+  href: string;
 }
 
 interface ReadLaterServiceDef {
   service: ReadLaterService;
   label: string;
   build: (url: string, title: string) => string;
+}
+
+/** A service's identity, without its URL builder — the catalog Settings renders
+ *  the save-service picker from (so the list of services lives in one place). */
+export interface ReadLaterServiceInfo {
+  service: ReadLaterService;
+  label: string;
 }
 
 const SERVICES: readonly ReadLaterServiceDef[] = [
@@ -55,21 +61,35 @@ const SERVICES: readonly ReadLaterServiceDef[] = [
   },
 ];
 
-/** Build the read-later save targets for an article. Each target's `href` is
- *  null when the article URL isn't a safe http(s) URL — callers omit those (a
- *  non-http item, e.g. a `mailto:`/relative URL, has nothing to save). `title`
- *  is the article's real headline (used only by services that accept a title
- *  param, e.g. Instapaper); the read-later app shows the article's own content,
- *  so the list-only spoiler-free rewrite isn't relevant here. */
-export function readLaterTargets(
+/** The read-later services in menu order — the catalog Settings renders the
+ *  save-service picker from (and validates a stored id against). */
+export const READ_LATER_SERVICES: readonly ReadLaterServiceInfo[] = SERVICES.map(
+  ({ service, label }) => ({ service, label }),
+);
+
+/** Whether `value` is a known read-later service id — guards a stored pref value
+ *  (an id dropped from the app, or a stray/newer-client value) at read time. */
+export function isReadLaterService(value: unknown): value is ReadLaterService {
+  return (
+    typeof value === 'string' &&
+    SERVICES.some((s) => s.service === value)
+  );
+}
+
+/** The save target for the user's chosen read-later service (menu label + save
+ *  URL), or null when no safe http(s) URL is available or the id is unknown —
+ *  callers then show no save option (a non-http item, e.g. a `mailto:`/relative
+ *  URL, has nothing to save). `title` is the article's real headline (used only
+ *  by services that accept a title param, e.g. Instapaper); the read-later app
+ *  shows the article's own content, so the list-only spoiler-free rewrite isn't
+ *  relevant here. */
+export function readLaterTarget(
+  service: ReadLaterService,
   articleUrl: string | null | undefined,
   title?: string | null,
-): ReadLaterTarget[] {
+): ReadLaterTarget | null {
+  const def = SERVICES.find((s) => s.service === service);
   const safe = isSafeHttpUrl(articleUrl) ? articleUrl : null;
-  const cleanTitle = title?.trim() ?? '';
-  return SERVICES.map((s) => ({
-    service: s.service,
-    label: s.label,
-    href: safe ? s.build(safe, cleanTitle) : null,
-  }));
+  if (!def || !safe) return null;
+  return { service: def.service, label: def.label, href: def.build(safe, title?.trim() ?? '') };
 }

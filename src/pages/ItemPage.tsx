@@ -10,9 +10,13 @@ import { useWideViewport } from '../hooks/useWideViewport';
 import { useShareItem } from '../hooks/useShareItem';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { useFullTextAllowed } from '../hooks/useCapabilities';
-import { useAutoSummarizePinned } from '../hooks/useReadingPrefs';
+import {
+  useAutoSummarizePinned,
+  useAutoSaveOnFavorite,
+  useSaveService,
+} from '../hooks/useReadingPrefs';
 import { useMarkDoneOnOpenFeeds } from '../hooks/useSubscriptionFeeds';
-import { readLaterTargets } from '../lib/readLater';
+import { readLaterTarget } from '../lib/readLater';
 import {
   articleSourceDomain,
   formatAge,
@@ -99,6 +103,9 @@ interface ReaderToolbarProps {
   commentsOnNewshacker: boolean;
   openComments: () => void;
   toggle: (field: ItemStateField) => void;
+  /** Toggle favorite AND run auto-save-on-favorite (see ItemPage.toggleFavorite);
+   *  used by the favorite button so the save fires in the same gesture. */
+  onToggleFavorite: () => void;
   set: (field: ItemStateField, value: boolean) => void;
   markDone: () => void;
   share: (item: { title: string; url: string }) => void;
@@ -127,6 +134,7 @@ function ReaderToolbar({
   commentsOnNewshacker,
   openComments,
   toggle,
+  onToggleFavorite,
   set,
   markDone,
   share,
@@ -229,7 +237,7 @@ function ReaderToolbar({
               tooltip={state.favorite ? 'Unfavorite' : 'Favorite'}
               aria-label={state.favorite ? 'Unfavorite' : 'Favorite'}
               aria-pressed={state.favorite}
-              onClick={() => toggle('favorite')}
+              onClick={onToggleFavorite}
               data-testid={`reader-favorite${sfx}`}
             >
               {state.favorite ? <FavoriteFilled /> : <FavoriteOutline />}
@@ -296,6 +304,8 @@ export function ItemPage() {
   const online = status === 'online';
 
   const { state, set, toggle } = useItemState(id);
+  const { saveService } = useSaveService();
+  const { autoSaveOnFavorite } = useAutoSaveOnFavorite();
   // Feeds set to "mark done when opening": opening the original (or newshacker)
   // target also marks the item Done. Applies to the reader's Open-original button
   // below — NOT to merely opening this article view, which is where the setting
@@ -355,6 +365,22 @@ export function ItemPage() {
   );
   const fallback = data === undefined ? listItem : null;
   const resolved = data === undefined ? fallback : data;
+
+  // Favorite, plus the opt-in "auto-save on favorite": when the user has picked
+  // a save service AND turned auto-save on, favoriting an article opens that
+  // service's save page in a new tab — the same deep link the ⋮ menu uses (no
+  // API/credentials). The window.open runs synchronously in the same gesture
+  // that toggled the favorite (button / menu / `f` key), so it isn't
+  // popup-blocked. Only a false→true transition saves — unfavoriting never does.
+  const toggleFavorite = useCallback(() => {
+    const turningOn = !state.favorite;
+    toggle('favorite');
+    if (!turningOn || !autoSaveOnFavorite || !saveService) return;
+    const it = resolved?.item;
+    const target = it ? readLaterTarget(saveService, it.url, it.title) : null;
+    if (target) window.open(target.href, '_blank', 'noopener,noreferrer');
+  }, [state.favorite, toggle, autoSaveOnFavorite, saveService, resolved]);
+
   // The cached AI summary for this article, delivered on the item row (the
   // allowlisted ride-along) — lets the reader show a pinned article's summary
   // instantly + offline with no "Summarizing…" placeholder; null falls back to
@@ -641,7 +667,7 @@ export function ItemPage() {
       items.push({
         key: 'favorite',
         label: state.favorite ? 'Unfavorite' : 'Favorite',
-        onSelect: () => toggle('favorite'),
+        onSelect: toggleFavorite,
       });
       items.push({
         key: 'share',
@@ -649,18 +675,20 @@ export function ItemPage() {
         onSelect: () => share({ title: it.title, url: it.url }),
       });
     }
-    // Save to a read-later service (Instapaper / Raindrop / Readwise Reader). Plain deep
-    // links to each service's own save page — no API call, no credentials (see
-    // src/lib/readLater.ts). Always in the menu (both viewports), unlike Share.
-    // Saves the real headline: the read-later service shows the article's own
-    // content anyway (Readwise re-scrapes the page), so the list-only
-    // spoiler-free rewrite is moot here.
-    for (const target of readLaterTargets(it.url, it.title)) {
-      if (!target.href) continue;
-      const href = target.href;
+    // Save to the user's chosen read-later service (Settings → Read later; None
+    // by default, so no entry until they opt in). A plain deep link to that
+    // service's own save page — no API call, no credentials (see
+    // src/lib/readLater.ts). Saves the real headline: the read-later service
+    // shows the article's own content anyway (Readwise re-scrapes the page), so
+    // the list-only spoiler-free rewrite is moot here.
+    const saveTarget = saveService
+      ? readLaterTarget(saveService, it.url, it.title)
+      : null;
+    if (saveTarget) {
+      const href = saveTarget.href;
       items.push({
-        key: `save-${target.service}`,
-        label: target.label,
+        key: `save-${saveTarget.service}`,
+        label: saveTarget.label,
         onSelect: () => window.open(href, '_blank', 'noopener,noreferrer'),
       });
     }
@@ -684,6 +712,8 @@ export function ItemPage() {
     state.favorite,
     state.pinned,
     toggle,
+    toggleFavorite,
+    saveService,
     share,
     navigate,
     showReading,
@@ -710,7 +740,7 @@ export function ItemPage() {
           toggle('pinned');
           break;
         case 'f':
-          toggle('favorite');
+          toggleFavorite();
           break;
         case 'd':
           markDone();
@@ -725,7 +755,7 @@ export function ItemPage() {
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [openOriginal, openComments, toggle, markDone, goUp, goBack]);
+  }, [openOriginal, openComments, toggle, toggleFavorite, markDone, goUp, goBack]);
 
   // Only show the blank "Loading…" when there's nothing cached to paint yet — a
   // cold first open, or while the persisted cache is still hydrating (the
@@ -818,6 +848,7 @@ export function ItemPage() {
     commentsOnNewshacker,
     openComments,
     toggle,
+    onToggleFavorite: toggleFavorite,
     set,
     markDone,
     share,

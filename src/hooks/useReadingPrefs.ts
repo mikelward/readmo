@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import type { ItemSort } from '../lib/data/DataSource';
 import type { ListLayout } from '../lib/types';
+import { isReadLaterService, type ReadLaterService } from '../lib/readLater';
 import {
   createPersistentStore,
   type PersistentStore,
@@ -85,6 +86,8 @@ export {
 export const BOTTOM_BAR_KEY = 'readmo:bottom-bar';
 export const LIST_LAYOUT_KEY = 'readmo:list-layout';
 export const DEBUG_SCROLL_JUMPS_KEY = 'readmo:debug-scroll-jumps';
+export const SAVE_SERVICE_KEY = 'readmo:save-service';
+export const AUTO_SAVE_ON_FAVORITE_KEY = 'readmo:auto-save-on-favorite';
 
 /** Where the bottom action bar sits. 'list' = relative footer at the end of the
  * list (the default); 'screen' = pinned to the bottom of the viewport. */
@@ -190,6 +193,31 @@ const listLayoutStore = createPersistentStore<ListLayout>({
     raw === 'excerpt'
       ? raw
       : DEFAULT_LIST_LAYOUT,
+});
+
+// The single read-later service the reader offers, or null for None (the
+// default — save is opt-in, so the ⋮ menu shows no "Save to …" until you pick
+// one). At most one service is enabled. A stored id that's no longer a known
+// service reads as None. Per-device (like the toolbar position and list layout):
+// which save integration you reach for — and whether favoriting pops it open —
+// is a per-device ergonomic, not synced account intent.
+const saveServiceStore = createPersistentStore<ReadLaterService | null>({
+  storageKey: SAVE_SERVICE_KEY,
+  changeEvent: CHANGE_EVENT,
+  defaultValue: null,
+  parse: (raw) => (isReadLaterService(raw) ? raw : undefined),
+  serialize: (value) => value ?? '',
+});
+
+// Whether favoriting an article also opens the chosen save service's save page
+// in a new tab (default off). Only takes effect when a save service is set —
+// there's nothing to save to otherwise.
+const autoSaveOnFavoriteStore = createPersistentStore<boolean>({
+  storageKey: AUTO_SAVE_ON_FAVORITE_KEY,
+  changeEvent: CHANGE_EVENT,
+  defaultValue: false,
+  parse: (raw) => (raw === '1' ? true : raw === '0' ? false : undefined),
+  serialize: (value) => (value ? '1' : '0'),
 });
 
 /** Whether unpinned articles are auto-marked Done as they scroll off the top.
@@ -325,6 +353,36 @@ export function useListLayout(): {
   return { listLayout, setListLayout };
 }
 
+/** The single read-later service the reader offers, or null for None (the
+ * default — save is opt-in). At most one is enabled. Per-device. See
+ * lib/readLater / SettingsPage. */
+export function useSaveService(): {
+  saveService: ReadLaterService | null;
+  setSaveService: (next: ReadLaterService | null) => void;
+} {
+  const saveService = usePersistentStore(saveServiceStore);
+  const setSaveService = useCallback(
+    (next: ReadLaterService | null) => saveServiceStore.set(next),
+    [],
+  );
+  return { saveService, setSaveService };
+}
+
+/** Whether favoriting an article also opens the chosen save service's save page
+ * in a new tab (default off) — the same deep link the ⋮ menu uses (no API/
+ * credentials). No effect unless a save service is set. Per-device. */
+export function useAutoSaveOnFavorite(): {
+  autoSaveOnFavorite: boolean;
+  setAutoSaveOnFavorite: (next: boolean) => void;
+} {
+  const autoSaveOnFavorite = usePersistentStore(autoSaveOnFavoriteStore);
+  const setAutoSaveOnFavorite = useCallback(
+    (next: boolean) => autoSaveOnFavoriteStore.set(next),
+    [],
+  );
+  return { autoSaveOnFavorite, setAutoSaveOnFavorite };
+}
+
 /** Whether scroll-jump diagnostics are on (default off). When on, useScrollDiag
  * records window scroll positions and Done flips into an in-memory timeline and
  * surfaces a "Done — Report bug" toast on each dismiss, so a jump-to-top can be
@@ -354,4 +412,6 @@ export function resetReadingPrefsCacheForTest(): void {
   bottomBarStore.resetForTest();
   itemSortStore.resetForTest();
   listLayoutStore.resetForTest();
+  saveServiceStore.resetForTest();
+  autoSaveOnFavoriteStore.resetForTest();
 }

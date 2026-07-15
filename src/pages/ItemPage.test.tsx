@@ -14,8 +14,11 @@ import { _resetNetworkStatusForTests, trackedFetch } from '../lib/networkStatus'
 import { CAPABILITIES_QUERY_KEY } from '../hooks/useCapabilities';
 import {
   AUTO_SUMMARIZE_PINNED_KEY,
+  SAVE_SERVICE_KEY,
+  AUTO_SAVE_ON_FAVORITE_KEY,
   resetReadingPrefsCacheForTest,
 } from '../hooks/useReadingPrefs';
+import { readLaterTarget } from '../lib/readLater';
 import type { Feed, FeedItem, Item, ItemId } from '../lib/types';
 import type { Capabilities } from '../lib/data/DataSource';
 import type { FullTextResult } from '../lib/fullText';
@@ -144,6 +147,8 @@ afterEach(() => {
   setOnline(true);
   _resetNetworkStatusForTests();
   window.localStorage.removeItem(AUTO_SUMMARIZE_PINNED_KEY);
+  window.localStorage.removeItem(SAVE_SERVICE_KEY);
+  window.localStorage.removeItem(AUTO_SAVE_ON_FAVORITE_KEY);
   resetReadingPrefsCacheForTest();
 });
 
@@ -687,11 +692,25 @@ describe('ItemPage (reader)', () => {
     }
   });
 
-  it('offers read-later save links that deep-link to the service save page', async () => {
+  it('shows no save option in the menu when no save service is chosen (default)', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
+    renderReader(source);
+    const more = await screen.findByTestId('reader-more');
+    await user.click(more);
+    await screen.findByTestId('item-row-menu');
+    expect(screen.queryByTestId('item-row-menu-save-instapaper')).toBeNull();
+    expect(screen.queryByTestId('item-row-menu-save-raindrop')).toBeNull();
+    expect(screen.queryByTestId('item-row-menu-save-readwise')).toBeNull();
+  });
+
+  it('offers the chosen save service as a deep link to its save page', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(SAVE_SERVICE_KEY, 'raindrop');
+    resetReadingPrefsCacheForTest();
+    const source = new MockDataSource(`test-${Math.random()}`);
     const fi = await source.getItem('item-1');
-    const articleUrl = fi!.item.url!;
+    const expected = readLaterTarget('raindrop', fi!.item.url, fi!.item.title)!;
     const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
     try {
       renderReader(source);
@@ -699,23 +718,62 @@ describe('ItemPage (reader)', () => {
       await user.click(more);
       await screen.findByTestId('item-row-menu');
 
-      expect(screen.getByTestId('item-row-menu-save-instapaper')).toHaveTextContent(
-        'Save to Instapaper',
-      );
+      // Only the chosen service is offered.
+      expect(screen.queryByTestId('item-row-menu-save-instapaper')).toBeNull();
       expect(screen.getByTestId('item-row-menu-save-raindrop')).toHaveTextContent(
         'Save to Raindrop',
       );
-      expect(screen.getByTestId('item-row-menu-save-readwise')).toHaveTextContent(
-        'Save to Readwise Reader',
-      );
 
-      await user.click(screen.getByTestId('item-row-menu-save-instapaper'));
+      await user.click(screen.getByTestId('item-row-menu-save-raindrop'));
       expect(openSpy).toHaveBeenCalledWith(
-        `https://www.instapaper.com/hello2?url=${encodeURIComponent(articleUrl)}` +
-          `&title=${encodeURIComponent(fi!.item.title!)}`,
+        expected.href,
         '_blank',
         'noopener,noreferrer',
       );
+    } finally {
+      openSpy.mockRestore();
+    }
+  });
+
+  it('auto-saves to the chosen service when favoriting, if auto-save is on', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(SAVE_SERVICE_KEY, 'raindrop');
+    window.localStorage.setItem(AUTO_SAVE_ON_FAVORITE_KEY, '1');
+    resetReadingPrefsCacheForTest();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const fi = await source.getItem('item-1');
+    const expected = readLaterTarget('raindrop', fi!.item.url, fi!.item.title)!;
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    try {
+      renderReader(source);
+      await screen.findByTestId('reader-more');
+      // Favorite via the `f` shortcut (a real gesture, like the button/menu).
+      await user.keyboard('f');
+      expect(openSpy).toHaveBeenCalledWith(
+        expected.href,
+        '_blank',
+        'noopener,noreferrer',
+      );
+      // Unfavoriting doesn't save again.
+      openSpy.mockClear();
+      await user.keyboard('f');
+      expect(openSpy).not.toHaveBeenCalled();
+    } finally {
+      openSpy.mockRestore();
+    }
+  });
+
+  it('does not auto-save on favorite when auto-save is off (service chosen)', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(SAVE_SERVICE_KEY, 'raindrop');
+    resetReadingPrefsCacheForTest();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    try {
+      renderReader(source);
+      await screen.findByTestId('reader-more');
+      await user.keyboard('f');
+      expect(openSpy).not.toHaveBeenCalled();
     } finally {
       openSpy.mockRestore();
     }
