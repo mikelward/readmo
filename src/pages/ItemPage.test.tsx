@@ -702,6 +702,9 @@ describe('ItemPage (reader)', () => {
       expect(screen.getByTestId('item-row-menu-save-instapaper')).toHaveTextContent(
         'Save to Instapaper',
       );
+      expect(screen.getByTestId('item-row-menu-save-raindrop')).toHaveTextContent(
+        'Save to Raindrop',
+      );
       expect(screen.getByTestId('item-row-menu-save-readwise')).toHaveTextContent(
         'Save to Readwise Reader',
       );
