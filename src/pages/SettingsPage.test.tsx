@@ -383,6 +383,19 @@ describe('SettingsPage — Read later', () => {
 
   const saveGroup = () => screen.getByRole('radiogroup', { name: 'Save to' });
 
+  it('places the Read later section immediately after Smart features', () => {
+    // Default caps leave the allowlist disarmed → canUseFullText is true, so the
+    // Smart features section renders and the ordering can be asserted directly.
+    renderWithProviders(<SettingsPage />);
+    const headings = screen
+      .getAllByRole('heading', { level: 2 })
+      .map((h) => h.textContent);
+    const smart = headings.indexOf('Smart features');
+    const readLater = headings.indexOf('Read later');
+    expect(smart).toBeGreaterThanOrEqual(0);
+    expect(readLater).toBe(smart + 1);
+  });
+
   it('offers None + one option per service, defaulting to None', () => {
     renderWithProviders(<SettingsPage />);
     const group = saveGroup();
