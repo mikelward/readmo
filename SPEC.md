@@ -2931,7 +2931,7 @@ immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
   Pin/Done/⋮ land at the same x-position — handy right where you finish reading,
   since this bar is the relative footer at the article's end.
 - **More ⋮** overflow: Favorite/Share (when not inline), **Save to Instapaper** /
-  **Save to Readwise Reader**, **Open feed**, **Copy
+  **Save to Raindrop** / **Save to Readwise Reader**, **Open feed**, **Copy
   link**, **Mute feed**. This is the **shared `ItemRowMenu`** component (the same
   one the feed list rows use, and the mirror of newshacker's thread ⋮) — lifted
   to the reader page so the top and bottom bars drive one instance. Anchored
@@ -2944,7 +2944,7 @@ immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
   traffic; there's no on-site discussion page to prefer — the one place Readmo
   differs from newshacker, which shared its own `/item/:id`). Web Share API +
   clipboard fallback + "Link copied" toast.
-- **Save to a read-later service** (Instapaper, Readwise Reader) opens that
+- **Save to a read-later service** (Instapaper, Raindrop, Readwise Reader) opens that
   service's own "save this page" page for the article in a new tab, prompting
   login there if needed — a plain deep link like *Open on newshacker*, so **$0,
   no API call, no stored credentials** (see *External services*: none added).

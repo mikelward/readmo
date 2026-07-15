@@ -649,7 +649,7 @@ export function ItemPage() {
         onSelect: () => share({ title: it.title, url: it.url }),
       });
     }
-    // Save to a read-later service (Instapaper / Readwise Reader). Plain deep
+    // Save to a read-later service (Instapaper / Raindrop / Readwise Reader). Plain deep
     // links to each service's own save page — no API call, no credentials (see
     // src/lib/readLater.ts). Always in the menu (both viewports), unlike Share.
     // Saves the real headline: the read-later service shows the article's own

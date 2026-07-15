@@ -8,7 +8,7 @@ import { isSafeHttpUrl } from './itemMeta';
 // (CLAUDE.md *External services* — none added). Pocket is deliberately absent:
 // Mozilla shut it down in July 2025.
 
-export type ReadLaterService = 'instapaper' | 'readwise';
+export type ReadLaterService = 'instapaper' | 'raindrop' | 'readwise';
 
 export interface ReadLaterTarget {
   service: ReadLaterService;
@@ -34,6 +34,16 @@ const SERVICES: readonly ReadLaterServiceDef[] = [
     // optional but recommended.
     build: (url, title) =>
       `https://www.instapaper.com/hello2?url=${encodeURIComponent(url)}` +
+      (title ? `&title=${encodeURIComponent(title)}` : ''),
+  },
+  {
+    service: 'raindrop',
+    label: 'Save to Raindrop',
+    // Raindrop.io's "add bookmark" deep link: opens the app's save dialog
+    // pre-filled with the article, prompting login if the reader isn't signed
+    // in. `title` is optional but pre-fills the bookmark title.
+    build: (url, title) =>
+      `https://app.raindrop.io/add?link=${encodeURIComponent(url)}` +
       (title ? `&title=${encodeURIComponent(title)}` : ''),
   },
   {

@@ -5,11 +5,12 @@ const href = (targets: ReturnType<typeof readLaterTargets>, s: ReadLaterService)
   targets.find((t) => t.service === s)?.href ?? null;
 
 describe('readLaterTargets', () => {
-  it('offers Instapaper and Readwise Reader for a safe https article', () => {
+  it('offers Instapaper, Raindrop and Readwise Reader for a safe https article', () => {
     const targets = readLaterTargets('https://example.com/story', 'A Story');
-    expect(targets.map((t) => t.service)).toEqual(['instapaper', 'readwise']);
+    expect(targets.map((t) => t.service)).toEqual(['instapaper', 'raindrop', 'readwise']);
     expect(targets.map((t) => t.label)).toEqual([
       'Save to Instapaper',
+      'Save to Raindrop',
       'Save to Readwise Reader',
     ]);
   });
@@ -29,6 +30,23 @@ describe('readLaterTargets', () => {
   it('omits the Instapaper title param when there is no title', () => {
     const url = href(readLaterTargets('https://example.com/x'), 'instapaper');
     expect(url).toBe('https://www.instapaper.com/hello2?url=https%3A%2F%2Fexample.com%2Fx');
+  });
+
+  it('builds the Raindrop save URL with an encoded url and title', () => {
+    const url = href(
+      readLaterTargets('https://example.com/a b?x=1&y=2', 'Hello & Goodbye'),
+      'raindrop',
+    );
+    expect(url).toBe(
+      'https://app.raindrop.io/add' +
+        '?link=https%3A%2F%2Fexample.com%2Fa%20b%3Fx%3D1%26y%3D2' +
+        '&title=Hello%20%26%20Goodbye',
+    );
+  });
+
+  it('omits the Raindrop title param when there is no title', () => {
+    const url = href(readLaterTargets('https://example.com/x'), 'raindrop');
+    expect(url).toBe('https://app.raindrop.io/add?link=https%3A%2F%2Fexample.com%2Fx');
   });
 
   it('builds the Readwise Reader save URL (no title param)', () => {
