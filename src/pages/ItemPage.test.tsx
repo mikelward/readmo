@@ -641,8 +641,10 @@ describe('ItemPage (reader)', () => {
     });
   });
 
-  it('shares the spoiler-free headline, not the original scoreline', async () => {
-    // Overlay a rewritten sports headline onto the resolved item.
+  it('shows the real headline in the reader (no de-spoiler marker) and shares it, even when a spoiler-free rewrite exists', async () => {
+    // A spoiler-free rewrite exists, but the reader always shows the REAL title
+    // — the rewrite is a list-only affordance; the body reveals the result here
+    // anyway. (The list still hides it; see ItemRow.)
     class SpoilerSource extends MockDataSource {
       async getItem(id: ItemId): Promise<FeedItem | null> {
         const fi = await super.getItem(id);
@@ -666,16 +668,19 @@ describe('ItemPage (reader)', () => {
     });
     try {
       renderReader(new SpoilerSource(`test-${Math.random()}`));
-      // Default (allowlisted-by-default caps + setting on) shows the rewrite.
-      const more = await screen.findByTestId('reader-more');
-      await user.click(more);
+      // The reader headline is the real title, with no de-spoiler marker.
+      const title = await screen.findByRole('heading', { level: 1 });
+      expect(title).toHaveTextContent('Man Utd beat Arsenal 3-1 to go top');
+      expect(screen.queryByTestId('reader-spoiler-flag')).toBeNull();
+
+      // Share sends the real title too (no spoiler-free rewrite to protect).
+      await user.click(screen.getByTestId('reader-more'));
       await screen.findByTestId('item-row-menu');
       await user.click(screen.getByTestId('item-row-menu-share'));
 
       expect(shareFn).toHaveBeenCalledTimes(1);
       const payload = shareFn.mock.calls[0][0] as { title: string; text: string };
-      expect(payload.title).toBe('EPL MNU v ARS spoiler');
-      expect(payload.text).not.toContain('3-1');
+      expect(payload.title).toBe('Man Utd beat Arsenal 3-1 to go top');
     } finally {
       if (prev) Object.defineProperty(window.navigator, 'share', prev);
       else delete (window.navigator as { share?: unknown }).share;
