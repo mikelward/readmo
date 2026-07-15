@@ -13,6 +13,7 @@ import { useFullTextAllowed, useCapabilities, canUseFullText } from '../hooks/us
 import { useAutoSummarizePinned, useHideSportsSpoilers } from '../hooks/useReadingPrefs';
 import { useMarkDoneOnOpenFeeds } from '../hooks/useSubscriptionFeeds';
 import { displayTitle } from '../lib/spoilerHeadline';
+import { readLaterTargets } from '../lib/readLater';
 import {
   articleSourceDomain,
   formatAge,
@@ -666,6 +667,21 @@ export function ItemPage() {
             }).text,
             url: it.url,
           }),
+      });
+    }
+    // Save to a read-later service (Instapaper / Readwise Reader). Plain deep
+    // links to each service's own save page — no API call, no credentials (see
+    // src/lib/readLater.ts). Always in the menu (both viewports), unlike Share.
+    // Saves the real headline: the read-later service shows the article's own
+    // content anyway (Readwise re-scrapes the page), so the list-only
+    // spoiler-free rewrite is moot here.
+    for (const target of readLaterTargets(it.url, it.title)) {
+      if (!target.href) continue;
+      const href = target.href;
+      items.push({
+        key: `save-${target.service}`,
+        label: target.label,
+        onSelect: () => window.open(href, '_blank', 'noopener,noreferrer'),
       });
     }
     if (showReading && it.contentHtml) {

@@ -681,6 +681,37 @@ describe('ItemPage (reader)', () => {
       else delete (window.navigator as { share?: unknown }).share;
     }
   });
+
+  it('offers read-later save links that deep-link to the service save page', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const fi = await source.getItem('item-1');
+    const articleUrl = fi!.item.url!;
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    try {
+      renderReader(source);
+      const more = await screen.findByTestId('reader-more');
+      await user.click(more);
+      await screen.findByTestId('item-row-menu');
+
+      expect(screen.getByTestId('item-row-menu-save-instapaper')).toHaveTextContent(
+        'Save to Instapaper',
+      );
+      expect(screen.getByTestId('item-row-menu-save-readwise')).toHaveTextContent(
+        'Save to Readwise Reader',
+      );
+
+      await user.click(screen.getByTestId('item-row-menu-save-instapaper'));
+      expect(openSpy).toHaveBeenCalledWith(
+        `https://www.instapaper.com/hello2?url=${encodeURIComponent(articleUrl)}` +
+          `&title=${encodeURIComponent(fi!.item.title!)}`,
+        '_blank',
+        'noopener,noreferrer',
+      );
+    } finally {
+      openSpy.mockRestore();
+    }
+  });
 });
 
 describe('ItemPage comments button', () => {
