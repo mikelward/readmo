@@ -752,8 +752,9 @@ newshacker_link (user_id PK/FK, token, created_at)                    -- compani
   can see — BBC's feeds live on a separate host and are only listed on a help
   page, so live discovery of `bbc.com` finds nothing and would fall through to
   the Google News last resort. So for a small, hand-curated set of major
-  publishers (`src/lib/feedSections.ts` — BBC, The Guardian, NPR, CBC at first,
-  extensible), the **same multi-select picker** is populated from a stored list
+  publishers (`src/lib/feedSections.ts` — BBC, The Guardian, NPR, CBC, The New
+  York Times, Sky News at present, extensible), the **same multi-select picker**
+  is populated from a stored list
   of that publisher's section feeds (**main feed first**, capped at ~10) the
   moment the user adds the site — no fetch, no discovery round-trip. It fires
   when the user adds a curated publisher **by name** (a dropdown pick or a

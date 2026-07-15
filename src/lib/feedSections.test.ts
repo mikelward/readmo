@@ -64,6 +64,38 @@ describe('publisherForUrl', () => {
     expect(publisherForUrl('bbc.com', { sitesOnly: true })?.name).toBe('BBC');
   });
 
+  it('maps NYT and Sky News by site host and by their separate feed host', () => {
+    // Site URL (raw paste of the site) → publisher, so it expands to the picker.
+    expect(publisherForUrl('nytimes.com')?.name).toBe('The New York Times');
+    expect(publisherForUrl('https://www.nytimes.com/section/world')?.name).toBe(
+      'The New York Times',
+    );
+    expect(publisherForUrl('news.sky.com')?.name).toBe('Sky News');
+    // Curated feed URL on the separate feed host (a dropdown pick) → publisher.
+    expect(
+      publisherForUrl('https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml')?.name,
+    ).toBe('The New York Times');
+    expect(publisherForUrl('https://feeds.skynews.com/feeds/rss/home.xml')?.name).toBe(
+      'Sky News',
+    );
+    // Sky's feed host is not a subdomain of its site host, so a raw paste of a
+    // Sky feed URL doesn't match sitesOnly (it subscribes directly, not expand).
+    expect(
+      publisherForUrl('https://feeds.skynews.com/feeds/rss/world.xml', { sitesOnly: true }),
+    ).toBeNull();
+    // NYT serves feeds from rss.nytimes.com, a subdomain of the site host, so
+    // sitesOnly *does* match — but a raw paste still subscribes directly because
+    // the URL is feed-shaped (looksLikeFeedUrl short-circuits the expansion).
+    expect(
+      publisherForUrl('https://rss.nytimes.com/services/xml/rss/nyt/World.xml', {
+        sitesOnly: true,
+      })?.name,
+    ).toBe('The New York Times');
+    expect(looksLikeFeedUrl('https://rss.nytimes.com/services/xml/rss/nyt/World.xml')).toBe(
+      true,
+    );
+  });
+
   it('returns null for unknown sites and unparseable input', () => {
     expect(publisherForUrl('example.com')).toBeNull();
     expect(publisherForUrl('notbbc.com')).toBeNull();

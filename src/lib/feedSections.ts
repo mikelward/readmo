@@ -123,6 +123,44 @@ export const PUBLISHERS: Publisher[] = [
       { name: 'CBC Sports', feedUrl: 'https://www.cbc.ca/cmlink/rss-sports' },
     ],
   },
+  {
+    name: 'The New York Times',
+    siteHosts: ['nytimes.com'],
+    feedHosts: ['rss.nytimes.com'],
+    // NYT publishes a per-section feed at
+    // rss.nytimes.com/services/xml/rss/nyt/<Section>.xml; HomePage is the front
+    // page (the single-feed catalog entry). Capped at MAX_SECTIONS.
+    sections: [
+      { name: 'NYT Top Stories', feedUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml' },
+      { name: 'NYT World', feedUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/World.xml' },
+      { name: 'NYT US', feedUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/US.xml' },
+      { name: 'NYT Politics', feedUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml' },
+      { name: 'NYT Business', feedUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/Business.xml' },
+      { name: 'NYT Technology', feedUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml' },
+      { name: 'NYT Science', feedUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/Science.xml' },
+      { name: 'NYT Health', feedUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/Health.xml' },
+      { name: 'NYT Sports', feedUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/Sports.xml' },
+      { name: 'NYT Arts', feedUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/Arts.xml' },
+    ],
+  },
+  {
+    name: 'Sky News',
+    siteHosts: ['news.sky.com'],
+    feedHosts: ['feeds.skynews.com'],
+    // Sky News publishes a per-section feed at
+    // feeds.skynews.com/feeds/rss/<section>.xml; home is the front page (the
+    // single-feed catalog entry).
+    sections: [
+      { name: 'Sky News', feedUrl: 'https://feeds.skynews.com/feeds/rss/home.xml' },
+      { name: 'Sky News UK', feedUrl: 'https://feeds.skynews.com/feeds/rss/uk.xml' },
+      { name: 'Sky News World', feedUrl: 'https://feeds.skynews.com/feeds/rss/world.xml' },
+      { name: 'Sky News US', feedUrl: 'https://feeds.skynews.com/feeds/rss/us.xml' },
+      { name: 'Sky News Politics', feedUrl: 'https://feeds.skynews.com/feeds/rss/politics.xml' },
+      { name: 'Sky News Business', feedUrl: 'https://feeds.skynews.com/feeds/rss/business.xml' },
+      { name: 'Sky News Technology', feedUrl: 'https://feeds.skynews.com/feeds/rss/technology.xml' },
+      { name: 'Sky News Entertainment', feedUrl: 'https://feeds.skynews.com/feeds/rss/entertainment.xml' },
+    ],
+  },
 ];
 
 /** Lowercase a host and drop a leading "www." so matching ignores that prefix. */
