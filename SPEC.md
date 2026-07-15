@@ -2757,7 +2757,7 @@ page's discipline is unchanged.
   (**"World Cup semi-final spoiler"**). Only a genuine pre-tournament fixture
   list or first-round draw, made before anyone has played, stays exempt.
   For allowlisted
-  users, such a headline is replaced — in the list **and** the reader — with a
+  users, such a headline is replaced **in the list** with a
   spoiler-free rewrite that names only **which** event it is — the competition
   and the participants — and *never what happened*: **"EPL MNU v ARS spoiler"**,
   **"F1 British GP qualifying spoiler"**, **"World Cup AUS v EGY spoiler"**. The
@@ -2831,20 +2831,25 @@ page's discipline is unchanged.
     each call hits its timeout — can't keep the Edge Function busy for minutes or
     overlap the next scheduled poll. Whatever's skipped stays `generated_at IS
     NULL` and is picked up next poll.
-  - **Display gate (client).** The rewrite shows only when the caller is
+  - **Display gate (client) — list only.** The rewrite shows **in the list** only
+    when the caller is
     allowlisted (`canUseFullText(useCapabilities())`, the shared reading-mode gate)
     **and** the per-user **"Hide sports spoilers"** setting is on
     (`useHideSportsSpoilers`, a synced per-account preference, **default on**, in the
     Settings → Smart features section; the toggle is hidden for off-list users). Off-list,
     setting-off, or no rewrite cached → the original headline, untouched. The
-    rewritten row/headline carries a **subtle, non-interactive marker**
+    rewritten row carries a **subtle, non-interactive marker**
     (`VisibilityOff` glyph, no tap zone — guardrail #2) whose native tooltip
     reveals the original. In the **Title + excerpt** layout the body preview is
     likewise replaced by a **"Spoilers hidden. Tap to see article."**
     placeholder, and in **Title + thumbnail** the image is **blurred** behind the
     same marker (the feed body/image would otherwise repeat or reveal the
-    concealed result — see *Article layout*). **Share** (row and reader) sends the *displayed*
-    headline too, so it never leaks the hidden scoreline into the share sheet.
+    concealed result — see *Article layout*). **The reader always shows the real
+    headline** (no rewrite, no marker): once the article is open its body reveals
+    the result anyway, so de-spoilering the headline above it buys nothing.
+    Accordingly, **Share from a list row** sends the displayed (spoiler-free)
+    headline so a share doesn't leak the scoreline, while **Share from the reader**
+    sends the real headline — matching what each surface shows.
     TODO: make it per-feed as well as per-user.
   - **Deploy dependency.** The spoiler-free title only appears once `make
     migrate` + `make deploy` land and the poller populates the column; until then

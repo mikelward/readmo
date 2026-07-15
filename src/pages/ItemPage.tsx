@@ -9,10 +9,9 @@ import { useItemState } from '../hooks/useItemState';
 import { useWideViewport } from '../hooks/useWideViewport';
 import { useShareItem } from '../hooks/useShareItem';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
-import { useFullTextAllowed, useCapabilities, canUseFullText } from '../hooks/useCapabilities';
-import { useAutoSummarizePinned, useHideSportsSpoilers } from '../hooks/useReadingPrefs';
+import { useFullTextAllowed } from '../hooks/useCapabilities';
+import { useAutoSummarizePinned } from '../hooks/useReadingPrefs';
 import { useMarkDoneOnOpenFeeds } from '../hooks/useSubscriptionFeeds';
-import { displayTitle } from '../lib/spoilerHeadline';
 import { readLaterTargets } from '../lib/readLater';
 import {
   articleSourceDomain,
@@ -41,7 +40,6 @@ import {
   PushPinOutline,
   Share as ShareIcon,
   VerticalAlignTop,
-  VisibilityOff,
 } from '../components/icons';
 import {
   NEWSHACKER_ORIGIN,
@@ -104,8 +102,7 @@ interface ReaderToolbarProps {
   set: (field: ItemStateField, value: boolean) => void;
   markDone: () => void;
   share: (item: { title: string; url: string }) => void;
-  /** The DISPLAYED headline (spoiler-free when the row is rewritten), so Share
-   * doesn't leak the original scoreline that the reader is hiding. */
+  /** The article's headline, shared as-is (the reader shows the real title). */
   shareTitle: string;
   /** Whether the shared overflow menu is currently open (drives the More
    * button's aria-expanded). The menu itself lives at the page level so
@@ -444,14 +441,6 @@ export function ItemPage() {
   // off-list request amplification (see useOfflineCacheLock). The server still
   // enforces the gate; this is purely the client not asking.
   const allowFull = useFullTextAllowed();
-  // Spoiler-free headline display gate. Uses the OPTIMISTIC allowlist gate (open
-  // while capabilities load), NOT `allowFull` — the conservative gate would paint
-  // the original (spoiler) headline until caps resolve, flashing the result. This
-  // is display-only (which text to paint), so unlike the full-text FETCH it can
-  // stay open while loading; the rewrite is non-sensitive. Resolved to text after
-  // `item` is in hand below.
-  const spoilerAllowed = canUseFullText(useCapabilities());
-  const { hideSportsSpoilers } = useHideSportsSpoilers();
   // The "Auto generate summaries for pinned articles" toggle gates the reader's
   // pinned auto-generation too, not just the ahead-of-time pre-warm: with it
   // off, a pinned open offers the "Generate summary" button like an unpinned
@@ -657,16 +646,7 @@ export function ItemPage() {
       items.push({
         key: 'share',
         label: 'Share',
-        // Share the displayed (spoiler-free when rewritten) headline, not the
-        // raw title, so Share doesn't leak the scoreline the reader is hiding.
-        onSelect: () =>
-          share({
-            title: displayTitle(it, {
-              hideSpoilers: hideSportsSpoilers,
-              allowed: spoilerAllowed,
-            }).text,
-            url: it.url,
-          }),
+        onSelect: () => share({ title: it.title, url: it.url }),
       });
     }
     // Save to a read-later service (Instapaper / Readwise Reader). Plain deep
@@ -707,8 +687,6 @@ export function ItemPage() {
     share,
     navigate,
     showReading,
-    hideSportsSpoilers,
-    spoilerAllowed,
   ]);
 
   // Reader keyboard shortcuts: o open original, c comments, p pin, f favorite,
@@ -793,13 +771,11 @@ export function ItemPage() {
   // the currently-rendered item (the render-time capture above guarantees they
   // match by the time we get here); drives the AI summary's auto-generate.
   const pinnedAtOpen = pinSnapshot.id === item.id && pinSnapshot.pinned;
-  // The headline to show: the spoiler-free rewrite for an allowlisted caller with
-  // the setting on, else the original. Article body + link target are unchanged —
-  // opening still gives the full piece (see lib/spoilerHeadline).
-  const headline = displayTitle(item, {
-    hideSpoilers: hideSportsSpoilers,
-    allowed: spoilerAllowed,
-  });
+  // The reader always shows the article's REAL headline. The spoiler-free
+  // rewrite is a list-only affordance (browsing shouldn't spoil a result you
+  // haven't chosen to read); once you've opened the article the body reveals
+  // the result anyway, so a de-spoilered headline over it buys nothing. The
+  // list still hides spoilers via lib/spoilerHeadline (ItemRow).
   // Article's publisher domain next to the feed name, for aggregator feeds
   // (Hacker News, Reddit) whose items link out elsewhere; same rule as the row.
   const domain = feed.title
@@ -845,7 +821,7 @@ export function ItemPage() {
     set,
     markDone,
     share,
-    shareTitle: headline.text,
+    shareTitle: item.title,
   } as const;
 
   return (
@@ -858,7 +834,7 @@ export function ItemPage() {
       />
       <ItemRowMenu
         open={menuOpen}
-        title={headline.text}
+        title={item.title}
         items={menuItems}
         anchorEl={menuAnchor}
         onClose={closeMenu}
@@ -873,25 +849,11 @@ export function ItemPage() {
               rel="noopener noreferrer"
               onClick={() => set('opened', true)}
             >
-              {headline.text}
+              {item.title}
             </a>
           ) : (
-            headline.text
+            item.title
           )}
-          {headline.rewritten ? (
-            // Non-interactive marker (guardrail #2 — not a control, adds no tap
-            // zone): flags the rewritten headline; native title reveals the
-            // original on hover. The article itself is unchanged below.
-            <span
-              className="reader__spoiler-flag"
-              role="img"
-              aria-label="Spoiler-free headline"
-              title={headline.original}
-              data-testid="reader-spoiler-flag"
-            >
-              <VisibilityOff width={18} height={18} />
-            </span>
-          ) : null}
         </h1>
         {/* Meta line below the title. The feed name now lives only on the
             reader bars (next to Back), so this carries author · age, plus the
