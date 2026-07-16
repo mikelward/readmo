@@ -1,6 +1,12 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { pollOne, resolveStoredFavicon } from './poller.ts';
+import {
+  CIRCUIT_BREAKER_FAILS,
+  MAX_INTERVAL_S,
+  pollOne,
+  recordFailure,
+  resolveStoredFavicon,
+} from './poller.ts';
 import type { PollerDbClient, PollerFeedRow, PollerFetch } from './poller.ts';
 import type { SafeFetchResult } from './ssrf.ts';
 
@@ -614,5 +620,77 @@ describe('pollOne favicon discovery', () => {
       | { args: { p_items: Array<{ url: string | null }> } }
       | undefined;
     expect(upsert?.args.p_items[0]?.url).toBe('https://example.com/posts/1');
+  });
+});
+
+describe('recordFailure', () => {
+  // The refresh Edge Function (on-add / pull-to-refresh) now funnels a failed
+  // fetch through recordFailure just like the cron poller, so a feed whose only
+  // attempt so far was its immediate poll records "Poll failed" + the reason
+  // instead of showing "Not tried". These assert the write it performs.
+  beforeEach(() => {
+    // Deterministic jitter so the backoff interval is exact (0.5 → factor 1.0).
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('increments error_count and stores last_error, then backs off', async () => {
+    const { client, calls } = makeClient();
+    const before = Date.now();
+
+    await recordFailure(client, FEED, new Error('HTTP 403'));
+
+    const update = calls.find((c) => c.kind === 'update') as
+      | { table: string; values: Record<string, unknown> }
+      | undefined;
+    expect(update?.table).toBe('feeds');
+    expect(update?.values.error_count).toBe(1);
+    expect(update?.values.last_error).toBe('HTTP 403');
+    // 1800s * 2^1 * 1.0 = 3600s of backoff (well inside the clamp bounds).
+    const nextMs = Date.parse(update?.values.next_fetch_at as string) - before;
+    expect(nextMs).toBeGreaterThanOrEqual(3600 * 1000 - 1000);
+    expect(nextMs).toBeLessThanOrEqual(3600 * 1000 + 2000);
+  });
+
+  it('coerces a non-Error reason to a string for last_error', async () => {
+    const { client, calls } = makeClient();
+    await recordFailure(client, FEED, 'non-feed response (text/html)');
+    const update = calls.find((c) => c.kind === 'update') as
+      | { values: Record<string, unknown> }
+      | undefined;
+    expect(update?.values.last_error).toBe('non-feed response (text/html)');
+  });
+
+  it('parks the feed at the max interval once the circuit breaker trips', async () => {
+    const { client, calls } = makeClient();
+    const before = Date.now();
+
+    // One more failure reaches CIRCUIT_BREAKER_FAILS consecutive failures.
+    await recordFailure(client, { ...FEED, error_count: CIRCUIT_BREAKER_FAILS - 1 }, new Error('down'));
+
+    const update = calls.find((c) => c.kind === 'update') as
+      | { values: Record<string, unknown> }
+      | undefined;
+    expect(update?.values.error_count).toBe(CIRCUIT_BREAKER_FAILS);
+    const nextMs = Date.parse(update?.values.next_fetch_at as string) - before;
+    expect(nextMs).toBeGreaterThanOrEqual(MAX_INTERVAL_S * 1000 - 1000);
+    expect(nextMs).toBeLessThanOrEqual(MAX_INTERVAL_S * 1000 + 2000);
+  });
+
+  it('logs but does not throw when the failure write itself fails', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const client: PollerDbClient = {
+      from() {
+        return {
+          update() {
+            return { eq: () => Promise.resolve({ error: { message: 'write blew up' } }) };
+          },
+        };
+      },
+      rpc: () => Promise.resolve({ error: null }),
+    };
+
+    await expect(recordFailure(client, FEED, new Error('boom'))).resolves.toBeUndefined();
+    expect(errorSpy).toHaveBeenCalled();
   });
 });

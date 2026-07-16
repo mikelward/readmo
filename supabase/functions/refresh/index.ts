@@ -11,7 +11,7 @@
 // @ts-nocheck — runs under Deno, not node/tsc.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { parseFeedBody } from '../_shared/parser.ts';
-import { resolveStoredFavicon } from '../_shared/poller.ts';
+import { clampInterval, recordFailure, resolveStoredFavicon } from '../_shared/poller.ts';
 import { fetchViaJinaHtml } from '../_shared/jina.ts';
 import { sanitizeContent } from '../_shared/sanitize.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
@@ -166,7 +166,9 @@ async function handle(req: Request): Promise<Response> {
 async function refreshOne(service: any, feedId: string): Promise<boolean> {
   const { data: feed } = await service
     .from('feeds')
-    .select('id, url, secret_url, last_fetched_at, fetch_interval_s, favicon_url, paused')
+    // error_count is read by recordFailure() below so an immediate poll that
+    // fails records the failure (and backs off) exactly like the cron poller.
+    .select('id, url, secret_url, last_fetched_at, fetch_interval_s, error_count, favicon_url, paused')
     .eq('id', feedId)
     .single();
   if (!feed) return false;
@@ -190,6 +192,26 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
   }
 
   console.log(`refresh: fetching feed ${feedId}`);
+  try {
+    return await fetchAndStore(service, feed);
+  } catch (err) {
+    // Record the failure (error_count/last_error + backoff) so the immediate
+    // on-add / pull-to-refresh poll surfaces as "Poll failed" with the reason on
+    // /admin/feeds, instead of "Not tried" until the cron next records it. This
+    // mirrors the cron poller (poll/index.ts), which already calls recordFailure
+    // on a per-feed throw; the refresh path historically swallowed it, so a feed
+    // whose ONLY attempt so far was its immediate poll looked untried. Re-throw
+    // so the caller still counts it as failed and logs the redacted URL.
+    await recordFailure(service, feed, err);
+    throw err;
+  }
+}
+
+/** Fetch, parse, sanitize, and store one feed's items + metadata, then schedule
+ * the next poll. Split out from refreshOne so a throw anywhere here is funneled
+ * through recordFailure by the caller. Returns true (it always fetched — the
+ * debounce/paused short-circuits happen before this runs). */
+async function fetchAndStore(service: any, feed: any): Promise<boolean> {
   const res = await safeFetch(feed.secret_url ?? feed.url, {
     headers: {
       'User-Agent': USER_AGENT,
@@ -197,11 +219,37 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
     },
     timeoutMs: 10_000,
   });
-  console.log(`refresh: feed ${feedId} responded HTTP ${res.status}`);
+  console.log(`refresh: feed ${feed.id} responded HTTP ${res.status}`);
+  // Honor 429/Retry-After like the cron poller (poller.ts): a rate-limit is a
+  // backoff/scheduling signal, NOT a feed failure. Falling through to the
+  // generic >=400 throw would route it into the caller's recordFailure(),
+  // bumping error_count and eventually parking a healthy feed a user merely
+  // pulled-to-refresh too often. Back off next_fetch_at and stop, without
+  // touching error_count.
+  if (res.status === 429) {
+    const retry = Number(res.headers.get('retry-after')) || (feed.fetch_interval_s ?? 1800) * 2;
+    const { error: backoffError } = await service
+      .from('feeds')
+      .update({
+        next_fetch_at: new Date(Date.now() + clampInterval(retry) * 1000).toISOString(),
+        // A 429 means the feed is reachable, just throttled — not a failure. Clear
+        // any prior circuit-breaker state and stamp the check, exactly as the cron
+        // poller's 429 path does (scheduleNext with ok:true). Without this an admin
+        // hitting "Retry now" on a PARKED feed that answers 429 would keep its
+        // stale "Poll failed" badge and stay parked despite a non-terminal response.
+        error_count: 0,
+        last_error: null,
+        last_fetched_at: new Date().toISOString(),
+      })
+      .eq('id', feed.id);
+    if (backoffError) throw new Error(`feed 429 backoff update failed: ${backoffError.message}`);
+    console.log(`refresh: feed ${feed.id} rate-limited (429), backing off`);
+    return false;
+  }
   if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
   const ct = res.headers.get('content-type') ?? '';
   const parsed = parseFeedBody(new TextDecoder().decode(res.body), feed.url, ct);
-  console.log(`refresh: feed ${feedId} parsed — ${parsed.items.length} item(s)`);
+  console.log(`refresh: feed ${feed.id} parsed — ${parsed.items.length} item(s)`);
   // Same favicon resolution as the cron poller: reuse an already-discovered
   // icon, else discover from the homepage <link rel="icon"> once, else the
   // /favicon.ico guess — so a manual refresh never clobbers a real icon.
@@ -253,9 +301,9 @@ async function refreshOne(service: any, feedId: string): Promise<boolean> {
       p_items: itemsPayload,
     });
     if (upsertError) throw new Error(`item upsert failed: ${upsertError.message}`);
-    console.log(`refresh: feed ${feedId} — upserted ${rows.length} item(s)`);
+    console.log(`refresh: feed ${feed.id} — upserted ${rows.length} item(s)`);
   } else {
-    console.log(`refresh: feed ${feedId} — 0 items to upsert, skipping`);
+    console.log(`refresh: feed ${feed.id} — 0 items to upsert, skipping`);
   }
   // Validators (etag/last_modified) are written only after items are stored.
   // Writing them before the upsert would cause the next cron poll to send
