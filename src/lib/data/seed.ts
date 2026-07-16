@@ -57,6 +57,16 @@ export const SEED_FEEDS: Feed[] = [
     lastError: 'HTTP 503 after 7 attempts',
     parked: true,
   },
+  {
+    id: 'feed-bbc',
+    url: 'https://feeds.bbci.co.uk/news/rss.xml',
+    siteUrl: 'https://www.bbc.co.uk/news',
+    title: 'BBC News',
+    faviconUrl: 'https://www.bbc.co.uk/favicon.ico',
+    errorCount: 0,
+    lastError: null,
+    parked: false,
+  },
 ];
 
 interface SeedSpec {
@@ -146,6 +156,29 @@ const SPECS: SeedSpec[] = [
     agoHours: 140,
     body: '<p>The new CSS scroll timelines let you tie keyframes to scroll position natively. A few practical recipes.</p>',
   },
+  // A general-news feed (BBC News) that intermingles world news with sport. The
+  // World Cup final result is a spoiler; the poller's Gemini pass would cache a
+  // spoiler-free rewrite on `spoilerFreeTitle`, so an allowlisted reader with
+  // "Hide sports spoilers" on sees "World Cup ESP v ARG spoiler" in the row —
+  // and, with a fresh timestamp, at the top of the feed — while the surrounding
+  // non-sport headline shows untouched. The body keeps the full result (SPEC:
+  // the article is unchanged; only the headline is rewritten). Appended last so
+  // the earlier items keep their index-derived `item-N` ids.
+  {
+    feedId: 'feed-bbc',
+    title: 'Spain crowned world champions after beating Argentina in the final',
+    author: null,
+    agoHours: 0,
+    body: '<p>Spain lifted the World Cup for the first time, edging Argentina in a final that went to a penalty shootout after a 1-1 draw.</p><p>The result caps a remarkable tournament run and denies Argentina back-to-back titles.</p>',
+    spoilerFreeTitle: 'World Cup ESP v ARG spoiler',
+  },
+  {
+    feedId: 'feed-bbc',
+    title: 'Central bank holds interest rates steady amid cooling inflation',
+    author: null,
+    agoHours: 4,
+    body: '<p>Policymakers kept the benchmark rate unchanged, citing signs that price growth is easing back toward target.</p>',
+  },
 ];
 
 const SITE_BY_FEED = new Map(SEED_FEEDS.map((f) => [f.id, f.siteUrl]));
@@ -176,6 +209,7 @@ export const SEED_SUBSCRIPTIONS: Subscription[] = [
   { feedId: 'feed-css', folder: 'Dev', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, listLayout: null, sort: 2 },
   { feedId: 'feed-reddit-prog', folder: 'Dev', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, listLayout: null, sort: 3 },
   { feedId: 'feed-park', folder: null, titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, listLayout: null, sort: 4 },
+  { feedId: 'feed-bbc', folder: 'News', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, listLayout: null, sort: 5 },
 ];
 
 export const SEED_FOLDERS = [

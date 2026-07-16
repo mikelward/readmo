@@ -507,9 +507,9 @@ describe('MockDataSource sort order', () => {
     const ds = new MockDataSource(`test-${Math.random()}`);
     const all = await ds.getHomeItems({ sort: 'oldest', limit: 100 });
     const ids = all.items.map((fi) => fi.item.id);
-    // Oldest (item-10) first, newest (item-1) last.
+    // Oldest (item-10, 140h) first, newest (item-11, the just-now BBC spoiler) last.
     expect(ids[0]).toBe('item-10');
-    expect(ids[ids.length - 1]).toBe('item-1');
+    expect(ids[ids.length - 1]).toBe('item-11');
     // Pagination respects the order: page 1 starts at the oldest.
     const p1 = await ds.getHomeItems({ sort: 'oldest', limit: 3 });
     expect(p1.items[0].item.id).toBe('item-10');
@@ -532,12 +532,13 @@ describe('MockDataSource group by feed', () => {
 
   it('sections items by feed in subscription order, newest-first within a feed', async () => {
     const ds = new MockDataSource(`test-${Math.random()}`);
-    // Subscription order: verge(0) nasa(1) css(2) reddit(3).
+    // Subscription order: verge(0) nasa(1) css(2) reddit(3) bbc(5).
     expect(await order(ds)).toEqual([
       'item-1', 'item-5', 'item-9', // verge, newest-first
       'item-2', 'item-7', // nasa
       'item-3', 'item-6', 'item-10', // css
       'item-4', 'item-8', // reddit-prog
+      'item-11', 'item-12', // bbc, newest-first (spoiler just-now, then 4h)
     ]);
   });
 
@@ -548,6 +549,7 @@ describe('MockDataSource group by feed', () => {
       'item-7', 'item-2', // nasa
       'item-10', 'item-6', 'item-3', // css
       'item-8', 'item-4', // reddit-prog
+      'item-12', 'item-11', // bbc, oldest-first (4h, then the just-now spoiler)
     ]);
   });
 
@@ -576,20 +578,20 @@ describe('MockDataSource reorderSubscriptions', () => {
   it('reassigns sort to match the given order', async () => {
     const ds = new MockDataSource(`test-${Math.random()}`);
     await ds.reorderSubscriptions([
-      'feed-nasa', 'feed-verge', 'feed-css', 'feed-reddit-prog', 'feed-park',
+      'feed-nasa', 'feed-verge', 'feed-css', 'feed-reddit-prog', 'feed-park', 'feed-bbc',
     ]);
     const subs = await ds.getSubscriptions();
     expect(subs.map((s) => s.feed.id)).toEqual([
-      'feed-nasa', 'feed-verge', 'feed-css', 'feed-reddit-prog', 'feed-park',
+      'feed-nasa', 'feed-verge', 'feed-css', 'feed-reddit-prog', 'feed-park', 'feed-bbc',
     ]);
-    expect(subs.map((s) => s.subscription.sort)).toEqual([0, 1, 2, 3, 4]);
+    expect(subs.map((s) => s.subscription.sort)).toEqual([0, 1, 2, 3, 4, 5]);
   });
 
   it('keeps an unnamed subscription after the listed ones', async () => {
     const ds = new MockDataSource(`test-${Math.random()}`);
     // Omit feed-park; it should fall to the end, not vanish.
     await ds.reorderSubscriptions([
-      'feed-css', 'feed-verge', 'feed-nasa', 'feed-reddit-prog',
+      'feed-css', 'feed-verge', 'feed-nasa', 'feed-reddit-prog', 'feed-bbc',
     ]);
     const subs = await ds.getSubscriptions();
     expect(subs[0].feed.id).toBe('feed-css');

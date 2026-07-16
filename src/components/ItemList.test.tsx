@@ -306,12 +306,14 @@ describe('ItemList', () => {
     const titles = [
       ...container.querySelectorAll('.item-list__group-title'),
     ].map((t) => t.textContent);
-    // Seed has four non-muted feeds with items (verge, nasa, css, reddit-prog).
+    // Seed has five non-muted feeds with items (verge, nasa, css, reddit-prog,
+    // and BBC News, which trails in subscription order).
     expect(titles).toEqual([
       'The Verge',
       'NASA Breaking News',
       'CSS-Tricks',
       'r/programming',
+      'BBC News',
     ]);
   });
 
@@ -329,13 +331,13 @@ describe('ItemList', () => {
       { source },
     );
     await screen.findAllByTestId('item-row');
-    // All seed items are unread by default: verge 3, nasa 2, css 3, reddit 2.
+    // All seed items are unread by default: verge 3, nasa 2, css 3, reddit 2, bbc 2.
     await waitFor(() => {
-      expect(container.querySelectorAll('.item-list__group-count')).toHaveLength(4);
+      expect(container.querySelectorAll('.item-list__group-count')).toHaveLength(5);
     });
     expect(
       [...container.querySelectorAll('.item-list__group-count')].map((c) => c.textContent),
-    ).toEqual(['3', '2', '3', '2']);
+    ).toEqual(['3', '2', '3', '2', '2']);
     // The count rides the collapse button's accessible name (the badge span is
     // aria-hidden), so screen readers announce it.
     expect(
@@ -677,7 +679,7 @@ describe('ItemList', () => {
     await screen.findAllByTestId('item-row');
     const links = screen.getAllByTestId('group-link');
     // One link per feed section, each pointing at /feed/<its feed id>.
-    expect(links).toHaveLength(4);
+    expect(links).toHaveLength(5);
     for (const link of links) {
       expect(link.getAttribute('href')).toMatch(/^\/feed\/[^/]+$/);
     }
@@ -702,12 +704,12 @@ describe('ItemList', () => {
       'aria-expanded',
       'false',
     );
-    // Fewer rows now, but still more than zero (other feeds remain) and all four
+    // Fewer rows now, but still more than zero (other feeds remain) and all five
     // headers still present.
     const after = container.querySelectorAll('[data-item-id]').length;
     expect(after).toBeGreaterThan(0);
     expect(after).toBeLessThan(before);
-    expect(container.querySelectorAll('.item-list__group-header')).toHaveLength(4);
+    expect(container.querySelectorAll('.item-list__group-header')).toHaveLength(5);
   });
 
   it('Collapse all hides every row; Expand all restores them', async () => {
@@ -718,9 +720,9 @@ describe('ItemList', () => {
     const total = container.querySelectorAll('[data-item-id]').length;
 
     await user.click(screen.getByTestId('collapse-all-btn'));
-    // Every section collapsed → no rows, but all four headers remain.
+    // Every section collapsed → no rows, but all five headers remain.
     expect(container.querySelectorAll('[data-item-id]')).toHaveLength(0);
-    expect(container.querySelectorAll('.item-list__group-header')).toHaveLength(4);
+    expect(container.querySelectorAll('.item-list__group-header')).toHaveLength(5);
     expect(screen.getByTestId('collapse-all-btn')).toHaveAttribute(
       'aria-disabled',
       'true',
@@ -1684,10 +1686,13 @@ describe('ItemList', () => {
     await screen.findAllByTestId('item-row');
 
     const body = screen.getByTestId('item-list-body');
-    // 100px of fixed chrome above the body; a viewport far taller than the
-    // post-sweep content so that content is sub-viewport after the sweep.
+    // 100px of fixed chrome above the body; a viewport taller than the post-sweep
+    // content (so it's sub-viewport after the sweep) yet shorter than the full
+    // pre-sweep list (so the reader can be scrolled off its bottom). Sized around
+    // the seed corpus: 12 rows pre-sweep (1300px doc), 10 survivors after the
+    // bottom BBC section (1100px) — 1200px sits between them.
     const scroll = installScrollModel(body, container, {
-      innerHeight: 1000,
+      innerHeight: 1200,
       rowHeight: 100,
       chromeHeight: 100,
     });
@@ -1710,7 +1715,7 @@ describe('ItemList', () => {
     // ...and the post-sweep document is shorter than one viewport (the condition
     // that used to trip the clamp): natural max scroll is 0.
     const survivors = container.querySelectorAll('[data-item-id]').length;
-    expect(100 + survivors * 100).toBeLessThan(1000);
+    expect(100 + survivors * 100).toBeLessThan(1200);
     // The reader did NOT snap to the top: the hold kept the offset exactly.
     await waitFor(() => expect(body.style.minHeight).not.toBe(''));
     expect(scroll.getScrollY()).toBe(before);
@@ -1833,10 +1838,11 @@ describe('ItemList', () => {
     await screen.findAllByTestId('item-row');
 
     const body = screen.getByTestId('item-list-body');
-    // innerHeight 1000 > survivors×100 (800) + footer (100) = 900, so the
-    // post-sweep document is sub-viewport and scrollHeight floors to 1000.
+    // innerHeight 1200 > survivors×100 (1000) + footer (100) = 1100, so the
+    // post-sweep document is sub-viewport and scrollHeight floors to 1200; yet the
+    // full pre-sweep list (12 rows + footer = 1300) overflows it, so before > 0.
     const scroll = installScrollModel(body, container, {
-      innerHeight: 1000,
+      innerHeight: 1200,
       rowHeight: 100,
       footerHeight: 100,
     });
@@ -1854,7 +1860,7 @@ describe('ItemList', () => {
     );
     const survivors = container.querySelectorAll('[data-item-id]').length;
     // Post-sweep document is genuinely sub-viewport (content < innerHeight).
-    expect(survivors * 100 + 100).toBeLessThan(1000);
+    expect(survivors * 100 + 100).toBeLessThan(1200);
     // Held at the offset. The defensive freeze first over-provisions the tail (to
     // survive a viewport spike), then relaxes to the tight hold once the settle
     // releases — at which point the floored scrollHeight still counts the footer,
@@ -4088,11 +4094,14 @@ describe('ItemList', () => {
   it('Sweep plays a slide+fade on every unpinned row before hiding them', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
-    // Pin the first row so it stays put through the sweep — it must never wear
-    // the animation class even while the unpinned rows are sliding out.
+    // Pin a row so it stays put through the sweep — it must never wear the
+    // animation class even while the unpinned rows are sliding out. Pick a
+    // non-spoiler row so its rendered text equals item.title (the spoiler row
+    // shows its rewrite instead, which would foil the getByText lookup below).
     const page = await source.getHomeItems();
-    const pinnedTitle = page.items[0].item.title;
-    source.stateStore.set(page.items[0].item.id, 'pinned', true);
+    const pinned = page.items.find((fi) => !fi.item.spoilerFreeTitle)!;
+    const pinnedTitle = pinned.item.title;
+    source.stateStore.set(pinned.item.id, 'pinned', true);
 
     renderHome(source);
     await screen.findAllByTestId('item-row');
@@ -4758,9 +4767,11 @@ describe('ItemList', () => {
       window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
       resetReadingPrefsCacheForTest();
       const source = new MockDataSource(`test-${Math.random()}`);
-      // Pin the first item up front so it leads the list and stays put.
+      // Pin an item up front so it leads the list and stays put. Pick a
+      // non-spoiler row so the rendered title equals item.title (the spoiler row
+      // shows its rewrite instead).
       const page = await source.getHomeItems();
-      const pinned = page.items[0].item;
+      const pinned = page.items.find((fi) => !fi.item.spoilerFreeTitle)!.item;
       source.stateStore.set(pinned.id, 'pinned', true);
 
       renderHome(source);
@@ -5083,7 +5094,11 @@ describe('ItemList', () => {
       window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
       resetReadingPrefsCacheForTest();
       const source = new MockDataSource(`test-${Math.random()}`);
-      const pool = (await source.getHomeItems()).items;
+      // Exclude the spoiler row: this test looks rows up by item.title, but a
+      // spoiler row renders its rewrite instead, so its title wouldn't be found.
+      const pool = (await source.getHomeItems()).items.filter(
+        (fi) => !fi.item.spoilerFreeTitle,
+      );
       const a = pool.slice(0, 2);
       const b = pool.slice(2, 4);
       // Each view returns its own slice, filtering out rows marked Done (as the
@@ -5794,7 +5809,10 @@ describe('ItemList', () => {
       const source = new MockDataSource(`tpl-${Math.random()}`);
       const tpl = (await source.getHomeItems()).items[0];
       const mk = (feedId: string, title: string, n: number): FeedItem => ({
-        item: { ...tpl.item, id: `${feedId}-${n}`, feedId, title: `${title} ${n}` },
+        // Clear spoilerFreeTitle: the newest seed row (the template) is now the
+        // BBC World Cup spoiler, and inheriting its rewrite would make every
+        // synthetic row render "World Cup ESP v ARG spoiler" instead of its title.
+        item: { ...tpl.item, id: `${feedId}-${n}`, feedId, title: `${title} ${n}`, spoilerFreeTitle: null },
         feed: { ...tpl.feed, id: feedId, title },
       });
       return { source, mk };

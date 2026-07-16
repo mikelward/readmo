@@ -154,8 +154,10 @@ describe('FeedsPage — popular feed autocomplete', () => {
     const user = userEvent.setup();
     renderWithProviders(<FeedsPage />);
     await user.type(screen.getByLabelText('Feed name or URL'), 'bbc news');
-    expect(await screen.findByRole('listbox')).toBeTruthy();
-    expect(screen.getByText('BBC News')).toBeTruthy();
+    const listbox = await screen.findByRole('listbox');
+    // Scope to the suggestion listbox: BBC News is also a seeded subscription in
+    // the feed list below, so an unscoped query would match twice.
+    expect(within(listbox).getByText('BBC News')).toBeTruthy();
   });
 
   it('shows the recommended feeds in the dropdown when the empty field is focused', async () => {
@@ -293,8 +295,10 @@ describe('FeedsPage — popular feed autocomplete', () => {
     renderWithProviders(<FeedsPage />);
     const input = screen.getByLabelText('Feed name or URL') as HTMLInputElement;
     await user.type(input, 'bbc news');
-    const suggestion = await screen.findByText('BBC News');
-    await user.click(suggestion);
+    // Scope to the suggestion listbox: BBC News is also a seeded subscription in
+    // the feed list below, so an unscoped query would match twice.
+    const listbox = await screen.findByRole('listbox');
+    await user.click(within(listbox).getByText('BBC News'));
     const bbcFeed = POPULAR_FEEDS.find((f) => f.name === 'BBC News')!;
     expect(input.value).toBe(bbcFeed.feedUrl);
     expect(screen.queryByRole('listbox')).toBeNull();
@@ -779,7 +783,10 @@ describe('FeedsPage — curated section picker', () => {
     // Tapping the suggestion itself opens the picker — no separate "Add" tap,
     // and no falling through to discovery on the exact feed URL it fills in.
     await user.type(screen.getByLabelText('Feed name or URL'), 'bbc news');
-    await user.click(await screen.findByText('BBC News'));
+    // Scope to the suggestion listbox: BBC News is also a seeded subscription in
+    // the feed list below, so an unscoped query would match twice.
+    const listbox = await screen.findByRole('listbox');
+    await user.click(within(listbox).getByText('BBC News'));
 
     const picker = await screen.findByRole('group', { name: /choose feeds/i });
     // Every curated BBC section is offered, main feed first.
