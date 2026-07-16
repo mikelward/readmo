@@ -37,6 +37,15 @@ export function AdminPage() {
         </div>
       </section>
 
+      <section className="settings__section">
+        <h2 className="settings__heading">AI calls</h2>
+        <div className="settings__actions">
+          <Link className="settings__btn" to="/admin/ai">
+            View AI calls
+          </Link>
+        </div>
+      </section>
+
       <p className="admin__back">
         <Link to="/">&larr; Back to Home</Link>
       </p>

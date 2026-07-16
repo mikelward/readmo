@@ -31,6 +31,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { AdminPage } from './pages/AdminPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
 import { AdminFeedsPage } from './pages/AdminFeedsPage';
+import { AiCallsPage } from './pages/AiCallsPage';
 import {
   AdminFeedUsersPage,
   AdminUserFeedsPage,
@@ -144,6 +145,7 @@ export default function App() {
                       element={<AdminUserFeedsPage />}
                     />
                     <Route path="/admin/feeds" element={<AdminFeedsPage />} />
+                    <Route path="/admin/ai" element={<AiCallsPage />} />
                     <Route
                       path="/admin/feeds/:feedId/users"
                       element={<AdminFeedUsersPage />}

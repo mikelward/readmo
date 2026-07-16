@@ -35,6 +35,9 @@ import {
   type AdminFeedStatus,
   type AdminFeedSubscriber,
   type AdminUserFeed,
+  type AiCall,
+  type AiCallCount,
+  type AiCallKind,
   type FulltextDownloadStatus,
   type AllowlistEntry,
   type Capabilities,
@@ -60,6 +63,8 @@ import {
   mapItemState,
   mapSubscription,
   mapUserSettings,
+  mapAiCall,
+  type AiCallRow,
   isMissingTableError,
   isPermanentWriteError,
   toRequestError,
@@ -2237,5 +2242,42 @@ export class SupabaseDataSource implements DataSource {
       p_enabled: enabled,
     });
     if (error) throw error instanceof Error ? error : new Error(String(error));
+  }
+
+  async listAiCalls(limit = 200): Promise<AiCall[]> {
+    const { data, error } = await this.sb.rpc('admin_ai_call_log', {
+      p_limit: limit,
+    });
+    if (error) {
+      // A backend that predates the 0067 RPC (PGRST202) → empty list, so a new
+      // client renders the console's empty state instead of crashing before the
+      // manual `make migrate` lands (guardrail #11). Every other error (incl. the
+      // non-admin 42501) surfaces to the caller.
+      const err = error as { code?: string; message?: string };
+      if (err.code === 'PGRST202') return [];
+      throw error instanceof Error ? error : new Error(err.message ?? String(error));
+    }
+    return ((data ?? []) as AiCallRow[]).map(mapAiCall);
+  }
+
+  async getAiCallCounts(sinceHours = 24): Promise<AiCallCount[]> {
+    const { data, error } = await this.sb.rpc('admin_ai_call_counts', {
+      p_since_hours: sinceHours,
+    });
+    if (error) {
+      const err = error as { code?: string; message?: string };
+      if (err.code === 'PGRST202') return [];
+      throw error instanceof Error ? error : new Error(err.message ?? String(error));
+    }
+    return ((data ?? []) as Array<{
+      kind?: string | null;
+      status?: string | null;
+      count?: number | string | null;
+    }>).map((r) => ({
+      kind: (r.kind === 'spoiler' ? 'spoiler' : 'summary') as AiCallKind,
+      status: r.status ?? '',
+      // PostgREST returns bigint count as a string; coerce to a number.
+      count: typeof r.count === 'number' ? r.count : Number(r.count ?? 0),
+    }));
   }
 }

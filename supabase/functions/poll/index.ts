@@ -28,6 +28,7 @@ import {
 } from '../_shared/spoilerTitle.ts';
 import { jsonBare as json } from '../_shared/respond.ts';
 import { rejectNonServiceCaller } from '../_shared/serviceAuth.ts';
+import { recordAiCall } from '../_shared/aiCallLog.ts';
 
 const BATCH_SIZE = 25;
 
@@ -49,6 +50,10 @@ const SPOILER_ITEMS_PER_FEED = 20;
 // generated_at NULL and is picked up next poll.
 const SPOILER_MAX_ITEMS_PER_RUN = 40;
 const SPOILER_BUDGET_MS = 60_000;
+
+// AI call log (0067) retention: the poll prunes rows older than this each run so
+// the observability table stays bounded without a scheduled job.
+const AI_CALL_LOG_KEEP_DAYS = 14;
 
 Deno.serve(async (req: Request) => {
   // Every failure path below logs through console.error — Supabase ships those
@@ -157,6 +162,15 @@ async function handle(req: Request): Promise<Response> {
     return null;
   });
 
+  // Best-effort retention for the AI call log (0067) so it can't grow unbounded
+  // without a scheduled job — one cheap indexed delete per poll. Soft: a failure
+  // (or an old backend without the function) never affects the poll.
+  try {
+    await supabase.rpc('prune_ai_call_log', { p_keep_days: AI_CALL_LOG_KEEP_DAYS });
+  } catch (err) {
+    console.warn('poll: prune_ai_call_log failed (non-fatal):', err);
+  }
+
   console.log(
     `poll: done — processed=${processed} failed=${failed} considered=${considered}` +
       (spoiler
@@ -216,8 +230,24 @@ async function runSpoilerTitles(
       }
       return data ?? [];
     },
-    async generate(title, content) {
-      return classifyHeadline(apiKey, title, content);
+    async generate(title, content, itemId) {
+      const { generation, httpStatus, error } = await classifyHeadline(
+        apiKey,
+        title,
+        content,
+      );
+      // Best-effort observability (0067): record the outcome so /admin/ai can
+      // show whether the spoiler classifier is producing rewrites, seeing
+      // non-spoilers, or failing (and the model's HTTP code). Never blocks the
+      // pass on a logging failure.
+      await recordAiCall(supabase, {
+        kind: 'spoiler',
+        status: generation.status,
+        httpStatus,
+        itemId,
+        error: generation.status === 'failed' ? error : null,
+      });
+      return generation;
     },
     async write(itemId, spoilerFreeTitle) {
       const { error } = await supabase
@@ -248,11 +278,20 @@ async function runSpoilerTitles(
  *   - `failed` on a TRANSIENT failure (non-2xx, timeout, network throw) — the
  *     caller leaves the item unprocessed so the next poll retries it, instead of
  *     letting one outage permanently skip the headline. */
+/** The classification plus the observability fields the AI call log records
+ * (the model's HTTP code when there was a response, and a short error on a
+ * transient failure). `generation` is the only thing the orchestrator acts on. */
+interface ClassifyResult {
+  generation: SpoilerGeneration;
+  httpStatus: number | null;
+  error: string | null;
+}
+
 async function classifyHeadline(
   apiKey: string,
   title: string | null,
   content: string,
-): Promise<SpoilerGeneration> {
+): Promise<ClassifyResult> {
   try {
     const res = await fetch(`${SPOILER_ENDPOINT}?key=${encodeURIComponent(apiKey)}`, {
       method: 'POST',
@@ -268,14 +307,25 @@ async function classifyHeadline(
     });
     if (!res.ok) {
       console.warn(`poll: spoiler Gemini responded HTTP ${res.status} — retry next poll`);
-      return { status: 'failed' };
+      return {
+        generation: { status: 'failed' },
+        httpStatus: res.status,
+        error: `Gemini HTTP ${res.status}`,
+      };
     }
     // A parsed 200 is a completed classification (a spoiler:false or garbage body
     // → no rewrite, cached so we don't re-bill it). Only a failed CALL retries.
     const { spoilerFreeTitle } = parseSpoilerResult(await res.json());
-    return spoilerFreeTitle ? { status: 'rewrite', title: spoilerFreeTitle } : { status: 'none' };
+    const generation: SpoilerGeneration = spoilerFreeTitle
+      ? { status: 'rewrite', title: spoilerFreeTitle }
+      : { status: 'none' };
+    return { generation, httpStatus: res.status, error: null };
   } catch (err) {
     console.warn('poll: spoiler Gemini call failed — retry next poll:', err);
-    return { status: 'failed' };
+    return {
+      generation: { status: 'failed' },
+      httpStatus: null,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }

@@ -256,8 +256,14 @@ export interface SpoilerDeps {
   unprocessedItems(feedId: string): Promise<SpoilerItemRow[]>;
   /** Classify + (when a spoiler) rewrite one headline via Gemini. Returns a
    * {@link SpoilerGeneration} so a transient failure is distinguished from a
-   * genuine non-spoiler (only the latter is cached as processed). */
-  generate(title: string | null, content: string): Promise<SpoilerGeneration>;
+   * genuine non-spoiler (only the latter is cached as processed). `itemId` is
+   * passed for side-effect logging only (the AI call log); the classification
+   * itself uses just the title + content. */
+  generate(
+    title: string | null,
+    content: string,
+    itemId: string,
+  ): Promise<SpoilerGeneration>;
   /** Persist the outcome on the shared item: the rewrite (or null) plus the
    * processed timestamp. Called only for a genuine classification, never a
    * transient failure. */
@@ -326,7 +332,7 @@ export async function generateSpoilerTitles(
         break outer;
       }
       const content = spoilerContentText(item);
-      const gen = await deps.generate(item.title, content);
+      const gen = await deps.generate(item.title, content, item.id);
       if (gen.status === 'failed') {
         // Transient failure: leave generated_at null so the next poll retries.
         // Don't persist "processed" — that would permanently skip the headline.
