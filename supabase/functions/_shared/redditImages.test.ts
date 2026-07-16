@@ -70,10 +70,52 @@ describe('upgradeRedditThumbnails', () => {
     expect(out).toContain('src="https://i.redd.it/full.jpeg"');
   });
 
-  it('leaves a gallery post untouched ([link] is not a direct image)', () => {
+  it('leaves a b.thumbs gallery post untouched ([link] is not a direct image, no preview.redd.it to derive from)', () => {
     const html = redditBody({
       thumbSrc: 'https://b.thumbs.redditmedia.com/g.jpg',
       linkHref: 'https://www.reddit.com/gallery/abc123',
+    });
+    expect(upgradeRedditThumbnails(html)).toBe(html);
+  });
+
+  it('upgrades a gallery cover to full resolution by deriving i.redd.it from the preview.redd.it thumbnail', () => {
+    // The blurry-image report: a gallery post ("[link]" → /gallery/…) whose body
+    // carries one downscaled preview.redd.it cover. Recover the full upload by
+    // swapping the shared media id onto i.redd.it (query string dropped).
+    const out = upgradeRedditThumbnails(
+      redditBody({
+        thumbSrc: 'https://preview.redd.it/passport9k2.jpg?width=640&crop=smart&auto=webp&s=sig',
+        linkHref: 'https://www.reddit.com/gallery/1uy5py',
+      }),
+    );
+    expect(out).toContain('src="https://i.redd.it/passport9k2.jpg"');
+    expect(out).not.toContain('preview.redd.it');
+    expect(out).not.toContain('width=');
+  });
+
+  it('does not derive i.redd.it from an external-preview.redd.it gallery thumbnail (original is off-site)', () => {
+    const html = redditBody({
+      thumbSrc: 'https://external-preview.redd.it/xyz.jpg?width=640&s=sig',
+      linkHref: 'https://www.reddit.com/gallery/abc123',
+    });
+    expect(upgradeRedditThumbnails(html)).toBe(html);
+  });
+
+  it('leaves a self/link post with a preview.redd.it thumbnail untouched ([link] is comments, not a gallery)', () => {
+    // A video/self/external post can carry a preview.redd.it thumbnail whose id
+    // has no matching i.redd.it asset, so the preview→i.redd.it derivation is
+    // gated to galleries — a non-gallery, non-direct "[link]" is left as-is.
+    const html = redditBody({
+      thumbSrc: 'https://preview.redd.it/selfpic5.png?width=320&s=sig',
+      linkHref: 'https://www.reddit.com/r/pics/comments/abc123/a_cool_photo/',
+    });
+    expect(upgradeRedditThumbnails(html)).toBe(html);
+  });
+
+  it('does not derive i.redd.it from a preview.redd.it thumbnail on a v.redd.it video post', () => {
+    const html = redditBody({
+      thumbSrc: 'https://preview.redd.it/vidposter7.jpg?width=640&s=sig',
+      linkHref: 'https://v.redd.it/abc123',
     });
     expect(upgradeRedditThumbnails(html)).toBe(html);
   });
