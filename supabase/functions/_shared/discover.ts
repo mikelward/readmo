@@ -14,6 +14,32 @@
 /** Common path fallbacks tried when a page advertises no <link> feeds. */
 const FALLBACK_PATHS = ['/feed', '/rss', '/atom.xml', '/feed.json', '/rss.xml'];
 
+/**
+ * Cap on how many feed-looking `<a href>` links `discoverAnchorFeeds` harvests
+ * from a directory-style page. Bounds the extra validation fetches on the
+ * no-advertised-feed path while sitting comfortably above real directory sizes
+ * (Fox Sports lists ~27 per-sport feeds; a big publisher might list ~40). The
+ * caller stops harvesting once it hits this many candidates, so a link-heavy
+ * page can't fan out unboundedly.
+ */
+export const MAX_ANCHOR_CANDIDATES = 50;
+
+/**
+ * A URL (host + path + query, lowercased) that looks like a feed: an `rss`/
+ * `atom`/`feed(s)` token bounded by a URL separator, or an `.xml`/`.rss`/`.atom`
+ * file. The separator classes include `?=&` so query-string feeds (`?feed=rss2`)
+ * match and `-._/` so a hyphenated segment (`/content-feeds/afl`) matches, while
+ * a boundary requirement keeps `/feedback` (feed + letter) from matching.
+ *
+ * The **host** is included so a feed-hosted link with an opaque path still
+ * matches on its subdomain — `feeds.feedburner.com/x`, `feeds.simplecast.com/x`,
+ * `rss.cnn.com/x` — where the path alone carries no feed token. This is a
+ * permissive *pre-filter* only: every survivor is still fetched + parsed before
+ * being offered, so a false positive costs one wasted fetch, not a bad candidate.
+ */
+const FEED_HREF_RE =
+  /(?:^|[/._\-?=&])(?:rss|atom|feeds?)(?:[/._\-?=&#]|$)|\.(?:xml|rss|atom)(?:[?#]|$)/i;
+
 /** Feed MIME types we recognize in <link type="…">. */
 const FEED_TYPES = [
   'application/rss+xml',
@@ -72,6 +98,67 @@ export function discoverFromHtml(html: string, baseUrl: string): FeedCandidate[]
     push(path, null, null);
   }
 
+  return candidates;
+}
+
+/**
+ * Harvest feed-looking `<a href>` links from a page body, for the case
+ * `discoverFromHtml` can't cover: a "here are our RSS feeds" *directory* page
+ * (e.g. foxsports.com.au/about-us/rss-feeds) that lists its feeds as ordinary
+ * body hyperlinks rather than advertising them via `<link rel="alternate">`
+ * autodiscovery tags. Autodiscovery misses every one of them; scraping the
+ * anchors recovers them.
+ *
+ * Lower-confidence than `discoverFromHtml`, so the caller uses this only as a
+ * fallback when `<link>`/path discovery validated nothing, and every returned
+ * URL is still fetched + parsed through the SSRF-hardened path before being
+ * offered. Only hrefs whose path/query looks feed-shaped (`FEED_HREF_RE`) are
+ * kept, and the result is de-duplicated, absolutized, and capped at
+ * `MAX_ANCHOR_CANDIDATES` (document order) to bound the follow-up fetches.
+ *
+ * `type`/`title` are null — like path fallbacks, an anchor is a guess, so a
+ * candidate that fails to parse is NOT reported as a discovery failure reason.
+ */
+export function discoverAnchorFeeds(html: string, baseUrl: string): FeedCandidate[] {
+  const candidates: FeedCandidate[] = [];
+  const seen = new Set<string>();
+  // The page's own address, sans fragment — used to drop self-referential
+  // anchors (a bare `#anchor` or a link back to this page) that would otherwise
+  // match when the page's own path is feed-shaped (e.g. `/about-us/rss-feeds`).
+  let selfKey: string | null = null;
+  try {
+    const b = new URL(baseUrl);
+    selfKey = `${b.origin}${b.pathname}${b.search}`;
+  } catch {
+    selfKey = null;
+  }
+  for (const tag of iterateAnchorTags(html)) {
+    if (candidates.length >= MAX_ANCHOR_CANDIDATES) break;
+    const href = attr(tag, 'href');
+    if (!href) continue;
+    const abs = absolutize(href, baseUrl);
+    if (!abs || seen.has(abs)) continue;
+    let parsed: URL;
+    try {
+      parsed = new URL(abs);
+    } catch {
+      continue;
+    }
+    // http(s) only — mailto:, javascript:, and the like aren't fetch targets.
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue;
+    // Skip a link back to this same page (a `#fragment` or self-link): it can't
+    // be a different feed, and re-fetching the directory page is wasted work.
+    if (selfKey !== null && `${parsed.origin}${parsed.pathname}${parsed.search}` === selfKey) {
+      continue;
+    }
+    // Match on host + path + query so a feed-hosted link with an opaque path
+    // (feeds.feedburner.com/x) still passes on its subdomain (see FEED_HREF_RE).
+    if (!FEED_HREF_RE.test(`${parsed.hostname}${parsed.pathname}${parsed.search}`.toLowerCase())) {
+      continue;
+    }
+    seen.add(abs);
+    candidates.push({ url: abs, type: null, title: null });
+  }
   return candidates;
 }
 
@@ -302,6 +389,17 @@ function* iterateLinkTags(html: string): Generator<string> {
   // Match <link ...> up to the closing '>' (self-closing or not). The 'i' flag
   // covers <LINK>; we stop at the first '>' not inside a quoted value.
   const re = /<link\b[^>]*>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    yield m[0];
+  }
+}
+
+/** Yield the raw text of each opening <a …> tag in the document. We only need
+ * the tag's attributes (the href), not the link text, so the closing </a> is
+ * irrelevant. Same regex-not-DOM approach as iterateLinkTags. */
+function* iterateAnchorTags(html: string): Generator<string> {
+  const re = /<a\b[^>]*>/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html)) !== null) {
     yield m[0];

@@ -1,10 +1,12 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import {
+  discoverAnchorFeeds,
   discoverFromHtml,
   discoverIconFromHtml,
   googleNewsFeedFor,
   homePageUrl,
+  MAX_ANCHOR_CANDIDATES,
   redditFeedFor,
 } from './discover.ts';
 
@@ -51,6 +53,102 @@ describe('discoverFromHtml — <link> autodiscovery', () => {
     const urls = found.map((f) => f.url);
     const unique = new Set(urls);
     expect(unique.size).toBe(urls.length);
+  });
+});
+
+describe('discoverAnchorFeeds — directory-page <a href> harvest', () => {
+  // A "here are our RSS feeds" directory page (shaped like
+  // foxsports.com.au/about-us/rss-feeds): feeds listed as body hyperlinks, none
+  // advertised via <link rel="alternate">.
+  const foxLike = `
+    <html><head><title>RSS Feeds</title>
+      <link rel="alternate" type="application/json+oembed" href="/wp-json/oembed">
+    </head><body>
+      <h1>RSS Feeds</h1>
+      <a href="/about-us">About us</a>
+      <a href="#fsvg-rss">icon</a>
+      <a href="mailto:feedback@foxsports.com.au">Feedback</a>
+      <a href="https://www.foxsports.com.au/content-feeds/afl">AFL</a>
+      <a href="https://www.foxsports.com.au/content-feeds/cricket">Cricket</a>
+      <a href="/content-feeds/nrl">Rugby League</a>
+      <a href="/content-feeds/afl">AFL again</a>
+    </body></html>`;
+
+  const found = discoverAnchorFeeds(foxLike, 'https://www.foxsports.com.au/about-us/rss-feeds');
+  const urls = found.map((f) => f.url);
+
+  it('harvests feed-looking anchors, absolutized', () => {
+    expect(urls).toContain('https://www.foxsports.com.au/content-feeds/afl');
+    expect(urls).toContain('https://www.foxsports.com.au/content-feeds/cricket');
+    expect(urls).toContain('https://www.foxsports.com.au/content-feeds/nrl');
+  });
+
+  it('ignores non-feed anchors, fragments, and non-http schemes', () => {
+    expect(urls).not.toContain('https://www.foxsports.com.au/about-us');
+    expect(urls.some((u) => u.startsWith('mailto:'))).toBe(false);
+    expect(urls.some((u) => u.includes('#fsvg-rss'))).toBe(false);
+  });
+
+  it('de-duplicates repeated anchors', () => {
+    const aflCount = urls.filter((u) => u.endsWith('/content-feeds/afl')).length;
+    expect(aflCount).toBe(1);
+  });
+
+  it('labels anchor candidates as low-confidence (no type, so no failure reason)', () => {
+    for (const c of found) expect(c.type).toBeNull();
+  });
+
+  it('matches common feed URL shapes and rejects look-alikes', () => {
+    const html = `
+      <a href="/blog/feed.xml">xml</a>
+      <a href="/rss">rss</a>
+      <a href="/atom.xml">atom</a>
+      <a href="/?feed=rss2">wp query feed</a>
+      <a href="/section/rss.xml">section</a>
+      <a href="/feedback">feedback page (not a feed)</a>
+      <a href="/about">about</a>
+      <a href="/newsroom">newsroom</a>`;
+    const got = discoverAnchorFeeds(html, 'https://example.com/').map((f) => f.url);
+    expect(got).toContain('https://example.com/blog/feed.xml');
+    expect(got).toContain('https://example.com/rss');
+    expect(got).toContain('https://example.com/atom.xml');
+    expect(got).toContain('https://example.com/?feed=rss2');
+    expect(got).toContain('https://example.com/section/rss.xml');
+    // "feedback"/"about"/"newsroom" are pages, not feeds — the boundary in
+    // FEED_HREF_RE keeps them out (validation would reject them anyway).
+    expect(got).not.toContain('https://example.com/feedback');
+    expect(got).not.toContain('https://example.com/about');
+    expect(got).not.toContain('https://example.com/newsroom');
+  });
+
+  it('matches feed-hosted links with opaque paths on their subdomain', () => {
+    const html = `
+      <a href="https://feeds.feedburner.com/ExampleBlog">FeedBurner</a>
+      <a href="https://feeds.simplecast.com/abc123">Simplecast</a>
+      <a href="https://rss.cnn.com/rss/cnn_topstories.rss">CNN</a>
+      <a href="https://www.example.com/2026/07/some-story">a plain article</a>`;
+    const got = discoverAnchorFeeds(html, 'https://directory.example/').map((f) => f.url);
+    expect(got).toContain('https://feeds.feedburner.com/ExampleBlog');
+    expect(got).toContain('https://feeds.simplecast.com/abc123');
+    expect(got).toContain('https://rss.cnn.com/rss/cnn_topstories.rss');
+    // A non-feed host with a non-feed path is not harvested.
+    expect(got).not.toContain('https://www.example.com/2026/07/some-story');
+  });
+
+  it(`caps the harvest at ${MAX_ANCHOR_CANDIDATES} candidates`, () => {
+    const many = Array.from(
+      { length: MAX_ANCHOR_CANDIDATES + 10 },
+      (_, i) => `<a href="/content-feeds/sport-${i}">s${i}</a>`,
+    ).join('\n');
+    const got = discoverAnchorFeeds(many, 'https://example.com/');
+    expect(got).toHaveLength(MAX_ANCHOR_CANDIDATES);
+    // Document order preserved up to the cap.
+    expect(got[0].url).toBe('https://example.com/content-feeds/sport-0');
+  });
+
+  it('returns nothing for a page with no feed-looking anchors', () => {
+    const html = `<a href="/about">About</a><a href="/contact">Contact</a>`;
+    expect(discoverAnchorFeeds(html, 'https://example.com/')).toEqual([]);
   });
 });
 

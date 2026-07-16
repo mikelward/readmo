@@ -7,6 +7,11 @@
 // offered. Discovery is the highest-risk fetch (brand-new user-supplied URL),
 // so EVERY outbound request goes through safeFetch. SPEC.md "Feed discovery".
 //
+// Anchor-harvest fallback: when a page advertises no feed via <link> autodiscovery
+// (path fallbacks included), we scrape feed-looking <a href> body links — the
+// shape of a "here are our RSS feeds" directory page — and validate each the same
+// way. Bounded and lower-priority; the publisher's advertised feeds always win.
+//
 // Deep-link fallback: a pasted article rarely advertises the site's feed in its
 // own <head>, so when the page yields nothing we re-probe the site home page.
 // Last-resort fallback: if neither advertises a feed, we offer a Google News
@@ -34,9 +39,11 @@
 // @ts-nocheck — runs under Deno, not node/tsc.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import {
+  discoverAnchorFeeds,
   discoverFromHtml,
   googleNewsFeedFor,
   homePageUrl,
+  MAX_ANCHOR_CANDIDATES,
   redditFeedFor,
   type FeedCandidate,
 } from '../_shared/discover.ts';
@@ -270,17 +277,82 @@ async function respondWithCandidates(
 async function probeHtml(html: string, baseUrl: string) {
   const candidates = discoverFromHtml(html, baseUrl);
   const validated = [];
+  const validatedUrls = new Set<string>(); // to dedup the anchor tier below
   let candidateFail: 'auth' | 'not-found' | 'unreachable' | null = null;
+  // Did an *advertised* feed (a `<link rel="alternate">`, type != null) validate,
+  // as opposed to only one of our generic root path-guesses (`/feed`, `/rss`, …)?
+  // The anchor tier keys off this, not `validated.length` — see below.
+  let advertisedFeedFound = false;
   for (const c of candidates as FeedCandidate[]) {
     const { feed, status } = await tryParse(c.url);
     if (feed) {
-      validated.push(feed);
+      // A *guessed* candidate (a generic path-fallback like `/feed`, type null)
+      // must prove it has content before we offer it: a valid-but-item-less feed
+      // (e.g. foxsports.com.au/feed is well-formed XML with zero items) is a junk
+      // row in the picker the user never asked for — same non-empty rule the
+      // Google News fallback applies. An *advertised* `<link>` feed is taken on
+      // the publisher's word (offered even if momentarily empty), and a user who
+      // truly wants an empty guessed feed can still paste its URL directly (that
+      // path doesn't come through here).
+      if (c.type != null || feed.sample.length > 0) {
+        validated.push(feed);
+        validatedUrls.add(feed.feedUrl);
+        if (c.type != null) advertisedFeedFound = true;
+      }
       continue;
     }
     if (c.type != null) {
       candidateFail = mergeFail(candidateFail, candidateFailCode(status));
     }
   }
+
+  // Anchor-harvest fallback. A "here are our RSS feeds" directory page (e.g.
+  // foxsports.com.au/about-us/rss-feeds) lists its feeds as body <a href> links,
+  // not <link rel="alternate"> autodiscovery tags, so the loop above finds no
+  // *advertised* feed. We harvest feed-looking anchors and validate each through
+  // the same SSRF-hardened tryParse gate, appending any that parse (deduped
+  // against what we already have). Runs on the Jina-fetched HTML too, so a
+  // bot-blocked directory page is still covered. Bounded (MAX_ANCHOR_CANDIDATES)
+  // and validated with a small concurrency pool so a link-heavy page stays
+  // polite and reasonably fast.
+  //
+  // Gate:
+  //  - `!advertisedFeedFound`, NOT `validated.length === 0`: a directory page on
+  //    a CMS may itself answer a generic root guess like `/feed`, which would
+  //    otherwise suppress the per-section feeds the user *intentionally* pasted
+  //    the directory for. Keying off advertised-vs-guessed lets both surface. A
+  //    real autodiscovery site short-circuits here (its <link> won), so the happy
+  //    path pays nothing.
+  //  - `!candidateFail` — same rule as the home-page and Google News fallbacks
+  //    below: when the page *advertised* a feed that's gated/dead/5xx, surface
+  //    that specific reason (SPEC.md "discovery reports *why* a URL yields no
+  //    feed") rather than masking it with a lower-confidence body anchor.
+  // candidateFail is left untouched here.
+  if (!advertisedFeedFound && candidateFail === null) {
+    const anchors = discoverAnchorFeeds(html, baseUrl) as FeedCandidate[];
+    if (anchors.length > 0) {
+      console.log(
+        `discover: no advertised feed — harvesting ${anchors.length} feed-looking ` +
+          `anchor(s)${anchors.length >= MAX_ANCHOR_CANDIDATES ? ` (capped at ${MAX_ANCHOR_CANDIDATES})` : ''}`,
+      );
+      const before = validated.length;
+      const POOL = 6;
+      for (let i = 0; i < anchors.length; i += POOL) {
+        const batch = anchors.slice(i, i + POOL);
+        const feeds = await Promise.all(batch.map((c) => tryParse(c.url).then((r) => r.feed)));
+        for (const feed of feeds) {
+          // Anchors are guesses too — require a non-empty sample (same as the
+          // path-fallback rule above) so an empty scraped link isn't offered.
+          if (feed && feed.sample.length > 0 && !validatedUrls.has(feed.feedUrl)) {
+            validated.push(feed);
+            validatedUrls.add(feed.feedUrl);
+          }
+        }
+      }
+      console.log(`discover: anchor harvest — ${validated.length - before} new feed(s) validated`);
+    }
+  }
+
   return { validated, candidateFail };
 }
 
