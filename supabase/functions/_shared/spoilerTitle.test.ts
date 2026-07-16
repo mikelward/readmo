@@ -151,6 +151,23 @@ describe('buildSpoilerPrompt', () => {
     expect(prompt).toMatch(/never invent a league/i);
   });
 
+  it('treats an off-field story that leans on a result as a spoiler', () => {
+    // Regression: "Tuchel retains FA backing despite England defeat" slipped
+    // through because its MAIN subject is off the pitch (a manager keeping his
+    // job) and it only mentions the result in passing. A story about job
+    // security, board backing, a sacking, or fan/pundit reaction still spoils
+    // when it names or leans on the result — the off-field framing does not
+    // neutralize the embedded outcome.
+    const prompt = buildSpoilerPrompt(
+      'Tuchel retains FA backing despite England defeat',
+      '',
+    );
+    expect(prompt).toMatch(/MAIN subject is OFF the pitch/i);
+    expect(prompt).toMatch(/keeping or\s+losing his job|board or federation backing/i);
+    expect(prompt).toMatch(/does NOT neutralize the result/i);
+    expect(prompt).toMatch(/Tuchel retains FA backing despite England defeat/);
+  });
+
   it('never treats non-sport news as a spoiler, however violent', () => {
     // Regression: a hard-news story about a leader killed in an airstrike was
     // rewritten as "Iran spoiler" — the injury/crash/collapse/medical-emergency

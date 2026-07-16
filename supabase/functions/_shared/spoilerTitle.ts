@@ -89,6 +89,17 @@ export function buildSpoilerPrompt(
     `away both the standings and a placing). If a headline is about a specific ` +
     `event that has started or finished and you're unsure whether it gives ` +
     `anything away, treat it as a spoiler.\n\n` +
+    `A headline whose MAIN subject is OFF the pitch still spoils the event when ` +
+    `it names or leans on the result to make its point. A manager keeping or ` +
+    `losing his job, board or federation backing, a sacking or an appointment, ` +
+    `a press-conference line, a pundit's verdict, or fan reaction are off-field ` +
+    `topics — but "retains backing despite the defeat", "sacked after the loss", ` +
+    `"hails the win", "under pressure after elimination", "fans furious as X crash ` +
+    `out" each give the result away. The story being about someone's job or mood ` +
+    `does NOT neutralize the result baked into it: hide it, and rewrite to name ` +
+    `only the event (the team or match involved), never the outcome — so ` +
+    `"Tuchel retains FA backing despite England defeat" is a spoiler naming ` +
+    `England, not the loss.\n\n` +
     `Many events have several separately-watched sessions — in F1 a qualifying, ` +
     `a sprint, and the race; elsewhere heats, legs, rounds, or each game of a ` +
     `series. Each session is its OWN event to protect: a result from qualifying ` +
