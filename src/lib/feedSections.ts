@@ -130,6 +130,13 @@ export const PUBLISHERS: Publisher[] = [
     // NYT publishes a per-section feed at
     // rss.nytimes.com/services/xml/rss/nyt/<Section>.xml; HomePage is the front
     // page (the single-feed catalog entry). Capped at MAX_SECTIONS.
+    //
+    // No Sports section: NYT moved its sports coverage to The Athletic, and the
+    // legacy nyt/Sports.xml endpoint — while still valid RSS — now carries only
+    // channel metadata and zero <item>s, so subscribing to it yields no
+    // articles (it looks "Not tried" on /admin/feeds because an empty-but-valid
+    // feed isn't a poll failure). Re-add a working sports feed here once one is
+    // verified with `npm run feeds:check`.
     sections: [
       { name: 'NYT Top Stories', feedUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml' },
       { name: 'NYT World', feedUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/World.xml' },
@@ -139,7 +146,6 @@ export const PUBLISHERS: Publisher[] = [
       { name: 'NYT Technology', feedUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml' },
       { name: 'NYT Science', feedUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/Science.xml' },
       { name: 'NYT Health', feedUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/Health.xml' },
-      { name: 'NYT Sports', feedUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/Sports.xml' },
       { name: 'NYT Arts', feedUrl: 'https://rss.nytimes.com/services/xml/rss/nyt/Arts.xml' },
     ],
   },
