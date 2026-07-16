@@ -7,12 +7,14 @@ import {
   mapFeed,
   mapItem,
   mapItemState,
+  mapSharedItem,
   mapSubscription,
   toRequestError,
   tsToMs,
   type FeedPublicRow,
   type ItemRow,
   type ItemStateRow,
+  type SharedItemRow,
   type SubscriptionRow,
 } from './supabaseMappers';
 
@@ -167,6 +169,45 @@ describe('mapItem', () => {
     // gets it NULLed — all map to null, and the reader falls back to `getSummary`.
     expect(mapItem(row).aiSummary).toBeNull();
     expect(mapItem({ ...row, ai_summary: null }).aiSummary).toBeNull();
+  });
+});
+
+describe('mapSharedItem', () => {
+  const row: SharedItemRow = {
+    id: 'item-1',
+    feed_id: 'feed-1',
+    guid: 'guid-1',
+    url: 'https://public.example/post',
+    title: 'A shared post',
+    author: 'Ada',
+    published_at: '2026-02-03T04:05:06.000Z',
+    content_html: '<p>body</p>',
+    summary: null,
+    enclosures: [],
+    content_hash: null,
+    created_at: '2026-01-01T00:00:00.000Z',
+    feed_site_url: 'https://public.example',
+    feed_title: 'Public Feed',
+    feed_favicon_url: 'https://public.example/icon.png',
+    feed_last_fetched_at: null,
+    feed_next_fetch_at: null,
+    feed_fetch_interval_s: 1800,
+    feed_error_count: 0,
+    feed_last_error: null,
+    feed_created_at: null,
+  };
+
+  it('splits the flat RPC row into item + feed and reuses mapItem/mapFeed', () => {
+    const fi = mapSharedItem(row);
+    expect(fi.item.id).toBe('item-1');
+    expect(fi.item.contentHtml).toBe('<p>body</p>');
+    // feed_id is the feed's id (no separate feed id column in the flat row).
+    expect(fi.feed.id).toBe('feed-1');
+    expect(fi.feed.title).toBe('Public Feed');
+    expect(fi.feed.faviconUrl).toBe('https://public.example/icon.png');
+    // The gated full body/summary are never part of this row's shape.
+    expect(fi.item.fullContentHtml).toBeNull();
+    expect(fi.item.aiSummary).toBeNull();
   });
 });
 

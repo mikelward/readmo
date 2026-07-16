@@ -566,6 +566,18 @@ newshacker_link (user_id PK/FK, token, created_at)                    -- compani
   Enforce via RLS
   predicates or a security-definer view/RPC applying the same test. The poller
   writes with the service role, bypassing RLS.
+- **Shared links open by capability, not by widening (a)/(b).** A hosted
+  `/item/:id` link lets *any* signed-in recipient open the article without
+  subscribing — but this does **not** broaden the row policies. `items.id` is an
+  unguessable random uuid, so the link itself is the capability; resolution goes
+  through a single `SECURITY DEFINER` read (`get_shared_item`) that returns
+  **display-safe columns only** (the item's feed `content_html` + feed
+  name/favicon — **never** `full_content_html`/`ai_summary`/fetch URLs) and
+  **only when the parent feed is public** (no `secret_url` and a non-tokenized
+  `url`). The public/private test is a **soft paywall gate**, not the security
+  boundary (the uuid is): a link to a paid/tokenized feed simply won't resolve,
+  and being imperfect is low-harm because nothing here is enumerable. See
+  *Sharing an article*.
 - **Keep feed secrets out of client-readable metadata.** The fetchable URL may
   embed an auth token: store it in `secret_url`, **never** returned to clients
   (only the poller's service role reads it); expose a display-safe identifier
@@ -579,6 +591,58 @@ newshacker_link (user_id PK/FK, token, created_at)                    -- compani
   place — so they only ever get back tokens they already hold. `secret_url` is
   still never returned, so a secret-backed feed exports its token-stripped `url`
   and may not round-trip.
+
+### Sharing an article
+
+The reader's **Share** hands out the **hosted `/item/:id` link** so the recipient
+opens the article inside Readmo (the publisher URL is still one tap away via
+**Share original**). The intent: a family member you send a link to reads the
+article in Readmo, and — if they're on the allowlist — sees the full text
+straightaway, exactly as if they'd opened it themselves.
+
+- **The link is a capability.** `items.id` is a random uuid, so a `/item/:id`
+  link is unguessable/non-enumerable — possession of the link is the
+  authorization ("anyone with the link"). We therefore do **not** widen the RLS
+  row policies for sharing.
+- **Opening a shared link.** A recipient who already subscribes to the feed (or
+  holds a permanent state on the item) resolves it the normal way. Otherwise the
+  reader falls back to `get_shared_item` (above): a **public** feed's article
+  resolves for any signed-in recipient (display-safe columns only); a
+  **private/tokenized** feed's link does not resolve (the soft paywall gate).
+- **Full text / AI summary for family.** These stay behind the allowlist-gated
+  `fulltext` / `summary` Edge Functions. Those functions apply the **same
+  public-feed check**, so an allowlisted recipient reading a shared link to a
+  feed they don't subscribe to still gets the full body (instant when the sharer
+  had pinned it, which pre-warms the shared row) and the AI gist. A
+  non-allowlisted recipient gets the feed body only, as everywhere else.
+- **Classifier.** "Public" = no `secret_url` **and** the `url` doesn't look
+  tokenized. It's deliberately conservative (a false "private" only stops a share
+  link resolving; a false "public" exposes a feed body to a link-holder you
+  chose, never an enumeration). The DB side is `looks_tokenized` (SQL) and the
+  Edge side reuses `looksTokenized` (`_shared/urlSafety.ts`); the two are kept in
+  step.
+- **Non-subscriber reader is read-only.** A signed-in recipient who opens a
+  shared link to a feed they *don't* subscribe to gets the article read-only —
+  **no Pin / Favorite / Done** (those `item_state` writes would be RLS-rejected),
+  no auto-*opened* write, and the **feed-navigation affordances are neutralized**
+  (the feed-name is a plain label, the `u` shortcut is inert, and "Open feed" is
+  omitted) because the feed page is subscription-scoped and wouldn't load for
+  them. Reading, full text (if allowlisted), Open original, Share, and Save-to-
+  read-later still work. *(Interim: these neutralized actions should eventually
+  route into the sign-up/subscribe flow below rather than simply doing nothing.)*
+- **Backwards-compat.** The frontend auto-deploys before `make migrate`, so the
+  reader only hands out a `/item/:id` link once `get_capabilities` reports
+  `shared_items` (the flag `0068` adds); until then Share falls back to the
+  publisher URL, which always resolves. See guardrail #11.
+- **v1 scope / TODOs.** Signed-in only for now (the `/item/:id` route stays
+  auth-gated; a signed-out recipient round-trips through `/signin`). Deferred:
+  **(a)** signed-out reading of shared public articles; **(b)** a **conversion
+  flow** for the read-only affordances — a signed-out reader who taps a mutation
+  control goes to **sign-up**, a signed-in non-subscriber goes to **subscribe** —
+  that **redirects back to the attempted action** once they're through (so the
+  tap isn't just swallowed); **(c)** letting a non-subscriber **save** a shared
+  article to their library rather than read-only; **(d)** share **revocation** (a
+  link currently works until the item is deleted).
 
 ### Feed fetching & parsing (server)
 
@@ -2999,9 +3063,11 @@ immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
 - Bottom bar swaps the primary slot to **Back to top** (neutral, stretched) so
   Pin/Done/⋮ land at the same x-position — handy right where you finish reading,
   since this bar is the relative footer at the article's end.
-- **More ⋮** overflow: Favorite/Share (when not inline), **Save to _<your
-  service>_** (only when a save service is chosen — see below), **Open feed**,
-  **Copy link**, **Mute feed**. This is the **shared `ItemRowMenu`** component (the same
+- **More ⋮** overflow: Favorite/Share (when not inline), **Share original**
+  (the publisher URL — always here, since the bar's Share hands out the hosted
+  reader link), **Save to _<your service>_** (only when a save service is chosen
+  — see below), **Open feed**, **Copy link**, **Mute feed**. This is the
+  **shared `ItemRowMenu`** component (the same
   one the feed list rows use, and the mirror of newshacker's thread ⋮) — lifted
   to the reader page so the top and bottom bars drive one instance. Anchored
   dropdown next to the ⋮ button (sheet fallback when no anchor), 44px touch /
@@ -3009,10 +3075,13 @@ immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
   open menu only dismisses it** — that gesture's trailing click is swallowed, so
   it never also activates whatever sits underneath (an item row's stretched link,
   a neighboring row, a toolbar button); a second tap is needed to act.
-- **Share** shares the **original article URL** (publishers want canonical-page
-  traffic; there's no on-site discussion page to prefer — the one place Readmo
-  differs from newshacker, which shared its own `/item/:id`). Web Share API +
-  clipboard fallback + "Link copied" toast.
+- **Share** shares the **hosted Readmo reader link** (`/item/:id`) so the
+  recipient opens the article **inside Readmo**, not the publisher's page — see
+  *Sharing an article*. **Share original** (⋮ overflow) is the escape hatch that
+  shares the **publisher's canonical URL** instead, for anyone who wants the
+  source page. Both use the Web Share API + clipboard fallback + "Link copied"
+  toast, and both send the article's **real headline** (the spoiler-free rewrite
+  is a list-only affordance; see *Sports-result spoilers*).
 - **Save to a read-later service** opens the chosen service's own "save this
   page" page for the article in a new tab, prompting login there if needed — a
   plain deep link like *Open on newshacker*, so **$0, no API call, no stored

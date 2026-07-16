@@ -9,7 +9,7 @@ import { useItemState } from '../hooks/useItemState';
 import { useWideViewport } from '../hooks/useWideViewport';
 import { useShareItem } from '../hooks/useShareItem';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
-import { useFullTextAllowed } from '../hooks/useCapabilities';
+import { useCapabilities, useFullTextAllowed } from '../hooks/useCapabilities';
 import {
   useAutoSummarizePinned,
   useAutoSaveOnFavorite,
@@ -17,6 +17,7 @@ import {
 } from '../hooks/useReadingPrefs';
 import { useMarkDoneOnOpenFeeds } from '../hooks/useSubscriptionFeeds';
 import { readLaterTarget } from '../lib/readLater';
+import { readmoItemUrl } from '../lib/shareLinks';
 import {
   articleSourceDomain,
   formatAge,
@@ -26,7 +27,7 @@ import {
 import { fullTextStaleTime, looksTruncated } from '../lib/fullText';
 import { FeedFavicon } from '../components/FeedFavicon';
 import type { FullTextResult } from '../lib/fullText';
-import type { Item, ItemState, ItemStateField } from '../lib/types';
+import type { ItemState, ItemStateField } from '../lib/types';
 import { ArticleSummary } from '../components/ArticleSummary';
 import { TooltipButton } from '../components/TooltipButton';
 import { ItemRowMenu, type ItemRowMenuItem } from '../components/ItemRowMenu';
@@ -79,7 +80,6 @@ interface ReaderToolbarProps {
   /** Where the bar sits. The bottom copy suffixes its test ids so the two
    * toolbars don't collide. */
   placement: 'top' | 'bottom';
-  item: Item;
   state: ItemState;
   /** The feed name shown next to the leading button, linking back to the feed
    * — a persistent "which feed is this?" anchor while reading (the top bar is
@@ -111,6 +111,10 @@ interface ReaderToolbarProps {
   share: (item: { title: string; url: string }) => void;
   /** The article's headline, shared as-is (the reader shows the real title). */
   shareTitle: string;
+  /** The Readmo-hosted reader URL for this article — what the toolbar Share
+   * button hands out so the link opens INSIDE Readmo (SPEC "Sharing an
+   * article"). The publisher's own URL is shared via the ⋮ "Share original". */
+  shareUrl: string;
   /** Whether the shared overflow menu is currently open (drives the More
    * button's aria-expanded). The menu itself lives at the page level so
    * the top and bottom bars share one instance — see newshacker's Thread. */
@@ -118,11 +122,13 @@ interface ReaderToolbarProps {
   /** Open the shared overflow menu anchored to the given element (the More
    * button of whichever bar was tapped). */
   onOpenMenu: (anchor: HTMLElement | null) => void;
+  /** Read-only shared open (a non-subscriber via a shared link): hide the
+   * item_state write actions (Favorite / Pin / Done) whose writes RLS rejects. */
+  readOnly: boolean;
 }
 
 function ReaderToolbar({
   placement,
-  item,
   state,
   source,
   feedId,
@@ -139,6 +145,8 @@ function ReaderToolbar({
   markDone,
   share,
   shareTitle,
+  shareUrl,
+  readOnly,
   menuOpen,
   onOpenMenu,
 }: ReaderToolbarProps) {
@@ -150,6 +158,23 @@ function ReaderToolbar({
   // overflow menu (see ItemPage's menuItems) so Comments stays inline; with no
   // Comments button, or on a wide viewport, Pin stays inline as before.
   const pinInline = wide || !commentsHref;
+
+  // The feed name doubles as a link to the feed page — but a read-only shared
+  // reader (a non-subscriber) can't load that page (feed_items is
+  // subscription-scoped), so render it as a plain label, not a link, in that case.
+  const feednameInner = (
+    <>
+      {/* Feed favicon between the leading button and the name, mirroring the
+          per-row icon. */}
+      <FeedFavicon
+        url={faviconUrl}
+        name={source}
+        className="reader__feedname-favicon"
+        testId={`reader-feedname-favicon${sfx}`}
+      />
+      <span className="reader__feedname-text">{source}</span>
+    </>
+  );
 
   return (
     <div className={`reader__${placement}bar`}>
@@ -176,21 +201,19 @@ function ReaderToolbar({
         </TooltipButton>
       )}
 
-      <Link
-        to={`/feed/${feedId}`}
-        className="reader__feedname"
-        data-testid={`reader-feedname${sfx}`}
-      >
-        {/* Feed favicon between the leading button and the name, mirroring the
-            per-row icon. */}
-        <FeedFavicon
-          url={faviconUrl}
-          name={source}
-          className="reader__feedname-favicon"
-          testId={`reader-feedname-favicon${sfx}`}
-        />
-        <span className="reader__feedname-text">{source}</span>
-      </Link>
+      {readOnly ? (
+        <div className="reader__feedname" data-testid={`reader-feedname${sfx}`}>
+          {feednameInner}
+        </div>
+      ) : (
+        <Link
+          to={`/feed/${feedId}`}
+          className="reader__feedname"
+          data-testid={`reader-feedname${sfx}`}
+        >
+          {feednameInner}
+        </Link>
+      )}
 
       <div className="reader__actions" role="toolbar" aria-label="Article actions">
         <TooltipButton
@@ -224,28 +247,30 @@ function ReaderToolbar({
               className="reader__action"
               tooltip="Share"
               aria-label="Share"
-              onClick={() => share({ title: shareTitle, url: item.url })}
+              onClick={() => share({ title: shareTitle, url: shareUrl })}
               data-testid={`reader-share${sfx}`}
             >
               <ShareIcon />
             </TooltipButton>
-            <TooltipButton
-              type="button"
-              className={
-                'reader__action' + (state.favorite ? ' reader__action--active' : '')
-              }
-              tooltip={state.favorite ? 'Unfavorite' : 'Favorite'}
-              aria-label={state.favorite ? 'Unfavorite' : 'Favorite'}
-              aria-pressed={state.favorite}
-              onClick={onToggleFavorite}
-              data-testid={`reader-favorite${sfx}`}
-            >
-              {state.favorite ? <FavoriteFilled /> : <FavoriteOutline />}
-            </TooltipButton>
+            {!readOnly ? (
+              <TooltipButton
+                type="button"
+                className={
+                  'reader__action' + (state.favorite ? ' reader__action--active' : '')
+                }
+                tooltip={state.favorite ? 'Unfavorite' : 'Favorite'}
+                aria-label={state.favorite ? 'Unfavorite' : 'Favorite'}
+                aria-pressed={state.favorite}
+                onClick={onToggleFavorite}
+                data-testid={`reader-favorite${sfx}`}
+              >
+                {state.favorite ? <FavoriteFilled /> : <FavoriteOutline />}
+              </TooltipButton>
+            ) : null}
           </>
         ) : null}
 
-        {pinInline ? (
+        {pinInline && !readOnly ? (
           <TooltipButton
             type="button"
             className={'reader__action' + (state.pinned ? ' reader__action--active' : '')}
@@ -259,17 +284,19 @@ function ReaderToolbar({
           </TooltipButton>
         ) : null}
 
-        <TooltipButton
-          type="button"
-          className={'reader__action' + (state.done ? ' reader__action--active' : '')}
-          tooltip={state.done ? 'Unmark done' : 'Done'}
-          aria-label={state.done ? 'Unmark done' : 'Done'}
-          aria-pressed={state.done}
-          onClick={() => (state.done ? set('done', false) : markDone())}
-          data-testid={`reader-done${sfx}`}
-        >
-          <Check />
-        </TooltipButton>
+        {!readOnly ? (
+          <TooltipButton
+            type="button"
+            className={'reader__action' + (state.done ? ' reader__action--active' : '')}
+            tooltip={state.done ? 'Unmark done' : 'Done'}
+            aria-label={state.done ? 'Unmark done' : 'Done'}
+            aria-pressed={state.done}
+            onClick={() => (state.done ? set('done', false) : markDone())}
+            data-testid={`reader-done${sfx}`}
+          >
+            <Check />
+          </TooltipButton>
+        ) : null}
 
         <div className="reader__more">
           <TooltipButton
@@ -297,6 +324,11 @@ export function ItemPage() {
   const navigate = useNavigate();
   const wide = useWideViewport();
   const share = useShareItem();
+  // P1 backwards-compat: only hand out the hosted /item/:id link once the backend
+  // is known to have `get_shared_item` (0068) — else a non-subscriber recipient
+  // couldn't resolve it. Absent/false against an older backend → share the
+  // publisher URL, as before. Feature-detected via the get_capabilities flag.
+  const sharedItemsSupported = useCapabilities().sharedItems === true;
   const status = useConnectivityStatus();
   // `online` gates the offline fallback + full-text fetch (both keyed on
   // "fully connected"); `status` distinguishes a genuine disconnect from our
@@ -365,6 +397,14 @@ export function ItemPage() {
   );
   const fallback = data === undefined ? listItem : null;
   const resolved = data === undefined ? fallback : data;
+  // Render the reader read-only when this is a shared-link open the caller can't
+  // otherwise see (a public feed they don't subscribe to — get_shared_item, 0068):
+  // their item_state writes would be RLS-rejected, so hide Pin/Favorite/Done and
+  // skip the auto-opened write. A shared open is the only read-only case today;
+  // the name generalizes if others appear. (Richer non-subscriber affordances —
+  // save-to-library, a sign-up nudge for signed-out readers — are TODOs; see SPEC
+  // "Sharing an article".)
+  const readOnly = !!resolved?.shared;
 
   // Favorite, plus the opt-in "auto-save on favorite": when the user has picked
   // a save service AND turned auto-save on, favoriting an article opens that
@@ -531,9 +571,11 @@ export function ItemPage() {
     );
   }
 
-  // Opening the reader marks the item Opened (auto).
+  // Opening the reader marks the item Opened (auto). Skipped for a shared-only
+  // open: the caller isn't a subscriber, so set_item_state would reject the write
+  // (42501) and roll it back — nothing to record.
   useEffect(() => {
-    if (resolved) set('opened', true);
+    if (resolved && !readOnly) set('opened', true);
     // (The pinned-at-open snapshot is captured during render, above — keeping it
     // out of this effect is what closes the auto-generate leak window.)
     // Only when the item first resolves / changes.
@@ -552,17 +594,21 @@ export function ItemPage() {
 
   const openOriginal = useCallback(() => {
     if (resolved && isSafeHttpUrl(resolved.item.url)) {
-      set('opened', true);
+      // A shared-only reader (non-subscriber) can't persist item_state, so skip
+      // the Opened/Done writes that would only be RLS-rejected and rolled back —
+      // still open the original page. (markDoneOnOpenFeeds is subscription-derived
+      // and empty for them anyway; the guard keeps it explicit.)
+      if (!readOnly) set('opened', true);
       window.open(resolved.item.url, '_blank', 'noopener,noreferrer');
       // "Mark done when opening" feeds: opening the original finishes the item,
       // so mark it Done (which also clears pinned) and drop back to where the
       // reader came from — the same completion flow as the Done action.
-      if (markDoneOnOpenFeeds.has(resolved.feed.id)) {
+      if (!readOnly && markDoneOnOpenFeeds.has(resolved.feed.id)) {
         set('done', true);
         goBack();
       }
     }
-  }, [resolved, set, markDoneOnOpenFeeds, goBack]);
+  }, [resolved, readOnly, set, markDoneOnOpenFeeds, goBack]);
 
   const markDone = useCallback(() => {
     set('done', true); // also clears pinned via the mutation shield
@@ -656,7 +702,9 @@ export function ItemPage() {
     if (!resolved) return [];
     const it = resolved.item;
     const items: ItemRowMenuItem[] = [];
-    if (pinInMenu) {
+    // Pin/Favorite are item_state writes — hidden for a read-only shared open
+    // (the write would be RLS-rejected for a non-subscriber).
+    if (pinInMenu && !readOnly) {
       items.push({
         key: 'pin',
         label: state.pinned ? 'Unpin' : 'Pin',
@@ -664,14 +712,32 @@ export function ItemPage() {
       });
     }
     if (!wide) {
-      items.push({
-        key: 'favorite',
-        label: state.favorite ? 'Unfavorite' : 'Favorite',
-        onSelect: toggleFavorite,
-      });
+      if (!readOnly) {
+        items.push({
+          key: 'favorite',
+          label: state.favorite ? 'Unfavorite' : 'Favorite',
+          onSelect: toggleFavorite,
+        });
+      }
       items.push({
         key: 'share',
         label: 'Share',
+        onSelect: () =>
+          share({
+            title: it.title,
+            url: sharedItemsSupported ? readmoItemUrl(it.id) : it.url,
+          }),
+      });
+    }
+    // Share the publisher's own page instead of the Readmo reader link. Only
+    // offered when the toolbar/menu "Share" actually hands out our hosted
+    // /item/:id URL (the backend supports shared items) — otherwise that primary
+    // Share IS the publisher URL and a separate entry would be redundant.
+    // Menu-only on every width; skipped when the item has no safe URL.
+    if (sharedItemsSupported && isSafeHttpUrl(it.url)) {
+      items.push({
+        key: 'share-original',
+        label: 'Share original',
         onSelect: () => share({ title: it.title, url: it.url }),
       });
     }
@@ -699,16 +765,23 @@ export function ItemPage() {
         onSelect: () => setUserView('feed'),
       });
     }
-    items.push({
-      key: 'open-feed',
-      label: 'Open feed',
-      onSelect: () => navigate(`/feed/${resolved.feed.id}`),
-    });
+    // "Open feed" leads to a subscription-scoped feed page a read-only shared
+    // (non-subscriber) reader can't load, so omit it for them (the toolbar
+    // feed-name link and `u` shortcut are likewise neutralized).
+    if (!readOnly) {
+      items.push({
+        key: 'open-feed',
+        label: 'Open feed',
+        onSelect: () => navigate(`/feed/${resolved.feed.id}`),
+      });
+    }
     return items;
   }, [
     resolved,
     wide,
     pinInMenu,
+    readOnly,
+    sharedItemsSupported,
     state.favorite,
     state.pinned,
     toggle,
@@ -729,6 +802,11 @@ export function ItemPage() {
         return;
       }
       if (document.querySelector('[role="dialog"], [role="menu"]')) return;
+      // Read-only shared open: the triage keys would only fire an RLS-rejected
+      // write, and `u` (go to feed) leads to a feed page a non-subscriber can't
+      // load — ignore them all (their buttons/links are hidden too).
+      if (readOnly && (e.key === 'p' || e.key === 'f' || e.key === 'd' || e.key === 'u'))
+        return;
       switch (e.key) {
         case 'o':
           openOriginal();
@@ -755,7 +833,7 @@ export function ItemPage() {
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [openOriginal, openComments, toggle, toggleFavorite, markDone, goUp, goBack]);
+  }, [openOriginal, openComments, toggle, toggleFavorite, markDone, goUp, goBack, readOnly]);
 
   // Only show the blank "Loading…" when there's nothing cached to paint yet — a
   // cold first open, or while the persisted cache is still hydrating (the
@@ -836,7 +914,6 @@ export function ItemPage() {
   const canGetFull = !fullHtml && !fetchingFull && !wantFull && online && allowFull;
 
   const toolbarProps = {
-    item,
     state,
     source,
     feedId: feed.id,
@@ -853,6 +930,10 @@ export function ItemPage() {
     markDone,
     share,
     shareTitle: item.title,
+    // P1: only the hosted link once the backend supports resolving it; else the
+    // publisher URL (which always works), matching pre-0068 behavior.
+    shareUrl: sharedItemsSupported ? readmoItemUrl(item.id) : item.url,
+    readOnly,
   } as const;
 
   return (
@@ -878,7 +959,11 @@ export function ItemPage() {
               href={item.url}
               target="_blank"
               rel="noopener noreferrer"
-              onClick={() => set('opened', true)}
+              // Skip the Opened write for a read-only shared reader — it would only
+              // be RLS-rejected and rolled back (the link still opens).
+              onClick={() => {
+                if (!readOnly) set('opened', true);
+              }}
             >
               {item.title}
             </a>

@@ -55,11 +55,13 @@ import { PAGE_SIZE } from './MockDataSource';
 import {
   type FeedPublicRow,
   type ItemRow,
+  type SharedItemRow,
   type ItemStateRow,
   type SubscriptionRow,
   type UserSettingsRow,
   mapFeed,
   mapItem,
+  mapSharedItem,
   mapItemState,
   mapSubscription,
   mapUserSettings,
@@ -1221,9 +1223,42 @@ export class SupabaseDataSource implements DataSource {
     const row = await this.selectItemRows<ItemRow | null>((cols) =>
       this.sb.from('items').select(cols).eq('id', id).maybeSingle(),
     );
-    if (!row) return null;
-    const [fi] = await this.resolveFeedItems([row]);
-    return fi ?? null;
+    if (row) {
+      const [fi] = await this.resolveFeedItems([row]);
+      if (fi) return fi;
+    }
+    // Shared-link fallback: the caller may not subscribe to this item's feed (nor
+    // hold a permanent state on it), so items_select hid the row above. A PUBLIC
+    // feed's item is still reachable by its unguessable uuid via get_shared_item
+    // (0068) — a capability-by-URL open. Returns display-safe item + feed data,
+    // or null for a private/tokenized feed, a genuine miss, or an older backend
+    // without the RPC.
+    return this.loadSharedItem(id);
+  }
+
+  /** Resolve a shared /item/<id> link via the `get_shared_item` RPC (0068) for an
+   * item the caller can't see under RLS. Degrades any error — including an older
+   * backend missing the function (PGRST202) — to null so the reader shows its
+   * miss state; the unguessable id means there's nothing to retry-leak. */
+  private async loadSharedItem(id: ItemId): Promise<FeedItem | null> {
+    const { data, error, status } = await this.sb.rpc('get_shared_item', {
+      p_item_id: id,
+    });
+    if (error) {
+      // Swallow ONLY the expected old-backend case — the function doesn't exist
+      // yet (PGRST202, or a 404) — as "no shared item", so the reader shows its
+      // normal miss state. Any OTHER error (a transient PostgREST/DB blip) throws
+      // like the direct item read, so React Query retries and the reader surfaces
+      // a real error instead of a false "article missing" the caller can't retry.
+      const code = (error as { code?: string } | null)?.code;
+      if (code === 'PGRST202' || status === 404) return null;
+      throw toRequestError({ error, status });
+    }
+    const row = (Array.isArray(data) ? data[0] : data) as
+      | SharedItemRow
+      | null
+      | undefined;
+    return row ? mapSharedItem(row) : null;
   }
 
   async fetchFullText(
@@ -2047,6 +2082,7 @@ export class SupabaseDataSource implements DataSource {
           allowlist_armed?: boolean;
           can_manage_users?: boolean;
           can_view_subscriptions?: boolean;
+          shared_items?: boolean;
         }
       | null
       | undefined;
@@ -2056,6 +2092,7 @@ export class SupabaseDataSource implements DataSource {
       allowlistArmed: row?.allowlist_armed === true,
       canManageUsers: row?.can_manage_users === true,
       canViewSubscriptions: row?.can_view_subscriptions === true,
+      sharedItems: row?.shared_items === true,
     };
   }
 

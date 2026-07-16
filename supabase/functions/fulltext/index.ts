@@ -80,6 +80,7 @@ import {
   resolveInternalCaller,
 } from '../_shared/internalCaller.ts';
 import { looksTruncatedHtml } from '../_shared/summary.ts';
+import { readItemIfPublicFeed } from '../_shared/feedVisibility.ts';
 import { coalesceGeneration } from '../_shared/coalesce.ts';
 import type { GenerationLeaseClient, GenerationOutcome } from '../_shared/coalesce.ts';
 import { jsonCors as json } from '../_shared/respond.ts';
@@ -271,6 +272,29 @@ async function handle(req: Request): Promise<Response> {
       return json({ error: error.message, transient: true }, 400);
     }
     item = data;
+    // Shared /item/<id> link: the caller may not subscribe to this item's feed,
+    // but a PUBLIC feed's item is shareable by its unguessable uuid (0068). Re-read
+    // via the service role and accept it only when the parent feed is public (soft
+    // paywall gate) — lets an allowlisted family member read full text on a link to
+    // a feed they don't subscribe to. A transient lookup blip throws → report
+    // retryable unreachable (not a terminal 404 the client would cache as `empty`).
+    //
+    // REQUIRE a real signed-in user first: the /item/:id + get_shared_item surfaces
+    // are signed-in-only, and in DISARMED (empty-allowlist) mode the auth.getUser
+    // gate above is skipped — so without this an anon caller (anon key, no user)
+    // with a public item uuid could reach this service-role read and get full text
+    // (and spend Jina/Gemini). No user → leave `item` null so the 404 miss stands.
+    if (!item) {
+      const { data: authData } = await userClient.auth.getUser();
+      if (authData?.user) {
+        try {
+          item = await readItemIfPublicFeed(service, itemId, itemColumns);
+        } catch (err) {
+          console.error(`fulltext: shared-item fallback lookup for ${itemId} failed:`, err);
+          return json({ status: 'unreachable', contentHtml: null, transient: true });
+        }
+      }
+    }
   }
   if (!item) {
     console.warn(`fulltext: item ${itemId} not found or not visible to caller`);

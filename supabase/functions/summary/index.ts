@@ -81,6 +81,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { preflight } from '../_shared/cors.ts';
 import { loadAllowlistFromDb, isAllowed } from '../_shared/allowlist.ts';
+import { readItemIfPublicFeed } from '../_shared/feedVisibility.ts';
 import { looksTokenized, redactUrl } from '../_shared/urlSafety.ts';
 import { assertSafeUrl } from '../_shared/ssrf.ts';
 import {
@@ -253,6 +254,28 @@ async function handle(req: Request): Promise<Response> {
       return json({ error: error.message }, 400);
     }
     item = data;
+    // Shared /item/<id> link: a PUBLIC feed's item is shareable by its
+    // unguessable uuid (0068). Re-read via the service role and accept it only when
+    // the parent feed is public, so an allowlisted family member sees a summary on a
+    // link to a feed they don't subscribe to. A transient lookup blip throws →
+    // report retryable unreachable.
+    //
+    // REQUIRE a real signed-in user first: the shared-link surfaces are
+    // signed-in-only, and in DISARMED (empty-allowlist) mode the auth.getUser gate
+    // above is skipped — so without this an anon caller with a public item uuid
+    // could reach this service-role read and get/generate a summary (spending
+    // Gemini). No user → leave `item` null so the 404 miss stands.
+    if (!item) {
+      const { data: authData } = await userClient.auth.getUser();
+      if (authData?.user) {
+        try {
+          item = await readItemIfPublicFeed(service, itemId, itemColumns);
+        } catch (err) {
+          console.error(`summary: shared-item fallback lookup for ${itemId} failed:`, err);
+          return json({ status: 'unreachable', summary: null });
+        }
+      }
+    }
   }
   if (!item) {
     console.warn(`summary: item ${itemId} not found or not visible to caller`);

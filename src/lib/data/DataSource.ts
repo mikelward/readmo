@@ -40,6 +40,11 @@ export interface Capabilities {
    * the admin console hides the "Feeds"/"Users" drill-down menu items until the
    * RPCs exist rather than link to a page that would only error. */
   canViewSubscriptions?: boolean;
+  /** The backend has migration 0068's `get_shared_item` deployed. Same
+   * ahead-of-migration story: absent on an older backend, so the reader's Share
+   * hands out the publisher URL until the RPC exists — a `/item/:id` link a
+   * non-subscriber couldn't yet resolve would only 404 (guardrail #11). */
+  sharedItems?: boolean;
 }
 
 /** One allowlist entry as shown on `/admin` (admin-only read). */
