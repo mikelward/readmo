@@ -77,6 +77,13 @@ export interface Item {
 export interface FeedItem {
   item: Item;
   feed: Feed;
+  /** True when this was resolved via a shared /item/:id link the caller can't
+   * otherwise see (a public feed they don't subscribe to — `get_shared_item`,
+   * 0068), rather than their own subscription/state. The reader renders such an
+   * item read-only: `item_state` writes (pin/favorite/done/opened) would be
+   * rejected by RLS for a non-subscriber, so those controls are hidden. Absent
+   * (falsy) for a normal, owned read. */
+  shared?: boolean;
 }
 
 export type ItemStateField =

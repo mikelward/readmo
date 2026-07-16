@@ -302,8 +302,69 @@ describe('SupabaseDataSource reads', () => {
   });
 
   it('getItem / getFeed return null for a missing/unauthorized row', async () => {
+    // 'does-not-exist' is unseeded, so the direct items read is null AND the
+    // get_shared_item fallback rpc is unknown to the fake (PGRST202) — exercising
+    // loadSharedItem's degrade-to-null (old-backend / no-shared-item) path.
     expect(await env.ds.getItem('does-not-exist')).toBeNull();
     expect(await env.ds.getFeed('does-not-exist')).toBeNull();
+  });
+
+  it('getItem falls back to get_shared_item for a shared public-feed link', async () => {
+    // The item isn't in the caller's visible rows (unseeded here = RLS-hidden for
+    // a non-subscriber), so the direct read is null and getItem resolves it via
+    // the get_shared_item RPC — the capability-by-URL shared open (0068).
+    const sharedRow = {
+      id: 'shared-1', feed_id: 'f-shared', guid: 'g-shared',
+      url: 'https://public.example/story', comments_url: null,
+      title: 'Shared Story', spoiler_free_title: null, author: 'A',
+      published_at: null, content_html: '<p>shared body</p>', summary: null,
+      enclosures: [], content_hash: null, created_at: '2026-01-01T00:00:00Z',
+      feed_site_url: 'https://public.example', feed_title: 'Public Feed',
+      feed_favicon_url: 'https://public.example/icon.png',
+      feed_last_fetched_at: null, feed_next_fetch_at: null,
+      feed_fetch_interval_s: 1800, feed_error_count: 0, feed_last_error: null,
+      feed_created_at: null,
+    };
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'get_shared_item' && params?.p_item_id === 'shared-1') {
+        return Promise.resolve({ data: [sharedRow], error: null });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+
+    const fi = await env.ds.getItem('shared-1');
+    expect(fi?.item.id).toBe('shared-1');
+    expect(fi?.item.contentHtml).toBe('<p>shared body</p>');
+    // Feed metadata came from the RPC row (no feeds_public read for a
+    // non-subscriber), so the reader can still show the feed name + favicon.
+    expect(fi?.feed.title).toBe('Public Feed');
+    expect(fi?.feed.faviconUrl).toBe('https://public.example/icon.png');
+    // The gated full body never rides this path — it arrives via fetchFullText.
+    expect(fi?.item.fullContentHtml).toBeNull();
+  });
+
+  it('getItem: shared-item fallback swallows an old backend (PGRST202) but throws other RPC errors', async () => {
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    // Old backend without the function → treated as a miss (reader shows its
+    // normal not-found state), NOT an error to retry.
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'get_shared_item') {
+        return Promise.resolve({ data: null, error: { code: 'PGRST202', message: 'no function' }, status: 404 });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    expect(await env.ds.getItem('missing-shared')).toBeNull();
+
+    // A transient PostgREST/DB error must THROW so React Query retries, instead
+    // of a false "article missing" the caller can't recover from.
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'get_shared_item') {
+        return Promise.resolve({ data: null, error: { code: 'PGRST301', message: 'db blip' }, status: 503 });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    await expect(env.ds.getItem('missing-shared-2')).rejects.toThrow('db blip');
   });
 
   it('hydrates item_state on the empty-ids path (cold library-route boot)', async () => {

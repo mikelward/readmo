@@ -2,6 +2,7 @@ import type {
   Enclosure,
   Feed,
   FeedId,
+  FeedItem,
   Item,
   ItemId,
   ItemState,
@@ -241,6 +242,45 @@ export function mapItem(row: ItemRow): Item {
     aiSummary: row.ai_summary ?? null,
     enclosures: mapEnclosures(row.enclosures),
   };
+}
+
+/** One flat row from the `get_shared_item` RPC (0068): the item's ITEM_COLS plus
+ * the feed's display columns, prefixed `feed_` to avoid the id/created_at name
+ * clash. Extends {@link ItemRow} so {@link mapItem} reads it directly; the
+ * `feed_*` fields rebuild a {@link FeedPublicRow} for {@link mapFeed}. */
+export interface SharedItemRow extends ItemRow {
+  feed_site_url: string | null;
+  feed_title: string | null;
+  feed_favicon_url?: string | null;
+  feed_last_fetched_at: string | null;
+  feed_next_fetch_at: string | null;
+  feed_fetch_interval_s: number | null;
+  feed_error_count: number | null;
+  feed_last_error: string | null;
+  feed_created_at: string | null;
+}
+
+/** `get_shared_item` row → `FeedItem`. The RPC already projects display-safe
+ * columns only (never the fetch URLs or the gated full-text/summary columns), so
+ * this reuses the same `mapItem`/`mapFeed` the normal reads use. `feed_id` is the
+ * feed's id (there's no separate feed id column in the flat row). */
+export function mapSharedItem(row: SharedItemRow): FeedItem {
+  const feed = mapFeed({
+    id: row.feed_id,
+    site_url: row.feed_site_url,
+    title: row.feed_title,
+    favicon_url: row.feed_favicon_url,
+    last_fetched_at: row.feed_last_fetched_at,
+    next_fetch_at: row.feed_next_fetch_at,
+    fetch_interval_s: row.feed_fetch_interval_s,
+    error_count: row.feed_error_count,
+    last_error: row.feed_last_error,
+    created_at: row.feed_created_at,
+  });
+  // `shared: true` marks this as a capability read (a public feed the caller
+  // may not subscribe to), so the reader renders it read-only — item_state
+  // writes would be RLS-rejected for a non-subscriber.
+  return { item: mapItem(row), feed, shared: true };
 }
 
 /** `item_state` row → domain `ItemState` (drops the user/item key columns). */

@@ -71,7 +71,13 @@ guardrails — read them before opening a PR.
    `feeds`/`items` are physically shared but **not world-readable** — a row is
    exposed only when the caller has a matching `subscriptions` row *or* a
    permanent (`pinned`/`favorite`/`done`) `item_state` row pointing at it.
-   Keep secret/tokenized feed URLs (`secret_url`) server-only.
+   Keep secret/tokenized feed URLs (`secret_url`) server-only. **Sharing carve-out
+   (capability, not RLS):** a hosted `/item/:id` link opens for any signed-in
+   recipient via the `get_shared_item` `SECURITY DEFINER` read — keyed on the
+   unguessable item uuid, returning display-safe columns only, and **only for a
+   public feed** (no `secret_url` + non-tokenized `url`). It does **not** widen
+   the row policies; full text/summary stay allowlist-gated. See SPEC *Sharing an
+   article*.
 
 8. **Scope client caches by `auth.uid()` and purge on account change.** Key the
    IndexedDB store and every Workbox runtime cache by the signed-in user; on

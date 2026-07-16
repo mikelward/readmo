@@ -30,7 +30,14 @@ import { recallHackerNewsItemId } from '../lib/newshackerItemIds';
 // capabilities RESOLVE to allowed (a signed-out caller is never allowlisted).
 // Seed a disarmed (open-to-all) capability set so the reader exercises the
 // allowed path, as these tests did when signed-out defaulted open.
-const ALLOWED_CAPS: Capabilities = { family: false, admin: false, allowlistArmed: false };
+const ALLOWED_CAPS: Capabilities = {
+  family: false,
+  admin: false,
+  allowlistArmed: false,
+  // The deployed backend has migration 0068, so the reader's Share hands out the
+  // hosted /item/:id link (a test seeds its own caps to model an older backend).
+  sharedItems: true,
+};
 function seedAllowed(qc: QueryClient): QueryClient {
   // Non-clobbering: a test that seeds its OWN capabilities (e.g. an armed,
   // off-allowlist caller) keeps them; only an unseeded client gets the allowed
@@ -686,6 +693,146 @@ describe('ItemPage (reader)', () => {
       expect(shareFn).toHaveBeenCalledTimes(1);
       const payload = shareFn.mock.calls[0][0] as { title: string; text: string };
       expect(payload.title).toBe('Man Utd beat Arsenal 3-1 to go top');
+    } finally {
+      if (prev) Object.defineProperty(window.navigator, 'share', prev);
+      else delete (window.navigator as { share?: unknown }).share;
+    }
+  });
+
+  it('Share hands out the Readmo reader link; "Share original" shares the publisher URL', async () => {
+    class FixedSource extends MockDataSource {
+      async getItem(id: ItemId): Promise<FeedItem | null> {
+        const fi = await super.getItem(id);
+        if (!fi) return null;
+        return {
+          ...fi,
+          item: { ...fi.item, id: 'item-1', url: 'https://publisher.example/story' },
+        };
+      }
+    }
+    const user = userEvent.setup();
+    const shareFn = vi.fn().mockResolvedValue(undefined);
+    const prev = Object.getOwnPropertyDescriptor(window.navigator, 'share');
+    Object.defineProperty(window.navigator, 'share', {
+      value: shareFn,
+      configurable: true,
+    });
+    try {
+      renderReader(new FixedSource(`test-${Math.random()}`), 'item-1');
+
+      // Primary "Share" → our hosted /item/:id reader link (opens in Readmo).
+      await user.click(await screen.findByTestId('reader-more'));
+      await screen.findByTestId('item-row-menu');
+      await user.click(screen.getByTestId('item-row-menu-share'));
+      expect(shareFn).toHaveBeenCalledTimes(1);
+      expect((shareFn.mock.calls[0][0] as { url: string }).url).toBe(
+        `${window.location.origin}/item/item-1`,
+      );
+
+      // "Share original" → the publisher's canonical page.
+      await user.click(screen.getByTestId('reader-more'));
+      await screen.findByTestId('item-row-menu');
+      await user.click(screen.getByTestId('item-row-menu-share-original'));
+      expect(shareFn).toHaveBeenCalledTimes(2);
+      expect((shareFn.mock.calls[1][0] as { url: string }).url).toBe(
+        'https://publisher.example/story',
+      );
+    } finally {
+      if (prev) Object.defineProperty(window.navigator, 'share', prev);
+      else delete (window.navigator as { share?: unknown }).share;
+    }
+  });
+
+  it('renders a shared-only (non-subscriber) open read-only: no Pin/Favorite/Done', async () => {
+    // A public-feed article resolved via a shared link the caller doesn't
+    // subscribe to (get_shared_item). item_state writes would be RLS-rejected, so
+    // the triage actions are hidden; reading + Share still work.
+    class SharedSource extends MockDataSource {
+      async getItem(id: ItemId): Promise<FeedItem | null> {
+        const fi = await super.getItem(id);
+        return fi ? { ...fi, shared: true } : null;
+      }
+    }
+    const user = userEvent.setup();
+    renderReader(new SharedSource(`test-${Math.random()}`), 'item-1');
+    // The article still renders.
+    await screen.findByRole('heading', { level: 1 });
+    // The item_state write actions are gone from the toolbar.
+    expect(screen.queryByTestId('reader-pin')).toBeNull();
+    expect(screen.queryByTestId('reader-done')).toBeNull();
+    expect(screen.queryByTestId('reader-favorite')).toBeNull();
+    // Feed navigation is neutralized (the feed page is subscription-scoped and
+    // wouldn't load): the feed name is a plain label, not a link.
+    expect(screen.getByTestId('reader-feedname').tagName).toBe('DIV');
+    // …and from the overflow menu, while Share stays. "Open feed" is omitted.
+    await user.click(await screen.findByTestId('reader-more'));
+    await screen.findByTestId('item-row-menu');
+    expect(screen.queryByTestId('item-row-menu-pin')).toBeNull();
+    expect(screen.queryByTestId('item-row-menu-favorite')).toBeNull();
+    expect(screen.queryByTestId('item-row-menu-open-feed')).toBeNull();
+    expect(screen.getByTestId('item-row-menu-share')).toBeInTheDocument();
+  });
+
+  it('a shared-only reader records no item_state writes (mount Opened + Open original)', async () => {
+    // The non-subscriber can't persist item_state, so neither the auto-open nor
+    // the Open-original click should queue a doomed (RLS-rejected) Opened write.
+    class SharedSource extends MockDataSource {
+      async getItem(id: ItemId): Promise<FeedItem | null> {
+        const fi = await super.getItem(id);
+        return fi ? { ...fi, shared: true } : null;
+      }
+    }
+    const source = new SharedSource(`test-${Math.random()}`);
+    const setSpy = vi.spyOn(source.stateStore, 'set');
+    const openSpy = vi.fn();
+    const prevOpen = window.open;
+    window.open = openSpy as typeof window.open;
+    try {
+      renderReader(source, 'item-1');
+      await screen.findByRole('heading', { level: 1 });
+      // Mount did not auto-write Opened for a shared-only reader.
+      expect(setSpy).not.toHaveBeenCalledWith('item-1', 'opened', true);
+      // Open original still opens the page, but records no Opened write.
+      await userEvent.setup().click(screen.getByTestId('open-original'));
+      expect(openSpy).toHaveBeenCalled();
+      expect(setSpy).not.toHaveBeenCalledWith('item-1', 'opened', true);
+    } finally {
+      window.open = prevOpen;
+    }
+  });
+
+  it('falls back to the publisher URL for Share when the backend lacks shared items (old backend)', async () => {
+    // sharedItems absent (a client ahead of migration 0068): Share must hand out
+    // the publisher URL, since a /item/:id link couldn't be resolved yet, and the
+    // redundant "Share original" entry is dropped.
+    class FixedSource extends MockDataSource {
+      async getItem(id: ItemId): Promise<FeedItem | null> {
+        const fi = await super.getItem(id);
+        if (!fi) return null;
+        return { ...fi, item: { ...fi.item, id: 'item-1', url: 'https://publisher.example/story' } };
+      }
+    }
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    qc.setQueryData(CAPABILITIES_QUERY_KEY, {
+      family: false,
+      admin: false,
+      allowlistArmed: false,
+    } satisfies Capabilities);
+
+    const user = userEvent.setup();
+    const shareFn = vi.fn().mockResolvedValue(undefined);
+    const prev = Object.getOwnPropertyDescriptor(window.navigator, 'share');
+    Object.defineProperty(window.navigator, 'share', { value: shareFn, configurable: true });
+    try {
+      renderReader(new FixedSource(`test-${Math.random()}`), 'item-1', qc);
+      await user.click(await screen.findByTestId('reader-more'));
+      await screen.findByTestId('item-row-menu');
+      // No separate "Share original" — the primary Share already IS the publisher URL.
+      expect(screen.queryByTestId('item-row-menu-share-original')).toBeNull();
+      await user.click(screen.getByTestId('item-row-menu-share'));
+      expect((shareFn.mock.calls[0][0] as { url: string }).url).toBe(
+        'https://publisher.example/story',
+      );
     } finally {
       if (prev) Object.defineProperty(window.navigator, 'share', prev);
       else delete (window.navigator as { share?: unknown }).share;
