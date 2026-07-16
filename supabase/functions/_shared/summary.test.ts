@@ -1,15 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  BLOCK_BODY_MAX_CHARS,
   MAX_SUMMARY_CONTENT_CHARS,
   SUMMARY_TRUNCATION_TEXT_THRESHOLD,
   buildSummaryPrompt,
   clampSummaryText,
   coalesceSummaryGeneration,
   htmlToPlainText,
+  isBlockingHttpStatus,
+  looksLikeBlockPage,
   looksTruncatedHtml,
   parseGeminiText,
   pickStoredContent,
   isSummaryOutcomeTransient,
+  siteLabel,
   stripSummaryPreamble,
 } from './summary';
 import type { SummaryLeaseClient, SummaryOutcome } from './summary';
@@ -31,6 +35,68 @@ describe('isSummaryOutcomeTransient', () => {
     expect(isSummaryOutcomeTransient({ status: 'empty' })).toBe(false);
     expect(isSummaryOutcomeTransient({ status: 'empty', retryable: false })).toBe(false);
     expect(isSummaryOutcomeTransient({ status: 'unavailable', retryable: true })).toBe(false);
+  });
+});
+
+describe('isBlockingHttpStatus', () => {
+  it('is a block for stable non-2xx access denials', () => {
+    for (const s of [401, 403, 404, 410, 451]) {
+      expect(isBlockingHttpStatus(s)).toBe(true);
+    }
+  });
+
+  it('is not a block for 2xx or transient 429/5xx (they should retry, not stick)', () => {
+    for (const s of [200, 204, 301, 429, 500, 502, 503]) {
+      expect(isBlockingHttpStatus(s)).toBe(false);
+    }
+  });
+});
+
+describe('looksLikeBlockPage', () => {
+  it('matches an error-page title on its own', () => {
+    expect(looksLikeBlockPage('403 Forbidden', null)).toBe(true);
+    expect(looksLikeBlockPage('Access Denied', 'anything here')).toBe(true);
+    expect(looksLikeBlockPage('Unauthorized', '')).toBe(true);
+    expect(looksLikeBlockPage('Page Not Found', null)).toBe(true);
+  });
+
+  it('matches an unambiguous whole-page signature regardless of body length', () => {
+    const long = 'x'.repeat(BLOCK_BODY_MAX_CHARS + 500);
+    expect(
+      looksLikeBlockPage('My son’s passport combo', `You don't have permission to access ${long}`),
+    ).toBe(true);
+    expect(looksLikeBlockPage(null, 'Sorry, you have been blocked from this site.')).toBe(true);
+    expect(looksLikeBlockPage(null, 'Attention Required! | Cloudflare\nRay ID: abc')).toBe(true);
+  });
+
+  it('matches a weak phrase only in a short body', () => {
+    expect(looksLikeBlockPage(null, 'The server returned 403 Forbidden.')).toBe(true);
+    // A long article that merely mentions the words is NOT a block.
+    const article = `A ruling on API access. ${'context '.repeat(400)} Access denied to some users, the court found. ${'more '.repeat(400)}`;
+    expect(article.length).toBeGreaterThan(BLOCK_BODY_MAX_CHARS);
+    expect(looksLikeBlockPage('Court weighs API access', article)).toBe(false);
+  });
+
+  it('does not match an ordinary article', () => {
+    expect(
+      looksLikeBlockPage('How we shipped the feature', 'This week we rolled out a new reader.'),
+    ).toBe(false);
+    expect(looksLikeBlockPage(null, null)).toBe(false);
+    expect(looksLikeBlockPage('', '')).toBe(false);
+  });
+});
+
+describe('siteLabel', () => {
+  it('returns the hostname without a leading www.', () => {
+    expect(siteLabel('https://www.reddit.com/r/x/comments/1')).toBe('reddit.com');
+    expect(siteLabel('https://ft.com/content/abc')).toBe('ft.com');
+    expect(siteLabel('http://news.example.co.uk/story')).toBe('news.example.co.uk');
+  });
+
+  it('is null for a missing or unparseable URL', () => {
+    expect(siteLabel(null)).toBeNull();
+    expect(siteLabel(undefined)).toBeNull();
+    expect(siteLabel('not a url')).toBeNull();
   });
 });
 

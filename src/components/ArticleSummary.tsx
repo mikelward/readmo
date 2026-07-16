@@ -37,7 +37,7 @@ export function ArticleSummary({
   autoGenerate,
   cachedSummary,
 }: ArticleSummaryProps) {
-  const { summary, loading, canGenerate, generate, failed, retry, offlineWithoutCache } =
+  const { summary, loading, canGenerate, generate, failed, retry, offlineWithoutCache, blocked } =
     useSummary(id, {
       online,
       autoGenerate,
@@ -85,6 +85,22 @@ export function ArticleSummary({
         data-testid="article-summary-offline"
       >
         <p className="article-summary__error">Summary not available offline.</p>
+      </section>
+    );
+  }
+  if (blocked) {
+    // The article page couldn't be read (a 403 wall, login gate, or bot block),
+    // so there's nothing to summarize — name the site instead of showing a
+    // verbose "no content here" gist. Terminal: no Retry.
+    return (
+      <section
+        className="article-summary"
+        aria-label="AI summary"
+        data-testid="article-summary-blocked"
+      >
+        <p className="article-summary__error">
+          {blocked.site ? `Summary blocked by ${blocked.site}` : 'Summary blocked'}
+        </p>
       </section>
     );
   }

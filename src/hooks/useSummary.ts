@@ -39,6 +39,11 @@ export interface UseSummary {
    * the prewarm promised a summary). The card explains instead of silently
    * missing. */
   offlineWithoutCache: boolean;
+  /** Set when the article page couldn't be read (a 403 wall, login gate, or bot
+   * block), so no summary was generated. `site` is the publisher host for the
+   * "Summary blocked by {site}" card, or null when the item had no URL. Null
+   * when the summary wasn't blocked. */
+  blocked: { site: string | null } | null;
 }
 
 /**
@@ -200,6 +205,7 @@ export function useSummary(
         void query.refetch();
       },
       offlineWithoutCache: false,
+      blocked: null,
     };
   }
 
@@ -272,6 +278,10 @@ export function useSummary(
     // Unpinned opens never promised one, so they stay silent offline.
     offlineWithoutCache:
       allowed && !opts.online && opts.autoGenerate && data?.status !== 'ok',
+    // The article page couldn't be read (403 / login wall / bot block) — the
+    // card names the site instead of staying silent or spinning. Terminal, so
+    // no Retry. Gated on the display gate (via `data`) like every other outcome.
+    blocked: data?.status === 'blocked' ? { site: data.site ?? null } : null,
     // Offer the button when we're allowed + online, weren't asked to
     // auto-generate (not pinned before opening), the user hasn't asked yet, and
     // there's nothing cached or in flight to show. The moment anything caches —

@@ -2761,21 +2761,30 @@ page's discipline is unchanged.
     during the deploy window just ignores the lease (at most one redundant call).
     The coalescing logic is the generic `coalesceGeneration` (`_shared/coalesce.ts`,
     shared with `fulltext`'s fetch lease), unit-tested there.
-  - **Outcomes** (the function returns `{ status, summary, retryable? }`): `ok`
+  - **Outcomes** (the function returns `{ status, summary, retryable?, site? }`): `ok`
     (the summary string), `empty` (nothing to summarize, or the silent
     allowlist denial — flagged `retryable` so a later allowlist change
     un-sticks it), `unavailable` (Gemini key unset — `retryable`), `unreachable`
-    (a transient allowlist-read / auth / Gemini failure — `retryable`). On
-    `empty` and `unavailable` the reader stays **silent** (no card, no error),
-    exactly like reading mode. The two cases where the reader was promised a
-    summary get a card instead of silence (same as newshacker's summary card):
-    a requested generation (pinned auto-run or the button) that settles
-    `unreachable` shows "Could not summarize." with a **Retry**, and a pinned
-    article opened offline with no summary cached shows "Summary not available
-    offline." `summaryStaleTime` caches `ok`/`empty` forever and keeps the
-    retryable/transient ones stale. Additive `retryable` flag (not a new wire
-    status) so a service-worker-cached older client still reads the plain status
-    (guardrail #11).
+    (a transient allowlist-read / auth / Gemini failure — `retryable`), and
+    `blocked` (the article page couldn't be read — a 403 wall, login gate, or
+    bot block — so no summary was generated). On `empty` and `unavailable` the
+    reader stays **silent** (no card, no error), exactly like reading mode. The
+    cases where the reader was promised a summary get a card instead of silence
+    (same as newshacker's summary card): a requested generation (pinned auto-run
+    or the button) that settles `unreachable` shows "Could not summarize." with a
+    **Retry**; a pinned article opened offline with no summary cached shows
+    "Summary not available offline."; and a `blocked` page shows a terminal
+    **"Summary blocked by {site}"** line (the publisher host; the bare "Summary
+    blocked" when the item has no URL). A block is detected **before spending a
+    Gemini call** — from the fetch's HTTP status when it's a stable non-2xx
+    access code, or from the fetched title/body when the block page comes back as
+    200 (r.jina.ai serves the block HTML as markdown) — so an unreadable page
+    costs nothing and doesn't produce a verbose "there's no content here" gist.
+    `summaryStaleTime` caches `ok`/`empty`/`blocked` forever and keeps the
+    retryable/transient ones stale. Additive `retryable` flag and `site` field
+    (not, respectively, a new wire status or a required field) so a
+    service-worker-cached older client still reads the plain status — an old
+    client that doesn't recognize `blocked` simply shows no card (guardrail #11).
   - **Cost & reliability (guardrail #5):** a cache miss makes **two** outbound
     calls — a Jina fetch (free tier 1M tokens/mo, ~10–100 K tokens per page) and a
     Gemini Flash-Lite call (~$0.10 / 1M input, ~$0.40 / 1M output). Each article is

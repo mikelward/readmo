@@ -1424,13 +1424,14 @@ export class SupabaseDataSource implements DataSource {
       return { status: 'unreachable', summary: null };
     }
     const rec = data as
-      | { status?: string; summary?: string | null; retryable?: boolean }
+      | { status?: string; summary?: string | null; retryable?: boolean; site?: string | null }
       | null;
     const status: SummaryStatus =
       rec?.status === 'ok' ||
       rec?.status === 'empty' ||
       rec?.status === 'unavailable' ||
-      rec?.status === 'unreachable'
+      rec?.status === 'unreachable' ||
+      rec?.status === 'blocked'
         ? rec.status
         : 'unreachable';
     return {
@@ -1440,6 +1441,9 @@ export class SupabaseDataSource implements DataSource {
       // `unavailable`): keeps the result retryable so a later server-side change
       // re-checks instead of caching it. Only present when true.
       ...(rec?.retryable === true ? { retryable: true } : {}),
+      // `blocked` carries the publisher host for the "Summary blocked by {site}"
+      // card (null when the item had no URL). Only threaded on that status.
+      ...(status === 'blocked' ? { site: rec?.site ?? null } : {}),
     };
   }
 

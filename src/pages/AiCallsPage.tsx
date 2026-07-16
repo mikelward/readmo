@@ -24,8 +24,8 @@ const KIND_LABEL: Record<AiCallKind, string> = {
 /** Coarse severity for the status badge tint. A status the client doesn't know
  * is treated as neutral rather than dropped, so a newer-server value still
  * renders. `ok`/`rewrite`/`none`/`accepted` are healthy outcomes; `failed`/
- * `unreachable` are errors; `unavailable`/`empty` are "declined / nothing to
- * do". See the AiCall.status doc for the full set. */
+ * `unreachable` are errors; `unavailable`/`empty`/`blocked` are "declined /
+ * nothing to do". See the AiCall.status doc for the full set. */
 function severityOf(status: string): 'ok' | 'warn' | 'bad' | 'neutral' {
   switch (status) {
     case 'ok':
@@ -38,6 +38,7 @@ function severityOf(status: string): 'ok' | 'warn' | 'bad' | 'neutral' {
       return 'bad';
     case 'unavailable':
     case 'empty':
+    case 'blocked':
       return 'warn';
     default:
       return 'neutral';
