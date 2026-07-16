@@ -100,6 +100,7 @@ import {
 import type { InternalCaller } from '../_shared/internalCaller.ts';
 import { retryWhile } from '../_shared/retry.ts';
 import { jsonCors as json } from '../_shared/respond.ts';
+import { recordAiCall } from '../_shared/aiCallLog.ts';
 
 const MODEL = 'gemini-2.5-flash-lite';
 const GEMINI_ENDPOINT =
@@ -327,6 +328,10 @@ async function handle(req: Request): Promise<Response> {
     // stale, so once the key IS set, a saved article recovers on its next
     // boot/open/Generate rather than waiting on cache eviction.
     console.warn('summary: GOOGLE_API_KEY not set — unavailable');
+    // Record the key-unset outcome (0067): "unavailable" is the single clearest
+    // /admin/ai signal for "the AI features are configured off", so surface it
+    // even though no Gemini call was made.
+    await recordAiCall(service, { kind: 'summary', status: 'unavailable', itemId });
     return json({ status: 'unavailable', summary: null });
   }
 
@@ -341,7 +346,7 @@ async function handle(req: Request): Promise<Response> {
     itemId,
     now: () => Date.now(),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-    generate: () => generateAndCache(service, apiKey, item, itemId),
+    generate: () => generateAndCacheLogged(service, apiKey, item, itemId),
   });
   // `cached` is internal to the coalescer (drives lease release); keep the wire
   // envelope exactly `{ status, summary, retryable? }` for older clients.
@@ -487,6 +492,7 @@ async function generateSummaryForPin(service: any, itemId: string): Promise<bool
   const apiKey = Deno.env.get('GOOGLE_API_KEY');
   if (!apiKey) {
     console.warn('summary: pin-triggered: GOOGLE_API_KEY not set — skipping');
+    await recordAiCall(service, { kind: 'summary', status: 'unavailable', itemId });
     return false;
   }
   const outcome = await coalesceSummaryGeneration({
@@ -494,7 +500,7 @@ async function generateSummaryForPin(service: any, itemId: string): Promise<bool
     itemId,
     now: () => Date.now(),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-    generate: () => generateAndCache(service, apiKey, item, itemId),
+    generate: () => generateAndCacheLogged(service, apiKey, item, itemId),
   });
   console.log(`summary: item ${itemId} — pin-triggered generation: ${outcome.status}`);
   return isSummaryOutcomeTransient(outcome);
@@ -549,12 +555,48 @@ async function ensureFullTextForPin(
 /** Run the actual Jina fetch + stored-body fallback + Gemini call + cache write
  * for one item, returning the normalized outcome. Called only by the elected
  * generator (or the last-resort fallback) inside coalesceSummaryGeneration. */
-async function generateAndCache(
+/** {@link generateAndCache} plus best-effort AI-call logging (0067). Wraps the
+ * real generation so every ACTUAL summary Gemini call — on-demand and
+ * pin-triggered alike — records its outcome to `ai_call_log` for /admin/ai,
+ * without threading logging through the coalescer. Passed as the coalescer's
+ * `generate`, which invokes it only for the caller that actually generates (a
+ * coalesced WAIT for another caller's result never calls this), so only real
+ * calls are logged, never cache hits or waits. */
+async function generateAndCacheLogged(
   service: any,
   apiKey: string,
   item: { feed_id: string; url: string | null; title: string | null; content_html: string | null; full_content_html: string | null },
   itemId: string,
 ): Promise<SummaryOutcome> {
+  const { outcome, httpStatus } = await generateAndCache(service, apiKey, item, itemId);
+  await recordAiCall(service, {
+    kind: 'summary',
+    status: outcome.status,
+    // The model's response code when the call reached Gemini (e.g. 429/503), so
+    // a summary failure is diagnosable from /admin/ai; null for a pre-call
+    // outcome (no article text) or a transport-level failure (timeout/network).
+    httpStatus,
+    itemId,
+    error: outcome.status === 'unreachable' ? 'summary generation failed' : null,
+  });
+  return outcome;
+}
+
+/** {@link generateAndCache}'s result: the wire {@link SummaryOutcome} plus the
+ * model's HTTP status (kept OUT of the outcome so it never leaks into the
+ * client envelope), for the AI call log only. `httpStatus` is null for an
+ * outcome decided before the Gemini call (no article text). */
+interface GenerateResult {
+  outcome: SummaryOutcome;
+  httpStatus: number | null;
+}
+
+async function generateAndCache(
+  service: any,
+  apiKey: string,
+  item: { feed_id: string; url: string | null; title: string | null; content_html: string | null; full_content_html: string | null },
+  itemId: string,
+): Promise<GenerateResult> {
   // Article text: Jina markdown is the primary source (handles bot-blocked /
   // paywalled / JS-rendered pages, and keeps the summary off our polite
   // first-party fetcher). Fall back to the body we already store when Jina is
@@ -574,9 +616,12 @@ async function generateAndCache(
       // body-less item is truly terminal (nothing to ever summarize).
       console.log(`summary: item ${itemId} — no article text from Jina or storage`);
       return {
-        status: 'empty',
-        summary: null,
-        ...(item.url ? { retryable: true } : {}),
+        outcome: {
+          status: 'empty',
+          summary: null,
+          ...(item.url ? { retryable: true } : {}),
+        },
+        httpStatus: null,
       };
     }
     if (!stored.cacheable) {
@@ -587,7 +632,7 @@ async function generateAndCache(
       // every reader mount. Defer with a retryable `empty` instead (no card, no
       // spend); the next mount re-checks once better content exists.
       console.log(`summary: item ${itemId} — only a stub available, deferring (retryable empty)`);
-      return { status: 'empty', summary: null, retryable: true };
+      return { outcome: { status: 'empty', summary: null, retryable: true }, httpStatus: null };
     }
     content = stored.text;
     source = 'stored';
@@ -595,10 +640,10 @@ async function generateAndCache(
 
   // Content here is always the full article (Jina markdown, the extraction, or a
   // non-truncated feed body), so the generated summary is always safe to cache.
-  const summary = await generateSummary(apiKey, item.title, content);
+  const { text: summary, httpStatus } = await generateSummary(apiKey, item.title, content);
   if (!summary) {
     console.warn(`summary: item ${itemId} — generation failed`);
-    return { status: 'unreachable', summary: null };
+    return { outcome: { status: 'unreachable', summary: null }, httpStatus };
   }
   console.log(`summary: item ${itemId} — generated ${summary.length} chars from ${source}, caching`);
 
@@ -615,9 +660,9 @@ async function generateAndCache(
     // write failed. `cached` stays false so the coalescer releases the lease and
     // a waiter regenerates rather than blocking on a summary that never landed.
     console.error(`summary: cache write for item ${itemId} failed:`, writeError);
-    return { status: 'ok', summary, cached: false };
+    return { outcome: { status: 'ok', summary, cached: false }, httpStatus };
   }
-  return { status: 'ok', summary, cached: true };
+  return { outcome: { status: 'ok', summary, cached: true }, httpStatus };
 }
 
 /** The generation-lease operations backed by the service-role Supabase client.
@@ -767,15 +812,18 @@ async function fetchViaJinaMarkdown(target: string): Promise<string | null> {
 
 /** Call Gemini's `generateContent` REST endpoint for a short summary.
  * The target is the fixed Google host (the article is in the request body, never
- * a URL), so there's no SSRF surface. Returns the summary text, or null on
- * timeout / non-2xx / unparseable response so the handler reports a soft failure.
- * `thinkingBudget: 0` disables the hidden reasoning tokens that otherwise
- * dominate latency for a task this small (matches newshacker). */
+ * a URL), so there's no SSRF surface. Returns the summary `text` (null on
+ * timeout / non-2xx / unparseable response so the handler reports a soft
+ * failure) plus the model's `httpStatus` when the call got a response — null on
+ * a transport-level failure (timeout / network) — so the AI call log can record
+ * a 429/503 etc. for /admin/ai (0067). `thinkingBudget: 0` disables the hidden
+ * reasoning tokens that otherwise dominate latency for a task this small
+ * (matches newshacker). */
 async function generateSummary(
   apiKey: string,
   title: string | null,
   content: string,
-): Promise<string | null> {
+): Promise<{ text: string | null; httpStatus: number | null }> {
   try {
     const res = await fetch(`${GEMINI_ENDPOINT}?key=${encodeURIComponent(apiKey)}`, {
       method: 'POST',
@@ -788,16 +836,16 @@ async function generateSummary(
     });
     if (!res.ok) {
       console.warn(`summary: Gemini responded HTTP ${res.status}`);
-      return null;
+      return { text: null, httpStatus: res.status };
     }
     const parsed = parseGeminiText(await res.json());
-    if (!parsed) return null;
+    if (!parsed) return { text: null, httpStatus: res.status };
     // Peel off any "tl;dr:" / "Here's a tl;dr of the article:" framing the model
     // echoed back before the gist (the prompt is deliberately unsteered). If
     // nothing but the preamble came back, treat it as a soft failure.
-    return stripSummaryPreamble(parsed) || null;
+    return { text: stripSummaryPreamble(parsed) || null, httpStatus: res.status };
   } catch (err) {
     console.warn('summary: Gemini call failed:', err);
-    return null;
+    return { text: null, httpStatus: null };
   }
 }

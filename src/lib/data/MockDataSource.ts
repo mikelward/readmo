@@ -25,6 +25,8 @@ import {
   type AdminFeedStatus,
   type AdminFeedSubscriber,
   type AdminUserFeed,
+  type AiCall,
+  type AiCallCount,
   type FulltextDownloadStatus,
   type AllowlistEntry,
   type Capabilities,
@@ -900,6 +902,40 @@ export class MockDataSource implements DataSource {
 
   async setSignupsEnabled(enabled: boolean): Promise<void> {
     this.signupsEnabled = enabled;
+  }
+
+  // A small, deterministic sample of AI generation calls so the /admin/ai
+  // console is demoable with no backend. Fixed timestamps keep it stable across
+  // renders/tests. Covers both kinds and a spread of statuses (incl. failures)
+  // so the health tally and the recent-calls table both have something to show.
+  private readonly aiCalls: AiCall[] = [
+    { kind: 'summary', status: 'ok', httpStatus: 200, itemId: 'item-1', itemTitle: 'A foldable phone that actually folds flat, finally', error: null, createdAt: '2026-07-16T02:40:00.000Z' },
+    { kind: 'spoiler', status: 'rewrite', httpStatus: 200, itemId: 'item-7', itemTitle: 'Crew returns after a record stay aboard the station', error: null, createdAt: '2026-07-16T02:30:00.000Z' },
+    { kind: 'spoiler', status: 'none', httpStatus: 200, itemId: 'item-3', itemTitle: 'Container queries are finally everywhere', error: null, createdAt: '2026-07-16T02:22:00.000Z' },
+    { kind: 'summary', status: 'unreachable', httpStatus: 503, itemId: 'item-2', itemTitle: 'Webb telescope captures a galaxy cluster bending light', error: 'summary generation failed', createdAt: '2026-07-16T02:05:00.000Z' },
+    { kind: 'spoiler', status: 'failed', httpStatus: 503, itemId: 'item-9', itemTitle: 'Why your next monitor should be matte again', error: 'Gemini HTTP 503', createdAt: '2026-07-16T01:50:00.000Z' },
+    { kind: 'summary', status: 'unavailable', httpStatus: null, itemId: 'item-4', itemTitle: 'Ask: what is your team’s policy on rewriting legacy services?', error: null, createdAt: '2026-07-16T01:20:00.000Z' },
+  ];
+
+  async listAiCalls(limit = 200): Promise<AiCall[]> {
+    // Already newest-first; the RPC orders by created_at desc.
+    return this.aiCalls.slice(0, Math.max(limit, 0));
+  }
+
+  async getAiCallCounts(_sinceHours = 24): Promise<AiCallCount[]> {
+    const tally = new Map<string, AiCallCount>();
+    for (const c of this.aiCalls) {
+      const key = `${c.kind} ${c.status}`;
+      const cur = tally.get(key);
+      if (cur) cur.count += 1;
+      else tally.set(key, { kind: c.kind, status: c.status, count: 1 });
+    }
+    return [...tally.values()].sort(
+      (a, b) =>
+        a.kind.localeCompare(b.kind) ||
+        b.count - a.count ||
+        a.status.localeCompare(b.status),
+    );
   }
 
   /** The in-memory store is single-user (`this.subs` is the demo account), so

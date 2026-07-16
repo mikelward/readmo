@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   PARKED_ERROR_THRESHOLD,
   isPermanentWriteError,
+  mapAiCall,
   mapFeed,
   mapItem,
   mapItemState,
@@ -251,5 +252,46 @@ describe('mapSubscription', () => {
       sort: 0,
     };
     expect(mapSubscription(row).listLayout).toBe(null);
+  });
+});
+
+describe('mapAiCall', () => {
+  it('maps a full row to the domain shape', () => {
+    expect(
+      mapAiCall({
+        kind: 'spoiler',
+        status: 'rewrite',
+        http_status: 200,
+        item_id: 'item-1',
+        item_title: 'Some match',
+        error: null,
+        created_at: '2026-07-16T02:00:00.000Z',
+      }),
+    ).toEqual({
+      kind: 'spoiler',
+      status: 'rewrite',
+      httpStatus: 200,
+      itemId: 'item-1',
+      itemTitle: 'Some match',
+      error: null,
+      createdAt: '2026-07-16T02:00:00.000Z',
+    });
+  });
+
+  it('defaults nulls and an unknown kind (summary), and keeps http_status null', () => {
+    const call = mapAiCall({
+      kind: 'something-new',
+      status: 'unavailable',
+      http_status: null,
+      item_id: null,
+      item_title: null,
+      error: null,
+      created_at: '2026-07-16T01:00:00.000Z',
+    });
+    // An unrecognized kind falls back to 'summary' so the row still renders.
+    expect(call.kind).toBe('summary');
+    expect(call.httpStatus).toBeNull();
+    expect(call.itemId).toBeNull();
+    expect(call.itemTitle).toBeNull();
   });
 });

@@ -8,6 +8,7 @@ import type {
   ListLayout,
   Subscription,
 } from '../types';
+import type { AiCall, AiCallKind } from './DataSource';
 import type { SyncedSettings } from '../settingsSync';
 
 // Pure row→domain mappers for the Supabase (PostgREST) shapes. Kept separate
@@ -298,6 +299,33 @@ export function mapUserSettings(row: UserSettingsRow): Partial<SyncedSettings> {
   if (typeof row.hide_sports_spoilers === 'boolean') out.hideSportsSpoilers = row.hide_sports_spoilers;
   if (typeof row.auto_summarize_pinned === 'boolean') out.autoSummarizePinned = row.auto_summarize_pinned;
   return out;
+}
+
+/** One `admin_ai_call_log` row (0067). */
+export interface AiCallRow {
+  kind?: string | null;
+  status?: string | null;
+  http_status?: number | null;
+  item_id?: string | null;
+  item_title?: string | null;
+  error?: string | null;
+  created_at?: string | null;
+}
+
+/** `admin_ai_call_log` row → {@link AiCall}. An unrecognized `kind` (a
+ * newer-server value) falls back to `summary` so a stray row still renders
+ * rather than being dropped. */
+export function mapAiCall(row: AiCallRow): AiCall {
+  const kind: AiCallKind = row.kind === 'spoiler' ? 'spoiler' : 'summary';
+  return {
+    kind,
+    status: row.status ?? '',
+    httpStatus: typeof row.http_status === 'number' ? row.http_status : null,
+    itemId: row.item_id ?? null,
+    itemTitle: row.item_title ?? null,
+    error: row.error ?? null,
+    createdAt: row.created_at ?? '',
+  };
 }
 
 /** A library/feed item id paired with its already-mapped state, for callers

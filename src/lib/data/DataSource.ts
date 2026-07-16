@@ -163,6 +163,40 @@ export interface AdminFeedSampleItem {
   downloadAttemptedAt: string | null;
 }
 
+/** Which AI generation path an {@link AiCall} came from — the reader's article
+ * summary, or the poll-time spoiler-free-headline classifier. Both run through
+ * the same Gemini/`GOOGLE_API_KEY` path (0067). */
+export type AiCallKind = 'summary' | 'spoiler';
+
+/** One recorded AI generation call, as shown on the admin `/admin/ai` console
+ * (admin-only read of `ai_call_log`, 0067). Operational metadata only. */
+export interface AiCall {
+  kind: AiCallKind;
+  /** The terminal outcome. summary: `ok` | `empty` | `unavailable` (key unset) |
+   * `unreachable` (transient) | `accepted`; spoiler: `rewrite` | `none` |
+   * `failed`. Free text so a new status needs no client change. */
+  status: string;
+  /** The model's HTTP status when the call reached Gemini (e.g. 200, 429, 503),
+   * or null when it never did (key unset, transport failure). */
+  httpStatus: number | null;
+  /** The item the call was for, or null when the item has since been reaped. */
+  itemId: ItemId | null;
+  /** The item's title for display, or null (item reaped, or untitled). */
+  itemTitle: string | null;
+  /** A short reason for a non-success outcome, or null. */
+  error: string | null;
+  /** ISO timestamp of the call. */
+  createdAt: string;
+}
+
+/** One (kind, status) tally over a recent window, for the `/admin/ai` health
+ * summary (admin-only read; 0067). */
+export interface AiCallCount {
+  kind: AiCallKind;
+  status: string;
+  count: number;
+}
+
 export interface Page<T> {
   items: T[];
   /** Opaque cursor for the next page, or null when exhausted. A non-null
@@ -487,6 +521,15 @@ export interface DataSource {
   getSignupsEnabled(): Promise<boolean>;
   /** Admin-only: turn new account creation on or off globally. */
   setSignupsEnabled(enabled: boolean): Promise<void>;
+  /** Admin-only: the most recent AI generation calls (summary + spoiler) for the
+   * `/admin/ai` observability console (`ai_call_log`, 0067). Feature-detects a
+   * backend that predates the RPC and returns `[]` so an old backend just shows
+   * an empty list rather than crashing (guardrail #11). `limit` caps the rows. */
+  listAiCalls(limit?: number): Promise<AiCall[]>;
+  /** Admin-only: (kind, status) call tallies over the last `sinceHours` (default
+   * 24) for the `/admin/ai` health summary. Feature-detects an old backend and
+   * returns `[]` like {@link listAiCalls}. */
+  getAiCallCounts(sinceHours?: number): Promise<AiCallCount[]>;
 }
 
 /** Items already cached on this device (offline view); resolved from the

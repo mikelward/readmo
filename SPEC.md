@@ -1936,8 +1936,8 @@ negligible and off every critical path. See the External services table in
 12. **Admin** — `/admin`: operator console **hub**, reached from the **account
     menu**'s Admin link (shown only to admins). It holds no controls of its own —
     just links (shared `settings__section` / `settings__btn` style) to the two
-    management sub-pages: **Manage users** (`/admin/users`) and **Manage feeds**
-    (`/admin/feeds`).
+    management sub-pages: **Manage users** (`/admin/users`), **Manage feeds**
+    (`/admin/feeds`), and **View AI calls** (`/admin/ai`).
 
     - **Users** — `/admin/users`: user management, reached from the Admin hub's
       *Users* link. Two sections:
@@ -2067,6 +2067,24 @@ negligible and off every critical path. See the External services table in
       opened before this shipped shows *Not tried* until one is next opened.
       Backed by the admin-only `admin_list_feeds` RPC (migration `0039`), which
       fails closed (`42501`) for non-admins like every other admin RPC.
+
+    - **AI calls** — `/admin/ai`: an operator observability console for the two
+      Gemini generation paths — the reader's **article summaries** and the
+      poll-time **spoiler-free sports headlines** — so the operator can see
+      whether they're producing results, and why not. It shows a **last-24h
+      tally** per kind (a status pill per outcome — e.g. `ok`, `unavailable`,
+      `failed`) and a **recent-calls list** (kind, outcome + the model's HTTP
+      code, the article, any error, when). Both features run on the same
+      `GOOGLE_API_KEY`, so a run of **unavailable** is the at-a-glance signal
+      that the key isn't set. Every actual generation call records its outcome
+      server-side; cache hits and coalesced waits (which make no call) don't.
+      Backed by the admin-only `admin_ai_call_log` / `admin_ai_call_counts` RPCs
+      (migration `0067`) reading the server-only, RLS-locked `ai_call_log` table
+      (written by the `summary` + `poll` Edge Functions with the service role,
+      never client-readable); both fail closed (`42501`) for non-admins. The log
+      is retention-bounded (the poller prunes rows past a rolling window). Cost
+      is **negligible** — one small insert per already-bounded Gemini call, and
+      no new third-party call.
 
 13. **Keyboard shortcuts** — same letter scheme (see below).
 

@@ -1584,6 +1584,86 @@ describe('SupabaseDataSource dispatch + writes', () => {
     expect(await env.ds.getCapabilities()).toMatchObject({ admin: true, canManageUsers: false });
   });
 
+  it('listAiCalls maps rows and coerces a bigint count for getAiCallCounts', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'admin_ai_call_log') {
+        return Promise.resolve({
+          data: [
+            {
+              id: 2,
+              kind: 'spoiler',
+              status: 'failed',
+              http_status: 503,
+              item_id: 'item-9',
+              item_title: 'Some match',
+              error: 'Gemini HTTP 503',
+              created_at: '2026-07-16T02:00:00.000Z',
+            },
+          ],
+          error: null,
+        });
+      }
+      if (name === 'admin_ai_call_counts') {
+        // PostgREST serializes a bigint count as a string.
+        return Promise.resolve({
+          data: [{ kind: 'summary', status: 'ok', count: '12' }],
+          error: null,
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+
+    const calls = await env.ds.listAiCalls(50);
+    expect(calls).toEqual([
+      {
+        kind: 'spoiler',
+        status: 'failed',
+        httpStatus: 503,
+        itemId: 'item-9',
+        itemTitle: 'Some match',
+        error: 'Gemini HTTP 503',
+        createdAt: '2026-07-16T02:00:00.000Z',
+      },
+    ]);
+    const counts = await env.ds.getAiCallCounts(24);
+    expect(counts).toEqual([{ kind: 'summary', status: 'ok', count: 12 }]);
+  });
+
+  it('listAiCalls / getAiCallCounts return [] against a backend without the RPC (PGRST202)', async () => {
+    // Guardrail #11: a new client must tolerate the un-migrated backend — the
+    // /admin/ai console then shows its empty state instead of crashing.
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'admin_ai_call_log' || name === 'admin_ai_call_counts') {
+        return Promise.resolve({
+          data: null,
+          error: { code: 'PGRST202', message: 'function not found' },
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    expect(await env.ds.listAiCalls()).toEqual([]);
+    expect(await env.ds.getAiCallCounts()).toEqual([]);
+  });
+
+  it('listAiCalls rethrows a non-PGRST202 error (e.g. the non-admin 42501)', async () => {
+    const env = setup();
+    const realRpc = env.fake.client.rpc.bind(env.fake.client);
+    env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+      if (name === 'admin_ai_call_log') {
+        return Promise.resolve({
+          data: null,
+          error: { code: '42501', message: 'admin required' },
+        });
+      }
+      return realRpc(name, params);
+    }) as typeof env.fake.client.rpc;
+    await expect(env.ds.listAiCalls()).rejects.toThrow('admin required');
+  });
+
   it('listUsers maps rows, defaulting a missing blocked flag to false', async () => {
     const env = setup();
     const realRpc = env.fake.client.rpc.bind(env.fake.client);
