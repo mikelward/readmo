@@ -80,7 +80,7 @@ import {
   resolveInternalCaller,
 } from '../_shared/internalCaller.ts';
 import { looksTruncatedHtml } from '../_shared/summary.ts';
-import { readItemIfPublicFeed } from '../_shared/feedVisibility.ts';
+import { readItemIfPublicFeed, isTransientAuthError } from '../_shared/feedVisibility.ts';
 import { coalesceGeneration } from '../_shared/coalesce.ts';
 import type { GenerationLeaseClient, GenerationOutcome } from '../_shared/coalesce.ts';
 import { jsonCors as json } from '../_shared/respond.ts';
@@ -285,7 +285,17 @@ async function handle(req: Request): Promise<Response> {
     // with a public item uuid could reach this service-role read and get full text
     // (and spend Jina/Gemini). No user → leave `item` null so the 404 miss stands.
     if (!item) {
-      const { data: authData } = await userClient.auth.getUser();
+      const { data: authData, error: authErr } = await userClient.auth.getUser();
+      if (authErr && isTransientAuthError(authErr)) {
+        // Only a TRANSIENT auth OUTAGE (5xx / network) is retryable. A definitive
+        // auth REJECTION (4xx) is the anon / invalid-JWT case — this function is
+        // deployed with jwt verification, so an anonymous caller presents the anon
+        // key and `getUser` 401s here rather than resolving to a null user; that
+        // must stay WITHHELD (fall through to the 404), not retried, or #526's
+        // anon-withhold regresses.
+        console.warn(`fulltext: shared-item auth lookup for ${itemId} failed — retryable:`, authErr);
+        return json({ status: 'unreachable', contentHtml: null, transient: true });
+      }
       if (authData?.user) {
         try {
           item = await readItemIfPublicFeed(service, itemId, itemColumns);
@@ -294,6 +304,7 @@ async function handle(req: Request): Promise<Response> {
           return json({ status: 'unreachable', contentHtml: null, transient: true });
         }
       }
+      // else: confirmed anon (no user, no error) → item stays null → 404 withheld.
     }
   }
   if (!item) {

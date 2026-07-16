@@ -81,7 +81,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { preflight } from '../_shared/cors.ts';
 import { loadAllowlistFromDb, isAllowed } from '../_shared/allowlist.ts';
-import { readItemIfPublicFeed } from '../_shared/feedVisibility.ts';
+import { readItemIfPublicFeed, isTransientAuthError } from '../_shared/feedVisibility.ts';
 import { looksTokenized, redactUrl } from '../_shared/urlSafety.ts';
 import { assertSafeUrl } from '../_shared/ssrf.ts';
 import {
@@ -266,7 +266,15 @@ async function handle(req: Request): Promise<Response> {
     // could reach this service-role read and get/generate a summary (spending
     // Gemini). No user → leave `item` null so the 404 miss stands.
     if (!item) {
-      const { data: authData } = await userClient.auth.getUser();
+      const { data: authData, error: authErr } = await userClient.auth.getUser();
+      if (authErr && isTransientAuthError(authErr)) {
+        // Only a TRANSIENT auth OUTAGE (5xx / network) is retryable. A definitive
+        // 4xx rejection is the anon / invalid-JWT case (the anon-key caller 401s
+        // here, since this function is deployed with jwt verification) and must
+        // stay WITHHELD (fall through to the 404), not retried.
+        console.warn(`summary: shared-item auth lookup for ${itemId} failed — retryable:`, authErr);
+        return json({ status: 'unreachable', summary: null });
+      }
       if (authData?.user) {
         try {
           item = await readItemIfPublicFeed(service, itemId, itemColumns);
@@ -275,6 +283,7 @@ async function handle(req: Request): Promise<Response> {
           return json({ status: 'unreachable', summary: null });
         }
       }
+      // else: confirmed anon (no user, no error) → item stays null → 404 withheld.
     }
   }
   if (!item) {
