@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 import type { ItemSort } from '../lib/data/DataSource';
 import type { ListLayout } from '../lib/types';
 import { isReadLaterService, type ReadLaterService } from '../lib/readLater';
@@ -220,6 +220,31 @@ const autoSaveOnFavoriteStore = createPersistentStore<boolean>({
   serialize: (value) => (value ? '1' : '0'),
 });
 
+// Session-only spoiler override — the toolbar's eye toggle (see ListToolbar /
+// ItemList). The synced `hideSportsSpoilers` preference is the baseline every
+// load starts from; the toggle records an EPHEMERAL choice here, in memory
+// only, never localStorage — so a refresh drops it and the view returns to the
+// user's saved preference (the requested "reset on refresh"). `null` = follow
+// the saved preference; a boolean = an explicit this-session choice. Kept as a
+// tiny hand-rolled external store (not createPersistentStore, which is
+// localStorage-backed by design) so useSyncExternalStore can share it across
+// every mounted row and the toolbar button.
+let spoilerSessionOverride: boolean | null = null;
+const spoilerOverrideListeners = new Set<() => void>();
+function getSpoilerSessionOverride(): boolean | null {
+  return spoilerSessionOverride;
+}
+function setSpoilerSessionOverride(next: boolean | null): void {
+  spoilerSessionOverride = next;
+  for (const cb of spoilerOverrideListeners) cb();
+}
+function subscribeSpoilerOverride(onChange: () => void): () => void {
+  spoilerOverrideListeners.add(onChange);
+  return () => {
+    spoilerOverrideListeners.delete(onChange);
+  };
+}
+
 /** Whether unpinned articles are auto-marked Done as they scroll off the top.
  * Per-account, synced. */
 export function useHideOnScroll(): {
@@ -321,6 +346,31 @@ export function useHideSportsSpoilers(): {
   return { hideSportsSpoilers, setHideSportsSpoilers };
 }
 
+/** The spoiler-hiding state the LIST actually renders with — the saved
+ * `hideSportsSpoilers` preference unless the toolbar's eye toggle has overridden
+ * it this session. `toggle` flips the effective value into the in-memory
+ * session override (see {@link setSpoilerSessionOverride}), so it takes effect
+ * everywhere at once but is forgotten on refresh, when the view reverts to the
+ * saved preference. The allowlist gate still applies at the display site (see
+ * lib/spoilerHeadline / ItemRow), so this is a no-op for off-list users. */
+export function useEffectiveHideSpoilers(): {
+  hideSpoilers: boolean;
+  toggle: () => void;
+} {
+  const { hideSportsSpoilers } = useHideSportsSpoilers();
+  const override = useSyncExternalStore(
+    subscribeSpoilerOverride,
+    getSpoilerSessionOverride,
+    getSpoilerSessionOverride,
+  );
+  const hideSpoilers = override ?? hideSportsSpoilers;
+  const toggle = useCallback(
+    () => setSpoilerSessionOverride(!hideSpoilers),
+    [hideSpoilers],
+  );
+  return { hideSpoilers, toggle };
+}
+
 /** Whether the AI summary for pinned articles is pre-warmed so it's ready
  * before the reader opens them (default ON). A family-only control — the toggle
  * is offered only to family users in Settings — but off-list callers never fire
@@ -414,4 +464,5 @@ export function resetReadingPrefsCacheForTest(): void {
   listLayoutStore.resetForTest();
   saveServiceStore.resetForTest();
   autoSaveOnFavoriteStore.resetForTest();
+  spoilerSessionOverride = null;
 }

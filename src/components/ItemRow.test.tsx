@@ -19,6 +19,7 @@ import {
   HIDE_SPORTS_SPOILERS_KEY,
   LIST_LAYOUT_KEY,
   resetReadingPrefsCacheForTest,
+  useEffectiveHideSpoilers,
 } from '../hooks/useReadingPrefs';
 import type { FeedItem } from '../lib/types';
 
@@ -899,6 +900,42 @@ describe('ItemRow', () => {
       renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
       expect(screen.getByTestId('item-title')).toHaveTextContent('A test headline');
       expect(screen.queryByTestId('item-spoiler-flag')).toBeNull();
+    });
+
+    it('reveals the original when the session spoiler toggle is flipped, then re-hides', async () => {
+      // Drive the same session override the toolbar's eye button writes: the row
+      // shows the rewrite by default (allowed + setting on), flips to the
+      // original on toggle, and back — all without touching the saved preference.
+      function SpoilerToggle() {
+        const { toggle } = useEffectiveHideSpoilers();
+        return (
+          <button type="button" onClick={toggle}>
+            toggle
+          </button>
+        );
+      }
+      renderWithProviders(
+        <>
+          <SpoilerToggle />
+          <ItemRow feedItem={SPOILER_ITEM} />
+        </>,
+      );
+      const title = screen.getByTestId('item-title');
+      expect(title).toHaveTextContent('EPL MNU v ARS spoiler');
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'toggle' }));
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'Man Utd beat Arsenal 3-1 to go top',
+      );
+      expect(screen.queryByTestId('item-spoiler-flag')).toBeNull();
+      // The saved preference is untouched — this is a session-only reveal.
+      expect(window.localStorage.getItem(HIDE_SPORTS_SPOILERS_KEY)).toBeNull();
+
+      await user.click(screen.getByRole('button', { name: 'toggle' }));
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'EPL MNU v ARS spoiler',
+      );
     });
   });
 
