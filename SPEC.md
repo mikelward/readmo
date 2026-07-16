@@ -696,6 +696,24 @@ newshacker_link (user_id PK/FK, token, created_at)                    -- compani
   parse `<link rel="alternate" type="application/rss+xml|atom+xml|json">` and
   common fallbacks (`/feed`, `/rss`, `/atom.xml`, `/feed.json`); validate by
   fetching+parsing each candidate before offering it.
+- **Feed-directory pages are supported.** Some publishers don't advertise their
+  feeds via `<link>` autodiscovery at all — they publish a human-readable "here
+  are our RSS feeds" page that lists the feeds as ordinary body links (e.g. Fox
+  Sports' `/about-us/rss-feeds`, one link per sport). When a page advertises no
+  feed through autodiscovery, discovery falls back to scanning its body links for
+  feed-shaped URLs and validating each the usual way, so pasting such a directory
+  page surfaces its feeds (via the multi-select picker) instead of "no feed
+  found". This is a bounded, lower-priority last resort: it runs only when the
+  page *advertises* no feed of its own (a publisher's advertised feeds always
+  win), and — as with every other path — each harvested link is fetched + parsed
+  before being offered. It still runs, and the section feeds are added alongside,
+  when the site merely answers a generic root guess like `/feed` — so pasting a
+  directory page never collapses to just the site-wide feed and hides the
+  per-section feeds the user pasted it for. A *guessed* feed (a generic path
+  fallback or a harvested anchor) that parses but has **no items** is not offered
+  — only an explicitly *advertised* feed or a directly-pasted feed URL is taken
+  on faith when empty. A directory page behind a bot wall is covered too (it runs
+  on the Jina-fetched HTML).
 - **Google News feeds (`news.google.com/rss/…`) are gated on the trusted-user
   allowlist** (the DB `allowlist` table — the same list as full-text reading
   mode, managed from */admin*; see *Full-text reading mode*), because they are a
