@@ -70,6 +70,34 @@ describe('AiCallsPage', () => {
     expect(screen.getByText(/unavailable/)).toBeInTheDocument();
   });
 
+  it('shows a blocked summary with its HTTP status and reason detail', async () => {
+    // A page the summary path couldn't read is recorded as `blocked`; the
+    // operator sees the publisher HTTP code (chip) and the block reason (detail).
+    class BlockedSource extends MockDataSource {
+      async listAiCalls(): Promise<AiCall[]> {
+        return [
+          {
+            kind: 'summary',
+            status: 'blocked',
+            httpStatus: 403,
+            itemId: 'item-blocked',
+            itemTitle: 'My son’s passport combo',
+            error: 'blocked: fetch returned HTTP 403',
+            createdAt: '2026-07-16T20:00:00Z',
+          },
+        ];
+      }
+      async getAiCallCounts(): Promise<AiCallCount[]> {
+        return [{ kind: 'summary', status: 'blocked', count: 1 }];
+      }
+    }
+    render(new BlockedSource(`test-${Math.random()}`));
+    const row = await screen.findByTestId('ai-call-row');
+    expect(row).toHaveTextContent('blocked');
+    expect(row).toHaveTextContent('403');
+    expect(row).toHaveTextContent('blocked: fetch returned HTTP 403');
+  });
+
   it('shows an empty state when nothing has been recorded', async () => {
     render(new EmptySource(`test-${Math.random()}`));
     expect(await screen.findByTestId('ai-calls-empty')).toHaveTextContent(

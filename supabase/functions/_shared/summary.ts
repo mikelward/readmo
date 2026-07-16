@@ -244,6 +244,108 @@ function stripHeadPreamble(text: string): string {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Access-block detection — naming an unreadable page instead of summarizing it.
+//
+// The summary path fetches the article (via Jina, or the stored body as a
+// fallback) and hands it to Gemini. When that "article" is really an
+// access-block page — a 403 wall, a login gate, a bot-block notice — summarizing
+// it wastes a Gemini call and yields a verbose "there's no article content to
+// summarize" meta-paragraph in the reader's summary card. Instead we detect the
+// block up front (no Gemini call) and the reader shows a short "Summary blocked
+// by {site}" line. Two signals detect it: the fetch's HTTP status when it's a
+// stable non-2xx access code, and a scan of the page title/body (r.jina.ai
+// commonly returns the block HTML as 200 markdown, so the status alone won't
+// reveal it). The exact cause doesn't change the copy, so both are just booleans.
+
+/** Whether a non-2xx fetch status is a stable ACCESS denial — the page can't be
+ * read and won't change on a retry, so it's worth showing a terminal "blocked"
+ * card. A transient 429/5xx is deliberately excluded: it stays on the existing
+ * retryable path rather than caching a permanent block. */
+export function isBlockingHttpStatus(status: number): boolean {
+  switch (status) {
+    case 401: // Unauthorized
+    case 403: // Forbidden
+    case 404: // Not Found
+    case 410: // Gone
+    case 451: // Unavailable For Legal Reasons
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** A body at or below this length is short enough to plausibly BE a block page
+ * rather than merely mention the words in passing, so the weaker phrase matches
+ * below are gated on it — a long article that quotes "access denied" isn't
+ * misread as a block. The unambiguous whole-page signatures ignore the gate. */
+export const BLOCK_BODY_MAX_CHARS = 2000;
+
+/** Whole-title error markers: an error page's title IS the error, so a title
+ * that is essentially just the code/phrase is a block on its own. Matched
+ * against the item title, trimmed, whole-string. */
+const TITLE_BLOCK_PATTERNS: readonly RegExp[] = [
+  /^(?:error\s*)?403(?:\s*[-:–—]?\s*forbidden)?$/i,
+  /^forbidden$/i,
+  /^access denied$/i,
+  /^permission denied$/i,
+  /^(?:401\s*[-:–—]?\s*)?unauthorized$/i,
+  /^(?:error\s*)?(?:404\s*[-:–—]?\s*)?(?:page\s+)?not found$/i,
+];
+
+/** Unambiguous whole-page block signatures — phrases a real article body would
+ * never carry verbatim — so they match regardless of body length. */
+const STRONG_BLOCK_SIGNATURES: readonly RegExp[] = [
+  /you (?:don'?t|do not) have permission to access/i,
+  /access to this (?:page|resource|document|website) has been denied/i,
+  /attention required!\s*\|\s*cloudflare/i,
+  /(?:sorry,?\s*)?you have been blocked/i,
+  /checking your browser before accessing/i,
+];
+
+/** Weaker phrases that also occur in normal prose — only a block when the body
+ * is short enough (see {@link BLOCK_BODY_MAX_CHARS}) to be the page itself. */
+const WEAK_BLOCK_PHRASES: readonly RegExp[] = [
+  /\b403\s+forbidden\b/i,
+  /\b(?:http\s+)?error\s+403\b/i,
+  /\baccess denied\b/i,
+  /\bpermission denied\b/i,
+  /\b401\s+unauthorized\b/i,
+  /\b404\s+not found\b/i,
+];
+
+/** Whether a fetched page's title/body looks like a block page even though the
+ * fetch returned 200 (r.jina.ai serves the block HTML as markdown). Conservative:
+ * a whole-title error marker or an unambiguous whole-page signature matches on
+ * its own; a weaker phrase counts only in a short body. False when nothing strong
+ * matches — the caller then summarizes normally. */
+export function looksLikeBlockPage(
+  title: string | null | undefined,
+  body: string | null | undefined,
+): boolean {
+  const t = (title ?? '').trim();
+  if (TITLE_BLOCK_PATTERNS.some((re) => re.test(t))) return true;
+  const b = (body ?? '').trim();
+  if (!b) return false;
+  if (STRONG_BLOCK_SIGNATURES.some((re) => re.test(b))) return true;
+  if (b.length <= BLOCK_BODY_MAX_CHARS && WEAK_BLOCK_PHRASES.some((re) => re.test(b))) {
+    return true;
+  }
+  return false;
+}
+
+/** The host shown in the "Summary blocked by {site}" line — the URL's hostname
+ * with a leading "www." dropped ("reddit.com", "ft.com"). Null when there's no
+ * URL or it won't parse (the client then shows the bare "Summary blocked"). */
+export function siteLabel(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname.replace(/^www\./, '') || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Minimal shape of the Gemini `generateContent` REST response we read. */
 export interface GeminiResponseLike {
   candidates?: Array<{
@@ -320,13 +422,18 @@ export const SUMMARY_MAX_WAIT_MS = 45_000;
  * lease). `cached: true` means a summary was actually persisted to
  * `items.ai_summary` — so waiters can see it and the lease must NOT be released. */
 export interface SummaryOutcome {
-  status: 'ok' | 'empty' | 'unavailable' | 'unreachable';
+  status: 'ok' | 'empty' | 'unavailable' | 'unreachable' | 'blocked';
   summary: string | null;
   retryable?: boolean;
   /** Set on the generator path: true iff the summary was written to the shared
    * item. Absent/false on every non-`ok` outcome and on an `ok` whose cache
    * write failed (so the lease is released and a waiter regenerates). */
   cached?: boolean;
+  /** For `blocked`: the publisher host, rendered client-side as "Summary
+   * blocked by {site}" ("Summary blocked by reddit.com"). Null when the item has
+   * no parseable URL — the client then shows the bare "Summary blocked". Absent
+   * on every other status. */
+  site?: string | null;
 }
 
 /**

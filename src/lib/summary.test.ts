@@ -6,9 +6,11 @@ function q(data?: SummaryResult) {
 }
 
 describe('isSummarySettled', () => {
-  it('treats terminal ok/empty as settled', () => {
+  it('treats terminal ok/empty/blocked as settled', () => {
     expect(isSummarySettled({ status: 'ok', summary: 'x' })).toBe(true);
     expect(isSummarySettled({ status: 'empty', summary: null })).toBe(true);
+    // A blocked page won't become readable on a retry — terminal, no polling.
+    expect(isSummarySettled({ status: 'blocked', summary: null, site: 'reddit.com' })).toBe(true);
   });
 
   it('treats transient unreachable as unsettled', () => {
@@ -39,9 +41,12 @@ describe('summaryStaleTime', () => {
     expect(summaryStaleTime(q(undefined))).toBe(0);
   });
 
-  it('caches terminal ok/empty forever', () => {
+  it('caches terminal ok/empty/blocked forever', () => {
     expect(summaryStaleTime(q({ status: 'ok', summary: 'x' }))).toBe(Infinity);
     expect(summaryStaleTime(q({ status: 'empty', summary: null }))).toBe(Infinity);
+    expect(
+      summaryStaleTime(q({ status: 'blocked', summary: null, site: 'reddit.com' })),
+    ).toBe(Infinity);
   });
 
   it('keeps transient unreachable stale for retry', () => {

@@ -2,13 +2,21 @@
 // unit-tested without React or a data source. Mirrors `fullText.ts` in shape.
 
 /** The outcome of a server summary request. Mirrors the `summary` Edge
- * Function's `{ status, summary, retryable? }` envelope. */
-export type SummaryStatus = 'ok' | 'empty' | 'unavailable' | 'unreachable';
+ * Function's `{ status, summary, retryable?, site? }` envelope. */
+export type SummaryStatus = 'ok' | 'empty' | 'unavailable' | 'unreachable' | 'blocked';
 
 export interface SummaryResult {
   status: SummaryStatus;
   /** The one-sentence summary when `status === 'ok'`, otherwise null. */
   summary: string | null;
+  /**
+   * For `status === 'blocked'`: the publisher host, rendered as "Summary blocked
+   * by {site}". The article page couldn't be read (a 403 wall, login gate, or
+   * bot block), so no Gemini call was spent. Null when the item had no parseable
+   * URL — the card then shows the bare "Summary blocked". Absent on every other
+   * status.
+   */
+  site?: string | null;
   /**
    * A normally-terminal outcome that should nonetheless be re-checked later
    * because a server-side condition could flip — e.g. the allowlist denial (an
@@ -50,7 +58,7 @@ export function isSummarySettled(data: SummaryResult): boolean {
 }
 
 /** staleTime policy for the `['summary', id]` query: terminal outcomes (`ok`,
- * `empty`) are cached forever, but a transient `unreachable`, a result flagged
+ * `empty`, `blocked`) are cached forever, but a transient `unreachable`, a result flagged
  * {@link SummaryResult.retryable} (e.g. an allowlist denial a later change
  * could flip), or a provisional {@link SummaryResult.viaRow} seed — stays stale
  * so the next pin/open revalidates it.

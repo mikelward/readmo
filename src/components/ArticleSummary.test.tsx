@@ -631,6 +631,36 @@ describe('ArticleSummary', () => {
     expect(called).toBe(true);
   });
 
+  it('names the site when the article page was blocked (no summary generated)', async () => {
+    // The `summary` function couldn't read the page (403 wall / login gate / bot
+    // block), so it returns `blocked` with the host instead of a verbose
+    // "no content to summarize" gist. The card shows a short line, no Retry.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    source.getSummary = async (): Promise<SummaryResult> => ({
+      status: 'blocked',
+      summary: null,
+      site: 'reddit.com',
+    });
+    renderWithProviders(<ArticleSummary id={ITEM_ID} online autoGenerate />, { source });
+    const card = await screen.findByTestId('article-summary-blocked');
+    expect(card).toHaveTextContent('Summary blocked by reddit.com');
+    expect(screen.queryByTestId('article-summary-retry')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('article-summary-body')).not.toBeInTheDocument();
+  });
+
+  it('shows a bare blocked line when the item had no URL (site null)', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    source.getSummary = async (): Promise<SummaryResult> => ({
+      status: 'blocked',
+      summary: null,
+      site: null,
+    });
+    renderWithProviders(<ArticleSummary id={ITEM_ID} online autoGenerate />, { source });
+    const card = await screen.findByTestId('article-summary-blocked');
+    expect(card).toHaveTextContent('Summary blocked');
+    expect(card.textContent).not.toContain(' by ');
+  });
+
   it('stays silent when the service is not configured (unavailable)', async () => {
     // `unavailable` (GOOGLE_API_KEY unset) is an operator condition, not a
     // user-actionable one — Retry would not help, so the card stays silent by

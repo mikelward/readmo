@@ -173,8 +173,9 @@ export type AiCallKind = 'summary' | 'spoiler';
 export interface AiCall {
   kind: AiCallKind;
   /** The terminal outcome. summary: `ok` | `empty` | `unavailable` (key unset) |
-   * `unreachable` (transient) | `accepted`; spoiler: `rewrite` | `none` |
-   * `failed`. Free text so a new status needs no client change. */
+   * `unreachable` (transient) | `blocked` (page unreadable — no Gemini call) |
+   * `accepted`; spoiler: `rewrite` | `none` | `failed`. Free text so a new
+   * status needs no client change. */
   status: string;
   /** The model's HTTP status when the call reached Gemini (e.g. 200, 429, 503),
    * or null when it never did (key unset, transport failure). */

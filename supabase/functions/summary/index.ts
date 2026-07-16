@@ -87,9 +87,12 @@ import {
   buildSummaryPrompt,
   clampSummaryText,
   coalesceSummaryGeneration,
+  isBlockingHttpStatus,
   isSummaryOutcomeTransient,
+  looksLikeBlockPage,
   parseGeminiText,
   pickStoredContent,
+  siteLabel,
   stripSummaryPreamble,
 } from '../_shared/summary.ts';
 import type { SummaryLeaseClient, SummaryOutcome } from '../_shared/summary.ts';
@@ -568,27 +571,33 @@ async function generateAndCacheLogged(
   item: { feed_id: string; url: string | null; title: string | null; content_html: string | null; full_content_html: string | null },
   itemId: string,
 ): Promise<SummaryOutcome> {
-  const { outcome, httpStatus } = await generateAndCache(service, apiKey, item, itemId);
+  const { outcome, httpStatus, logDetail } = await generateAndCache(service, apiKey, item, itemId);
   await recordAiCall(service, {
     kind: 'summary',
     status: outcome.status,
     // The model's response code when the call reached Gemini (e.g. 429/503), so
     // a summary failure is diagnosable from /admin/ai; null for a pre-call
     // outcome (no article text) or a transport-level failure (timeout/network).
+    // For an HTTP-status block it's the publisher's access code (403/401/…).
     httpStatus,
     itemId,
-    error: outcome.status === 'unreachable' ? 'summary generation failed' : null,
+    // A short reason for /admin/ai: the block detail (why a page was blocked)
+    // when present, else the generic generation-failure note for `unreachable`.
+    error: logDetail ?? (outcome.status === 'unreachable' ? 'summary generation failed' : null),
   });
   return outcome;
 }
 
-/** {@link generateAndCache}'s result: the wire {@link SummaryOutcome} plus the
- * model's HTTP status (kept OUT of the outcome so it never leaks into the
- * client envelope), for the AI call log only. `httpStatus` is null for an
- * outcome decided before the Gemini call (no article text). */
+/** {@link generateAndCache}'s result: the wire {@link SummaryOutcome} plus two
+ * fields kept OUT of the outcome so they never leak into the client envelope,
+ * for the AI call log only. `httpStatus` is the model's (or, for an HTTP-status
+ * block, the publisher's) HTTP code, null for an outcome decided before any
+ * fetch/call. `logDetail` is a short human reason (e.g. why a page was
+ * `blocked`) surfaced on /admin/ai, null when the status is self-explanatory. */
 interface GenerateResult {
   outcome: SummaryOutcome;
   httpStatus: number | null;
+  logDetail?: string | null;
 }
 
 async function generateAndCache(
@@ -601,7 +610,8 @@ async function generateAndCache(
   // paywalled / JS-rendered pages, and keeps the summary off our polite
   // first-party fetcher). Fall back to the body we already store when Jina is
   // unconfigured, the URL looks secret-bearing, or the fetch fails.
-  let content = await maybeFetchViaJinaMarkdown(service, item.feed_id, item.url);
+  const jina = await maybeFetchViaJinaMarkdown(service, item.feed_id, item.url);
+  let content = jina.text;
   let source = 'jina';
   if (!content) {
     const stored = pickStoredContent({
@@ -609,11 +619,25 @@ async function generateAndCache(
       fullContentHtml: item.full_content_html,
     });
     if (!stored) {
-      // No Jina text AND no stored body. If the item has a URL this is
-      // TRANSIENT — Jina may be unconfigured / down / screened now (or a full
-      // body could be extracted later), so flag `retryable` and the reader
-      // re-checks on a later mount once it can yield text. Only a URL-less,
-      // body-less item is truly terminal (nothing to ever summarize).
+      // No Jina text AND no stored body. If Jina reported a stable non-2xx
+      // ACCESS status (403/401/404/410/451), the page can't be read at all — show
+      // the "Summary blocked by …" card instead of a silent `empty`, and spend no
+      // Gemini call. (A transient 429/5xx isn't a block and falls through to the
+      // retryable path below.)
+      if (jina.status != null && isBlockingHttpStatus(jina.status)) {
+        console.log(
+          `summary: item ${itemId} — Jina HTTP ${jina.status}, no fallback body → blocked`,
+        );
+        return {
+          outcome: { status: 'blocked', summary: null, site: siteLabel(item.url) },
+          httpStatus: jina.status,
+          logDetail: `blocked: fetch returned HTTP ${jina.status}`,
+        };
+      }
+      // Otherwise TRANSIENT when the item has a URL — Jina may be unconfigured /
+      // down / screened now (or a full body could be extracted later), so flag
+      // `retryable` and the reader re-checks on a later mount once it can yield
+      // text. Only a URL-less, body-less item is truly terminal.
       console.log(`summary: item ${itemId} — no article text from Jina or storage`);
       return {
         outcome: {
@@ -636,6 +660,21 @@ async function generateAndCache(
     }
     content = stored.text;
     source = 'stored';
+  }
+
+  // The fetch returned text, but that "article" may itself be a block page —
+  // r.jina.ai commonly returns a 403 wall / bot-block notice as 200 markdown, and
+  // a feed body can be a "you don't have permission" stub. Detect that up front
+  // and show "Summary blocked by …" rather than spending a Gemini call to produce
+  // a verbose "there's no content to summarize" paragraph. Conservative (see
+  // looksLikeBlockPage) so a real article isn't misread.
+  if (looksLikeBlockPage(item.title, content)) {
+    console.log(`summary: item ${itemId} — ${source} content looks like a block page → blocked`);
+    return {
+      outcome: { status: 'blocked', summary: null, site: siteLabel(item.url) },
+      httpStatus: null,
+      logDetail: `blocked: ${source} content looks like a block page`,
+    };
   }
 
   // Content here is always the full article (Jina markdown, the extraction, or a
@@ -724,14 +763,16 @@ function makeLeaseClient(service: any): SummaryLeaseClient {
  *       service-role client), and
  *   (b) screen the item URL with looksTokenized() (query strings, long
  *       hex/base64url blobs, embedded credentials).
- * Either trips → return null (don't forward to the third party), and the caller
- * falls back to the stored body. Returns clamped markdown, or null. */
+ * Either trips → return no text (don't forward to the third party), and the
+ * caller falls back to the stored body. Returns the {@link JinaFetch} — clamped
+ * markdown plus Jina's HTTP status (both null on a screen-out, since no request
+ * is made). */
 async function maybeFetchViaJinaMarkdown(
   service: any,
   feedId: string,
   url: string | null,
-): Promise<string | null> {
-  if (!url) return null;
+): Promise<JinaFetch> {
+  if (!url) return { text: null, status: null };
   // Obey the same URL policy as our other server-side fetches before handing a
   // publisher-controlled URL to a third party (guardrail #6): http/https only,
   // no embedded credentials, and reject internal-address IP literals
@@ -744,26 +785,38 @@ async function maybeFetchViaJinaMarkdown(
   try {
     assertSafeUrl(url);
   } catch {
-    return null;
+    return { text: null, status: null };
   }
-  if (looksTokenized(url)) return null; // URL looks secret-bearing → never forward
+  // URL looks secret-bearing → never forward.
+  if (looksTokenized(url)) return { text: null, status: null };
   const { data: feed } = await service
     .from('feeds')
     .select('secret_url')
     .eq('id', feedId)
     .maybeSingle();
-  if (!feed || feed.secret_url) return null; // private/tokenized feed → skip
+  // Private/tokenized feed → skip.
+  if (!feed || feed.secret_url) return { text: null, status: null };
   return fetchViaJinaMarkdown(url);
+}
+
+/** What a Jina fetch attempt yields: the clamped markdown (null when Jina is
+ * unconfigured, the request failed, or the size cap was hit) plus the HTTP
+ * `status` Jina returned — null on a transport failure (timeout/network) or when
+ * no request was made. A stable non-2xx access status with no text lets the
+ * caller show "Summary blocked by …" instead of a bare `empty`. */
+interface JinaFetch {
+  text: string | null;
+  status: number | null;
 }
 
 /** Fetch a page via Jina Reader (r.jina.ai) as markdown. The fetch target is
  * always the fixed host r.jina.ai (the article URL only appears in the path), so
- * there's no redirect-based SSRF here. Returns clamped markdown, or null if Jina
- * is unconfigured or the request fails / exceeds the size cap. The URL has
- * already been screened by maybeFetchViaJinaMarkdown. */
-async function fetchViaJinaMarkdown(target: string): Promise<string | null> {
+ * there's no redirect-based SSRF here. Returns the clamped markdown and Jina's
+ * HTTP status (see {@link JinaFetch}). The URL has already been screened by
+ * maybeFetchViaJinaMarkdown. */
+async function fetchViaJinaMarkdown(target: string): Promise<JinaFetch> {
   const apiKey = Deno.env.get('JINA_API_KEY');
-  if (!apiKey) return null;
+  if (!apiKey) return { text: null, status: null };
   try {
     const res = await fetch(`https://r.jina.ai/${target}`, {
       headers: {
@@ -775,7 +828,7 @@ async function fetchViaJinaMarkdown(target: string): Promise<string | null> {
     });
     if (!res.ok) {
       console.warn(`summary: Jina responded HTTP ${res.status} for ${redactUrl(target)}`);
-      return null;
+      return { text: null, status: res.status };
     }
     const reader = res.body?.getReader();
     let text: string;
@@ -791,7 +844,7 @@ async function fetchViaJinaMarkdown(target: string): Promise<string | null> {
         if (total > JINA_MAX_BYTES) {
           reader.cancel();
           console.warn(`summary: Jina body exceeded ${JINA_MAX_BYTES} bytes for ${redactUrl(target)}`);
-          return null;
+          return { text: null, status: res.status };
         }
         chunks.push(value);
       }
@@ -803,10 +856,10 @@ async function fetchViaJinaMarkdown(target: string): Promise<string | null> {
       }
       text = new TextDecoder().decode(out);
     }
-    return clampSummaryText(text);
+    return { text: clampSummaryText(text), status: res.status };
   } catch (err) {
     console.warn(`summary: Jina fetch failed for ${redactUrl(target)}:`, err);
-    return null;
+    return { text: null, status: null };
   }
 }
 
