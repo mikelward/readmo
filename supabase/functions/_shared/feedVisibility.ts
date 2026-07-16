@@ -18,6 +18,18 @@ export interface FeedPrivacyRow {
   secret_url: string | null;
 }
 
+/** Whether a Supabase `auth.getUser()` error is a TRANSIENT outage worth
+ * retrying, vs a definitive rejection. A 4xx (missing / invalid / expired JWT —
+ * including the anonymous-key caller, which 401s rather than resolving to a null
+ * user) is definitive and must be withheld (→ 404); only a 5xx, or a network
+ * failure with no/zero status, is retryable. Used by the shared-item fallback in
+ * fulltext/summary so an anon caller still hits the intended 404 while a genuine
+ * Auth outage retries. */
+export function isTransientAuthError(err: unknown): boolean {
+  const status = (err as { status?: number } | null)?.status;
+  return status == null || status === 0 || status >= 500;
+}
+
 /** True when a feed is public (shareable to non-subscribers): no secret_url and
  * a fetch url that doesn't look like it embeds a token. Conservative — an absent
  * or tokenized url is treated as private. This is the soft paywall gate (the

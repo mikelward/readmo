@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { feedIsPublic, readItemIfPublicFeed } from './feedVisibility.ts';
+import { feedIsPublic, isTransientAuthError, readItemIfPublicFeed } from './feedVisibility.ts';
 
 describe('feedIsPublic', () => {
   it('is true for a plain public feed url with no secret', () => {
@@ -33,6 +33,22 @@ describe('feedIsPublic', () => {
     expect(feedIsPublic({ url: 'ftp://x.example/feed.xml', secret_url: null })).toBe(false);
     expect(feedIsPublic({ url: 'javascript:alert(1)', secret_url: null })).toBe(false);
     expect(feedIsPublic({ url: 'file:///etc/passwd', secret_url: null })).toBe(false);
+  });
+});
+
+describe('isTransientAuthError', () => {
+  it('is true for a 5xx or network (no/zero status) error — retryable outage', () => {
+    expect(isTransientAuthError({ status: 500 })).toBe(true);
+    expect(isTransientAuthError({ status: 503 })).toBe(true);
+    expect(isTransientAuthError({ status: 0 })).toBe(true);
+    expect(isTransientAuthError({})).toBe(true);
+    expect(isTransientAuthError(new Error('network'))).toBe(true);
+  });
+
+  it('is false for a 4xx auth rejection — anon / invalid JWT must be withheld', () => {
+    expect(isTransientAuthError({ status: 401 })).toBe(false);
+    expect(isTransientAuthError({ status: 403 })).toBe(false);
+    expect(isTransientAuthError({ status: 400 })).toBe(false);
   });
 });
 
