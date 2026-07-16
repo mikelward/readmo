@@ -18,6 +18,7 @@ import {
   useGroupByFeed,
   useHideOnScroll,
   useHideSportsSpoilers,
+  useEffectiveHideSpoilers,
   useItemSort,
   useListLayout,
   useShowRowFavicon,
@@ -263,6 +264,73 @@ describe('useReadingPrefs', () => {
       act(() => screen.getByRole('button').click());
       expect(screen.getByRole('button')).toHaveTextContent('on');
       expect(window.localStorage.getItem(HIDE_SPORTS_SPOILERS_KEY)).toBe('1');
+    });
+  });
+
+  describe('effective spoiler-hiding (session override)', () => {
+    function EffectiveSpoilerProbe() {
+      const { hideSpoilers, toggle } = useEffectiveHideSpoilers();
+      return (
+        <button type="button" onClick={toggle}>
+          {hideSpoilers ? 'hidden' : 'shown'}
+        </button>
+      );
+    }
+
+    it('follows the saved preference until overridden (default ON)', () => {
+      render(<EffectiveSpoilerProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent('hidden');
+    });
+
+    it('follows a persisted opted-out preference', () => {
+      window.localStorage.setItem(HIDE_SPORTS_SPOILERS_KEY, '0');
+      resetReadingPrefsCacheForTest();
+      render(<EffectiveSpoilerProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent('shown');
+    });
+
+    it('toggles the effective state for the session', () => {
+      render(<EffectiveSpoilerProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent('hidden');
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('shown');
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('hidden');
+    });
+
+    it('never writes the override to localStorage (resets on refresh)', () => {
+      render(<EffectiveSpoilerProbe />);
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('shown');
+      // The session override is in-memory only — the saved preference is
+      // untouched, so a fresh load (simulated by dropping the memo) reverts.
+      expect(window.localStorage.getItem(HIDE_SPORTS_SPOILERS_KEY)).toBeNull();
+    });
+
+    it('resetReadingPrefsCacheForTest clears the override', () => {
+      render(<EffectiveSpoilerProbe />);
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('shown');
+      resetReadingPrefsCacheForTest();
+      // A remount (fresh session) after the reset follows the saved preference.
+      render(<EffectiveSpoilerProbe />);
+      expect(screen.getAllByRole('button')[1]).toHaveTextContent('hidden');
+    });
+
+    it('shares the override across separate consumers', () => {
+      render(
+        <>
+          <EffectiveSpoilerProbe />
+          <EffectiveSpoilerProbe />
+        </>,
+      );
+      const [a, b] = screen.getAllByRole('button');
+      expect(a).toHaveTextContent('hidden');
+      expect(b).toHaveTextContent('hidden');
+      // Toggling one flips both — the eye toggle is app-wide for the session.
+      act(() => a.click());
+      expect(a).toHaveTextContent('shown');
+      expect(b).toHaveTextContent('shown');
     });
   });
 

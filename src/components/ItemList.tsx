@@ -16,7 +16,12 @@ import { useConnectivityStatus } from '../hooks/useOnlineStatus';
 import { useFeedItems, dedupeFeedPages, type FetchPage } from '../hooks/useFeedItems';
 import type { ItemSort, Page } from '../lib/data/DataSource';
 import { useInViewIds } from '../hooks/useInViewIds';
-import { useHideOnScroll, useBottomBarPosition } from '../hooks/useReadingPrefs';
+import {
+  useHideOnScroll,
+  useBottomBarPosition,
+  useEffectiveHideSpoilers,
+} from '../hooks/useReadingPrefs';
+import { useCapabilities, canUseFullText } from '../hooks/useCapabilities';
 import { useCollapsedFeeds } from '../hooks/useCollapsedFeeds';
 import { useTopChromeHeight } from '../hooks/useTopChromeHeight';
 import { useNewshackerLink } from '../hooks/useNewshackerLink';
@@ -2796,6 +2801,17 @@ export function ItemList({
     ? { itemSort, onToggle: onToggleSort }
     : undefined;
 
+  // The spoiler eye toggle rides the top toolbar, but only for allowlisted
+  // callers — the spoiler-free rewrite only ever shows for them (same gate the
+  // rows use), so off-list the button would toggle nothing. It flips the
+  // effective spoiler-hiding state for the session (see useEffectiveHideSpoilers);
+  // a refresh drops the override back to the saved preference.
+  const { hideSpoilers, toggle: toggleSpoilers } = useEffectiveHideSpoilers();
+  const spoilerAllowed = canUseFullText(useCapabilities());
+  const spoilerControl = spoilerAllowed
+    ? { hideSpoilers, onToggle: toggleSpoilers }
+    : undefined;
+
   const collapseControls =
     groupByFeed && feedIdsInView.length > 0
       ? {
@@ -3200,6 +3216,7 @@ export function ItemList({
         collapse={collapseControls}
         group={groupControl}
         sort={sortControl}
+        spoiler={spoilerControl}
         onUndo={handleUndoScroll}
       />
 

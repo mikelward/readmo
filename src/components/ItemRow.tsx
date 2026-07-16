@@ -14,7 +14,7 @@ import { usePointerDevice } from '../hooks/usePointerDevice';
 import { useWideViewport } from '../hooks/useWideViewport';
 import { useSwipeToDismiss } from '../hooks/useSwipeToDismiss';
 import { useItemState } from '../hooks/useItemState';
-import { useHideSportsSpoilers, useListLayout } from '../hooks/useReadingPrefs';
+import { useEffectiveHideSpoilers, useListLayout } from '../hooks/useReadingPrefs';
 import { leadImageUrl, itemPreviewText } from '../lib/itemPreview';
 import { useCapabilities, canUseFullText } from '../hooks/useCapabilities';
 import { displayTitle } from '../lib/spoilerHeadline';
@@ -121,7 +121,9 @@ export function ItemRow({
   // (see lib/spoilerHeadline). `title` is the DISPLAYED text, so every label /
   // menu header below stays spoiler-free too; the original rides the marker's
   // hover reveal.
-  const { hideSportsSpoilers } = useHideSportsSpoilers();
+  // The effective spoiler-hiding state: the saved preference, unless the
+  // toolbar's eye toggle overrode it this session (see useEffectiveHideSpoilers).
+  const { hideSpoilers } = useEffectiveHideSpoilers();
   // Optimistic allowlist gate: OPEN while capabilities are still loading (default
   // caps → allowed). For a spoiler-HIDING feature this is the safe pending state
   // — showing the already-cached rewrite immediately avoids flashing the original
@@ -132,7 +134,7 @@ export function ItemRow({
   // avoid firing Edge calls — here there's no request, just which text to paint.)
   const spoilerAllowed = canUseFullText(useCapabilities());
   const headline = displayTitle(item, {
-    hideSpoilers: hideSportsSpoilers,
+    hideSpoilers,
     allowed: spoilerAllowed,
   });
   const title = headline.text || '[untitled]';

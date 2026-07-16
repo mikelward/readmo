@@ -256,3 +256,57 @@ describe('ListToolbar sort-order toggle', () => {
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('ListToolbar spoiler toggle', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+
+  it('renders no spoiler toggle without the spoiler prop', () => {
+    renderWithProviders(<ListToolbar />);
+    expect(screen.queryByTestId('spoiler-toggle-btn')).toBeNull();
+  });
+
+  it('renders an icon-only toggle with a stable accessible name', () => {
+    renderWithProviders(
+      <ListToolbar spoiler={{ hideSpoilers: true, onToggle: vi.fn() }} />,
+    );
+    const btn = screen.getByTestId('spoiler-toggle-btn');
+    // Icon-only: the accessible name comes from aria-label, not visible text.
+    expect(btn).toHaveAccessibleName('Hide spoilers');
+    expect(btn).toHaveTextContent('');
+    expect(btn.querySelector('svg')).not.toBeNull();
+  });
+
+  it('reflects the hiding (pressed) state via aria-pressed and the active class', () => {
+    renderWithProviders(
+      <ListToolbar spoiler={{ hideSpoilers: true, onToggle: vi.fn() }} />,
+    );
+    const btn = screen.getByTestId('spoiler-toggle-btn');
+    expect(btn).toHaveAttribute('aria-pressed', 'true');
+    expect(btn).toHaveClass('list-toolbar__button--active');
+  });
+
+  it('reflects the revealed (unpressed) state via aria-pressed', () => {
+    renderWithProviders(
+      <ListToolbar spoiler={{ hideSpoilers: false, onToggle: vi.fn() }} />,
+    );
+    const btn = screen.getByTestId('spoiler-toggle-btn');
+    expect(btn).toHaveAttribute('aria-pressed', 'false');
+    expect(btn).not.toHaveClass('list-toolbar__button--active');
+  });
+
+  it('calls onToggle when tapped', async () => {
+    const onToggle = vi.fn();
+    renderWithProviders(
+      <ListToolbar spoiler={{ hideSpoilers: true, onToggle }} />,
+    );
+    await userEvent.setup().click(screen.getByTestId('spoiler-toggle-btn'));
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+});

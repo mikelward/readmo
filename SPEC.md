@@ -1645,7 +1645,7 @@ negligible and off every critical path. See the External services table in
 6. **List toolbar** — sticky below the header: right-aligned **Undo** +
    **Sweep unpinned** (Mark all done), and a left-aligned cluster of view
    toggles in this order: **Group by feed**, **Collapse all / Expand all**,
-   **Sort order**. The **Group by feed** toggle (a flat-list / tree icon
+   **Sort order**, **Hide spoilers**. The **Group by feed** toggle (a flat-list / tree icon
    that mirrors the current layout, with a
    long-press / hover tooltip and `aria-pressed` for its on/off state) is a
    one-tap shortcut for the `readmo:group-by-feed` reading preference, so the
@@ -1660,7 +1660,15 @@ negligible and off every critical path. See the External services table in
    column plus a direction arrow (9→0 + down arrow = newest-first / descending,
    0→9 + up arrow = oldest-first / ascending) — and its tooltip / accessible
    name names that order, and it rides **every** feed view — Home,
-   folders, and single feeds — since sort applies even where grouping doesn't. Sweep marks done only
+   folders, and single feeds — since sort applies even where grouping doesn't.
+   The **Hide spoilers** toggle (an eye icon — open when spoilers are shown,
+   closed when hidden — with a long-press / hover tooltip and `aria-pressed`) is
+   a one-tap reveal/re-hide of the spoiler-free sports headlines (see
+   *Spoiler-free sports headlines*): it flips the effective hide-spoilers state
+   for **this session only** — never touching the saved **Hide sports spoilers**
+   preference — so a refresh reverts to that preference. It shows **only for
+   allowlisted callers** (the same gate the rewrites use — off-list it would
+   toggle nothing) and rides every feed view. Sweep marks done only
    the unpinned rows that
    are **fully visible right now** — not the whole loaded list — so scrolling
    past content and tapping the broom can't dismiss rows off-screen. A row
@@ -2849,6 +2857,10 @@ page's discipline is unchanged.
     (`useHideSportsSpoilers`, a synced per-account preference, **default on**, in the
     Settings → Smart features section; the toggle is hidden for off-list users). Off-list,
     setting-off, or no rewrite cached → the original headline, untouched. The
+    **list toolbar's Hide spoilers eye** (allowlisted callers only — see *List
+    toolbar*) overrides this per session without changing the saved preference,
+    so a reader can reveal or re-hide all rewrites on the fly and a refresh
+    reverts to the preference. The
     rewritten row carries a **subtle, non-interactive marker**
     (`VisibilityOff` glyph, no tap zone — guardrail #2) whose native tooltip
     reveals the original. In the **Title + excerpt** layout the body preview is

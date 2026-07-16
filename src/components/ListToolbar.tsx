@@ -13,6 +13,8 @@ import {
   UnfoldLess,
   UnfoldMore,
   VerticalAlignTop,
+  Visibility,
+  VisibilityOff,
 } from './icons';
 import type { ItemSort } from '../lib/data/DataSource';
 import type { ItemId } from '../lib/types';
@@ -71,6 +73,18 @@ export interface SortAction {
   onToggle: () => void;
 }
 
+/** Top-bar toggle for hiding sports spoilers this session. Passed only to the
+ * top bar, and only for allowlisted callers (the feature is a no-op otherwise —
+ * see ItemList). Flips the effective spoiler-hiding state without touching the
+ * saved preference, so it resets on refresh. */
+export interface SpoilerAction {
+  /** The effective spoiler-hiding state right now (session override or the
+   * saved preference — see useEffectiveHideSpoilers). */
+  hideSpoilers: boolean;
+  /** Flip it for this session. */
+  onToggle: () => void;
+}
+
 interface Props {
   /** Where the bar sits. The bottom copy mirrors the top bar but leads with a
    * Back to top button in the left slot, matching the reader's two bars
@@ -93,6 +107,9 @@ interface Props {
   /** Feed views pass this to the top bar to render the sort-order toggle.
    * Omitted on the bottom bar. */
   sort?: SortAction;
+  /** Feed views pass this to the top bar (allowlisted callers only) to render
+   * the session spoiler toggle. Omitted on the bottom bar and off-list. */
+  spoiler?: SpoilerAction;
   /** Called after Undo restores a batch, with the ids it brought back (in list
    * order). Feed views use it to scroll back up to the topmost restored row when
    * it's off-screen above the fold (e.g. after undoing an auto-hide-on-scroll
@@ -111,6 +128,7 @@ export function ListToolbar({
   collapse,
   group,
   sort,
+  spoiler,
   onUndo,
 }: Props = {}) {
   const ds = useDataSource();
@@ -215,6 +233,25 @@ export function ListToolbar({
             ) : (
               <SortOldestFirst />
             )}
+          </TooltipButton>
+        ) : null}
+        {spoiler ? (
+          <TooltipButton
+            type="button"
+            className={
+              'list-toolbar__button' +
+              (spoiler.hideSpoilers ? ' list-toolbar__button--active' : '')
+            }
+            data-testid="spoiler-toggle-btn"
+            aria-pressed={spoiler.hideSpoilers}
+            onClick={spoiler.onToggle}
+            tooltip="Hide spoilers"
+            aria-label="Hide spoilers"
+          >
+            {/* The glyph mirrors the current state (like Group by feed): a closed
+                eye while spoilers are hidden, an open eye once they're revealed —
+                reinforcing the aria-pressed state. */}
+            {spoiler.hideSpoilers ? <VisibilityOff /> : <Visibility />}
           </TooltipButton>
         ) : null}
         {more ? (
