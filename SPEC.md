@@ -2336,12 +2336,14 @@ page's discipline is unchanged.
   etc. keep their natural size. `<figcaption>` text is inset 16px to align with body copy.
   Direct-child `<table>` elements (Reddit and similar feeds embed a thumbnail
   in a layout table) are reflowed as a block stack so the image leads
-  full-bleed above the text summary. For **Reddit image posts**, the feed body's
-  `<img>` is a small, server-cropped thumbnail (top/sides cut off) while the
-  full uncropped image is only linked as the post's "[link]"; the sanitizer
-  swaps the thumbnail's `src` for that full image at poll/refresh time (see
-  *Feed fetching & parsing* → `_shared/redditImages.ts`) so the reader shows the
-  whole picture rather than Reddit's crop. **Body copy matches the AI summary
+  full-bleed above the text summary. For **Reddit image and gallery posts**, the
+  feed body's `<img>` is a reduced thumbnail — a server-cropped tile (top/sides
+  cut off) or a downscaled preview (soft/blurry full-bleed) — while the full,
+  uncropped, full-resolution image lives elsewhere; the sanitizer swaps the
+  thumbnail's `src` for that full image at poll/refresh time (see *Feed fetching
+  & parsing* → `_shared/redditImages.ts`) so the reader shows the whole picture
+  at full resolution rather than Reddit's crop or a blurry preview. **Body copy
+  matches the AI summary
   card's text size** (0.95rem, ~15px at the default text size; line-height 1.4)
   so the summary and the article read as one continuous piece. It is sized in
   `rem`, so it scales with the Settings "Text size" choice along with the rest

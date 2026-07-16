@@ -1,24 +1,41 @@
 // Readmo Reddit thumbnail → full-image upgrade.
 //
 // Reddit's RSS/Atom feed embeds a small, server-cropped *thumbnail* as the item
-// body's <img> (a ~140px b.thumbs.redditmedia.com tile, or a cropped
-// preview.redd.it variant), while the full, uncropped image is only linked
-// separately as the "[link]" anchor that points at i.redd.it/<id>.<ext>.
-// Rendered full-bleed in the reader, that thumbnail shows a crop of the picture
-// with its top (and sides) cut off — the source of the "image is truncated at
-// the top" report. This pre-pass rewrites the thumbnail's src to the full image
-// so the reader shows the whole picture.
+// body's <img> (a ~140px b.thumbs.redditmedia.com tile, or a downscaled
+// preview.redd.it variant), while the full, uncropped image is served
+// elsewhere. Rendered full-bleed in the reader, the b.thumbs tile shows a crop
+// with its top (and sides) cut off (the "image is truncated at the top"
+// report), and the downscaled preview.redd.it variant renders soft/blurry (the
+// "image is blurry" report). This pre-pass rewrites the thumbnail's src to the
+// full image so the reader shows the whole picture at full resolution.
+//
+// Two ways to recover the original:
+//   1. The post's "[link]" anchor points at the submission target. For a single-
+//      image post that target *is* the full image (i.redd.it/<id>.<ext> or an
+//      external direct image), so we swap it in.
+//   2. For a *gallery* ("[link]" → reddit.com/gallery/…), where the body
+//      carries one downscaled preview.redd.it cover, we derive the original
+//      from the thumbnail itself: an internal preview.redd.it URL shares its
+//      media id with the full i.redd.it upload (preview.redd.it/<id>.<ext> ↔
+//      i.redd.it/<id>.<ext>), and the query string's `width`/`crop` is the only
+//      thing shrinking it, so dropping the host+query recovers full resolution.
+//      Its signed `s=` param can't be re-widened anyway, so the host swap is the
+//      only route. This mapping is only reliable for Reddit-hosted image/gallery
+//      uploads, so it is gated on the gallery "[link]" shape — a video post's
+//      preview.redd.it poster or a self/external post's preview may have no
+//      matching i.redd.it asset, and those are left untouched (as before).
 //
 // It runs *before* sanitizeContent(): the swapped-in i.redd.it URL then flows
 // through the normal <img> transform (absolutize + route through /api/img), so
 // the stored body is still fully sanitized and proxied. Never store/serve raw
 // publisher HTML — guardrail #6.
 //
-// Deliberately conservative — a no-op for every non-Reddit feed and for Reddit
-// gallery posts ("[link]" → /gallery/…), external-link posts, and self posts.
-// It only fires on the recognizable image-post shape: a "[link]" anchor whose
-// href is a direct image URL, plus exactly one <img> served from a known Reddit
-// thumbnail/preview host.
+// Deliberately conservative — a no-op for every non-Reddit feed, for external-
+// link, self, and video posts, and for external-preview.redd.it thumbnails
+// (whose original lives off-site, not on i.redd.it). It only fires on the
+// recognizable image/gallery-post shape: exactly one <img> from a known Reddit
+// thumbnail host where either "[link]" is a direct image or "[link]" is a
+// reddit.com/gallery/… URL and the thumbnail is an internal preview.redd.it URL.
 //
 // linkedom (already used by fulltext.ts) parses the snippet; the bare specifier
 // is rewritten for Deno via supabase/functions/import_map.json.
@@ -63,11 +80,46 @@ function isDirectImageUrl(url: string): boolean {
   return IMAGE_EXT_RE.test(u.pathname.toLowerCase());
 }
 
+/** True for a Reddit gallery submission target, `reddit.com/gallery/<id>` (the
+ * "[link]" href of a gallery post). Gates the preview→i.redd.it derivation to
+ * the one non-direct-"[link]" shape where that media-id mapping is reliable. */
+function isRedditGalleryUrl(url: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  const host = u.hostname.toLowerCase();
+  const isReddit = host === 'reddit.com' || host.endsWith('.reddit.com');
+  return isReddit && u.pathname.toLowerCase().startsWith('/gallery/');
+}
+
+/** Map an internal Reddit preview URL to its full-resolution i.redd.it
+ * original. `preview.redd.it/<id>.<ext>?width=…&crop=…&s=<sig>` and
+ * `i.redd.it/<id>.<ext>` share the media id + extension; only the query string
+ * (the downscale + signature) differs, so dropping the host+query yields the
+ * uncropped upload. Returns null for any other host — notably
+ * external-preview.redd.it, whose original is off-site, not on i.redd.it. */
+function fullImageFromPreview(src: string | null | undefined): string | null {
+  if (!src) return null;
+  let u: URL;
+  try {
+    u = new URL(src);
+  } catch {
+    return null;
+  }
+  if (u.hostname.toLowerCase() !== 'preview.redd.it') return null;
+  // pathname is `/<id>.<ext>`; i.redd.it serves the identical path, no query.
+  return `https://i.redd.it${u.pathname}`;
+}
+
 /**
- * Rewrite a Reddit feed body's cropped thumbnail <img> to the full uncropped
- * image linked as "[link]". Returns `html` unchanged for non-Reddit content,
- * gallery/external/self posts, or anything that doesn't match the exact
- * one-thumbnail-plus-image-"[link]" shape.
+ * Rewrite a Reddit feed body's cropped/downscaled thumbnail <img> to the full
+ * uncropped, full-resolution image — the one linked as "[link]" (image posts)
+ * or the i.redd.it original derived from a preview.redd.it cover (galleries).
+ * Returns `html` unchanged for non-Reddit content, external/self posts, and
+ * anything that doesn't match the exact one-thumbnail shape.
  */
 export function upgradeRedditThumbnails(html: string | null | undefined): string {
   if (!html) return html ?? '';
@@ -85,23 +137,32 @@ export function upgradeRedditThumbnails(html: string | null | undefined): string
     return html;
   }
 
-  // The "[link]" anchor points at the submission target. Only upgrade when it
-  // is itself a direct image (an image post) — galleries and external links are
-  // left alone.
-  const linkAnchor = [...doc.querySelectorAll('a')].find(
-    (a) => (a.textContent ?? '').trim().toLowerCase() === '[link]',
-  );
-  const fullUrl = linkAnchor?.getAttribute('href') ?? '';
-  if (!isDirectImageUrl(fullUrl)) return html;
-
   // Exactly one Reddit thumbnail in the body — the post's preview tile. Bail on
   // zero or several (an unexpected shape we won't second-guess).
   const thumbs = [...doc.querySelectorAll('img')].filter((im) =>
     isRedditThumbnailSrc(im.getAttribute('src')),
   );
   if (thumbs.length !== 1) return html;
-
   const img = thumbs[0];
+
+  // The "[link]" anchor points at the submission target. For a single-image
+  // post that target is itself the full image, so prefer it. For a gallery
+  // ("[link]" → reddit.com/gallery/…) — where "[link]" names no direct image —
+  // fall back to deriving the i.redd.it original from the preview.redd.it cover.
+  // Only galleries get the fallback: the media-id mapping is unreliable for
+  // video posters and external/self previews, so those are left unchanged. Bail
+  // if neither route yields a full image.
+  const linkAnchor = [...doc.querySelectorAll('a')].find(
+    (a) => (a.textContent ?? '').trim().toLowerCase() === '[link]',
+  );
+  const linkHref = linkAnchor?.getAttribute('href') ?? '';
+  const fullUrl = isDirectImageUrl(linkHref)
+    ? linkHref
+    : isRedditGalleryUrl(linkHref)
+      ? fullImageFromPreview(img.getAttribute('src'))
+      : null;
+  if (!fullUrl) return html;
+
   img.setAttribute('src', fullUrl);
   // The thumbnail's srcset and intrinsic width/height describe the cropped
   // tile, not the full image — drop them so the browser uses the real picture's
