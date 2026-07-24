@@ -111,6 +111,56 @@ describe('parseFeed — Atom', () => {
     expect(p.items[1].contentHtml).toContain('The whole article.');
     expect(p.items[1].summary).toBe('Short form.');
   });
+
+  it('never falls back to a hub/self link for the site URL', () => {
+    // Regression: with no <link rel="alternate">, the last-resort "first link
+    // with an href" took the WebSub hub as the feed's website — so the row
+    // showed pubsubhubbub.appspot.com's favicon and "open website" opened the
+    // hub. No document link → null, and the favicon derives from the FEED
+    // origin instead.
+    const xml = `<?xml version="1.0"?>
+      <feed xmlns="http://www.w3.org/2005/Atom">
+        <title>Hub only</title>
+        <link rel="hub" href="https://pubsubhubbub.appspot.com/"/>
+        <link rel="self" type="application/atom+xml" href="https://atom.example.com/feed.xml"/>
+      </feed>`;
+    const p = parseFeed(xml, 'https://atom.example.com/feed.xml');
+    expect(p.siteUrl).toBeNull();
+    expect(p.faviconUrl).toBe('https://atom.example.com/favicon.ico');
+    expect(p.faviconAdvertised).toBe(false);
+  });
+
+  it('never falls back to an enclosure link for the entry URL', () => {
+    // Regression: a podcast entry whose only link is the audio enclosure took
+    // the MP3 as its article URL, so opening the row played/downloaded the
+    // file. The enclosure still rides in `enclosures`.
+    const xml = `<?xml version="1.0"?>
+      <feed xmlns="http://www.w3.org/2005/Atom">
+        <title>Podcast</title>
+        <link rel="alternate" href="https://atom.example.com/"/>
+        <entry>
+          <id>urn:x:1</id>
+          <title>Episode 1</title>
+          <link rel="enclosure" type="audio/mpeg" href="https://cdn.example.net/ep1.mp3" length="9"/>
+        </entry>
+      </feed>`;
+    const p = parseFeed(xml, 'https://atom.example.com/feed.xml');
+    expect(p.items[0].url).toBeNull();
+    expect(p.items[0].enclosures).toEqual([
+      { url: 'https://cdn.example.net/ep1.mp3', type: 'audio/mpeg', length: 9 },
+    ]);
+  });
+
+  it('still uses a non-standard rel as the last resort', () => {
+    const xml = `<?xml version="1.0"?>
+      <feed xmlns="http://www.w3.org/2005/Atom">
+        <title>Odd rel</title>
+        <link rel="self" href="https://atom.example.com/feed.xml"/>
+        <link rel="canonical" href="https://atom.example.com/home"/>
+      </feed>`;
+    const p = parseFeed(xml, 'https://atom.example.com/feed.xml');
+    expect(p.siteUrl).toBe('https://atom.example.com/home');
+  });
 });
 
 describe('parseFeed — comments / discussion URL', () => {
