@@ -39,8 +39,9 @@ interface Lockfile {
 }
 
 const lock = JSON.parse(read('../../package-lock.json')) as Lockfile;
+const importMapSource = read('./import_map.json');
 const imports = (
-  JSON.parse(read('./import_map.json')) as { imports: Record<string, string> }
+  JSON.parse(importMapSource) as { imports: Record<string, string> }
 ).imports;
 
 /** The version npm actually installed for `name` (what vitest loads). */
@@ -92,4 +93,59 @@ describe('supabase/functions/import_map.json', () => {
       ).toBe(installed);
     },
   );
+});
+
+// The guard above only fails AFTER a bump has already landed the two files out
+// of step. Renovate's custom manager (renovate.json → customManagers) is what
+// keeps them in step in the first place, by editing the map in the same PR as
+// package.json. That manager reaches this file through a hand-written regex, so
+// it can silently stop matching — add a mapping in a shape the regex misses and
+// Renovate just stops managing it, with no signal until the parity test fires
+// on some later bump. Assert the regex still sees exactly what we pin.
+
+interface RenovateConfig {
+  customManagers?: Array<{
+    managerFilePatterns?: string[];
+    matchStrings?: string[];
+  }>;
+}
+
+describe('renovate.json custom manager for the import map', () => {
+  const renovate = JSON.parse(read('../../renovate.json')) as RenovateConfig;
+  const manager = renovate.customManagers?.find((m) =>
+    m.managerFilePatterns?.some((p) => p.includes('import_map')),
+  );
+
+  it('is configured', () => {
+    expect(
+      manager,
+      'renovate.json has no customManager targeting supabase/functions/import_map.json — ' +
+        'without it a dependency bump updates package.json but not the map, and CI goes ' +
+        'red on the parity assertion above',
+    ).toBeDefined();
+    expect(manager?.matchStrings?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it('still matches every pin in the import map', () => {
+    const found = new Map<string, string>();
+    for (const source of manager?.matchStrings ?? []) {
+      const re = new RegExp(source, 'g');
+      for (const m of importMapSource.matchAll(re)) {
+        const { depName, currentValue } = m.groups ?? {};
+        if (depName && currentValue) found.set(depName, currentValue);
+      }
+    }
+    // Every mapped specifier must be visible to Renovate, at the same version.
+    const expected = Object.fromEntries(
+      Object.entries(imports).map(([specifier, target]) => {
+        const withoutScheme = target.replace(/^npm:/, '');
+        return [specifier, withoutScheme.slice(withoutScheme.lastIndexOf('@') + 1)];
+      }),
+    );
+    expect(
+      Object.fromEntries(found),
+      "the customManager regex no longer captures every import-map pin, so Renovate " +
+        'would stop bumping the ones it misses',
+    ).toEqual(expected);
+  });
 });
