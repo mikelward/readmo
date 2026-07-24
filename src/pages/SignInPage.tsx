@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth, type OAuthProvider } from '../hooks/useAuth';
 import { usePageTitle } from '../hooks/useDocumentTitle';
-import { isSupabaseConfigured } from '../lib/supabase/client';
+import { isEmailAuthEnabled, isSupabaseConfigured } from '../lib/supabase/client';
 import '../components/ItemRow.css';
 import './SignInPage.css';
 
@@ -34,6 +34,10 @@ export function SignInPage() {
   // idle → sending → sent (magic link on its way); an error drops back to idle.
   const [phase, setPhase] = useState<'idle' | 'sending' | 'sent'>('idle');
   const [error, setError] = useState<string | null>(null);
+
+  // Passwordless email sign-in is opt-in per deployment (VITE_EMAIL_AUTH_ENABLED);
+  // when off, only the OAuth buttons show.
+  const emailEnabled = isEmailAuthEnabled();
 
   const from = (location.state as FromState | null)?.from;
   const target = from?.pathname
@@ -132,39 +136,43 @@ export function SignInPage() {
               </button>
             </div>
 
-            <div className="signin__divider">or</div>
+            {emailEnabled && (
+              <>
+                <div className="signin__divider">or</div>
 
-            <form className="signin__email-form" onSubmit={handleEmailSubmit}>
-              <label className="signin__email-label" htmlFor="signin-email">
-                Email
-              </label>
-              <input
-                id="signin-email"
-                type="email"
-                required
-                autoComplete="email"
-                className="signin__email-input"
-                placeholder="you@example.com"
-                value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value);
-                  if (error) setError(null);
-                }}
-                disabled={phase === 'sending'}
-              />
-              <button
-                type="submit"
-                className="signin__btn signin__btn--primary"
-                disabled={phase === 'sending'}
-              >
-                {phase === 'sending' ? 'Sending…' : 'Email me a link'}
-              </button>
-              {error && (
-                <p className="signin__error" role="alert">
-                  {error}
-                </p>
-              )}
-            </form>
+                <form className="signin__email-form" onSubmit={handleEmailSubmit}>
+                  <label className="signin__email-label" htmlFor="signin-email">
+                    Email
+                  </label>
+                  <input
+                    id="signin-email"
+                    type="email"
+                    required
+                    autoComplete="email"
+                    className="signin__email-input"
+                    placeholder="you@example.com"
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      if (error) setError(null);
+                    }}
+                    disabled={phase === 'sending'}
+                  />
+                  <button
+                    type="submit"
+                    className="signin__btn signin__btn--primary"
+                    disabled={phase === 'sending'}
+                  >
+                    {phase === 'sending' ? 'Sending…' : 'Email me a link'}
+                  </button>
+                  {error && (
+                    <p className="signin__error" role="alert">
+                      {error}
+                    </p>
+                  )}
+                </form>
+              </>
+            )}
 
             <p className="signin__privacy">
               We use your sign-in only to sync your subscriptions and reading

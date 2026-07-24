@@ -117,6 +117,16 @@ sign-in (Apple is deferred). No passwords are stored by Readmo. In
    Discord. Enable it.
 
 ### Email (magic link)
+
+Email sign-in / sign-up is **opt-in on the client** and **off by default**: the
+sign-in page shows the email field only when the frontend is built with
+`VITE_EMAIL_AUTH_ENABLED=true` (or `1`). On Vercel, set it as an env var and
+**redeploy** (the env snapshot is per-deploy); locally, add it to `.env.local`.
+Leave it unset and the page shows only the Google/Discord buttons. Turn it on
+only after completing the Supabase steps below — otherwise the form would be
+visible but every send would fail. One magic link handles **both** signing in an
+existing account and signing up a new one.
+
 1. Enable the **Email** provider (Authentication → Providers → Email). This is
    the only toggle magic link needs — Supabase has no separate "magic link"
    provider; the passwordless link is sent by the `signInWithOtp` call the app

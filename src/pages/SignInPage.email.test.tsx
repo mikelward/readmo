@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({ signInWithOtp: vi.fn() }));
 
 vi.mock('../lib/supabase/client', () => ({
   isSupabaseConfigured: () => true,
+  isEmailAuthEnabled: () => true,
   AUTH_STORAGE_KEY: 'readmo:sb-auth',
   getSupabase: () => ({
     auth: {
