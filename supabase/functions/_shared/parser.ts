@@ -528,6 +528,48 @@ function atomAuthor(node: unknown): string | null {
   return firstOf(text(obj.name), text(obj['#text']));
 }
 
+/**
+ * Atom `rel` values that are definitively NOT the human-facing document this
+ * feed/entry stands for, so {@link pickAtomLink}'s last resort must skip them.
+ * Picking one produced visibly wrong data: a feed advertising only
+ * `rel="hub"` (WebSub — very common) + `rel="self"` took the hub as its site,
+ * so the feed row showed `pubsubhubbub.appspot.com`'s favicon and "open
+ * website" opened the hub; and a podcast entry whose only link is
+ * `rel="enclosure"` took the MP3 as its article URL.
+ */
+const NON_DOCUMENT_ATOM_RELS: ReadonlySet<string> = new Set([
+  'self',
+  'hub',
+  'enclosure',
+  'replies',
+  'edit',
+  'edit-media',
+  'license',
+  'search',
+  'payment',
+  'related',
+  'via',
+  'first',
+  'last',
+  'next',
+  'previous',
+  'prev',
+]);
+
+/** MIME types that mark a link as pointing at a FEED rather than a page — the
+ * other shape a self link takes (`<link type="application/atom+xml">` with the
+ * `rel` omitted). */
+function isFeedLinkType(type: string | null): boolean {
+  if (!type) return false;
+  const t = type.toLowerCase();
+  return (
+    t.startsWith('application/rss+xml') ||
+    t.startsWith('application/atom+xml') ||
+    t.startsWith('application/rdf+xml') ||
+    t.startsWith('application/feed+json')
+  );
+}
+
 /** Choose the best Atom <link>. `rels` lists acceptable rel values in
  * priority order ('' matches a link with no rel, which defaults to
  * alternate). Returns an absolutized href. */
@@ -541,8 +583,16 @@ function pickAtomLink(
     const match = links.find((l) => (l.rel ?? '') === rel);
     if (match?.href) return absolutizeUrl(match.href, feedUrl);
   }
-  // Last resort: first link with an href.
-  const any = links.find((l) => l.href);
+  // Last resort: the first link that could plausibly BE the document — never a
+  // hub/self/enclosure/paging link (see NON_DOCUMENT_ATOM_RELS). Returning null
+  // when there is none is the honest answer: the feed keeps the origin-derived
+  // favicon, and an entry with no article link simply has none.
+  const any = links.find(
+    (l) =>
+      l.href &&
+      !NON_DOCUMENT_ATOM_RELS.has((l.rel ?? '').toLowerCase()) &&
+      !isFeedLinkType(l.type),
+  );
   return any ? absolutizeUrl(any.href, feedUrl) : null;
 }
 
