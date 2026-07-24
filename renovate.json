@@ -16,6 +16,16 @@
     "schedule": ["after 6am and before 12pm on saturday"]
   },
   "platformAutomerge": true,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "supabase/functions/import_map.json pins the EXACT npm versions the Edge runtime resolves at deploy time (there is no deno.lock, and `supabase functions deploy --import-map` re-resolves every deploy). It has no ecosystem behind it, so no built-in manager sees it: a bump would edit package.json + the lockfile and silently leave the map behind — which is how `entities` ended up at ^7.0.1 against package.json's ^8.0.0, running the tests on 8.x while production served 7.x. import_map.test.ts fails CI on that drift; this manager is what keeps the bump PR green in the first place, by updating the map in the SAME branch (Renovate branches per depName, and both managers report the same depName + version).",
+      "managerFilePatterns": ["/^supabase/functions/import_map\\.json$/"],
+      "matchStrings": ["\"npm:(?<depName>@?[^\"@]+(?:/[^\"@]+)?)@(?<currentValue>[^\"]+)\""],
+      "datasourceTemplate": "npm",
+      "versioningTemplate": "npm"
+    }
+  ],
   "packageRules": [
     {
       "description": "Cooldown before an update is offered (mirrors the old dependabot semver-aware cooldown).",
