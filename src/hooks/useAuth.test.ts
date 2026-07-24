@@ -31,4 +31,18 @@ describe('useAuth', () => {
     act(() => result.current.signIn());
     expect(result.current.user?.uid).toBe(uid);
   });
+
+  it('signs the demo user in via the email form on the mock path', async () => {
+    const { result } = renderHook(() => useAuth());
+    expect(result.current.user).toBeNull();
+
+    let outcome: { error: string | null } | undefined;
+    await act(async () => {
+      outcome = await result.current.signInWithEmail('reader@example.com');
+    });
+
+    // No real email is sent on the mock path — it flips straight to signed-in.
+    expect(outcome).toEqual({ error: null });
+    expect(result.current.user?.uid).toBe(DEMO_UID);
+  });
 });

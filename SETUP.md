@@ -94,10 +94,11 @@ supabase db reset      # re-applies every migration from scratch
 
 ---
 
-## 4. Configure OAuth (Google + Discord)
+## 4. Configure sign-in (Google, Discord, email magic link)
 
-MVP ships **Google** and **Discord** sign-in (Apple is deferred). No passwords
-are stored by Readmo. In **Authentication → Providers**:
+Readmo ships **Google**, **Discord**, and **passwordless email (magic link)**
+sign-in (Apple is deferred). No passwords are stored by Readmo. In
+**Authentication → Providers**:
 
 ### Google
 1. In the [Google Cloud Console](https://console.cloud.google.com), create an
@@ -115,10 +116,46 @@ are stored by Readmo. In **Authentication → Providers**:
 3. Copy the **Client ID** and **Client Secret** into Supabase → Providers →
    Discord. Enable it.
 
+### Email (magic link)
+1. Enable the **Email** provider (Authentication → Providers → Email). This is
+   the only toggle magic link needs — Supabase has no separate "magic link"
+   provider; the passwordless link is sent by the `signInWithOtp` call the app
+   makes, and the client never calls `signInWithPassword`, so the password
+   sub-features stay unused.
+2. The default **Magic Link** email template sends a clickable link (what the
+   app expects). Editing that template to include the `{{ .Token }}` variable
+   would switch it to a typed one-time code instead — not required.
+3. Configure a sender under **Authentication → Emails**. Supabase's built-in
+   SMTP is rate-limited to a handful of emails per hour and is **explicitly not
+   for production** — under it, sign-in links silently fail to arrive once the
+   cap is hit. For production, point Auth at a real SMTP relay (SES / Fastmail /
+   Gmail / Postmark); a mainstream free tier covers sign-in volume many times
+   over. **Cost/reliability:** negligible ($0 on any relay's free tier at this
+   scale); latency is one email round-trip (seconds) before the link arrives;
+   on a sender outage or rate-limit, `signInWithOtp` may still return success
+   (GoTrue queues server-side) while the email never lands, so **email sign-in
+   degrades but OAuth (Google/Discord) is unaffected**. See the *External
+   services* table in `CLAUDE.md`.
+4. **Before enabling in production, turn on the Supabase Auth abuse controls that
+   need no client change:** per-IP / per-email **rate limits** on the OTP endpoint
+   (Authentication → Rate Limits) and **account-enumeration protection**
+   (Authentication → Attack Protection). The app sends a standard `signInWithOtp`
+   with no secret, so these platform controls are the layer that bounds OTP-send
+   abuse (a bot exhausting the Auth-email/SMTP quota, or generating unsolicited
+   mail) and stops an unauthenticated caller from distinguishing registered from
+   unregistered addresses when new sign-ups are disabled.
+5. **Do _not_ enable Supabase's CAPTCHA protection yet.** With CAPTCHA on,
+   Supabase Auth requires a solved-CAPTCHA `captchaToken` on every OTP request —
+   which this client does not yet render or send, so turning it on would reject
+   **all** email sign-ins (OAuth is unaffected). Wiring an hCaptcha / Turnstile
+   widget that passes `options.captchaToken` is a possible follow-up; until then,
+   rely on the rate limits above.
+
 ### Redirect URLs
 Under **Authentication → URL Configuration**, add your app origins to
 **Redirect URLs** (e.g. `https://readmo.app/**`, plus any Vercel preview
-origins and `http://localhost:5173/**` for local dev).
+origins and `http://localhost:5173/**` for local dev). The magic-link email
+lands back on one of these origins, so they must be allow-listed here too.
 
 > OAuth **client secrets** are stored in Supabase and are **server-only**.
 > They never reach the browser.

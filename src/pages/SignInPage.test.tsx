@@ -47,6 +47,15 @@ describe('SignInPage', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/');
   });
 
+  it('signs in via the email form and lands on the saved deep link (mock path)', async () => {
+    const user = userEvent.setup();
+    renderAt({ pathname: '/signin', state: { from: { pathname: '/item/xyz' } } });
+    await user.type(screen.getByLabelText(/email/i), 'reader@example.com');
+    await user.click(screen.getByRole('button', { name: /email me a link/i }));
+    // Mock mode signs in immediately (no email sent), so we land on the target.
+    expect(screen.getByTestId('location')).toHaveTextContent('/item/xyz');
+  });
+
   it('renders the feed preview hero when signed out', () => {
     renderAt({ pathname: '/signin' });
     expect(document.querySelector('.signin__hero')).not.toBeNull();
