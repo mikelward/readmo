@@ -282,6 +282,56 @@ describe('parseFeed — malformed input', () => {
   });
 });
 
+describe('parseFeed — entity-expansion (billion laughs) bounds', () => {
+  // A publisher body is untrusted input (guardrail #6) and the poller parses it
+  // with the parser's default entity processing, so an entity bomb is a real
+  // denial-of-service path into an Edge invocation. Two properties have to hold,
+  // and they're pinned here so a fast-xml-parser downgrade — or a
+  // supabase/functions/import_map.json that drifts back below the fixed
+  // version — fails CI instead of silently reopening GHSA-8r6m-32jq-jx6q.
+
+  /** One DOCTYPE internal subset whose entities nest 5 deep at ×10 each — the
+   * classic exponential-expansion shape (~5 M chars if fully expanded). */
+  const bomb = (suffix: string) => `<!DOCTYPE rss [
+    <!ENTITY a${suffix} "${'a'.repeat(50)}">
+    <!ENTITY b${suffix} "${`&a${suffix};`.repeat(10)}">
+    <!ENTITY c${suffix} "${`&b${suffix};`.repeat(10)}">
+    <!ENTITY d${suffix} "${`&c${suffix};`.repeat(10)}">
+    <!ENTITY e${suffix} "${`&d${suffix};`.repeat(10)}">
+  ]>`;
+
+  it('does not expand a single-DOCTYPE entity bomb', () => {
+    const xml =
+      `<?xml version="1.0"?>${bomb('')}` +
+      `<rss version="2.0"><channel><title>T</title>` +
+      `<item><title>&e;</title></item></channel></rss>`;
+    const parsed = parseFeed(xml, 'https://bomb.example.com/feed.xml');
+    // The expansion limit holds, so the title never becomes the multi-megabyte
+    // blow-up. Assert the SIZE (the security property) rather than an exact
+    // string, which is the library's business and may change.
+    expect(JSON.stringify(parsed).length).toBeLessThan(10_000);
+  });
+
+  it('rejects repeated DOCTYPE declarations instead of re-arming the limit', () => {
+    // The advisory: each further <!DOCTYPE> reset the expansion budget, so N
+    // copies multiplied the ceiling and got the bomb past it. The fixed parser
+    // refuses a second declaration outright, and parseFeed surfaces that as its
+    // ordinary XML-parse failure — which the poller records as a feed error and
+    // backs off, exactly like any other unparseable body.
+    const doctypes = Array.from({ length: 20 }, (_, i) => bomb(String(i))).join('');
+    const items = Array.from(
+      { length: 20 },
+      (_, i) => `<item><title>&e${i};</title></item>`,
+    ).join('');
+    const xml =
+      `<?xml version="1.0"?>${doctypes}` +
+      `<rss version="2.0"><channel><title>T</title>${items}</channel></rss>`;
+    expect(() => parseFeed(xml, 'https://bomb.example.com/feed.xml')).toThrow(
+      /Failed to parse XML feed/,
+    );
+  });
+});
+
 describe('parseFeed — missing GUID fallbacks', () => {
   const parsed = parseFeed(fixture('no-guid.xml'), 'https://noguid.example.com/feed');
 
