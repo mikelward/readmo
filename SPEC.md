@@ -1069,20 +1069,23 @@ negligible and off every critical path. See the External services table in
 
 ## Auth & sync
 
-### Auth (Supabase social OAuth)
+### Auth (Supabase social OAuth + email magic link)
 
-- Sign in with Google / Discord (Apple deferred). No password handled by us. Sessions
-  are Supabase's HTTP-only refresh-token cookies; the access token is attached
-  to API/DB calls.
+- Sign in with Google / Discord, or a **passwordless email magic link** (Apple
+  deferred). No password handled by us — the emailed link is the credential.
+  Sessions are Supabase's HTTP-only refresh-token cookies; the access token is
+  attached to API/DB calls.
 - First launch (no session) routes to the sign-in page. The page shows a
   static feed preview (hero mockup of article rows) above the sign-in
-  card (tagline + OAuth buttons + short privacy disclosure) so visitors
-  understand the product before signing in. The hero always stacks above
-  the card in a single column. The mock rows have a small top inset and a
+  card (tagline + OAuth buttons + email field + short privacy disclosure) so
+  visitors understand the product before signing in. The hero always stacks
+  above the card in a single column. The mock rows have a small top inset and a
   bottom fade gradient (implying more content); the sample row that shows a
   Reddit source / read state is kept out of the bottom row so the fade never
-  washes out its source line. Deep links
-  round-trip through sign-in then land on the target.
+  washes out its source line. Deep links round-trip through sign-in then land
+  on the target — the magic link returns to that same target once clicked.
+  After submitting an email, the card confirms the link is on its way and
+  offers a way back to try a different address.
 - **Account UI = header chip** (mirrors newshacker): one always-visible
   control, far right, 44×44+, every page. Signed out → "Sign in". Signed in →
   32px avatar (OAuth picture, falling back to an initial-on-color disc —
@@ -1092,13 +1095,15 @@ negligible and off every critical path. See the External services table in
   row menu): closes on Escape or an outside press, and **the first press
   outside only dismisses** — its trailing click is swallowed, so it never also
   activates whatever was tapped.
-- **Implementation status.** Real Supabase OAuth (Google / Discord) is wired
-  behind the existing `useAuth` / `getActiveUid` shape: when
-  `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` are present the buttons start
-  the real redirect and the session drives the header chip + per-user cache
-  keying (`getActiveUid` reads the persisted session synchronously at boot);
-  when those env vars are absent the app falls back to the mock demo user so
-  tests and backend-less local dev still work. Apple sign-in stays deferred.
+- **Implementation status.** Real Supabase sign-in (Google / Discord OAuth and
+  email magic link) is wired behind the existing `useAuth` / `getActiveUid`
+  shape: when `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` are present the
+  buttons start the real OAuth redirect, the email form requests a magic link,
+  and the session drives the header chip + per-user cache keying (`getActiveUid`
+  reads the persisted session synchronously at boot); when those env vars are
+  absent the app falls back to the mock demo user (any sign-in control signs in
+  immediately) so tests and backend-less local dev still work. Apple sign-in
+  stays deferred.
 - **Operator signup notification.** When a new user is created (`auth.users`
   insert), an `AFTER INSERT` trigger (migration `0012`) fire-and-forget posts
   the new row to the `notify-signup` Edge Function via `pg_net`; the function
@@ -3126,7 +3131,7 @@ immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
 | `/admin/users/:email/feeds` | admin drill-down: the feeds a given account subscribes to (`admin_list_user_feeds`, migration 0047); admin-only. See *Admin → Subscription drill-downs*. |
 | `/admin/feeds` | feed-status console: every system feed with health, subscriber count, most-recent full-text download status, and per-row refresh / pause / delete / view **Users**; admin-only. See *Admin → Feed status*. |
 | `/admin/feeds/:feedId/users` | admin drill-down: the accounts subscribed to a given feed (`admin_list_feed_subscribers`, migration 0047); admin-only. See *Admin → Subscription drill-downs*. |
-| `/signin` | OAuth sign-in (unauthenticated landing) |
+| `/signin` | Sign-in (unauthenticated landing): Google/Discord OAuth + passwordless email magic link |
 | `/about` | what Readmo is, credited to its author (mikelward.com); no auth gate, informational only (no user data). Shows the build sequence number and age (e.g. `Build 100 · 2 days ago`) — no SHA — with a link to Debug. Linked from Settings → About. |
 | `/legal` | self-contained legal/DMCA page: third-party content, copyright/DMCA takedown + counter-notice, acceptable use, warranty disclaimer, limitation of liability, a privacy summary, and contact (mikel@mikelward.com). No auth gate, policy text only (no user data). Distinct from the standalone `docs/` legal hub (Privacy, Terms, and Copyright/DMCA pages), which Vercel's catch-all rewrite does not serve from readmo.app. Linked from the drawer (App section) and Settings → Legal. |
 | `/debug` | build/runtime/config diagnostics; no auth gate, public/presence info only (no secrets). Headline is `<branch-leaf> <commit-count> (<short-sha>)`, e.g. `main 100 (abcdef)`; the Committed/Built rows use the verbose `2 days ago` age format. Runtime groups the badged status rows together — Network, Service worker, and Supabase each carry a glanceable green/red/gray status dot (the Supabase row probes `/auth/v1/health` for live reachability + latency, neutral when unconfigured) — followed by Last sync (relative time of the last server `item_state` pull), Last fetch (the most recent feed-list read's relative time and outcome, with the failure message inline — the phone-reachable answer to "did my refresh run, and what did the server say?"), and the informational rows. A **Diagnostics** section carries the **Scroll-jump diagnostics** toggle (`readmo:debug-scroll-jumps`, per-device, **off by default**) and a **Run feed probe** button: an on-demand grouped + flat home read run outside the query cache that lists rows returned by the backend, rows surviving feed-metadata resolution, the per-feed split, the flat first page, timing, and any error — followed by a snapshot of each live feed-list query's cache (rows held, data age, status, and any error), so an empty feed view can be localized (transit vs. resolution vs. the view's cache vs. rendering) from a device with no devtools. Read-only, own-subscription data only. Linked from the About page. |

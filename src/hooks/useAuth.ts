@@ -2,14 +2,15 @@ import { useCallback, useSyncExternalStore } from 'react';
 import { AUTH_STORAGE_KEY, getSupabase, isSupabaseConfigured } from '../lib/supabase/client';
 import { clearExplicitSignOut, markExplicitSignOut } from '../lib/userCache';
 
-// Auth behind one stable shape: `{ user, signIn, signOut }` + a synchronous
-// `getActiveUid()` for boot-time cache keying.
+// Auth behind one stable shape: `{ user, signIn, signInWithEmail, signOut }` +
+// a synchronous `getActiveUid()` for boot-time cache keying.
 //
 // When Supabase is configured (VITE_SUPABASE_URL/ANON_KEY present) this is the
-// real OAuth session; otherwise it falls back to the mock path. The mock path
-// starts signed-out so unconfigured deployments (e.g. Vercel preview without
-// env vars) show the real sign-in page. Clicking a sign-in button in mock mode
-// sets a localStorage flag and lands the user in the mock app.
+// real session — social OAuth (Google/Discord) or a passwordless email magic
+// link — otherwise it falls back to the mock path. The mock path starts
+// signed-out so unconfigured deployments (e.g. Vercel preview without env vars)
+// show the real sign-in page. Clicking a sign-in button (or submitting the email
+// form) in mock mode sets a localStorage flag and lands the user in the mock app.
 
 export type OAuthProvider = 'google' | 'discord';
 
@@ -206,6 +207,38 @@ function readPersistedSupabaseUser(): AuthUser | null {
 }
 
 // ---------------------------------------------------------------------------
+// Email sign-in helpers
+// ---------------------------------------------------------------------------
+
+/** UI bound on the passwordless send (`signInWithEmail` below). `supabaseFetch`
+ * deliberately leaves `/auth/v1/` POSTs uncapped (a timed-out auth refresh would
+ * spuriously null the session), so a hung OTP send would otherwise strand the
+ * sign-in form in its disabled "sending" state forever. */
+const EMAIL_SIGN_IN_TIMEOUT_MS = 15_000;
+
+/** Reject if `p` hasn't settled within `ms`. Does NOT cancel `p` — the caller
+ * just stops awaiting it, so the underlying send may still complete server-side
+ * (harmless: GoTrue rate-limits/dedups repeat sends). */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error('email sign-in timed out')),
+      ms,
+    );
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -223,6 +256,16 @@ export function useAuth(): {
    * hold instead of treating "not yet known" as "signed out". */
   initializing: boolean;
   signIn: (provider?: OAuthProvider, redirectPath?: string) => void;
+  /** Start a passwordless email sign-in: send a magic link to `email` that
+   * lands back on `redirectPath` (default `/`) once clicked. Resolves with
+   * `{ error }` — a non-null string when the request was rejected (e.g. rate
+   * limited or a malformed address) so the caller can surface it. On the mock
+   * (unconfigured) path no email is sent — it signs in the demo user straight
+   * away, mirroring the mock OAuth buttons — and always resolves `{ error: null }`. */
+  signInWithEmail: (
+    email: string,
+    redirectPath?: string,
+  ) => Promise<{ error: string | null }>;
   signOut: () => void;
 } {
   const configured = isSupabaseConfigured();
@@ -257,6 +300,45 @@ export function useAuth(): {
     [configured],
   );
 
+  const signInWithEmail = useCallback(
+    async (
+      email: string,
+      redirectPath?: string,
+    ): Promise<{ error: string | null }> => {
+      if (configured) {
+        const origin =
+          typeof window !== 'undefined' ? window.location.origin : '';
+        try {
+          // Passwordless magic link. Same landing mechanism as OAuth: clicking
+          // the emailed link returns to `emailRedirectTo` with the session in
+          // the URL, which `detectSessionInUrl` completes (see
+          // supabase/client.ts). Bounded (see EMAIL_SIGN_IN_TIMEOUT_MS) so a
+          // hung send on lie-fi can't leave the form stuck disabled.
+          const { error } = await withTimeout(
+            getSupabase().auth.signInWithOtp({
+              email,
+              options: { emailRedirectTo: `${origin}${redirectPath ?? '/'}` },
+            }),
+            EMAIL_SIGN_IN_TIMEOUT_MS,
+          );
+          return { error: error ? error.message : null };
+        } catch {
+          // Timeout or a thrown network error — surface a single retryable
+          // message so the caller restores the idle/error state (rather than
+          // throwing out of here and leaving the form stuck "sending").
+          return {
+            error:
+              'Could not send the sign-in link. Check your connection and try again.',
+          };
+        }
+      }
+      // Mock/demo path: no email is actually sent — flip straight to signed-in.
+      setSignedIn(true);
+      return { error: null };
+    },
+    [configured],
+  );
+
   const signOut = useCallback(() => {
     // Mark the sign-out as the reader's own choice BEFORE tearing the session
     // down: useUserCacheScope purges the departing user's on-device caches only
@@ -281,5 +363,5 @@ export function useAuth(): {
     }
   }, [configured]);
 
-  return { user, initializing, signIn, signOut };
+  return { user, initializing, signIn, signInWithEmail, signOut };
 }
