@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -31,6 +31,7 @@ function renderAt(entry: { pathname: string; state?: unknown }) {
 describe('SignInPage', () => {
   afterEach(() => {
     window.localStorage.clear();
+    vi.unstubAllEnvs();
   });
 
   it('returns to the saved deep link after signing in', async () => {
@@ -47,7 +48,22 @@ describe('SignInPage', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/');
   });
 
+  it('hides the email form unless VITE_EMAIL_AUTH_ENABLED is set', () => {
+    // Flag unset (the default) → only the OAuth buttons, no email field/divider.
+    renderAt({ pathname: '/signin' });
+    expect(screen.queryByLabelText(/email/i)).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: /email me a link/i }),
+    ).toBeNull();
+    expect(document.querySelector('.signin__divider')).toBeNull();
+    // OAuth is unaffected.
+    expect(
+      screen.getByRole('button', { name: /continue with google/i }),
+    ).toBeInTheDocument();
+  });
+
   it('signs in via the email form and lands on the saved deep link (mock path)', async () => {
+    vi.stubEnv('VITE_EMAIL_AUTH_ENABLED', 'true');
     const user = userEvent.setup();
     renderAt({ pathname: '/signin', state: { from: { pathname: '/item/xyz' } } });
     await user.type(screen.getByLabelText(/email/i), 'reader@example.com');

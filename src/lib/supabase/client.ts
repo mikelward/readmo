@@ -85,6 +85,17 @@ export function isSupabaseConfigured(): boolean {
   return Boolean(url && anonKey);
 }
 
+/** Feature flag for the passwordless email (magic-link) sign-in form. **Off by
+ * default** — a deployment opts in by setting `VITE_EMAIL_AUTH_ENABLED` to
+ * `true`/`1` at build time, which it should do only after enabling Supabase's
+ * Email provider + sender (SETUP.md §4). OAuth sign-in is unaffected either way.
+ * Read at call time (not hoisted into a module const) so tests can flip it via
+ * `vi.stubEnv`. */
+export function isEmailAuthEnabled(): boolean {
+  const v = env.VITE_EMAIL_AUTH_ENABLED;
+  return v === '1' || (typeof v === 'string' && v.toLowerCase() === 'true');
+}
+
 /** The request URL as a string, across the `Request | string | URL` shapes the
  * global fetch accepts. */
 function requestUrl(input: RequestInfo | URL): string {

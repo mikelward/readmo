@@ -1072,13 +1072,17 @@ negligible and off every critical path. See the External services table in
 ### Auth (Supabase social OAuth + email magic link)
 
 - Sign in with Google / Discord, or a **passwordless email magic link** (Apple
-  deferred). No password handled by us — the emailed link is the credential.
-  Sessions are Supabase's HTTP-only refresh-token cookies; the access token is
-  attached to API/DB calls.
+  deferred). No password handled by us — the emailed link is the credential. One
+  magic link both **signs in** an existing account and **signs up** a new one.
+  Email sign-in is **opt-in per deployment**: when it's disabled the sign-in
+  card shows only the OAuth buttons; OAuth is always available. Sessions are
+  Supabase's HTTP-only refresh-token cookies; the access token is attached to
+  API/DB calls.
 - First launch (no session) routes to the sign-in page. The page shows a
   static feed preview (hero mockup of article rows) above the sign-in
-  card (tagline + OAuth buttons + email field + short privacy disclosure) so
-  visitors understand the product before signing in. The hero always stacks
+  card (tagline + OAuth buttons + an email field when email sign-in is enabled +
+  short privacy disclosure) so visitors understand the product before signing
+  in. The hero always stacks
   above the card in a single column. The mock rows have a small top inset and a
   bottom fade gradient (implying more content); the sample row that shows a
   Reddit source / read state is kept out of the bottom row so the fade never
