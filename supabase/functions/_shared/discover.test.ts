@@ -56,6 +56,47 @@ describe('discoverFromHtml — <link> autodiscovery', () => {
   });
 });
 
+describe('tag attribute parsing', () => {
+  it('reads the real href, not a data-href lookalike', () => {
+    const html = `<head><link rel="alternate" type="application/rss+xml"
+      data-href="/analytics/beacon" href="/feed.xml"></head>`;
+    const urls = discoverFromHtml(html, 'https://example.com/').map((f) => f.url);
+    expect(urls).toContain('https://example.com/feed.xml');
+    expect(urls).not.toContain('https://example.com/analytics/beacon');
+  });
+
+  it('does not let data-rel make a stylesheet look like a feed', () => {
+    const html =
+      '<head><link data-rel="alternate" rel="stylesheet" type="application/rss+xml" href="/style.css"></head>';
+    const urls = discoverFromHtml(html, 'https://example.com/').map((f) => f.url);
+    expect(urls).not.toContain('https://example.com/style.css');
+  });
+
+  it('ignores an attribute name that only appears inside a quoted value', () => {
+    const html = '<head><link rel="icon" title="href=/decoy.png" href="/real.png"></head>';
+    expect(discoverIconFromHtml(html, 'https://example.com/')).toEqual([
+      'https://example.com/real.png',
+    ]);
+  });
+
+  it('reads the real href on a harvested anchor, not its data-href', () => {
+    const html = '<body><a data-href="/tracked" href="/rss/news.xml">News</a></body>';
+    expect(discoverAnchorFeeds(html, 'https://example.com/feeds')).toEqual([
+      { url: 'https://example.com/rss/news.xml', type: null, title: null },
+    ]);
+  });
+
+  it('handles single-quoted and unquoted attribute values', () => {
+    const html = `<head>
+      <link rel='alternate' type='application/rss+xml' href='/single.xml'>
+      <link rel=alternate type=application/atom+xml href=/bare.xml>
+    </head>`;
+    const urls = discoverFromHtml(html, 'https://example.com/').map((f) => f.url);
+    expect(urls).toContain('https://example.com/single.xml');
+    expect(urls).toContain('https://example.com/bare.xml');
+  });
+});
+
 describe('discoverAnchorFeeds — directory-page <a href> harvest', () => {
   // A "here are our RSS feeds" directory page (shaped like
   // foxsports.com.au/about-us/rss-feeds): feeds listed as body hyperlinks, none
