@@ -384,39 +384,98 @@ function mergeQuery(search: string, extra: string): string {
 // Tiny HTML attribute scanner (no DOM dependency)
 // ---------------------------------------------------------------------------
 
-/** Yield the raw text of each <link …> tag in the document. */
-function* iterateLinkTags(html: string): Generator<string> {
+/** One tag's attributes: lowercased name → entity-decoded value. */
+type TagAttrs = Record<string, string>;
+
+/** Yield the parsed attributes of each <link …> tag in the document. */
+function* iterateLinkTags(html: string): Generator<TagAttrs> {
   // Match <link ...> up to the closing '>' (self-closing or not). The 'i' flag
   // covers <LINK>; we stop at the first '>' not inside a quoted value.
   const re = /<link\b[^>]*>/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html)) !== null) {
-    yield m[0];
+    yield parseTagAttrs(m[0]);
   }
 }
 
-/** Yield the raw text of each opening <a …> tag in the document. We only need
- * the tag's attributes (the href), not the link text, so the closing </a> is
- * irrelevant. Same regex-not-DOM approach as iterateLinkTags. */
-function* iterateAnchorTags(html: string): Generator<string> {
+/** Yield the parsed attributes of each opening <a …> tag in the document. We
+ * only need the tag's attributes (the href), not the link text, so the closing
+ * </a> is irrelevant. Same regex-not-DOM approach as iterateLinkTags. */
+function* iterateAnchorTags(html: string): Generator<TagAttrs> {
   const re = /<a\b[^>]*>/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html)) !== null) {
-    yield m[0];
+    yield parseTagAttrs(m[0]);
   }
 }
 
-/** Read an attribute value from a single tag's text, or null. Handles single,
- * double, and unquoted values. */
-function attr(tag: string, name: string): string | null {
-  const re = new RegExp(
-    `\\b${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s"'>]+))`,
-    'i',
-  );
-  const m = re.exec(tag);
-  if (!m) return null;
-  const val = m[2] ?? m[3] ?? m[4] ?? '';
-  return decodeEntities(val.trim());
+/**
+ * Split one tag's text into its attributes: lowercased name → entity-decoded
+ * value. First occurrence of a name wins (what browsers do). A valueless
+ * attribute maps to ''.
+ *
+ * This walks the tag rather than running a per-name `\bname\s*=` regex, because
+ * that regex can't tell an attribute name from a lookalike substring, and both
+ * failure modes are real on publisher pages:
+ *   - `data-href="/track"` satisfied a lookup for `href` (its `-` is a word
+ *     boundary), so an advertised feed's real `href` was SHADOWED by whatever
+ *     the site kept in its tracking attribute — discovery then offered a URL
+ *     that isn't a feed. `data-rel="alternate"` likewise made an ordinary
+ *     `<link rel="stylesheet">` look like an advertised feed.
+ *   - a quoted value containing `href=` (e.g. `title="href=…"`) matched too.
+ * Tokenizing once per tag closes both and is cheaper than one regex per name.
+ */
+function parseTagAttrs(tag: string): TagAttrs {
+  const out: TagAttrs = {};
+  const n = tag.length;
+  const isWs = (c: string) => c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f';
+  // Skip `<` + the tag name; attributes start after it.
+  let i = 1;
+  while (i < n && !isWs(tag[i]) && tag[i] !== '/' && tag[i] !== '>') i++;
+
+  while (i < n) {
+    while (i < n && (isWs(tag[i]) || tag[i] === '/')) i++;
+    if (i >= n || tag[i] === '>') break;
+
+    const nameStart = i;
+    while (
+      i < n &&
+      !isWs(tag[i]) &&
+      tag[i] !== '=' &&
+      tag[i] !== '/' &&
+      tag[i] !== '>'
+    ) {
+      i++;
+    }
+    const name = tag.slice(nameStart, i).toLowerCase();
+
+    while (i < n && isWs(tag[i])) i++;
+    let value = '';
+    if (tag[i] === '=') {
+      i++;
+      while (i < n && isWs(tag[i])) i++;
+      const quote = tag[i];
+      if (quote === '"' || quote === "'") {
+        i++;
+        const valueStart = i;
+        while (i < n && tag[i] !== quote) i++;
+        value = tag.slice(valueStart, i);
+        i++; // consume the closing quote
+      } else {
+        const valueStart = i;
+        while (i < n && !isWs(tag[i]) && tag[i] !== '>') i++;
+        value = tag.slice(valueStart, i);
+      }
+    }
+    if (name && !(name in out)) out[name] = decodeEntities(value.trim());
+  }
+  return out;
+}
+
+/** Read an attribute value from an already-parsed tag, or null when absent. */
+function attr(tag: TagAttrs, name: string): string | null {
+  const value = tag[name];
+  return value === undefined ? null : value;
 }
 
 /** Decode the handful of HTML entities that appear in URLs/titles. */
