@@ -66,6 +66,23 @@ export function isMissingTableError(error: unknown): boolean {
   );
 }
 
+/** Whether a PostgREST error says the TABLE is there but a COLUMN this client
+ * named isn't — the finer-grained half of the same guardrail #11 detect:
+ *   - 42703   — undefined_column (raised on a read selecting it)
+ *   - PGRST204 — column not in the schema cache (raised on a write naming it)
+ *
+ * Kept separate from {@link isMissingTableError} because the right response is
+ * different. A missing table means nothing here works. A missing column means
+ * everything EXCEPT that column still works — and since the settings read names
+ * an explicit projection, one un-migrated column would otherwise fail the whole
+ * row and strand every OTHER setting device-local. The caller retries on the
+ * older projection instead, so only the new preference waits for the
+ * migration. */
+export function isMissingColumnError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && ['42703', 'PGRST204'].includes(code);
+}
+
 /** An Error carrying the HTTP `status` + PostgREST `code` of a failed request. */
 export type RequestError = Error & { status?: number; code?: string };
 
@@ -317,6 +334,7 @@ export interface UserSettingsRow {
   item_sort?: string | null;
   group_by_feed?: boolean | null;
   hide_on_scroll?: boolean | null;
+  hide_on_scroll_remove?: boolean | null;
   show_row_favicon?: boolean | null;
   show_group_favicon?: boolean | null;
   hide_sports_spoilers?: boolean | null;
@@ -334,6 +352,8 @@ export function mapUserSettings(row: UserSettingsRow): Partial<SyncedSettings> {
   }
   if (typeof row.group_by_feed === 'boolean') out.groupByFeed = row.group_by_feed;
   if (typeof row.hide_on_scroll === 'boolean') out.hideOnScroll = row.hide_on_scroll;
+  if (typeof row.hide_on_scroll_remove === 'boolean')
+    out.hideOnScrollRemove = row.hide_on_scroll_remove;
   if (typeof row.show_row_favicon === 'boolean') out.showRowFavicon = row.show_row_favicon;
   if (typeof row.show_group_favicon === 'boolean') out.showGroupFavicon = row.show_group_favicon;
   if (typeof row.hide_sports_spoilers === 'boolean') out.hideSportsSpoilers = row.hide_sports_spoilers;

@@ -68,6 +68,7 @@ import {
   mapAiCall,
   type AiCallRow,
   isMissingTableError,
+  isMissingColumnError,
   isPermanentWriteError,
   toRequestError,
   PARKED_ERROR_THRESHOLD,
@@ -99,9 +100,18 @@ const SUBSCRIPTION_COLS =
 /** The synced reading-behavior settings columns (`user_settings`, 0064) — the
  * caller's own row only (RLS); `user_id`/`updated_at` never leave the server. */
 const USER_SETTINGS_COLS =
+  'item_sort, group_by_feed, hide_on_scroll, hide_on_scroll_remove, show_row_favicon, show_group_favicon, hide_sports_spoilers, auto_summarize_pinned';
+/** The same projection minus 0069's `hide_on_scroll_remove` — what a backend
+ * that has 0064 but not yet 0069 can actually serve. Because the read names an
+ * explicit column list, one un-migrated column fails the WHOLE row, which would
+ * strand every other setting device-local; falling back to this projection
+ * keeps the seven older prefs syncing while only the new one waits for
+ * `make migrate` (Codex P1 on #546). */
+const USER_SETTINGS_COLS_PRE_0069 =
   'item_sort, group_by_feed, hide_on_scroll, show_row_favicon, show_group_favicon, hide_sports_spoilers, auto_summarize_pinned';
 
-/** How long a "backend has no user_settings table" detection is trusted before
+/** How long a "backend can't serve user_settings" detection — no table, or no
+ * column this client's select names (see isMissingSchemaError) — is trusted before
  * the next reconcile re-probes. Long enough that a pre-migration tab isn't
  * paying a failing request per focus/flip, short enough that a long-lived PWA
  * tab notices the operator's `make migrate` within minutes and drains its
@@ -334,6 +344,12 @@ export class SupabaseDataSource implements DataSource {
    * a still-missing table just re-stamps it (Codex P2 on #494). */
   private syncedSettingsUnsupportedAt: number | null = null;
 
+  /** Epoch ms of the last `user_settings` read/write that said the backend has
+   * 0064's table but not 0069's `hide_on_scroll_remove` column. Null until seen.
+   * Separate from {@link syncedSettingsUnsupportedAt} so a pre-0069 backend
+   * degrades ONE setting instead of all of them. */
+  private settingsColumnUnsupportedAt: number | null = null;
+
   /** Whether the backend was recently seen without `user_settings`, expiring
    * the memo when its retry window has passed. */
   private settingsBackendUnsupported(): boolean {
@@ -342,6 +358,18 @@ export class SupabaseDataSource implements DataSource {
       return true;
     }
     this.syncedSettingsUnsupportedAt = null;
+    return false;
+  }
+
+  /** Whether the backend was recently seen without 0069's column, expiring on
+   * the same schedule as the table memo so a long-lived tab starts syncing the
+   * new pref within minutes of `make migrate` — no reload. */
+  private settingsColumnUnsupported(): boolean {
+    if (this.settingsColumnUnsupportedAt === null) return false;
+    if (Date.now() - this.settingsColumnUnsupportedAt < SETTINGS_UNSUPPORTED_RETRY_MS) {
+      return true;
+    }
+    this.settingsColumnUnsupportedAt = null;
     return false;
   }
   private resyncing: Promise<void> | null = null;
@@ -1757,19 +1785,45 @@ export class SupabaseDataSource implements DataSource {
   }
 
   /** Synced reading-behavior settings (`user_settings`, 0064; RLS scopes the
-   * read to the caller's own row). A backend without the table — the manual
-   * `make migrate` hasn't run — is remembered (with expiry, see
-   * {@link settingsBackendUnsupported}) and both methods short-circuit, so
-   * prefs simply stay device-local until the deploy lands (guardrail #11).
+   * read to the caller's own row). Two grades of "this backend is behind the
+   * client" are detected separately, because the right answer differs
+   * (guardrail #11):
+   *
+   *  - **No table at all** (0064 never migrated): remembered with expiry (see
+   *    {@link settingsBackendUnsupported}) and both methods short-circuit —
+   *    every pref stays device-local until the deploy lands.
+   *  - **Table, but not 0069's column**: only the NEW pref is unavailable. The
+   *    read retries on {@link USER_SETTINGS_COLS_PRE_0069} so the seven older
+   *    settings still hydrate and sync normally, and the detection is likewise
+   *    remembered with expiry so the fallback costs one failed request per
+   *    window rather than one per read.
+   *
    * Any other read error also resolves null (soft): the sync layer re-tries on
    * the next focus/online reconcile. */
   async getSyncedSettings(): Promise<Partial<SyncedSettings> | null> {
     if (this.settingsBackendUnsupported()) return null;
-    const { data, error } = await this.sb
-      .from('user_settings')
-      .select(USER_SETTINGS_COLS)
-      .maybeSingle();
+    const read = (cols: string) =>
+      this.sb.from('user_settings').select(cols).maybeSingle();
+    const { data, error } = await read(
+      this.settingsColumnUnsupported()
+        ? USER_SETTINGS_COLS_PRE_0069
+        : USER_SETTINGS_COLS,
+    );
     if (error) {
+      if (isMissingColumnError(error)) {
+        // Pre-0069 backend meeting a post-0069 client: remember, and re-read on
+        // the older projection so this deploy-order skew costs only the one
+        // setting it actually affects.
+        this.settingsColumnUnsupportedAt = Date.now();
+        const retry = await read(USER_SETTINGS_COLS_PRE_0069);
+        if (retry.error) {
+          if (isMissingTableError(retry.error)) {
+            this.syncedSettingsUnsupportedAt = Date.now();
+          }
+          return null;
+        }
+        return retry.data ? mapUserSettings(retry.data as UserSettingsRow) : {};
+      }
       if (isMissingTableError(error)) {
         this.syncedSettingsUnsupportedAt = Date.now();
       }
@@ -1783,6 +1837,8 @@ export class SupabaseDataSource implements DataSource {
     if (patch.itemSort !== undefined) row.item_sort = patch.itemSort;
     if (patch.groupByFeed !== undefined) row.group_by_feed = patch.groupByFeed;
     if (patch.hideOnScroll !== undefined) row.hide_on_scroll = patch.hideOnScroll;
+    if (patch.hideOnScrollRemove !== undefined)
+      row.hide_on_scroll_remove = patch.hideOnScrollRemove;
     if (patch.showRowFavicon !== undefined) row.show_row_favicon = patch.showRowFavicon;
     if (patch.showGroupFavicon !== undefined) row.show_group_favicon = patch.showGroupFavicon;
     if (patch.hideSportsSpoilers !== undefined) row.hide_sports_spoilers = patch.hideSportsSpoilers;
@@ -1813,17 +1869,66 @@ export class SupabaseDataSource implements DataSource {
     // `defaultToNull: false` (`Prefer: missing=default`) is belt-and-braces on
     // top: it keeps the `auth.uid()` default in force even if this payload
     // ever becomes an array (Codex P1 on #494).
-    const { error } = await this.sb
-      .from('user_settings')
-      .upsert(row, { onConflict: 'user_id', defaultToNull: false });
-    if (error) {
-      if (isMissingTableError(error)) {
-        this.syncedSettingsUnsupportedAt = Date.now();
+    const write = (payload: Record<string, unknown>) =>
+      this.sb
+        .from('user_settings')
+        .upsert(payload, { onConflict: 'user_id', defaultToNull: false });
+    const raise = (e: unknown): never => {
+      throw e instanceof Error
+        ? e
+        : new Error(String((e as { message?: string }).message ?? e));
+    };
+    // Same split as the read: a pre-0069 backend can still take the other
+    // settings, so drop just the new column and push the rest. The new value is
+    // NOT acked — the throw at the end keeps it pending until the migration.
+    const olderOnly = (payload: Record<string, unknown>) => {
+      const { hide_on_scroll_remove: _drop, ...rest } = payload;
+      return rest;
+    };
+    const newPrefPending = row.hide_on_scroll_remove !== undefined;
+    // Read the memo ONCE. It is time-based and self-clearing, so two calls can
+    // straddle its expiry and disagree — strip the column on the first, then
+    // skip arming `deferredNewPref` on the second. A patch carrying only the new
+    // pref would then send an empty payload and RESOLVE, which the sync engine
+    // reads as delivered: the exact fake-ack that strands a value device-local
+    // forever (Codex P2 on #546).
+    const columnUnsupported = this.settingsColumnUnsupported();
+    let payload = columnUnsupported ? olderOnly(row) : row;
+    let deferredNewPref = newPrefPending && columnUnsupported;
+    if (Object.keys(payload).length > 0) {
+      const { error } = await write(payload);
+      if (error) {
+        if (isMissingColumnError(error)) {
+          this.settingsColumnUnsupportedAt = Date.now();
+          payload = olderOnly(payload);
+          deferredNewPref = newPrefPending;
+          if (Object.keys(payload).length > 0) {
+            const retry = await write(payload);
+            if (retry.error) {
+              if (isMissingTableError(retry.error)) {
+                this.syncedSettingsUnsupportedAt = Date.now();
+              }
+              raise(retry.error);
+            }
+          }
+        } else {
+          if (isMissingTableError(error)) {
+            this.syncedSettingsUnsupportedAt = Date.now();
+          }
+          // Missing table or transient (offline/5xx) alike: throw so the sync
+          // engine keeps the diff pending — it retries on the next change/
+          // online/focus, and post-migration the pending values sync for real.
+          raise(error);
+        }
       }
-      // Missing table or transient (offline/5xx) alike: throw so the sync
-      // engine keeps the diff pending — it retries on the next change/online/
-      // focus, and post-migration the pending values sync for real.
-      throw error instanceof Error ? error : new Error(String((error as { message?: string }).message ?? error));
+    }
+    // The older columns landed; the 0069 one couldn't. Throw so the engine keeps
+    // THIS setting pending (a resolved set() would ack it as delivered and
+    // strand it device-local forever — same reasoning as the missing-table case
+    // above). The already-written columns are simply re-sent on the retry, which
+    // is idempotent, and only until the migration lands.
+    if (deferredNewPref) {
+      throw new Error('hide_on_scroll_remove is not deployed on this backend');
     }
   }
 

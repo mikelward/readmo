@@ -18,6 +18,7 @@ import type { ItemSort, Page } from '../lib/data/DataSource';
 import { useInViewIds } from '../hooks/useInViewIds';
 import {
   useHideOnScroll,
+  useHideOnScrollRemove,
   useBottomBarPosition,
   useEffectiveHideSpoilers,
 } from '../hooks/useReadingPrefs';
@@ -484,12 +485,22 @@ export function ItemList({
   const listRef = useListKeyboardNav();
   const { registerSweep } = useFeedBar();
   const { hideOnScroll } = useHideOnScroll();
+  const { hideOnScrollRemove } = useHideOnScrollRemove();
 
   // Auto-hide-on-scroll: when enabled, mark unpinned rows Done the moment they
   // scroll off the top of the viewport (the user scrolled past them without
   // pinning). Reuses Sweep's `hideMany` so the feed refetch filters the row out.
   // Pinned rows are shielded, exactly like Sweep. Off by default (SPEC.md
   // *Reading settings*).
+  //
+  // What happens to the row afterwards is the sub-setting (SPEC.md *Reading
+  // settings*): REMOVE (default) drops it and collapses the list up, which is
+  // what the scroll pin and the settle-flush buffer below exist to make safe;
+  // STRIKE IN PLACE leaves it rendered, dimmed and struck through, until the
+  // list next re-materializes. Strike mode moves no layout at all, so it needs
+  // neither the anchor capture nor the cascade it guards against — but it still
+  // buffers to settle, because a row scrolled back into view before the batch
+  // commits must still be spared in both modes.
   //
   // Undo restores the whole scroll burst, not just the last row: dismissals
   // within SCROLL_HIDE_BATCH_WINDOW_MS of each other share one undo batch
@@ -512,6 +523,16 @@ export function ItemList({
   // inside hideMany, tell an auto-hide Done flip from a reader's in-view
   // mark-done and skip it.
   const autoHideInFlightRef = useRef<Set<ItemId> | null>(null);
+  // Rows auto-hidden with the remove sub-setting OFF: marked Done, but held in
+  // the list struck through instead of dropped. `visibleItems` reads this to
+  // keep them rendered even though the store says dismissed — a lifetime the
+  // cross-device gray set below deliberately does NOT share (that one commits
+  // the moment its row leaves the screen, whereas these are marked BECAUSE the
+  // row left the screen, so the same rule would drop every one of them
+  // instantly). They clear on the next re-materialization — a view change, a
+  // Sweep, or any refetch that repaints the list (the shared reset below, which
+  // the pull-to-refresh handler's own reset merely overlaps).
+  const struckIdsRef = useRef<Set<ItemId>>(new Set());
   // The reader's scroll anchor across a settle-time top-exit flush: a row under
   // their eyes and where it sits on screen, held there until they next act on
   // the viewport. The browser's own scroll anchoring can't be trusted across
@@ -585,11 +606,19 @@ export function ItemList({
         return !st.pinned && !st.done && !st.hidden;
       });
       if (toHide.length === 0) return;
-      // Capture the anchor only now that a removal is certain — so the restore
-      // layout effect, keyed on the visibleItems shrink this hideMany causes,
-      // always fires to consume it and never strands a stale anchor for an
-      // unrelated later render.
-      captureExitTopAnchor(new Set(toHide));
+      if (hideOnScrollRemove) {
+        // Capture the anchor only now that a removal is certain — so the restore
+        // layout effect, keyed on the visibleItems shrink this hideMany causes,
+        // always fires to consume it and never strands a stale anchor for an
+        // unrelated later render.
+        captureExitTopAnchor(new Set(toHide));
+      } else {
+        // Strike in place: nothing leaves the list, so there is no shift to pin
+        // against. Record the ids BEFORE hideMany — its store bump re-runs the
+        // visibleItems memo synchronously on the next render, and the memo reads
+        // this ref, so a late write would flash the rows out and back.
+        for (const id of toHide) struckIdsRef.current.add(id);
+      }
       const now = Date.now();
       if (now - lastScrollHideAt.current >= SCROLL_HIDE_BATCH_WINDOW_MS) {
         // A gap ends the burst; mint a globally-unique key for the new one so it
@@ -605,7 +634,7 @@ export function ItemList({
       ds.stateStore.hideMany(toHide, now, { batchKey: scrollBatchKey.current });
       autoHideInFlightRef.current = null;
     },
-    [ds, captureExitTopAnchor],
+    [ds, captureExitTopAnchor, hideOnScrollRemove],
   );
 
   // Auto-hide-on-scroll must never remove rows while the viewport is still in
@@ -808,7 +837,12 @@ export function ItemList({
     let droppedGray = false;
     for (const id of ids) {
       onScreenIdsRef.current.delete(id);
-      if (grayedIdsRef.current.has(id)) droppedGray = true;
+      // A struck-in-place row is grayed too, but it's held regardless of where
+      // it sits, so this bump would only re-run the memo to reach the same
+      // answer. Skip it — every struck row would otherwise cost a render on the
+      // scroll that marked it.
+      if (grayedIdsRef.current.has(id) && !struckIdsRef.current.has(id))
+        droppedGray = true;
     }
     if (droppedGray) bumpViewportVersion();
   }, []);
@@ -1147,6 +1181,9 @@ export function ItemList({
         localDismissedIdsRef.current.add(id);
       } else if (changed.done === false || changed.hidden === false) {
         localDismissedIdsRef.current.delete(id);
+        // NB: strike holds are NOT pruned here. This channel is local-only, so
+        // it would miss a cross-device restore; visibleItems prunes them off the
+        // row's live state instead, which covers every channel.
       }
     });
   }, [ds]);
@@ -1184,6 +1221,7 @@ export function ItemList({
       // local-dismiss bookkeeping, or pin baseline from the previous view.
       onScreenIdsRef.current = new Set();
       grayedIdsRef.current = new Set();
+      struckIdsRef.current = new Set();
       localDismissedIdsRef.current = new Set();
       basePinnedRef.current = new Set();
       seenForBaseRef.current = new Set();
@@ -1243,6 +1281,14 @@ export function ItemList({
     setStayInBodyIds(new Set());
     setPendingFeedMore(new Set());
     grayedIdsRef.current = new Set();
+    // Every re-materialization ends a strike-in-place hold, not just the PTR
+    // that clears it explicitly below: a stale-focus/reconnect/subscription
+    // refetch repaints the list from a fresh read, and rows the reader scrolled
+    // past in the previous sitting must compact with it. (The refetch usually
+    // drops them server-side anyway; this covers the case where it doesn't —
+    // the async outbox write hasn't landed yet — so the repaint doesn't seat a
+    // row the reader already finished.)
+    struckIdsRef.current = new Set();
     // Re-baseline pin membership from the fresh page HERE, not by clearing and
     // leaving it to the render-time loop: the sticky-window init effect below
     // runs in this same effect flush, and its state updater executes at the top
@@ -1660,6 +1706,24 @@ export function ItemList({
     for (const fi of mergedRaw) {
       const id = fi.item.id;
       const st = ds.stateStore.get(id);
+      // A row that is LIVE carries no dismissal provenance. Both sets below
+      // describe how the row's *current* dismissal came about, so the moment it
+      // isn't dismissed they're stale and must go — whatever revived it: the
+      // row's own Undo, a batch Undo, a pin (which clears done/hidden), or
+      // ANOTHER DEVICE, which arrives by hydrate and fires no local mutation at
+      // all. Pruning here rather than on the mutation channel is what covers
+      // that last case, for both sets (Codex P2 on #546):
+      //  - a stale STRIKE hold makes the next dismissal look like the original
+      //    auto-hide, holding the row struck instead of removing/graying it;
+      //  - stale LOCAL-DISMISS provenance makes a later CROSS-DEVICE dismissal
+      //    remove the row outright instead of graying it in place.
+      // Re-dismissing locally re-adds the id through the mutation channel
+      // synchronously, before the next render, so nothing is lost by clearing
+      // them here.
+      if (!st.done && !st.hidden) {
+        struckIdsRef.current.delete(id);
+        localDismissedIdsRef.current.delete(id);
+      }
       // A PIN is exempt from the Done/Hidden overlay — a pin means "keep this
       // visible", so it always shows normally (never dismissed, never grayed),
       // matching the server feed read, which returns a pinned row regardless of
@@ -1674,6 +1738,16 @@ export function ItemList({
         continue;
       }
       if (!st.done && !st.hidden) {
+        visible.push(fi);
+        continue;
+      }
+      // Auto-hidden with the remove sub-setting off: hold it where it is,
+      // struck through, however far off screen it has scrolled. Checked BEFORE
+      // the local-dismiss branch because hideMany fired the mutation channel for
+      // these ids too, so they're in both sets — this one is the more specific
+      // instruction and wins until a re-materialization clears it.
+      if (struckIdsRef.current.has(id)) {
+        grayed.add(id);
         visible.push(fi);
         continue;
       }
@@ -1711,6 +1785,12 @@ export function ItemList({
       const st = ds.stateStore.get(id);
       if (st.done) ds.stateStore.set(id, 'done', false);
       if (st.hidden) ds.stateStore.set(id, 'hidden', false);
+      // Rescuing a row individually takes it out of any pending batch undo. A
+      // strike-in-place row is in one (its auto-hide burst) AND carries this
+      // button, so without this the reader could restore a row, pin it, then
+      // tap the toolbar Undo for the rest of the burst and have the batch's
+      // pre-hide snapshot silently unpin it (Codex P2 on #546).
+      ds.stateStore.dropFromUndo(id);
     },
     [ds],
   );
@@ -2479,6 +2559,13 @@ export function ItemList({
     // channel never fires — record every swept id as locally dismissed so the
     // overlay drops the grayed rows too, not just the freshly-dismissed ones.
     for (const id of ids) localDismissedIdsRef.current.add(id);
+    // Sweep ends EVERY strike-in-place hold, not just the swept rows'. Rows
+    // struck earlier are usually scrolled above the viewport, so they aren't in
+    // `ids` — deleting only those would leave them struck, and scrolling back up
+    // after a Sweep would still show dismissed rows (Codex P2 on #546). They're
+    // already Done, so clearing the hold just lets the overlay drop them; Sweep
+    // is the consolidating gesture, same as it is for pins.
+    struckIdsRef.current = new Set();
     ds.stateStore.hideMany(ids);
     // Sweep consolidates: in-body pins snap into the top block (SPEC.md).
     setStayInBodyIds(new Set());
@@ -2552,6 +2639,7 @@ export function ItemList({
         // Grayed cross-device dismisses are already done → record them as locally
         // dismissed so the overlay drops them (see commitSweep).
         for (const id of batch) localDismissedIdsRef.current.add(id);
+        struckIdsRef.current = new Set(); // see commitSweep
         ds.stateStore.hideMany(batch);
         // Sweep consolidates: in-body pins snap into the top block (SPEC.md).
         setStayInBodyIds(new Set());
@@ -3302,11 +3390,13 @@ export function ItemList({
           seenForBaseRef.current = new Set();
           basePinnedRef.current = new Set();
           promotedPinsRef.current = new Set();
-          // …and compacts grayed cross-device dismisses (the refetch also drops
-          // them server-side, so this just clears the in-session bookkeeping;
-          // `onScreenIdsRef` is re-derived by the observer as the fresh rows
-          // mount).
+          // …and compacts grayed cross-device dismisses AND the rows struck in
+          // place by auto-hide (the refetch also drops them server-side, so this
+          // just clears the in-session bookkeeping; `onScreenIdsRef` is
+          // re-derived by the observer as the fresh rows mount). This is the
+          // "until you refresh" in the sub-setting's copy.
           grayedIdsRef.current = new Set();
+          struckIdsRef.current = new Set();
           await checkForServiceWorkerUpdate();
         }}
       >

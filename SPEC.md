@@ -1639,7 +1639,11 @@ negligible and off every critical path. See the External services table in
      distinguished from the reader's *own* dismiss purely by channel: a local
      swipe/Sweep/auto-hide removes and collapses immediately (below); only a
      dismiss that arrives via resync — which never fires the local mutation
-     channel — can gray. **Graying is only to avoid a visible jump, so it applies
+     channel — can gray. (Auto-hide is the one local dismiss that can *also*
+     render struck rather than remove, when its remove sub-setting is off — but
+     that's the reader's own standing choice, and those rows are held until the
+     list re-materializes rather than following the on-screen rule below.)
+     **Graying is only to avoid a visible jump, so it applies
      only to a row that is actually on screen.** A cross-device dismiss that lands
      on a row that is **off screen** — below the fold, scrolled above the top, or
      inside a collapsed section — **removes it immediately**, since nothing the
@@ -1792,32 +1796,38 @@ negligible and off every critical path. See the External services table in
    - **Auto-hide on scroll** (opt-in, `readmo:hide-on-scroll`, off by default —
      see *Settings → Reading*): when on, each unpinned row you **scroll fully
      off the top** of the viewport is marked Done (you scrolled past it without
-     pinning it). A row counts as scrolled-off the moment it's **visually gone**:
-     in grouped views that's when it slips behind the **pinned section header**
-     (which has already hidden it), not a header-height later when it clears the
-     toolbar above. This is **not** the Sweep button: no tap and no selection —
+     pinning it). A row counts as scrolled-off the moment it's **visually gone**
+     — in grouped views, when it slips behind the pinned section header that has
+     already hidden it. This is **not** the Sweep button: no tap and no selection —
      every scrolled-past row is dismissed on its own. It reuses Sweep's
      dismissal and the same pin shield (pinned rows are never auto-hidden), and
      rows still below the fold are never auto-hidden — only ones you've
      actually scrolled past, and a row scrolled back into view before its
-     dismissal commits is spared. Rows that are already Done/Hidden are
-     skipped, so a re-delivered id can't clobber the undo baseline.
+     dismissal commits is spared.
      **Dismissals commit only once the scroll comes to rest** — never while a
-     finger is still down or the viewport is still moving (a drag, a wheel
-     burst, or the momentum glide after a flick). Removing rows mid-motion
-     would shift the remaining content up under the reader, sweeping rows they
-     can still see past the top — at the foot of a feed section that dismisses
-     the section's last rows unread and yanks the next feed group into view.
-     When the batch commits, the reader's scroll position is **actively held**:
-     a row near the top of what they're looking at is restored to the same
-     on-screen spot as the rows above it collapse — across the removal and the
-     refetch that lands a beat later — until the reader next touches, wheels,
-     or keys the viewport. (The browser's own scroll anchoring can't be relied
-     on for either guarantee.) **Undo restores the whole scroll burst, not just the last
-     row:** dismissals within a rolling **2s window** of each other extend a
+     finger is still down or the viewport is still moving. Acting mid-motion
+     would shift content up under the reader, sweeping rows they can still see
+     past the top.
+   - **What happens to a marked row is yours to choose**
+     (`readmo:hide-on-scroll-remove`, **on by default** — see *Settings →
+     Reading*). **On, the row is removed** and the list collapses up; the
+     reader's scroll position is then **actively held** so what they're looking
+     at stays put as the rows above them disappear, until they next touch,
+     wheel, or key the viewport. **Off, the row stays exactly where it is,
+     dimmed with its title struck through**, until the list next
+     re-materializes (a Sweep, or any of the refetches under *A stable set of
+     articles* — a pull-to-refresh, a return past the freshness window, leaving
+     and coming back) —
+     so the list never moves under you at all, scrolling back up shows you what
+     you dismissed, and each struck row offers its own **Undo** to rescue it
+     one at a time. Removal is the default because it's what auto-hide has
+     always done. Same dismissal either way: the row is Done immediately and
+     everywhere, only its rendering differs.
+   - **Undo restores the whole scroll burst, not just the last
+     row:** dismissals in quick succession extend a
      single undo batch (mirrors newshacker's dismiss-batch window), so one tap of
-     the toolbar Undo brings back the run you just scrolled past; a gap longer
-     than the window starts a fresh batch, so Undo only ever reaches back to the
+     the toolbar Undo brings back the run you just scrolled past; a longer pause
+     starts a fresh batch, so Undo only ever reaches back to the
      burst you were just looking at. Undo also **scrolls the list back up to the
      topmost restored row** (the earliest one you'd scrolled past) when it lands
      above the fold, so the rows it brought back are actually in view rather than
@@ -1885,7 +1895,12 @@ negligible and off every critical path. See the External services table in
     button at the top of Settings links there (see below).
     - **Reading** — toggles **Mark Done as you scroll**
       (`readmo:hide-on-scroll`, **off by default**), wiring the auto-hide
-      behavior in *List toolbar → Auto-hide on scroll*; and **Group by feed**
+      behavior in *List toolbar → Auto-hide on scroll*, with the sub-toggle
+      **Remove them from the list** (`readmo:hide-on-scroll-remove`, **on by
+      default**) indented beneath it — off leaves each marked row struck through
+      in place until the next refresh. Title only, no description (the label is
+      the copy), and shown only while its parent is on rather than offered as a
+      dead control; and **Group by feed**
       (`readmo:group-by-feed`, **off by default**), sectioning Home/folder lists
       by feed (see *Feed views → Sort & grouping*) — followed by the **Sort
       order** picker (`readmo:item-sort`): **Newest first** (default) or **Oldest

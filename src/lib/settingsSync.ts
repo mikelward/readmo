@@ -1,7 +1,8 @@
 // Per-account reading-behavior settings sync (SPEC.md *Settings* → scope).
 //
 // The reading-behavior preferences (sort order, group by feed, mark-done-on-
-// scroll, favicon toggles, spoiler hiding, auto-summarize) are ACCOUNT intent,
+// scroll and what it does with the row, favicon toggles, spoiler hiding,
+// auto-summarize) are ACCOUNT intent,
 // not device ergonomics, so they sync across devices via the `user_settings`
 // table (0064). Appearance (theme/palette/text size/font), the bottom-toolbar
 // position, the app-wide article-layout default, and diagnostics stay
@@ -46,6 +47,7 @@ export interface SyncedSettings {
   itemSort: 'newest' | 'oldest';
   groupByFeed: boolean;
   hideOnScroll: boolean;
+  hideOnScrollRemove: boolean;
   showRowFavicon: boolean;
   showGroupFavicon: boolean;
   hideSportsSpoilers: boolean;
@@ -59,6 +61,7 @@ export type SyncedSettingKey = keyof SyncedSettings;
 export const ITEM_SORT_KEY = 'readmo:item-sort';
 export const GROUP_BY_FEED_KEY = 'readmo:group-by-feed';
 export const HIDE_ON_SCROLL_KEY = 'readmo:hide-on-scroll';
+export const HIDE_ON_SCROLL_REMOVE_KEY = 'readmo:hide-on-scroll-remove';
 export const SHOW_ROW_FAVICON_KEY = 'readmo:show-row-favicon';
 export const SHOW_GROUP_FAVICON_KEY = 'readmo:show-group-favicon';
 export const HIDE_SPORTS_SPOILERS_KEY = 'readmo:hide-sports-spoilers';
@@ -94,6 +97,7 @@ export const SYNCED_SETTINGS: {
   },
   groupByFeed: boolSpec(GROUP_BY_FEED_KEY),
   hideOnScroll: boolSpec(HIDE_ON_SCROLL_KEY),
+  hideOnScrollRemove: boolSpec(HIDE_ON_SCROLL_REMOVE_KEY),
   showRowFavicon: boolSpec(SHOW_ROW_FAVICON_KEY),
   showGroupFavicon: boolSpec(SHOW_GROUP_FAVICON_KEY),
   hideSportsSpoilers: boolSpec(HIDE_SPORTS_SPOILERS_KEY),

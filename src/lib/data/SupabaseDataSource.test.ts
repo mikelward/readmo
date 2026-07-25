@@ -3067,6 +3067,133 @@ describe('synced settings (user_settings, 0064)', () => {
     expect(env.fake.selectCount('user_settings')).toBe(0);
   });
 
+  it.each([
+    ['read', '42703', 'column user_settings.hide_on_scroll_remove does not exist'],
+    ['write', 'PGRST204', "Could not find the 'hide_on_scroll_remove' column"],
+  ])(
+    'falls back to the pre-0069 projection when only the new COLUMN is missing, on %s (guardrail #11)',
+    async (_op, code, message) => {
+      // Deploy-order skew: the client ships before `make migrate`. The read
+      // names an explicit column list, so the un-migrated column fails the whole
+      // row — but that must degrade ONLY the new preference. Every 0064 setting
+      // has to keep hydrating and syncing (Codex P1 on #546).
+      const env = setup({
+        ...seed(),
+        user_settings: [{ user_id: 'u1', group_by_feed: true }],
+      });
+      env.fake.failSelectOnce('user_settings', { code, message });
+      env.fake.failUpdateOnce('user_settings', { code, message });
+
+      // The retry on the older projection still hydrates the existing prefs.
+      await expect(env.ds.getSyncedSettings()).resolves.toEqual({
+        groupByFeed: true,
+      });
+      // …and an older setting still WRITES, rather than being blocked.
+      await env.ds.setSyncedSettings({ groupByFeed: false });
+      expect(env.fake.store.user_settings).toEqual([
+        { user_id: 'u1', group_by_feed: false },
+      ]);
+      // The table itself was never marked unsupported — only the column.
+      await expect(env.ds.getSyncedSettings()).resolves.toEqual({
+        groupByFeed: false,
+      });
+    },
+  );
+
+  it('keeps the new pref pending (never fake-acks it) against a pre-0069 backend', async () => {
+    const env = setup({ ...seed(), user_settings: [] });
+    env.fake.failUpdateOnce('user_settings', {
+      code: 'PGRST204',
+      message: "Could not find the 'hide_on_scroll_remove' column",
+    });
+
+    // A patch carrying BOTH: the older column lands, the new one must not be
+    // acked — a resolved set() would strand it device-local forever once the
+    // migration arrives (local == acked leaves no diff to push).
+    await expect(
+      env.ds.setSyncedSettings({ groupByFeed: true, hideOnScrollRemove: false }),
+    ).rejects.toThrow('hide_on_scroll_remove is not deployed');
+    expect(env.fake.store.user_settings).toEqual([{ group_by_feed: true }]);
+
+    // A patch carrying ONLY the new one short-circuits on the remembered
+    // detection and still rejects, without a pointless failing request.
+    await expect(
+      env.ds.setSyncedSettings({ hideOnScrollRemove: false }),
+    ).rejects.toThrow('hide_on_scroll_remove is not deployed');
+  });
+
+  it('never fake-acks the new pref when the column memo expires mid-write', async () => {
+    // Codex P2 on #546: the memo is time-based and self-clearing, so two reads
+    // inside one write can straddle its expiry — strip the column on the first,
+    // then skip deferring on the second. A patch carrying ONLY the new pref
+    // would send an empty payload and resolve, which the sync engine acks as
+    // delivered: the value is then stranded device-local forever.
+    const env = setup({ ...seed(), user_settings: [] });
+    const now = vi.spyOn(Date, 'now');
+    now.mockReturnValue(1_000_000);
+    env.fake.failUpdateOnce('user_settings', {
+      code: 'PGRST204',
+      message: "Could not find the 'hide_on_scroll_remove' column",
+    });
+    await expect(
+      env.ds.setSyncedSettings({ hideOnScrollRemove: false }),
+    ).rejects.toThrow('not deployed');
+
+    // Land exactly on the expiry boundary for the next write.
+    now.mockReturnValue(1_000_000 + 5 * 60 * 1000);
+    // Whichever side of the boundary this write resolves on, it must not
+    // RESOLVE without having sent the value.
+    let acked = false;
+    try {
+      await env.ds.setSyncedSettings({ hideOnScrollRemove: false });
+      acked = true;
+    } catch {
+      acked = false;
+    }
+    if (acked) {
+      // Resolving is only honest if the value actually reached the backend.
+      expect(env.fake.store.user_settings).toEqual([
+        { hide_on_scroll_remove: false },
+      ]);
+    } else {
+      expect(env.fake.store.user_settings ?? []).toEqual([]);
+    }
+    now.mockRestore();
+  });
+
+  it('picks up the new column once the migration lands and the memo expires', async () => {
+    const now = vi.spyOn(Date, 'now');
+    now.mockReturnValue(1_000_000);
+    const env = setup({ ...seed(), user_settings: [] });
+    env.fake.failSelectOnce('user_settings', {
+      code: '42703',
+      message: 'column user_settings.hide_on_scroll_remove does not exist',
+    });
+    await expect(env.ds.getSyncedSettings()).resolves.toEqual({});
+    await expect(
+      env.ds.setSyncedSettings({ hideOnScrollRemove: false }),
+    ).rejects.toThrow('not deployed');
+
+    // The operator runs `make migrate` while this tab stays open.
+    now.mockReturnValue(1_000_000 + 6 * 60 * 1000);
+    await env.ds.setSyncedSettings({ hideOnScrollRemove: false });
+    expect(env.fake.store.user_settings).toEqual([
+      { hide_on_scroll_remove: false },
+    ]);
+    now.mockRestore();
+  });
+
+  it('round-trips the hide_on_scroll_remove sub-setting (0069)', async () => {
+    const env = setup({ ...seed(), user_settings: [] });
+    await env.ds.setSyncedSettings({ hideOnScrollRemove: false });
+    expect(env.fake.store.user_settings).toEqual([
+      { hide_on_scroll_remove: false },
+    ]);
+    await expect(env.ds.getSyncedSettings()).resolves.toEqual({
+      hideOnScrollRemove: false,
+    });
+  });
+
   it('setSyncedSettings rethrows a transient failure so the sync engine keeps the diff pending', async () => {
     const env = setup({ ...seed(), user_settings: [] });
     env.fake.failUpdateOnce('user_settings', { code: '503', message: 'service unavailable' });

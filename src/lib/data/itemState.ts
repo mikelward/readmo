@@ -442,6 +442,20 @@ export class ItemStateStore {
     }
     if (sameMap(this.map, next)) return;
     this.map = next;
+    // A cross-device RESTORE invalidates that row's entry in the pending undo
+    // batch. `undoLast` replays each entry's pre-hide snapshot verbatim, so a
+    // row another device revived would let a later batch Undo stomp whatever
+    // happened to it since — unpinning a row the reader pinned after the
+    // restore. Only a restore drops its entry: a hydrate that merely echoes our
+    // own dismissal back (the outbox round-trip) leaves the row dismissed and
+    // must NOT, or syncing would silently retract the Undo the reader just
+    // earned.
+    if (this.lastUndo) {
+      for (const [id] of [...this.lastUndo]) {
+        const st = next[id];
+        if (st && !st.done && !st.hidden) this.invalidateUndoEntry(id);
+      }
+    }
     this.persistence.save(this.map);
     this.emit();
     // Distinct from `emit()`: fires only when a hydrate/cross-device sync
@@ -504,10 +518,45 @@ export class ItemStateStore {
       return next;
     }
     this.map = { ...this.map, [id]: next };
+    // Undo may restore dismissal state; it must NEVER revert a pin or a
+    // favorite. `undoLast` replays each batch entry's pre-hide snapshot
+    // verbatim, so a row that is pinned or favorited AFTER its hide would have
+    // that stripped when the reader undoes the rest of the burst. Strike mode
+    // makes this ordinary — a struck row stays on screen and fully tappable, so
+    // pinning one is a normal thing to do — but the hazard is not specific to
+    // any one route in (the row menu, the reader, a keyboard shortcut), so the
+    // rule lives here, at the mutation itself, rather than at each caller.
+    //
+    // ONLY `pinned`. `favorite` and `opened` are already safe — undoLast restores
+    // just the dismissal fields and carries those forward untouched. A pin is
+    // different because it IS a decision about the dismissal state (it clears
+    // Done), so an Undo would legitimately-but-wrongly revert it; the row leaves
+    // the batch instead. Dropping entries for done/hidden/opened would shrink a
+    // burst's Undo every time the reader merely opened a struck row.
+    if (field === 'pinned') {
+      this.invalidateUndoEntry(id);
+    }
     this.persistence.save(this.map);
     this.emitDiff(id, prev, next, now);
     this.emit();
     return next;
+  }
+
+  /** Remove one id from the pending undo batch, clearing the batch when it was
+   * the last entry. Pure bookkeeping — no restore, no emit; callers emit as
+   * part of whatever change prompted it. */
+  private invalidateUndoEntry(id: ItemId): boolean {
+    const batch = this.lastUndo;
+    if (!batch) return false;
+    const kept = batch.filter(([bid]) => bid !== id);
+    if (kept.length === batch.length) return false;
+    if (kept.length === 0) {
+      this.lastUndo = null;
+      this.lastUndoKey = null;
+    } else {
+      this.lastUndo = kept;
+    }
+    return true;
   }
 
   /** Dismiss one item (marks done, records an undo point). Distinct from
@@ -569,6 +618,23 @@ export class ItemStateStore {
     return this.lastUndo !== null;
   }
 
+  /** Drop one id from the pending undo batch, without restoring anything.
+   *
+   * For a row the reader has ALREADY restored individually (the per-row Undo on
+   * a dismissed-in-place row). `undoLast` writes each batch entry's pre-hide
+   * snapshot back verbatim, so leaving a rescued row in the batch means a later
+   * batch Undo reverts whatever the reader did to it after the rescue — pin it,
+   * favorite it, and the toolbar Undo silently undoes that too. An explicit
+   * per-row restore is the newer action and takes the row out of the batch.
+   *
+   * Clears the batch entirely once its last id is consumed, so `canUndo()` stops
+   * offering an Undo that would do nothing. */
+  dropFromUndo(id: ItemId): void {
+    // The undo AVAILABILITY changed (the toolbar button reads canUndo), so the
+    // subscribers need a repaint even though no item state moved.
+    if (this.invalidateUndoEntry(id)) this.emit();
+  }
+
   /** Restore the most recent hide/sweep batch. Returns the ids it restored
    * (in batch order), so a caller can react to the restore — e.g. scroll the
    * list back up to the topmost row that just reappeared. Empty when there was
@@ -585,7 +651,25 @@ export class ItemStateStore {
     // last-write-wins clock and wins over the dismissal it reverses.
     for (const [id, prior] of batch) {
       const current = this.map[id] ?? DEFAULT_ITEM_STATE;
-      const restored = prior ?? DEFAULT_ITEM_STATE;
+      const snapshot = prior ?? DEFAULT_ITEM_STATE;
+      // Undo reverts the DISMISSAL, not the row's whole history. A hide only
+      // ever touches pinned/done/hidden (applyMutation's exclusivity rules), so
+      // those are the only fields restored from the snapshot. `favorite` and
+      // `opened` are independent of dismissal and carry forward at their CURRENT
+      // values — replaying the snapshot wholesale would revert whatever the
+      // reader did to the row after the hide, and for `opened` that means
+      // emitting opened:false and dropping an article out of /opened that they
+      // had just read. Strike mode makes that ordinary (a struck row stays on
+      // screen and openable), but the bug was always latent for swipe/Sweep.
+      const restored: ItemState = {
+        ...current,
+        pinned: snapshot.pinned,
+        pinnedAt: snapshot.pinnedAt,
+        done: snapshot.done,
+        doneAt: snapshot.doneAt,
+        hidden: snapshot.hidden,
+        hiddenAt: snapshot.hiddenAt,
+      };
       this.emitDiff(id, current, restored, now);
       // Restamp the reverted fields' `<f>At` to `now` so the local restore carries
       // the SAME last-write-wins clock the server write does. Writing the prior

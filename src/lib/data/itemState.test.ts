@@ -735,3 +735,122 @@ describe('ItemStateStore', () => {
     });
   });
 });
+
+describe('dropFromUndo', () => {
+  function memoryPersistence(): StatePersistence {
+    let saved: Record<string, ItemState> = {};
+    return {
+      load: () => saved,
+      save: (m) => {
+        saved = m;
+      },
+    };
+  }
+
+  // Clocks must sit inside the retention window: done/hidden/opened collapse to
+  // false once they age past the 30-day TTL, so epoch-relative test times would
+  // make those assertions pass for the wrong reason.
+  const T = Date.now();
+
+  it('takes a rescued row out of the batch so a later Undo cannot revert newer actions', () => {
+    // Codex P2 on #546: an auto-hide burst records a pre-hide snapshot per id.
+    // If the reader restores one row individually and then acts on it, the
+    // toolbar Undo for the REST of the burst must not write that stale snapshot
+    // back over the newer action.
+    const store = new ItemStateStore(memoryPersistence());
+    store.hideMany(['a', 'b'], T, { batchKey: 'burst' });
+
+    // Rescue 'a' individually, then pin it.
+    store.set('a', 'done', false, T + 1000);
+    store.dropFromUndo('a');
+    store.set('a', 'pinned', true, T + 2000);
+
+    // Undo the rest of the burst.
+    const restored = store.undoLast(T + 3000);
+
+    expect(restored).toEqual(['b']);
+    expect(store.get('b').done).toBe(false);
+    // 'a' keeps the pin the reader added after rescuing it.
+    expect(store.get('a').pinned).toBe(true);
+    expect(store.get('a').done).toBe(false);
+  });
+
+  it('drops a cross-device RESTORE from the pending batch, but not an echo of our own dismissal', () => {
+    // Codex P2 on #546. A hydrate that revives a row makes its pre-hide snapshot
+    // stale — replaying it later would stomp what the reader did after the
+    // restore. A hydrate that merely confirms the dismissal must leave the batch
+    // alone, or the outbox round-trip would silently retract the reader's Undo.
+    const store = new ItemStateStore(memoryPersistence());
+    store.hideMany(['a', 'b'], T, { batchKey: 'burst' });
+
+    // The server echoes our own dismissal of 'a' back: batch untouched.
+    store.hydrate([['a', { ...DEFAULT_ITEM_STATE, done: true, doneAt: T }]], new Map(), T + 500);
+    expect(store.canUndo()).toBe(true);
+
+    // Another device RESTORES 'a', and the reader pins it.
+    store.hydrate([['a', { ...DEFAULT_ITEM_STATE, done: false, doneAt: T + 1000 }]], new Map(), T + 1000);
+    store.set('a', 'pinned', true, T + 2000);
+
+    // Undoing the rest of the burst must not revert that pin.
+    const restored = store.undoLast(T + 3000);
+    expect(restored).toEqual(['b']);
+    expect(store.get('a').pinned).toBe(true);
+  });
+
+  it('drops a batched row from Undo once it is PINNED, so Undo cannot unpin it', () => {
+    // Codex P2 on #546. A struck row stays on screen and fully tappable, so
+    // pinning one is ordinary — and the row menu / reader / `p` shortcut all
+    // reach `set` without passing the per-row Undo handler. A pin IS a decision
+    // about the dismissal state (it clears Done), so the row leaves the batch
+    // rather than being restored out from under the reader.
+    const store = new ItemStateStore(memoryPersistence());
+    store.hideMany(['a', 'b'], T, { batchKey: 'burst' });
+
+    store.set('a', 'pinned', true, T + 1000);
+    const restored = store.undoLast(T + 2000);
+
+    expect(restored).toEqual(['b']);
+    expect(store.get('a').pinned).toBe(true);
+    expect(store.get('b').done).toBe(false);
+  });
+
+  it('keeps FAVORITE and OPENED through a batch Undo, restoring only the dismissal', () => {
+    // Codex P2 on #546. Undo reverts the dismissal, not the row's whole history:
+    // favorite and opened are independent of dismissal, so replaying the
+    // snapshot wholesale would strip a favorite the reader just added and drop a
+    // just-read article out of /opened. The row stays in the batch — it is still
+    // restored — but those fields carry forward.
+    const store = new ItemStateStore(memoryPersistence());
+    store.hideMany(['a', 'b'], T, { batchKey: 'burst' });
+
+    store.set('a', 'favorite', true, T + 1000);
+    store.set('a', 'opened', true, T + 1100);
+
+    const restored = store.undoLast(T + 2000);
+
+    expect(restored).toEqual(['a', 'b']); // still part of the burst
+    expect(store.get('a').done).toBe(false); // the dismissal IS reverted
+    expect(store.get('a').favorite).toBe(true);
+    expect(store.get('a').opened).toBe(true);
+  });
+
+  it('clears the batch once its last id is consumed, so canUndo goes false', () => {
+    const store = new ItemStateStore(memoryPersistence());
+    store.hideMany(['solo'], 1000);
+    expect(store.canUndo()).toBe(true);
+
+    store.dropFromUndo('solo');
+
+    expect(store.canUndo()).toBe(false);
+    expect(store.undoLast(2000)).toEqual([]);
+  });
+
+  it('is a no-op for an id that is not in the batch (and with no batch at all)', () => {
+    const store = new ItemStateStore(memoryPersistence());
+    expect(() => store.dropFromUndo('nothing')).not.toThrow();
+    store.hideMany(['a'], 1000);
+    store.dropFromUndo('b');
+    expect(store.canUndo()).toBe(true);
+    expect(store.undoLast(2000)).toEqual(['a']);
+  });
+});

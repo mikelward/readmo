@@ -340,6 +340,9 @@ describe('exports', () => {
         SHOW_GROUP_FAVICON_KEY,
       ]),
     );
-    expect(SYNCED_SETTINGS_STORAGE_KEYS).toHaveLength(7);
+    // The purge list is derived from SYNCED_SETTINGS, so this length is the
+    // guard that adding a synced pref can't quietly skip the account-change
+    // wipe (guardrail #8) — bump it deliberately when you add one.
+    expect(SYNCED_SETTINGS_STORAGE_KEYS).toHaveLength(8);
   });
 });
