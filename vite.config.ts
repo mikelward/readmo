@@ -158,6 +158,19 @@ const TEST_BUILD_INFO: BuildInfo = {
 
 const buildInfo = isTest ? TEST_BUILD_INFO : readBuildInfo();
 
+// React Compiler (bail-out mode): auto-memoizes components it can prove are
+// safe and silently skips any it can't, so it never breaks a working one.
+// Runs via @rolldown/plugin-babel since plugin-react v6 transforms with oxc,
+// not Babel. target '19' uses React 19's built-in react/compiler-runtime.
+//
+// Exported (rather than inlined in `plugins` below) so reactCompiler.test.ts can
+// drive this exact plugin: the config skips it under Vitest, so nothing else in
+// the unit suite would notice @babel/core, @rolldown/plugin-babel, and
+// babel-plugin-react-compiler drifting out of compatibility.
+export function reactCompilerBabelPlugin() {
+  return babel({ presets: [reactCompilerPreset({ target: '19' })] });
+}
+
 export default defineConfig({
   // Expose VITE_* (our own) and NEXT_PUBLIC_* (what the Supabase↔Vercel
   // integration provisions) to the client bundle. NEXT_PUBLIC_ is public by
@@ -169,13 +182,11 @@ export default defineConfig({
   },
   plugins: [
     react(),
-    // React Compiler (bail-out mode): auto-memoizes components it can prove are
-    // safe and silently skips any it can't, so it never breaks a working one.
-    // Runs via @rolldown/plugin-babel since plugin-react v6 transforms with oxc,
-    // not Babel. Skipped in tests (like the PWA plugin) to keep the unit run
-    // fast — tests exercise the source; the compiler is a build-time optimization.
-    // target '19' uses React 19's built-in react/compiler-runtime.
-    !isTest && babel({ presets: [reactCompilerPreset({ target: '19' })] }),
+    // Skipped in tests (like the PWA plugin) to keep the unit run fast — tests
+    // exercise the source; the compiler is a build-time optimization. See
+    // reactCompilerBabelPlugin above (and reactCompiler.test.ts, which is what
+    // covers the integration in place of the whole suite running through it).
+    !isTest && reactCompilerBabelPlugin(),
     !isTest &&
       VitePWA({
         // autoUpdate silently activates a new service worker on the next
