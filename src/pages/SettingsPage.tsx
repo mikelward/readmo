@@ -154,6 +154,9 @@ export function SettingsPage() {
                   <span className="settings__toggle-title">
                     Remove them from the list
                   </span>
+                  <span className="settings__toggle-desc">
+                    Off: strike through until refresh.
+                  </span>
                 </span>
               </label>
             </li>
