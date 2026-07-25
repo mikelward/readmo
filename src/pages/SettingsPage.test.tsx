@@ -210,12 +210,12 @@ describe('SettingsPage — Reading & Bottom toolbar', () => {
     );
 
     // On by default — removal is what auto-hide did before the sub-setting
-    // existed. Title only, no description: guardrail #12 (the label is the
-    // copy) — an explanatory aside needs explicit sign-off first.
+    // existed. The description is what the title can't say: the title states
+    // what ON does, so OFF would otherwise only be discoverable by flipping it.
     expect(sub()).toBeChecked();
     expect(
       document.querySelector('.settings__toggle--sub .settings__toggle-desc'),
-    ).toBeNull();
+    ).toHaveTextContent('Off: strike through until refresh.');
   });
 
   it('persists the "Remove them from the list" sub-toggle when turned off', async () => {

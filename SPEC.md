@@ -1898,9 +1898,9 @@ negligible and off every critical path. See the External services table in
       behavior in *List toolbar → Auto-hide on scroll*, with the sub-toggle
       **Remove them from the list** (`readmo:hide-on-scroll-remove`, **on by
       default**) indented beneath it — off leaves each marked row struck through
-      in place until the next refresh. Title only, no description (the label is
-      the copy), and shown only while its parent is on rather than offered as a
-      dead control; and **Group by feed**
+      in place until the next refresh — which its one-line description says,
+      since the title can only state what ON does. Shown only while its parent is
+      on rather than offered as a dead control; and **Group by feed**
       (`readmo:group-by-feed`, **off by default**), sectioning Home/folder lists
       by feed (see *Feed views → Sort & grouping*) — followed by the **Sort
       order** picker (`readmo:item-sort`): **Newest first** (default) or **Oldest
