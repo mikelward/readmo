@@ -20,9 +20,9 @@ variables, function deployment, and the scheduled poller. The frontend
 
 ## 1. Prerequisites
 
-- [Node.js](https://nodejs.org) **22 or newer** (see `.nvmrc`; `nvm use` picks
-  it up). The frontend toolchain and the `infra/cf-gateway` Worker's `wrangler`
-  both require Node ≥ 22.
+- [Node.js](https://nodejs.org) **24 or newer** (see `.nvmrc`; `nvm use` picks
+  it up). 24 is the active LTS line; CI, Vercel, and the web sandbox all build
+  on it, so matching locally is what keeps a green local run meaningful.
 - A [Supabase](https://supabase.com) account.
 - The [Supabase CLI](https://supabase.com/docs/guides/cli):
   ```sh

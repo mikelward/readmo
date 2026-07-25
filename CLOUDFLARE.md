@@ -87,7 +87,7 @@ This doc is only about the **frontend host**.
      `…supabase.co` origin — never the gateway (the shim can't carry
      `x-readmo-build`, so through the gateway it'd 426 once the gate is armed).
 5. **Build settings.** Build command `npm run build`, output `dist`, Node pinned
-   to the `engines` range (20/22/24). Add a `_headers` file for asset
+   to the `engines` range (24). Add a `_headers` file for asset
    cache-control if you want to tune it (Vite's hashed filenames make the JS/CSS
    immutable-cacheable).
 
