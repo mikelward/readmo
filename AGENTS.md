@@ -294,6 +294,85 @@ build/routing/deploy.
 - **After asking, stop and wait for the answer.** Don't proceed on an assumed
   answer, pick a "recommended" option yourself, or keep working on the part
   the question affects.
+## Node version
+
+- **The Node major is named in three places and they move together or not at
+  all:** `.nvmrc` (CI's `setup-node` via `node-version-file`, `nvm use`, and
+  the web sandbox's session-start hook), `engines.node` in `package.json`
+  (Vercel's build image and function runtime, plus npm's EBADENGINE warning),
+  and `@types/node` (what `tsc` believes the runtime's stdlib looks like).
+  `nodeVersion.test.ts` fails CI on a mismatch.
+- **A split is quiet in the worst way** — the suite goes green on one runtime
+  while production serves another, or `tsc` type-checks against APIs the
+  deployed Node doesn't have.
+- **The web sandbox is the consumer that can't follow on its own.** Its image
+  ships whatever Node it ships (22 today), so `.claude/hooks/session-start.sh`
+  provisions the `.nvmrc` major before `npm install` — before any native dep
+  builds against an ABI. It re-resolves the newest release of that major every
+  run rather than trusting the container's cached copy, because container state
+  survives between sessions and an existence-only check would pin the first
+  version ever installed. Best-effort: an unreachable nodejs.org keeps the
+  cached toolchain and says so, rather than failing session startup.
+- **The hook is identical in all three repos, and so is its test.**
+  `scripts/session-start-hook.test.ts` runs the real hook end to end against a
+  temp install root and a `file://` release fixture, via the `SESSION_NODE_ROOT`
+  and `SESSION_NODE_DIST_URL` seams — no network, no stubbed internals. Its
+  failure mode is a *false pass*, so behavior is asserted, not structure. When
+  you change the hook, change it everywhere and keep the Node block byte-identical.
+- **A `@types/node` major is a runtime migration, not a dependency update.** A
+  packageRule disables that major so it stops arriving as an unmergeable
+  weekly PR. When you do move the runtime, move all three pins in one commit.
+- **Assert the `@types/node` version npm *resolved*, not the range declared.**
+  `vite`, `vitest` and `msw` all depend on it with ranges permissive enough to
+  resolve any newer major, so a declared-range check stays green while `tsc`
+  loads something else entirely. newshacker had no direct dependency at all and
+  was type-checking `vite.config.ts` against Node 26 types on a Node 24
+  runtime; `nodeVersion.test.ts` here reads the lockfile for that reason.
+- Currently Node **24** (the active LTS; 22 dropped to maintenance when 26
+  shipped).
+
+## Dependency updates
+
+- **Renovate (Mend-hosted app) owns dependency bumps.** Config lives in
+  `renovate.json` at the repo root; validate changes with
+  `npx --package renovate renovate-config-validator`.
+- **Renovate silence is not success — every failure mode here is silent.** A
+  bot that opens nothing looks exactly like a repo with nothing to update.
+  This config landed on Jul 12 and produced zero PRs and — the telling part —
+  no dependency dashboard issue either, which "nothing needs updating" does
+  not explain. If PRs go quiet, open the per-repo job log at developer.mend.io
+  before assuming there's nothing to do. A `DONE` job does not mean Renovate
+  did anything: a silent-mode run clones, scans, extracts, creates nothing,
+  and reports `DONE`.
+- **`mode=silent` suppresses everything, and the authoritative switch is
+  Mend-side.** The Mend-hosted app injects its own config via
+  `RENOVATE_CONFIG` and defaults an "All repositories" install to silent: no
+  PRs, no `renovate/*` branches, no Dependency Dashboard, not even an
+  onboarding PR. `"mode": "full"` here states the repo-side intent (and is what
+  a self-hosted or CLI run honors), but the injected value wins — the other
+  half is developer.mend.io → repo/org → Interactive.
+- **A top-level `schedule` is a delay, not a gate.** The per-update-type
+  `minimumReleaseAge` cooldowns (5 days patch / 7 minor / 14 major) plus
+  `prConcurrentLimit` are what pace volume; a window only parks updates that
+  have *already* cooled down, and this repo's weekly window added up to six
+  days on top for no benefit. Schedules never apply to security fixes —
+  Renovate forces `schedule: []` and `prCreation: immediate` on
+  vulnerability-alert branches, so don't blame a window for a missing advisory
+  PR.
+- **Deleting `lockFileMaintenance.schedule` does not mean "any time".** That
+  option's own default is `before 4am on monday`, so dropping the key silently
+  restores a weekly window instead of removing one. `renovate.test.ts` guards
+  that, along with `mode` and the top-level `schedule`.
+- **Minors and patches auto-merge on green CI; majors always wait for review.**
+  Pre-1.0 (`0.x`) packages are excluded — SemVer permits breaking changes in a
+  0.x minor. Auto-merge is only as safe as CI, so a red or skipped check is a
+  stop sign, not noise to route around.
+- **The Deno import map has no ecosystem behind it**, so no built-in manager
+  sees it. A custom regex manager bumps `supabase/functions/import_map.json`
+  in the *same* branch as the matching `package.json` bump; without it a bump
+  edits package.json + the lockfile and silently leaves the map behind, which
+  is how `entities` ran 8.x in tests and 7.x in production.
+  `import_map.test.ts` fails CI on that drift.
 
 ## Error handling
 

@@ -21,17 +21,26 @@ import { describe, expect, it } from 'vitest';
 const read = (path: string): string =>
   readFileSync(new URL(path, import.meta.url), 'utf8');
 
-const major = (range: string): string => {
-  const match = /(\d+)\./.exec(range);
-  if (!match) throw new Error(`no major version in ${JSON.stringify(range)}`);
-  return match[1];
-};
-
 const pkg = JSON.parse(read('./package.json')) as {
   engines: { node: string };
   devDependencies: Record<string, string>;
 };
 const nvmrc = read('./.nvmrc').trim();
+
+// Confine a range to the pinned major rather than reading its first numeral:
+// `>=24` and `^24 || >=26` both start with the right number while still
+// resolving to a different major, which is the drift this file exists to
+// catch. Applied to every pin here — a check that's exact for one consumer and
+// lossy for the next just moves the blind spot.
+//
+// Accepts `24`, `^24`, `^24.13.0`; rejects a bare `24.13.0`. That last one
+// looks harmless but isn't: the session-start hook reads engines.node as a
+// *floor*, which is what the caret and bare-major forms mean — an exact pin
+// means only that version, so treating it as a floor would accept 24.14.0 for
+// a `24.13.0` pin that npm rejects. Keeping the declared forms to the ones
+// that genuinely are floors is what lets the hook stay a string comparison
+// instead of a semver evaluator.
+const pinnedToMajor = new RegExp(`^(${nvmrc}|\\^${nvmrc}(\\.\\d+){0,2})$`);
 
 describe('Node version pinning', () => {
   it('pins .nvmrc to the active LTS major', () => {
@@ -39,10 +48,24 @@ describe('Node version pinning', () => {
   });
 
   it('agrees between .nvmrc and engines.node', () => {
-    expect(major(pkg.engines.node)).toBe(nvmrc);
+    expect(pkg.engines.node).toMatch(pinnedToMajor);
   });
 
   it('types the runtime it actually runs on', () => {
-    expect(major(pkg.devDependencies['@types/node'])).toBe(nvmrc);
+    expect(pkg.devDependencies['@types/node']).toMatch(pinnedToMajor);
+  });
+
+  it('resolves @types/node to the pinned major', () => {
+    // The declared range is not what tsc loads — the installed version is, and
+    // vite/vitest/happy-dom all depend on `@types/node` with ranges permissive
+    // enough to resolve a newer major. newshacker had exactly that: no direct
+    // dependency, `@types/node` 26 hoisted in transitively, and a declared-range
+    // check that stayed green throughout.
+    const lock = JSON.parse(read('./package-lock.json')) as {
+      packages: Record<string, { version?: string }>;
+    };
+    const resolved = lock.packages['node_modules/@types/node']?.version;
+    expect(resolved).toBeDefined();
+    expect(resolved).toMatch(new RegExp(`^${nvmrc}\\.`));
   });
 });
