@@ -32,7 +32,7 @@
     "@tanstack/react-query-persist-client": "^5.99.1",
     "entities": "^8.0.0",
     "fast-xml-parser": "^5.10.1",
-    "linkedom": "^0.18.12",
+    "linkedom": "^0.18.13",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router-dom": "^7.18.0",
