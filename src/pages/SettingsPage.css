@@ -243,6 +243,14 @@
   color: var(--rm-meta);
 }
 
+/* A toggle that qualifies the one above it (auto-hide's remove-vs-strike
+   choice). Indented by the checkbox column + gap so its text lines up under the
+   parent's text, reading as a continuation rather than a peer. The row keeps
+   the full 44px tap target; only the leading edge moves. */
+.settings__toggle--sub .settings__toggle-label {
+  padding-left: 34px;
+}
+
 .settings__subs {
   list-style: none;
   margin: 0;

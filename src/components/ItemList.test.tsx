@@ -12,6 +12,7 @@ import { resetPromoDismissedCacheForTest } from '../hooks/usePromoDismissed';
 import {
   BOTTOM_BAR_KEY,
   HIDE_ON_SCROLL_KEY,
+  HIDE_ON_SCROLL_REMOVE_KEY,
   resetReadingPrefsCacheForTest,
 } from '../hooks/useReadingPrefs';
 import {
@@ -4341,6 +4342,283 @@ describe('ItemList', () => {
       });
     });
 
+    // The `hide-on-scroll-remove` sub-setting. ON (the default, asserted by the
+    // test above) removes the row; OFF holds it where it is, struck through,
+    // until the list re-materializes — so the list never moves under the reader.
+    describe('remove sub-setting off (strike in place)', () => {
+      /** Auto-hide on, remove off; returns the render + the first row's id. */
+      async function strikeFirstRow() {
+        window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+        window.localStorage.setItem(HIDE_ON_SCROLL_REMOVE_KEY, '0');
+        resetReadingPrefsCacheForTest();
+        const source = new MockDataSource(`test-${Math.random()}`);
+        const rendered = renderHome(source);
+        const firstRow = (await screen.findAllByTestId('item-row'))[0];
+        const li = firstRow.closest('li')!;
+        const id = li.dataset.itemId!;
+        const row = () =>
+          rendered.container.querySelector(
+            `[data-item-id="${id}"]`,
+          ) as HTMLElement | null;
+        // Scroll it fully off the top of the viewport.
+        act(() => {
+          setVisibilityForTest(li, 0);
+        });
+        return { source, rendered, id, row };
+      }
+
+      it('marks the row Done but keeps it rendered, struck through, with its own Undo', async () => {
+        const { source, id, row } = await strikeFirstRow();
+
+        await waitFor(() =>
+          expect(row()?.classList.contains('item-list__row--dismissed')).toBe(
+            true,
+          ),
+        );
+        // Really dismissed in the store — only the rendering is held back.
+        expect(source.stateStore.get(id).done).toBe(true);
+        expect(within(row()!).getByTestId('row-undo-dismiss')).toBeTruthy();
+      });
+
+      it('keeps the row struck after it scrolls further off screen', async () => {
+        // The lifetime fork against a cross-device gray, which commits (drops
+        // out) the moment its row leaves the screen. A row struck by auto-hide
+        // is marked BECAUSE it left the screen, so that rule would delete every
+        // one of them the instant it applied — the list would collapse anyway,
+        // which is exactly what this setting turns off.
+        const { id, row } = await strikeFirstRow();
+        await waitFor(() =>
+          expect(row()?.classList.contains('item-list__row--dismissed')).toBe(
+            true,
+          ),
+        );
+
+        // Another viewport-exit for the same row (a further scroll).
+        act(() => {
+          setVisibilityForTest(
+            document.querySelector(`[data-item-id="${id}"]`)!,
+            0,
+          );
+        });
+
+        await Promise.resolve();
+        expect(row()).not.toBeNull();
+        expect(row()?.classList.contains('item-list__row--dismissed')).toBe(true);
+      });
+
+      it('drops the strike hold when ANOTHER DEVICE restores the row', async () => {
+        // Codex P2 on #546: a cross-device restore arrives via hydrate, which
+        // fires no local mutation — so pruning the hold on the mutation channel
+        // missed it. A stale hold would then make the NEXT dismissal look like
+        // the original auto-hide and keep the row struck instead of removing it.
+        const { source, id, row } = await strikeFirstRow();
+        await waitFor(() =>
+          expect(row()?.classList.contains('item-list__row--dismissed')).toBe(true),
+        );
+
+        // Another device un-dismisses it (resync/hydrate, not a local mutation).
+        act(() => {
+          source.stateStore.hydrate([
+            [id, { ...DEFAULT_ITEM_STATE, done: false, doneAt: Date.now() + 1000 }],
+          ]);
+        });
+        await waitFor(() =>
+          expect(row()?.classList.contains('item-list__row--dismissed')).toBe(false),
+        );
+
+        // Now a normal LOCAL dismiss must remove the row, not re-strike it.
+        act(() => {
+          source.stateStore.set(id, 'done', true);
+        });
+        await waitFor(() => expect(row()).toBeNull());
+      });
+
+      it('grays (not removes) a cross-device re-dismiss after a cross-device restore', async () => {
+        // Codex P2 on #546. `localDismissedIdsRef` is hydrate-blind too, so an
+        // id put there by the auto-hide survived a cross-device restore — and
+        // the NEXT cross-device dismissal hit the local-dismiss branch and
+        // removed the row instead of graying it in place.
+        const { source, id, row } = await strikeFirstRow();
+        await waitFor(() =>
+          expect(row()?.classList.contains('item-list__row--dismissed')).toBe(true),
+        );
+
+        // Another device restores it…
+        act(() => {
+          source.stateStore.hydrate([
+            [id, { ...DEFAULT_ITEM_STATE, done: false, doneAt: Date.now() + 1000 }],
+          ]);
+        });
+        await waitFor(() =>
+          expect(row()?.classList.contains('item-list__row--dismissed')).toBe(false),
+        );
+        // …the row is back on screen…
+        act(() => {
+          setVisibilityForTest(row()!, 1);
+        });
+
+        // …and another device dismisses it again. That's a CROSS-DEVICE
+        // dismissal of an on-screen row: gray in place, with an Undo — never a
+        // silent removal, which would move the list for something the reader
+        // didn't do.
+        act(() => {
+          source.stateStore.hydrate([
+            [id, { ...DEFAULT_ITEM_STATE, done: true, doneAt: Date.now() + 2000 }],
+          ]);
+        });
+
+        await waitFor(() =>
+          expect(row()?.classList.contains('item-list__row--dismissed')).toBe(true),
+        );
+        expect(row()).not.toBeNull();
+        expect(within(row()!).getByTestId('row-undo-dismiss')).toBeTruthy();
+      });
+
+      it('restores the row when its Undo is tapped', async () => {
+        const user = userEvent.setup();
+        const { source, id, row } = await strikeFirstRow();
+        await waitFor(() =>
+          expect(within(row()!).getByTestId('row-undo-dismiss')).toBeTruthy(),
+        );
+
+        await user.click(within(row()!).getByTestId('row-undo-dismiss'));
+
+        // Un-struck AND un-done — the strike hold must not outlive the restore.
+        await waitFor(() =>
+          expect(row()?.classList.contains('item-list__row--dismissed')).toBe(
+            false,
+          ),
+        );
+        expect(source.stateStore.get(id).done).toBe(false);
+      });
+
+      it('compacts struck rows on any re-materializing refetch, not just a pull-to-refresh', async () => {
+        // Codex P2 on #546: the shared re-materialization path (stale focus /
+        // TTL, reconnect confirm, subscription-change invalidation) repaints the
+        // list from a fresh read, so a hold from the previous sitting must end
+        // there too — not only on the explicit PTR handler.
+        window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+        window.localStorage.setItem(HIDE_ON_SCROLL_REMOVE_KEY, '0');
+        resetReadingPrefsCacheForTest();
+        const source = new MockDataSource(`test-${Math.random()}`);
+        const queryClient = new QueryClient({
+          defaultOptions: { queries: { retry: false, gcTime: 0 } },
+        });
+        const tpl = (await source.getHomeItems()).items[0];
+        const mk = (n: number): FeedItem => ({
+          item: { ...tpl.item, id: `r-${n}`, title: `Row ${n}`, spoilerFreeTitle: null },
+          feed: tpl.feed,
+        });
+        // The page keeps serving both rows, so a row that disappears proves the
+        // in-session strike bookkeeping was cleared — not that the backend
+        // stopped returning it (the async outbox write may not have landed).
+        const items = [mk(0), mk(1)];
+        const viewKey = `strike-remat-${viewKeySeq++}`;
+        const { container } = renderWithProviders(
+          <ItemList
+            viewKey={viewKey}
+            fetchPage={() => Promise.resolve({ items, nextCursor: null })}
+            emptyLabel="x"
+          />,
+          { source, queryClient },
+        );
+        await screen.findAllByTestId('item-row');
+        const row = () =>
+          container.querySelector('[data-item-id="r-0"]') as HTMLElement | null;
+
+        act(() => {
+          setVisibilityForTest(row()!, 0);
+        });
+        await waitFor(() =>
+          expect(row()?.classList.contains('item-list__row--dismissed')).toBe(true),
+        );
+
+        // A whole-list refetch (stale focus / TTL), NOT a pull-to-refresh.
+        await act(async () => {
+          await queryClient.invalidateQueries({ queryKey: ['feed', viewKey] });
+        });
+
+        await waitFor(() => expect(row()).toBeNull());
+        expect(container.querySelector('[data-item-id="r-1"]')).not.toBeNull();
+      });
+
+      it('compacts struck rows on a pull-to-refresh — the "until you refresh" in the copy', async () => {
+        window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+        window.localStorage.setItem(HIDE_ON_SCROLL_REMOVE_KEY, '0');
+        resetReadingPrefsCacheForTest();
+        const source = new MockDataSource(`test-${Math.random()}`);
+        const tpl = (await source.getHomeItems()).items[0];
+        const mk = (n: number): FeedItem => ({
+          item: { ...tpl.item, id: `s-${n}`, title: `Struck ${n}`, spoilerFreeTitle: null },
+          feed: tpl.feed,
+        });
+        // The page keeps returning the same rows, so a row that disappears after
+        // the refresh proves the in-session strike bookkeeping was cleared —
+        // not that the backend simply stopped serving a Done row.
+        const items = [mk(0), mk(1)];
+        const fetchPage = vi.fn(() => Promise.resolve({ items, nextCursor: null }));
+        const { container } = renderWithProviders(
+          <ItemList
+            viewKey={`strike-ptr-${viewKeySeq++}`}
+            fetchPage={fetchPage}
+            emptyLabel="x"
+          />,
+          { source },
+        );
+        await screen.findAllByTestId('item-row');
+        const row = () =>
+          container.querySelector('[data-item-id="s-0"]') as HTMLElement | null;
+
+        act(() => {
+          setVisibilityForTest(row()!, 0);
+        });
+        await waitFor(() =>
+          expect(row()?.classList.contains('item-list__row--dismissed')).toBe(true),
+        );
+
+        // jsdom has no PointerEvent, so fireEvent can't carry pointer coords —
+        // polyfill it with a MouseEvent subclass (which does) to drive a real pull.
+        if (typeof (globalThis as unknown as { PointerEvent?: unknown }).PointerEvent === 'undefined') {
+          class PE extends MouseEvent {
+            pointerId: number;
+            pointerType: string;
+            constructor(type: string, params: PointerEventInit = {}) {
+              super(type, params);
+              this.pointerId = params.pointerId ?? 0;
+              this.pointerType = params.pointerType ?? '';
+            }
+          }
+          (globalThis as unknown as { PointerEvent: unknown }).PointerEvent = PE;
+        }
+        if (!(Element.prototype as unknown as { setPointerCapture?: unknown }).setPointerCapture) {
+          (Element.prototype as unknown as { setPointerCapture: () => void }).setPointerCapture =
+            () => {};
+        }
+        const ptr = document.querySelector(
+          '[data-testid="pull-to-refresh"]',
+        ) as HTMLElement;
+        await act(async () => {
+          fireEvent.pointerDown(ptr, {
+            pointerId: 1,
+            clientX: 100,
+            clientY: 0,
+            pointerType: 'touch',
+            button: 0,
+          });
+          fireEvent.pointerMove(ptr, { pointerId: 1, clientX: 100, clientY: 24 });
+          fireEvent.pointerMove(ptr, { pointerId: 1, clientX: 100, clientY: 170 });
+          fireEvent.pointerUp(ptr, { pointerId: 1, clientX: 100, clientY: 170 });
+        });
+
+        await waitFor(() => expect(fetchPage.mock.calls.length).toBeGreaterThan(1));
+        // The struck row is gone; the one still unread stays.
+        await waitFor(() => expect(row()).toBeNull());
+        expect(
+          container.querySelector('[data-item-id="s-1"]'),
+        ).not.toBeNull();
+      });
+    });
+
     it('defers an auto-hide while a touch is in progress, committing it once the scroll settles after release', async () => {
       // Removing a row above the viewport while the reader's finger is still
       // down shifts content up under them (the browser suspends scroll
@@ -8490,6 +8768,95 @@ describe('ItemList — Sweep clears grayed rows', () => {
     // no-op, but Sweep records it as locally dismissed so the overlay drops it).
     await user.click(screen.getByTestId('sweep-btn'));
     await waitFor(() => expect(row()).toBeNull());
+  });
+
+  it('sweeps a row struck in place by auto-hide once it is scrolled back into view', async () => {
+    // Strike-in-place holds a row past the point a cross-device gray would have
+    // committed, so Sweep has to release that hold explicitly — otherwise the
+    // broom leaves the struck rows behind and can never clear the section.
+    const user = userEvent.setup();
+    window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+    window.localStorage.setItem(HIDE_ON_SCROLL_REMOVE_KEY, '0');
+    resetReadingPrefsCacheForTest();
+    try {
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const { container } = renderWithProviders(
+        <ItemList
+          viewKey={`home-sweepstruck-${viewKeySeq++}`}
+          fetchPage={(c) => source.getHomeItems({ cursor: c })}
+          emptyLabel="All caught up."
+        />,
+        { source },
+      );
+      const firstRow = (await screen.findAllByTestId('item-row'))[0];
+      const li = firstRow.closest('li')!;
+      const target = li.dataset.itemId!;
+      const row = () =>
+        container.querySelector(`[data-item-id="${target}"]`) as HTMLElement | null;
+
+      // Scrolled past → struck in place, then scrolled back into view.
+      act(() => {
+        setVisibilityForTest(li, 0);
+      });
+      await waitFor(() =>
+        expect(row()?.classList.contains('item-list__row--dismissed')).toBe(true),
+      );
+      act(() => {
+        setVisibilityForTest(row()!, 1);
+      });
+
+      await user.click(screen.getByTestId('sweep-btn'));
+      await waitFor(() => expect(row()).toBeNull());
+    } finally {
+      window.localStorage.clear();
+      resetReadingPrefsCacheForTest();
+    }
+  });
+
+  it('sweeps struck rows still scrolled ABOVE the viewport, not just the visible ones', async () => {
+    // Codex P2 on #546: a struck row is usually scrolled off the top by the
+    // time the reader reaches the broom, so it isn't in the sweep batch at all.
+    // Deleting only the swept ids left those rows struck, and scrolling back up
+    // after a Sweep still showed dismissed rows — contradicting SPEC, where a
+    // Sweep ends the strike-in-place lifetime.
+    const user = userEvent.setup();
+    window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+    window.localStorage.setItem(HIDE_ON_SCROLL_REMOVE_KEY, '0');
+    resetReadingPrefsCacheForTest();
+    try {
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const { container } = renderWithProviders(
+        <ItemList
+          viewKey={`home-sweepabove-${viewKeySeq++}`}
+          fetchPage={(c) => source.getHomeItems({ cursor: c })}
+          emptyLabel="All caught up."
+        />,
+        { source },
+      );
+      const rows = await screen.findAllByTestId('item-row');
+      const li = rows[0].closest('li')!;
+      const target = li.dataset.itemId!;
+      const row = () =>
+        container.querySelector(`[data-item-id="${target}"]`) as HTMLElement | null;
+
+      // Struck, and LEFT off the top — never scrolled back into view, so it is
+      // not among the rows Sweep dismisses.
+      act(() => {
+        setVisibilityForTest(li, 0);
+      });
+      await waitFor(() =>
+        expect(row()?.classList.contains('item-list__row--dismissed')).toBe(true),
+      );
+
+      await user.click(screen.getByTestId('sweep-btn'));
+
+      // Gone — the Sweep consolidated it away rather than leaving it struck
+      // above the fold for the reader to scroll back up into.
+      await waitFor(() => expect(row()).toBeNull());
+    } finally {
+      window.localStorage.clear();
+      resetReadingPrefsCacheForTest();
+    }
   });
 });
 

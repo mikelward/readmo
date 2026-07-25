@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useTheme } from '../hooks/useTheme';
 import {
   useHideOnScroll,
+  useHideOnScrollRemove,
   useBottomBarPosition,
   useItemSort,
   useGroupByFeed,
@@ -35,6 +36,8 @@ import './PageHeader.css';
 export function SettingsPage() {
   const { font, setFont } = useTheme();
   const { hideOnScroll, setHideOnScroll } = useHideOnScroll();
+  const { hideOnScrollRemove, setHideOnScrollRemove } =
+    useHideOnScrollRemove();
   const { bottomBarPosition, setBottomBarPosition } = useBottomBarPosition();
   const { itemSort, setItemSort } = useItemSort();
   const { groupByFeed, setGroupByFeed } = useGroupByFeed();
@@ -136,6 +139,25 @@ export function SettingsPage() {
               </span>
             </label>
           </li>
+          {/* Qualifies the toggle above, so it only appears once that's on —
+              the same "no dead controls" rule the spoiler toggle follows. */}
+          {hideOnScroll ? (
+            <li className="settings__toggle settings__toggle--sub">
+              <label className="settings__toggle-label">
+                <input
+                  type="checkbox"
+                  className="settings__toggle-check"
+                  checked={hideOnScrollRemove}
+                  onChange={(e) => setHideOnScrollRemove(e.target.checked)}
+                />
+                <span className="settings__toggle-text">
+                  <span className="settings__toggle-title">
+                    Remove them from the list
+                  </span>
+                </span>
+              </label>
+            </li>
+          ) : null}
           <li className="settings__toggle">
             <label className="settings__toggle-label">
               <input

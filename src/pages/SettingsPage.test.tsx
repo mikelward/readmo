@@ -7,6 +7,7 @@ import {
   BOTTOM_BAR_KEY,
   GROUP_BY_FEED_KEY,
   HIDE_ON_SCROLL_KEY,
+  HIDE_ON_SCROLL_REMOVE_KEY,
   HIDE_SPORTS_SPOILERS_KEY,
   AUTO_SUMMARIZE_PINNED_KEY,
   ITEM_SORT_KEY,
@@ -194,6 +195,43 @@ describe('SettingsPage — Reading & Bottom toolbar', () => {
     await user.click(toggle);
     expect(toggle).toBeChecked();
     expect(window.localStorage.getItem(HIDE_ON_SCROLL_KEY)).toBe('1');
+  });
+
+  it('reveals the "Remove them from the list" sub-toggle only once auto-hide is on', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    const sub = () => screen.queryByRole('checkbox', { name: /remove them from the list/i });
+
+    // Auto-hide is off by default, so its sub-setting isn't a live control yet.
+    expect(sub()).toBeNull();
+
+    await user.click(
+      screen.getByRole('checkbox', { name: /mark done as you scroll/i }),
+    );
+
+    // On by default — removal is what auto-hide did before the sub-setting
+    // existed. Title only, no description: guardrail #12 (the label is the
+    // copy) — an explanatory aside needs explicit sign-off first.
+    expect(sub()).toBeChecked();
+    expect(
+      document.querySelector('.settings__toggle--sub .settings__toggle-desc'),
+    ).toBeNull();
+  });
+
+  it('persists the "Remove them from the list" sub-toggle when turned off', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+    resetReadingPrefsCacheForTest();
+    renderWithProviders(<SettingsPage />);
+
+    const sub = screen.getByRole('checkbox', {
+      name: /remove them from the list/i,
+    });
+    expect(sub).toBeChecked();
+
+    await user.click(sub);
+    expect(sub).not.toBeChecked();
+    expect(window.localStorage.getItem(HIDE_ON_SCROLL_REMOVE_KEY)).toBe('0');
   });
 
   it('shows "Hide sports spoilers" (on by default) for an allowed user and toggles it off', async () => {

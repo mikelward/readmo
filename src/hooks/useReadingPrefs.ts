@@ -13,6 +13,7 @@ import {
   ITEM_SORT_KEY,
   GROUP_BY_FEED_KEY,
   HIDE_ON_SCROLL_KEY,
+  HIDE_ON_SCROLL_REMOVE_KEY,
   SHOW_ROW_FAVICON_KEY,
   SHOW_GROUP_FAVICON_KEY,
   HIDE_SPORTS_SPOILERS_KEY,
@@ -41,6 +42,10 @@ export type { ListLayout };
 //  - hide-on-scroll (default off, synced): mark an unpinned row Done the moment
 //    it scrolls off the top of the viewport — an automatic Sweep (see ItemList /
 //    useInViewIds).
+//  - hide-on-scroll-remove (default ON, synced): what auto-hide does with a
+//    row it marked — remove it (collapsing the list up) or leave it in place
+//    struck through until the list re-materializes. Only read while
+//    hide-on-scroll is on.
 //  - bottom-bar (default 'list', per-device): where the bottom action bar
 //    lives — at the end of the list in normal flow ('list', newshacker's
 //    relative footer) or pinned to the viewport foot ('screen'). Kept
@@ -78,6 +83,7 @@ export {
   ITEM_SORT_KEY,
   GROUP_BY_FEED_KEY,
   HIDE_ON_SCROLL_KEY,
+  HIDE_ON_SCROLL_REMOVE_KEY,
   SHOW_ROW_FAVICON_KEY,
   SHOW_GROUP_FAVICON_KEY,
   HIDE_SPORTS_SPOILERS_KEY,
@@ -149,6 +155,17 @@ function syncedBoolStore(
 }
 
 const hideOnScrollStore = syncedBoolStore('hideOnScroll', false);
+// Default ON: removing the row is what auto-hide did before this sub-setting
+// existed, so an upgrading reader sees no change until they opt out.
+//
+// TODO: flip this default to OFF (strike in place) once we've read with it off
+// for a while. Off is the calmer behavior — nothing moves under you mid-scroll,
+// and you can see (and individually rescue) what you scrolled past — and it
+// sidesteps the scroll-pin machinery in ItemList entirely. Kept ON here only
+// because it's the behavior that shipped; changing it is a visible change for
+// everyone already using auto-hide, so it wants a deliberate flip, not a
+// default chosen at implementation time.
+const hideOnScrollRemoveStore = syncedBoolStore('hideOnScrollRemove', true);
 const groupByFeedStore = syncedBoolStore('groupByFeed', false);
 const showRowFaviconStore = syncedBoolStore('showRowFavicon', false);
 const hideSportsSpoilersStore = syncedBoolStore('hideSportsSpoilers', true);
@@ -257,6 +274,21 @@ export function useHideOnScroll(): {
     [],
   );
   return { hideOnScroll, setHideOnScroll };
+}
+
+/** Whether a row auto-marked Done on scroll is REMOVED from the list (default)
+ * or left in place, struck through, until the list next re-materializes.
+ * Only meaningful while {@link useHideOnScroll} is on. Per-account, synced. */
+export function useHideOnScrollRemove(): {
+  hideOnScrollRemove: boolean;
+  setHideOnScrollRemove: (next: boolean) => void;
+} {
+  const hideOnScrollRemove = usePersistentStore(hideOnScrollRemoveStore);
+  const setHideOnScrollRemove = useCallback(
+    (next: boolean) => hideOnScrollRemoveStore.set(next),
+    [],
+  );
+  return { hideOnScrollRemove, setHideOnScrollRemove };
 }
 
 /** Where the bottom action bar sits — end of the list ('list', default) or
@@ -453,6 +485,7 @@ export function useDebugScrollJumps(): {
  * resets state between cases. */
 export function resetReadingPrefsCacheForTest(): void {
   hideOnScrollStore.resetForTest();
+  hideOnScrollRemoveStore.resetForTest();
   debugScrollJumpsStore.resetForTest();
   groupByFeedStore.resetForTest();
   showRowFaviconStore.resetForTest();
