@@ -272,6 +272,16 @@ build/routing/deploy.
   directory. Delete that test only after actually deploying and verifying a
   new approach works on a Vercel preview.
 
+## Asking questions
+
+- **Ask in chat, never with `AskUserQuestion`.** That's Claude Code's
+  multiple-choice question prompt, and it's broken in the Claude mobile app —
+  a question asked through it may be unanswerable. Plain chat also keeps the
+  question, its context, and the answer in one readable thread.
+- **After asking, stop and wait for the answer.** Don't proceed on an assumed
+  answer, pick a "recommended" option yourself, or keep working on the part
+  the question affects.
+
 ## Safe vs. risky actions
 
 - Safe: edit files, add dependencies, run tests, run the dev server,
