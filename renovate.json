@@ -65,6 +65,12 @@
       "matchPackageNames": ["@types/**"]
     },
     {
+      "description": "@types/node tracks the Node major we actually run (.nvmrc / engines.node), so a major bump here is a runtime migration, not a dependency update — nodeVersion.test.ts fails CI on the mismatch. Renovate would otherwise re-offer it every week for a PR that can't be merged on its own.",
+      "matchPackageNames": ["@types/node"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
       "groupName": "eslint",
       "matchPackageNames": [
         "eslint",
