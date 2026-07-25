@@ -272,6 +272,19 @@ build/routing/deploy.
   directory. Delete that test only after actually deploying and verifying a
   new approach works on a Vercel preview.
 
+## Talking to the user
+
+- **One question at a time.** Never stack multiple questions in a single
+  turn — ask the most important one, wait for the answer, then ask the next if
+  you still need it. A wall of bundled questions is harder to answer than a
+  short back-and-forth.
+- **Don't interrupt.** Never fire off a question while the user is still
+  typing. Let them finish; a half-typed message isn't an invitation to jump in.
+- **Keep replies short — don't dump a full page.** Lead with the single most
+  important point and stop. If there's more, say the first point and ask
+  whether they're ready for the next one rather than emptying everything at
+  once.
+
 ## Asking questions
 
 - **Ask in chat, never with `AskUserQuestion`.** That's Claude Code's
@@ -282,6 +295,46 @@ build/routing/deploy.
   answer, pick a "recommended" option yourself, or keep working on the part
   the question affects.
 
+## Error handling
+
+- **Don't silently swallow exceptions.** A bare `catch {}` or
+  `catch (e) { /* ignore */ }` hides real failures in the field and burns
+  hours when something eventually breaks. Every catch needs to do three
+  things: **log** the error with enough context to identify the failed call —
+  the operation, the feed or item id, the status code — but **sanitized
+  context only**. Never log a token, API key, service-role key, `secret_url`
+  or tokenized feed URL, or a raw request/response body; the *Privacy* rule
+  below applies to logs too, so redact or summarize instead ("poll of feed
+  42 failed: 403", not the URL that carried the token). **Clean up** what the
+  `try` acquired — abort controllers,
+  in-flight fetches, outbox entries, partial writes, in-progress UI state —
+  so a failure doesn't leak resources or leave the app half-mutated; and
+  **handle the edge case explicitly** — pick how the caller sees this failure
+  (default value, `null`, a typed error result, rethrow) rather than letting
+  control fall through. Two traps specific to this codebase: a blanket
+  `catch` swallows `AbortError` from a deliberately-canceled fetch, turning a
+  normal cancellation into a silent no-op; and swallowing a Supabase/Edge
+  error is how a *feature-detect* fallback (guardrail 11) turns into "the
+  write silently didn't happen". Narrow the type. If you genuinely do want to
+  ignore a specific failure, name the reason in a one-line comment
+  ("publisher 404s on dead items, treat as empty") and still log at debug.
+
+## Privacy
+
+- **Never put user data in any artifact that leaves this machine.** That
+  includes commit subjects and bodies, PR titles / descriptions / comments,
+  review replies, issue text, branch names, code comments, test fixtures, and
+  anything else that ends up on GitHub or in logs. Here that covers the
+  operator's and any user's email address, `auth.uid()` values, Supabase
+  service-role keys, `JINA_API_KEY` / `GOOGLE_API_KEY` / `SMTP_*` values,
+  allowlist membership, and — most easily missed — **`secret_url` and any
+  tokenized feed URL** (guardrail 7 keeps those server-only; a fixture is
+  still "off the machine"). Use generic placeholders
+  (`alice@example.com`, `https://example.com/feed.xml`, `sk-example`) in
+  examples, fixtures, and reproductions. If a user-supplied bug report
+  contains any of it, paraphrase in the commit / PR — don't quote verbatim.
+  When in doubt, ask before pushing.
+
 ## Safe vs. risky actions
 
 - Safe: edit files, add dependencies, run tests, run the dev server,
@@ -290,11 +343,10 @@ build/routing/deploy.
   (and for subsequent follow-up PRs in the same thread — don't keep
   re-asking), `git push --force-with-lease` to your own live feature branch
   after a rebase (this is normal hygiene, not a risky action), and the
-  Copilot-review round-trip on your own PRs:
-  `mcp__github__request_copilot_review`,
-  `mcp__github__add_reply_to_pull_request_comment`, and
-  `mcp__github__resolve_review_thread` (currently broken via MCP — see
-  *Copilot reviews* below).
+  Codex-review round-trip on your own PRs:
+  `mcp__github__add_reply_to_pull_request_comment` and
+  `mcp__github__resolve_review_thread` (see *Codex reviews* below for where
+  the `threadId` comes from).
 - Ask first before: force-pushing to `main`/`master` or to a merged branch,
   rewriting history on shared branches, deleting branches you didn't create,
   changing Vercel/Supabase project settings, changing CI secrets, adding
@@ -317,15 +369,21 @@ build/routing/deploy.
 - **Unshallow before answering anything that depends on git history depth.** The sandbox clones shallow, so `git rev-list --count`, `git log` past the shallow boundary, blame, and any "how many commits / what's the build number" question return wrong answers without warning. If `git rev-parse --is-shallow-repository` says `true`, run `git fetch --unshallow` first — same rule `vite.config.ts` already follows for the `build` field shown in `/debug`. Don't quote a count off a shallow clone.
 - End every reply with the open-PR link (or `.../compare/main...<branch>` until a PR exists). Never link to a closed or merged PR.
 
-## Copilot reviews
+## Codex reviews
 
-Copilot reviews are triggered automatically — do not call `mcp__github__request_copilot_review`.
+**Codex is the automated reviewer on this repo** — not Copilot. Its reviews are triggered automatically; you don't request them.
 
-- **Address Copilot comments automatically — don't wait to be asked.** When a Copilot review lands, treat each comment like a real review note: read it, decide whether it's a real issue or a false positive, and if it's real, fix it in the same PR. Fold the fix into the commit it belongs to (rebase / `--fixup`) rather than tacking on an "address review" commit, per the *one commit per logical surviving change* rule. Group several small fixes into one commit when they share a topic.
-- **Reply to (and, when possible, resolve) every addressed Copilot comment** via `mcp__github__add_reply_to_pull_request_comment`. Do this for each addressed comment, not in bulk.
+- **Address Codex comments automatically — don't wait to be asked.** When a Codex review lands, treat each comment like a real review note: read it, decide whether it's a real issue or a false positive, and if it's real, fix it in the same PR. Fold the fix into the commit it belongs to (rebase / `--fixup`) rather than tacking on an "address review" commit, per the *one commit per logical surviving change* rule. Group several small fixes into one commit when they share a topic.
+- **Reply to (and resolve) every addressed Codex comment** via `mcp__github__add_reply_to_pull_request_comment`, then `mcp__github__resolve_review_thread`. Do this for each addressed comment, not in bulk.
 - **Don't resolve threads you haven't addressed.** If you disagree with a suggestion or are deferring it, leave the thread open and reply explaining why.
-- **Order of operations on a push that addresses review comments:** (1) push the fix commit, (2) reply on each addressed thread referencing the new sha.
-- **Known limitation: `resolve_review_thread` is currently broken via MCP.** The thread node ID (`PRRT_*`) is stripped from `get_review_comments` responses, so `resolve_review_thread` can't be called. Post the reply via `mcp__github__add_reply_to_pull_request_comment` and skip the resolve step — flag in the end-of-turn summary that the threads are replied-but-unresolved so the user can resolve them in the GitHub UI.
+- **Order of operations on a push that addresses review comments:** (1) push the fix commit, (2) reply on each addressed thread referencing the new sha, then resolve it. Doing (2) before (1) means the sha you cite doesn't exist yet.
+- **`resolve_review_thread` works — the old MCP limitation is fixed.** `mcp__github__pull_request_read` / `get_review_comments` now returns each thread's node ID (`PRRT_*`) on the `review_threads[].id` field, alongside `is_resolved` / `is_outdated` / `is_collapsed`. Pass that `PRRT_*` value straight to `mcp__github__resolve_review_thread` as `threadId`. Do NOT pass a comment's node ID (`PRRC_*`) — that fails with `Could not resolve to PullRequestReviewThread node`; the thread ID and the comment ID are different objects. So the full round-trip is available, with no "replied-but-unresolved, please resolve in the UI" caveat in the end-of-turn summary.
+
+  > **History.** This was previously documented here as broken: the response stripped the thread node ID, leaving no way to obtain a `threadId`. Tracked upstream as github/github-mcp-server#2331 (issue) and github/github-mcp-server#2245 (fix), and verified working against a real Codex review thread on 2026-07-24. Kept as a note rather than deleted so the next agent that hits a resolve failure knows this was a real, since-fixed upstream bug and doesn't re-derive it.
+
+- **Report when Codex finishes reviewing a fresh push.** Codex's review runs asynchronously after each push; once its review event lands for the latest commit, surface a one-liner naming the SHA and comment count — e.g. `Codex reviewed 87d9f02 — 0 comments` or `Codex reviewed 87d9f02 — 3 comments, addressing now`. Tie it to the *latest* pushed SHA so a stale review of a superseded commit isn't conflated with the current state.
+- **Skip echo events silently.** `mcp__github__add_reply_to_pull_request_comment` / `add_issue_comment` post under whichever GitHub identity backs the MCP auth (typically the repo owner's), so a moment after you post a reply the same body comes back as a webhook event authored by that identity. That's the echo of your own reply, not user feedback — treat it as a duplicate and continue without a chat-side acknowledgement. The test is "did *I* just post this body?", not "who is the author?".
+- **Keep watching merged PRs for late review comments.** Reviewers and bots routinely comment *after* merge. Stay subscribed after the merge and handle each new comment per the reply-or-resolve rule — reply, resolve, or open a follow-up PR with the fix. Stop once every comment posted on or after the merge commit has been answered or resolved, or after ~24h of silence, whichever comes first.
 
 ## Pull requests and reviews
 
@@ -334,6 +392,7 @@ Copilot reviews are triggered automatically — do not call `mcp__github__reques
   on the thread saying why if you don't — and merge once CI is green and Codex
   has left its thumbs up.
 - Open PRs ready for review (not draft) unless asked otherwise.
+- **Never leave a review comment thread silently dismissed.** Either reply on the thread *or* resolve it — every thread ends in one of those two states, not "left open and ignored". When you think a comment is a false positive, say *why* on the thread (one or two sentences): the reasoning is exactly what the user wants surfaced, and "Deno-only path, doesn't apply" is more useful on the PR than buried in chat history. Acknowledgement noise ("good catch, will do") is fine and preferred over silence; the discipline is "say something or resolve", not "say nothing". This applies to human reviewers too, not just Codex.
 - **Wait for a 👍 reaction and no open comments before merging.** Don't merge to `main` (via rebase) until the reviewer has left a top-level thumbs-up reaction on the PR AND there are no open review comments. Don't ask whether it's okay to merge — wait for the signal.
 - When a feature has multiple open PRs, list **every** open PR by URL,
   one per line — the "View PR" chip sticks to the first link and hides
