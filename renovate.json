@@ -47,8 +47,13 @@
     },
     {
       "description": "Auto-merge every patch and minor once CI is green; majors always wait for review. Pre-1.0 (0.x) packages are excluded — SemVer permits breaking changes in a 0.x minor, so they still open a PR for review.",
-      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "lockFileMaintenance"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "matchCurrentVersion": "!/^0/",
+      "automerge": true
+    },
+    {
+      "description": "Lock file maintenance auto-merges too, but as its own rule: a lockFileMaintenance branch refreshes the whole lockfile and has no single dependency behind it, so it has no current version for matchCurrentVersion to test. Folded into the rule above it would silently never match, and those PRs would pile up unmerged.",
+      "matchUpdateTypes": ["lockFileMaintenance"],
       "automerge": true
     },
     {
@@ -75,6 +80,8 @@
       "matchPackageNames": [
         "eslint",
         "eslint-**",
+        "@eslint/**",
+        "@eslint-community/**",
         "@typescript-eslint/**",
         "typescript-eslint"
       ]
@@ -85,7 +92,9 @@
         "@testing-library/**",
         "vitest",
         "@vitest/**",
-        "jsdom"
+        "jsdom",
+        "msw",
+        "fake-indexeddb"
       ]
     },
     {
@@ -105,14 +114,14 @@
       "matchPackageNames": ["workbox-**"]
     },
     {
+      "description": "Both the scoped families we use — @fontsource/* and @fontsource-variable/*. The glob has to reach across the scope separator, which `@fontsource**` does not: minimatch treats `**` as a cross-directory globstar only when it is a whole path segment, so an embedded one behaves like `*` and stops at the `/`. That spelling matched nothing at all, and the group silently never fired.",
       "groupName": "fonts",
-      "matchPackageNames": ["@fontsource**"]
+      "matchPackageNames": ["@fontsource*/**"]
     },
     {
-      "description": "GitHub Actions: group + cooldown, same weekly cadence.",
+      "description": "GitHub Actions get their own group. No minimumReleaseAge here on purpose: the per-update-type cooldowns above already apply to every manager, and repeating one here would override the 14-day major cooldown with 7 days for actions majors (later rules win on scalar fields).",
       "matchManagers": ["github-actions"],
-      "groupName": "github-actions",
-      "minimumReleaseAge": "7 days"
+      "groupName": "github-actions"
     }
   ]
 }
