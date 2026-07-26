@@ -16,7 +16,7 @@
     "feeds:check": "node scripts/checkFeeds.mjs"
   },
   "engines": {
-    "node": "^24.13.0"
+    "node": "^24.18.0"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
