@@ -43,7 +43,7 @@ jobs:
       - name: Set up Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: 2.9.3
+          deno-version: 2.9.4
 
       - name: Type-check SSRF module
         run: deno check supabase/functions/_shared/ssrf.ts
