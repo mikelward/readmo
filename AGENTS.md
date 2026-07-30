@@ -435,6 +435,7 @@ build/routing/deploy.
 
 - **Branch naming.** Feature branches are prefixed with the agent's own short name: `<agent>/<short-topic>` (e.g. `claude/...` for Claude Code). Human contributors pick a name that identifies them.
 - **Workflow.** `<agent>/<short-topic>` branch off `origin/main` → PR → merge via rebase or squash. One topic per branch. Follow-up work after a merge goes on a new branch. Never commit to `main` / `master`.
+- **No-remote sandbox exception.** Sandboxes without remote Git support (such as Codex cloud) may continue from the checked-out HEAD without fetching `origin`; a missing remote or unsupported fetch must not block otherwise-local work. Do not make claims that depend on unseen remote state.
 - **Use `git worktree` when it's available.** Give each branch its own worktree instead of switching branches in place, so work in progress on one branch isn't disturbed by work on another.
 - **One commit per logical surviving change on the branch.** Rewrite unmerged commits freely (squash, amend, reorder, split with `git rebase -i` / `git reset --soft`) so each landing commit is one coherent change, with fix-ups and review responses folded into the commit they belong to. A PR can be a single commit or a short series — but review-fix noise doesn't survive into `main`.
 - **Check state before you push or branch.** Query the branch's PR via the GitHub MCP first.
