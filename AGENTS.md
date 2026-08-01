@@ -246,6 +246,10 @@ build/routing/deploy.
   failure is genuinely unrelated and out of scope, say so in the first
   response and confirm with the user before skipping past it — don't silently
   report a task "done" with the tree still red.
+- **Don't disable a failing check** (a test, ESLint, `tsc`, the coverage
+  floor, a CI job) to make it pass — fix the underlying issue. Lowering the
+  80% floor in guardrail 1 to land a change is the same move under a different
+  name.
 - **Avoid racy / flaky tests.** Never paper over a timing race with
   `await new Promise(r => setTimeout(r, 500))`, a retry loop, or a bumped
   `findBy*` timeout. If a test depends on ordering, make the ordering
@@ -434,7 +438,8 @@ build/routing/deploy.
   `mcp__github__add_reply_to_pull_request_comment` and
   `mcp__github__resolve_review_thread` (see *Codex reviews* below for where
   the `threadId` comes from).
-- Ask first before: force-pushing to `main`/`master` or to a merged branch,
+- Ask first before: force-pushing to `main`/`master` or to a merged branch
+  (resetting a merged branch name included — see *Branching*),
   rewriting history on shared branches, deleting branches you didn't create,
   changing Vercel/Supabase project settings, changing CI secrets, adding
   paid/third-party services.
@@ -443,19 +448,21 @@ build/routing/deploy.
 
 - **Branch naming.** Feature branches are prefixed with the agent's own short name: `<agent>/<short-topic>` (e.g. `claude/...` for Claude Code). Human contributors pick a name that identifies them.
 - **Workflow.** `<agent>/<short-topic>` branch off `origin/main` → PR → merge via rebase or squash. One topic per branch. Follow-up work after a merge goes on a new branch. Never commit to `main` / `master`.
-- **No-remote sandbox exception.** Sandboxes without remote Git support (such as Codex cloud) may continue from the checked-out HEAD without fetching `origin`; a missing remote or unsupported fetch must not block otherwise-local work. Do not make claims that depend on unseen remote state.
+- **No-remote sandbox exception.** Sandboxes without remote Git support (such as Codex cloud) may continue from the checked-out HEAD without fetching `origin` — but still on this task's own topic branch: unless the checked-out branch is already it, cut a local `<agent>/<short-topic>` first — and cut it from a base free of earlier work (local `main` where it carries none, otherwise ask for a synced checkout), since branching off a stale topic tip only renames that topic's commits into your PR. Committing onto `main` or onto a stale topic branch from earlier work both mix unrelated topics into one PR once remote access returns; only fetch, push and the PR are unavailable, not the branching rules — a missing remote or unsupported fetch must not block otherwise-local work. Do not make claims that depend on unseen remote state.
 - **Use `git worktree` when it's available.** Give each branch its own worktree instead of switching branches in place, so work in progress on one branch isn't disturbed by work on another.
 - **One commit per logical surviving change on the branch.** Rewrite unmerged commits freely (squash, amend, reorder, split with `git rebase -i` / `git reset --soft`) so each landing commit is one coherent change, with fix-ups and review responses folded into the commit they belong to. A PR can be a single commit or a short series — but review-fix noise doesn't survive into `main`.
 - **Check state before you push or branch.** Query the branch's PR via the GitHub MCP first.
   - No PR yet, or PR open → `git push` (`--force-with-lease` to your own feature branch after a rebase is fine; don't ask).
-  - PR merged / closed → don't push. Merge-path hygiene: `git fetch origin`, cut a fresh `<agent>/<short-topic>` branch off `origin/main`, announce the switch.
+  - PR merged / closed → don't push. Merge-path hygiene: `git fetch origin main`, cut a fresh `<agent>/<short-topic>` branch off `origin/main`, announce the switch. Where the sandbox has no remote, the cue can't be honored as written — a fresh branch needs a base that contains the merge, and an offline checkout can't fetch one; say so and ask for a synced checkout rather than branching off a stale `main`. Where a sandbox pins the branch name and it has been reset onto `origin/main` per the post-merge rule below, that reset clears its association with the merged PR: the check applies to the new work on it, so push rather than reading the old PR as a block — with `--force-with-lease`, since the reset leaves the branch diverged from its pre-merge remote tip and a plain push is rejected as non-fast-forward.
 - **Merge cue (`merged` / `I merged` / `landed` / merge webhook) runs hygiene *before* engaging with the rest of the message.**
+- **After a merge, take a fresh `<agent>/<short-topic>`** — don't reset the merged name onto the new base. Its remote ref still points at the pre-merge tip, so `origin/<branch>..HEAD` keeps spanning the merged commits and unpushed-work checks report your own merged history back at you. When a sandbox pins the branch name so a fresh one isn't available, say so and ask before resetting it. No short check reliably separates "already merged" from "not yet merged" here: a rebase merge rewrites the commits, a squash merge collapses them, `main` moves on underneath so a tip-to-tip diff reports upstream drift as branch work, the remote ref can hold a commit the local one doesn't, and no tree comparison sees the uncommitted work a `--hard` reset would erase. Confirming costs one question in a rare situation; guessing costs someone their work. Don't reach for `--force-with-lease` as the safety net either — fetching updates the remote-tracking ref the lease compares against, so a commit you have already fetched passes the lease unnoticed.
+- **The agent authors; whoever merges takes over the committer line.** A squash or rebase merge rewrites the committer to the person who pressed the button — the repo owner normally, the agent itself when it merges under *drive* (see *Autonomy*). That's expected either way — never re-author or amend already-merged commits to "fix" authorship or signing.
 - Creating new `<agent>/<short-topic>` branches and creating PRs via `mcp__github__create_pull_request` are safe — this file is the standing ask (see *Autonomy*), so don't wait for a per-thread one and don't re-ask.
 - Sandbox git proxy can't delete branches (HTTP 403). Flag it and move on; auto-delete-on-merge handles GitHub's side.
-- **After every push and after every merge, report the resulting HEAD SHA** so the operator can verify which build is deployed. Format: `pushed <short-sha>` after a push; `merged at <short-sha>` after a merge webhook. 7-char prefix is fine. Mention it once per push.
+- **After every push and after every merge, report the resulting HEAD SHA** so the operator can verify which build is deployed. Format: `pushed <short-sha>` after a push — your branch tip on `origin/<branch>`; `merged at <short-sha>` after a merge — the commit the merge produced on `main`, which is *not* your local `HEAD`: a rebase or squash merge leaves the feature branch pointing at the source commit, so take the SHA the merge API returned, or the merge commit the PR itself records — not the `origin/main` tip, which another push can have moved past it by the time you look. 7-char prefix is fine. Mention it once per push.
 - **On every push, update the PR body and print the PR link.** Whenever you push to a branch that has an open PR, edit the PR description (`mcp__github__update_pull_request`) so it still matches what's on the branch — new commits, reversed decisions, changed scope — and print the PR link in the chat reply for that push, not only at the end of the conversation. If no PR exists yet, do this as soon as one is opened.
 - **Unshallow before answering anything that depends on git history depth.** The sandbox clones shallow, so `git rev-list --count`, `git log` past the shallow boundary, blame, and any "how many commits / what's the build number" question return wrong answers without warning. If `git rev-parse --is-shallow-repository` says `true`, run `git fetch --unshallow` first — same rule `vite.config.ts` already follows for the `build` field shown in `/debug`. Don't quote a count off a shallow clone.
-- End every reply with the open-PR link (or `.../compare/main...<branch>` until a PR exists). Never link to a closed or merged PR. When a pending decision also needs restating (see *Talking to the user*), the link goes second-to-last and the question is the final line.
+- End every reply with the open-PR link (or `.../compare/main...<branch>` until a PR exists). Never link to a closed or merged PR. In a no-remote sandbox there is no link to give: say the branch is local and unpushed rather than inventing a URL. When a pending decision also needs restating (see *Talking to the user*), the link goes second-to-last and the question is the final line.
 
 ## Autonomy
 
@@ -530,27 +537,30 @@ build/routing/deploy.
 - **"Autopilot" is drive without blocking on the user.** Wherever drive would
   stop and ask, autopilot takes its best guess and keeps going, preferring the
   option that is cheapest to undo or change later. Record each guess in
-  `TODO.md` under a `Decisions needing review` heading — what was decided, what
-  the alternative was, and why it's reversible — creating the heading if it
-  isn't there, so nothing guessed silently becomes permanent. While autopilot is
-  in effect it outranks *Asking questions*' "after asking, stop and wait for the
-  answer"; that rule governs everywhere else. The carve-out is for destructive
-  or irreversible actions *outside* the loop — rewriting shared history,
-  deleting work, anything reaching a system beyond this repo (a Supabase
-  migration or function deploy included) — which still wait for a real answer.
-  *Safe vs. risky actions*' ask-first list holds under autopilot too: adding a
-  paid or third-party service, or changing CI secrets or Vercel/Supabase
-  settings, is an ask however reversible it looks from inside the repo — as is
-  guardrail 12's in-product copy, which waits for an explicit yes.
-  The loop's own steps don't count: committing, pushing, opening a PR,
-  subscribing to it, reading its CI and review state, arming the next scheduled
-  check, and merging a green PR are authorized here, so autopilot must not stall
-  on them — the carve-out is aimed at destructive writes to systems outside the
-  repo, not at the loop's own GitHub reads and follow-ups.
-  Privacy uncertainty is never inside the loop either: if you can't tell whether
-  something is user data — an email address, an `auth.uid()`, a key, a
-  `secret_url` — it waits for a real answer, since a push can't be un-published
-  and a `TODO.md` note doesn't retract it.
+  `TODO.md` under a `Decisions needing review` heading — what was decided,
+  what the alternative was, and why it's reversible — creating the heading if
+  it isn't there, so nothing guessed silently becomes permanent. While
+  autopilot is in effect it outranks *Asking questions*' "after asking, stop
+  and wait for the answer"; that rule governs everywhere else. The carve-out
+  is for destructive or irreversible actions *outside* the loop — rewriting
+  shared history, deleting work, anything reaching a system beyond this repo
+  (a Supabase migration or function deploy included) — which still wait for a
+  real answer. Resetting a pinned merged branch waits too, even though it is
+  inside the loop: the post-merge rule asks precisely because no check can
+  tell what the reset would destroy, and autopilot guessing there is the loss
+  that rule exists to prevent. *Safe vs. risky actions*' ask-first list holds
+  under autopilot too: adding a paid or third-party service, or changing CI
+  secrets or Vercel/Supabase settings, is an ask however reversible it looks
+  from inside the repo — as is guardrail 12's in-product copy, which waits for
+  an explicit yes. The loop's own steps don't count: committing, pushing,
+  opening a PR, subscribing to it, reading its CI and review state, arming the
+  next scheduled check, and merging a green PR are authorized here, so
+  autopilot must not stall on them — the carve-out is aimed at destructive
+  writes to systems outside the repo, not at the loop's own GitHub reads and
+  follow-ups. Privacy uncertainty is never inside the loop either: if you
+  can't tell whether something is user data — an email address, an
+  `auth.uid()`, a key, a `secret_url` — it waits for a real answer, since a
+  push can't be un-published and a `TODO.md` note doesn't retract it.
 
 ## Codex reviews
 
