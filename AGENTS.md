@@ -284,6 +284,15 @@ build/routing/deploy.
   important point and stop. If there's more, say the first point and ask
   whether they're ready for the next one rather than emptying everything at
   once.
+- **End the turn by restating any pending decision.** If you're waiting on an
+  answer — a question you asked, or a guess autopilot recorded for review — the
+  last line of the reply is that question, written out in about a sentence. A
+  back-reference ("as asked above") isn't actionable when the question is pages
+  back or was never actually put into words; restate it every turn until it's
+  answered. Nothing pending, no line. It is the *last* line: where *Branching*
+  also ends the reply with the open-PR link, that link goes just above it. This
+  governs replies the user reads: a scheduled check that finds nothing new
+  re-arms silently and produces no reply at all, so there is nothing to restate.
 
 ## Asking questions
 
@@ -446,7 +455,7 @@ build/routing/deploy.
 - **After every push and after every merge, report the resulting HEAD SHA** so the operator can verify which build is deployed. Format: `pushed <short-sha>` after a push; `merged at <short-sha>` after a merge webhook. 7-char prefix is fine. Mention it once per push.
 - **On every push, update the PR body and print the PR link.** Whenever you push to a branch that has an open PR, edit the PR description (`mcp__github__update_pull_request`) so it still matches what's on the branch — new commits, reversed decisions, changed scope — and print the PR link in the chat reply for that push, not only at the end of the conversation. If no PR exists yet, do this as soon as one is opened.
 - **Unshallow before answering anything that depends on git history depth.** The sandbox clones shallow, so `git rev-list --count`, `git log` past the shallow boundary, blame, and any "how many commits / what's the build number" question return wrong answers without warning. If `git rev-parse --is-shallow-repository` says `true`, run `git fetch --unshallow` first — same rule `vite.config.ts` already follows for the `build` field shown in `/debug`. Don't quote a count off a shallow clone.
-- End every reply with the open-PR link (or `.../compare/main...<branch>` until a PR exists). Never link to a closed or merged PR.
+- End every reply with the open-PR link (or `.../compare/main...<branch>` until a PR exists). Never link to a closed or merged PR. When a pending decision also needs restating (see *Talking to the user*), the link goes second-to-last and the question is the final line.
 
 ## Autonomy
 
