@@ -96,6 +96,13 @@ const ITEM_COLS =
 // read can't reach it either is folded into the DB-backed allowlist follow-up.
 const ITEM_STATE_COLS =
   'item_id, pinned, pinned_at, favorite, favorite_at, done, done_at, hidden, hidden_at, opened, opened_at';
+/** The same projection plus 0070's server-assigned change clock, which drives
+ * the incremental hydrate. Named separately because a backend that has not had
+ * 0070 applied yet rejects the whole select with 42703 (undefined column) —
+ * `updatedAtUnsupported` detects that once and falls back to ITEM_STATE_COLS
+ * and full reads for the session (guardrail #11). */
+const ITEM_STATE_COLS_WITH_CURSOR =
+  'item_id, pinned, pinned_at, favorite, favorite_at, done, done_at, hidden, hidden_at, opened, opened_at, updated_at';
 const SUBSCRIPTION_COLS =
   'feed_id, folder, title_override, muted, open_original, open_newshacker, mark_done_on_open, list_layout, sort';
 /** The synced reading-behavior settings columns (`user_settings`, 0064) — the
@@ -157,6 +164,21 @@ function liveItemStateFilter(now: number = Date.now()): string {
     `opened_at.gte.${cutoff}`,
   ].join(',');
 }
+
+/** How far BEFORE the stored cursor an incremental hydrate re-reads.
+ *
+ * `updated_at` is stamped with `now()`, which in Postgres is the transaction's
+ * START time — so a slower transaction can commit AFTER a quicker one while
+ * carrying an EARLIER stamp. A strict `> cursor` read taken in between would
+ * step over that row and never see it again. Re-reading a small overlap closes
+ * the gap: rows are applied idempotently (per-field last-write-wins), so the
+ * only cost of seeing one twice is a few bytes.
+ *
+ * A minute is enormously more than needed — every writer here is a
+ * single-statement RPC, so real exposure is milliseconds — but the overlap is
+ * nearly free and the failure it prevents is a silently-lost cross-device
+ * change. */
+const INCREMENTAL_OVERLAP_MS = 60 * 1000;
 
 /** Page size for the full item_state hydrate read. PostgREST caps a single
  * response at 1000 rows (see GROUPED_WINDOW_ROW_CAP), so an account that has
@@ -410,6 +432,41 @@ export class SupabaseDataSource implements DataSource {
    * executes it strictly later — without assuming client start order matches the
    * server's execution order (which HTTP/2 / server queueing can reorder). */
   private hydrationChain: Promise<void> = Promise.resolve();
+  /** Newest `updated_at` (an ISO string, server-assigned) this session has seen
+   * in item_state, or null before the first successful FULL read. Non-null means
+   * the next hydrate can pull incrementally.
+   *
+   * Deliberately in memory, not persisted. A cold boot therefore always does one
+   * full read, which is what re-establishes the "a row absent from the response
+   * is gone" invariant that incremental reads cannot check — so drift can never
+   * outlive a session, and there is no per-user cursor to key or purge on an
+   * account switch (guardrail #8). The reported symptom is per-FOCUS latency,
+   * and every focus after boot is incremental. */
+  private itemStateCursor: string | null = null;
+  /** Set when the backend rejects `updated_at` (pre-0070, 42703): this client
+   * stops asking for the column and stays on full reads for the session. */
+  private updatedAtUnsupported = false;
+  /** Bumped by each write correction that reconciles BY ABSENCE, and so needs
+   * the drop pass only a full read performs.
+   *
+   * A generation counter rather than cursor state or a boolean, because both
+   * weaker forms lose a request. Clearing the CURSOR doesn't survive the queue:
+   * reads are serialized, so a correction raised while one is in flight has its
+   * null cursor overwritten by that read's `advanceItemStateCursor` before the
+   * correction's own read starts. A BOOLEAN doesn't survive a second correction:
+   * raised while a forced-full read is already running, it only re-sets an
+   * already-true flag, and that read's completion then clears it — so the second
+   * correction's own read silently runs as a delta and reconciles nothing.
+   *
+   * Counting makes each request distinct: a read serves the generation it
+   * observed at its start, and only that one. The constructor kicks boot
+   * hydration before the outbox flushes, so stale replays really do arrive in
+   * these windows. */
+  private forceFullGeneration = 0;
+  /** Highest generation a completed full read has satisfied. A read is forced
+   * full while {@link forceFullGeneration} is ahead of this; a FAILED read
+   * leaves it behind, so the request survives to the next attempt. */
+  private forceFullServed = 0;
   private readonly outbox: ItemStateOutbox;
   /** Delay between summary-fetch retries (see getSummary). A mutable field rather
    * than the const directly so tests can zero it and not wait on a real timer. */
@@ -495,6 +552,11 @@ export class SupabaseDataSource implements DataSource {
         // it as a brand-new row: forget any during-read write note for it, letting
         // hydrate drop the now-absent local row.
         for (const id of ids) this.hydrationWrittenChanges?.delete(id);
+        // This correction works by ABSENCE — the rejected row is gone server-side
+        // and hydrate rolls the optimistic local row back because the response
+        // omits it. An incremental read can't express that (absent there means
+        // "unchanged since the cursor"), so the re-pull has to be a full one.
+        this.forceFullGeneration += 1;
         this.hydration = null;
         // Swallow rejection: ensureHydrated re-throws after clearing the memo,
         // so a failing correction re-pull (e.g. the device just went offline)
@@ -513,6 +575,15 @@ export class SupabaseDataSource implements DataSource {
         // server truth to replace the stale optimistic value with the winner.
         if (this.lwwLossPending) {
           this.lwwLossPending = false;
+          // Force a full read, same as the permanent-reject correction. The
+          // winner's `<f>At` is newer than the LOSING write's, but that says
+          // nothing about the live window: a stale write replayed from a
+          // long-persisted outbox loses to a tombstone whose clocks are also
+          // aged out, so the winning row matches neither the delta's window
+          // filter nor the full read's — and only the full read's drop-absent
+          // pass then clears the optimistic value. A delta would leave the
+          // rejected pin on screen for the rest of the session.
+          this.forceFullGeneration += 1;
           this.hydration = null;
           // Swallow rejection — same reasoning as the permanent-reject re-pull
           // above; the memo is cleared so the next read retries.
@@ -711,25 +782,30 @@ export class SupabaseDataSource implements DataSource {
     // them as absent, and `withRetention` was already collapsing them to their
     // defaults at read time. So "absent = stale" still holds, now reading as
     // "absent = stale or aged past anything that could change the UI".
-    const rows: ItemStateRow[] = [];
-    let afterId: string | null = null;
+    let rows: ItemStateRow[] = [];
+    // Whether `rows` is a cursor delta rather than the caller's complete set —
+    // decides the drop pass in `hydrate`, so it must reflect what actually ran,
+    // not what was intended (an incremental attempt can fall back mid-flight).
+    let partial = false;
+    // Which correction generation THIS read answers. Snapshot it up front: a
+    // correction raised while the read is in flight bumps the counter past this
+    // value and so keeps its own request, instead of being absorbed by a read
+    // that started before it existed.
+    const servingGeneration = this.forceFullGeneration;
+    const forceFull = servingGeneration > this.forceFullServed;
+    // Only a FULL read needs the cap: a delta is a single request, so its rows
+    // come from one server snapshot and their maximum can't straddle a gap.
+    let fullReadCap: string | null = null;
+    let cappedFullRead = false;
     try {
-      for (;;) {
-        let q = this.sb
-          .from('item_state')
-          .select(ITEM_STATE_COLS)
-          .or(liveItemStateFilter())
-          .order('item_id', { ascending: true })
-          .limit(ITEM_STATE_PAGE)
-          .not('item_id', 'eq', cacheBustUuid());
-        // First page has no lower bound; later pages resume strictly after the last
-        // id seen (a uuid sentinel for "before all rows" would be an invalid-uuid
-        // cast, so omit the filter rather than seed one).
-        if (afterId !== null) q = q.gt('item_id', afterId);
-        const page = this.unwrap<ItemStateRow[]>(await q);
-        rows.push(...page);
-        if (page.length < ITEM_STATE_PAGE) break;
-        afterId = page[page.length - 1].item_id;
+      const delta = forceFull ? null : await this.readItemStateDelta();
+      if (delta) {
+        rows = delta;
+        partial = true;
+      } else {
+        fullReadCap = await this.readItemStateHighWater();
+        cappedFullRead = true;
+        rows = await this.readItemStateFull();
       }
     } finally {
       this.hydrationWrittenChanges = prevWritten;
@@ -750,12 +826,233 @@ export class SupabaseDataSource implements DataSource {
     this.stateStore.hydrate(
       rows.map((r) => [r.item_id, mapItemState(r)] as [ItemId, ItemState]),
       pending,
+      Date.now(),
+      { partial },
     );
+    // Advance the cursor only AFTER the rows are applied, and only from values
+    // the SERVER produced — never the local clock, which could skew the cursor
+    // past rows this device has never seen. A read that returned nothing leaves
+    // the cursor where it was.
+    // A full read whose high-water probe failed has no safe ceiling, so it
+    // declines to advance at all rather than risk stepping over an update it
+    // missed between pages; the cursor simply stays put and the next read
+    // re-covers the ground.
+    if (!cappedFullRead || fullReadCap !== null) {
+      this.advanceItemStateCursor(rows, fullReadCap);
+    }
+    // A full read landed, so every correction raised up to this read's START has
+    // been served — but not any raised since, which carry a higher generation.
+    if (forceFull) {
+      this.forceFullServed = Math.max(this.forceFullServed, servingGeneration);
+    }
     // A live read landed: from now on a feed/library read has server-confirmed
     // last-good state to overlay, so it never needs to BLOCK on a re-pull (even
     // one that hangs) — see ensureHydratedForRead.
     this.hydratedOnce = true;
     this.lastSyncedAt = Date.now();
+  }
+
+  /** The newest `updated_at` on the server RIGHT NOW, or null if it can't be
+   * read. Taken BEFORE a full read starts paging, to cap where that read may
+   * leave the cursor.
+   *
+   * A full read is many requests, each its own transaction — not one snapshot.
+   * So a row in an already-read page can be updated mid-read and be missed,
+   * while a row in a not-yet-read page is updated later and IS returned. Taking
+   * the plain maximum over the result would move the cursor to that later stamp,
+   * and the next delta (cursor minus the overlap) would start after the missed
+   * update and never see it again this session. Capping at the pre-read
+   * high-water mark makes that impossible: anything written during the read is
+   * stamped above the cap, so it stays ahead of the cursor and the next delta
+   * still reaches it.
+   *
+   * This is a CEILING, not a source of cursor values — the cursor still only
+   * advances to stamps on rows this client actually applied. Advancing TO a
+   * server-wide max is the separate bug of skipping live rows written earlier
+   * but not yet seen; clamping can only ever hold the cursor back.
+   *
+   * One indexed row via the 0070 `(user_id, updated_at, item_id)` index, once
+   * per full read — negligible next to the paging it guards. On any failure it
+   * returns null and the caller declines to advance the cursor at all, which
+   * costs another full read rather than risking a skipped update. */
+  private async readItemStateHighWater(): Promise<string | null> {
+    if (this.updatedAtUnsupported) return null;
+    try {
+      const rows = this.unwrap<{ updated_at: string | null }[]>(
+        await this.sb
+          .from('item_state')
+          .select('updated_at')
+          .or(liveItemStateFilter())
+          .order('updated_at', { ascending: false })
+          .limit(1),
+      );
+      const at = rows[0]?.updated_at;
+      return typeof at === 'string' ? at : null;
+    } catch (err) {
+      // A pre-0070 backend rejects the projection outright. The probe is the
+      // FIRST read to ask for the column, so latch it here and spare the page
+      // read a failing round trip of its own. Not a warning — an expected shape
+      // for an un-migrated backend (guardrail 11).
+      if (isMissingColumnError(err)) {
+        this.updatedAtUnsupported = true;
+        this.itemStateCursor = null;
+        return null;
+      }
+      // Otherwise non-fatal: the full read still runs, it just won't advance the
+      // cursor this time.
+      console.warn(
+        '[readmo] item_state high-water read failed; skipping cursor advance:',
+        err instanceof Error ? err.message : String(err),
+      );
+      return null;
+    }
+  }
+
+  /** The FULL live-window set, in keyset pages by `item_id`. PostgREST truncates
+   * a single response at its row cap, and a truncated read would make `hydrate`
+   * mistake every row past the cap for a genuinely-absent one and drop its local
+   * pin/favorite/done. Keyset (not offset `.range()`) so a row another device
+   * inserts between two pages can't shift a window and skip an existing row. Any
+   * page failing throws, so a partial set is never applied. */
+  private async readItemStateFull(): Promise<ItemStateRow[]> {
+    const rows: ItemStateRow[] = [];
+    let afterId: string | null = null;
+    for (;;) {
+      const base = this.sb.from('item_state');
+      let q = (this.updatedAtUnsupported
+        ? base.select(ITEM_STATE_COLS)
+        : base.select(ITEM_STATE_COLS_WITH_CURSOR)
+      )
+        .or(liveItemStateFilter())
+        .order('item_id', { ascending: true })
+        .limit(ITEM_STATE_PAGE)
+        .not('item_id', 'eq', cacheBustUuid());
+      // First page has no lower bound; later pages resume strictly after the last
+      // id seen (a uuid sentinel for "before all rows" would be an invalid-uuid
+      // cast, so omit the filter rather than seed one).
+      if (afterId !== null) q = q.gt('item_id', afterId);
+      let page: ItemStateRow[];
+      try {
+        page = this.unwrap<ItemStateRow[]>(await q);
+      } catch (err) {
+        // Pre-0070 backend: it has no `updated_at`, so the whole select is
+        // rejected. Drop the column and retry the read from the top — with the
+        // flag set, every later read (this session) skips straight to the plain
+        // projection and never attempts an incremental pull. Guardrail #11.
+        if (!this.updatedAtUnsupported && isMissingColumnError(err)) {
+          this.updatedAtUnsupported = true;
+          this.itemStateCursor = null;
+          return this.readItemStateFull();
+        }
+        throw err;
+      }
+      rows.push(...page);
+      if (page.length < ITEM_STATE_PAGE) break;
+      afterId = page[page.length - 1].item_id;
+    }
+    return rows;
+  }
+
+  /** Everything changed since the cursor, or `null` when an incremental read is
+   * not possible/appropriate and the caller should do a full one.
+   *
+   * One request, no paging: when the server reports more matching rows than it
+   * returned, more changed than a response can carry, and rather than reach for
+   * a composite `(updated_at, item_id)` keyset — whose boundary handling is
+   * exactly where this kind of code goes subtly wrong — we simply fall back to
+   * the full read. That path is rare by construction and always correct.
+   *
+   * A page-sized response is NOT itself overflow, and the distinction matters:
+   * `now()` is transaction start, so one transaction writing a page's worth of
+   * rows (the reverse newshacker pull applies up to ITEM_STATE_PAGE Done and as
+   * many Pinned in a single call) stamps all of them identically. The overlap
+   * re-reads that clump on every focus; treating each such read as overflow
+   * would fall back to a full read forever, since the cursor can never advance
+   * past the tie.
+   *
+   * Carries the SAME live-window filter as the full read, so both agree on which
+   * rows exist and the cursor means one thing. Without it the two disagree: the
+   * full read excludes aged-out rows while the delta would haul them back, which
+   * (a) re-adds rows `withRetention` only collapses again and (b) lets expired
+   * rows eat the page cap and force a pointless fallback to full.
+   *
+   * Filtering here cannot make the delta miss a row it should have returned: a
+   * row only ENTERS the window by being written, and every write stamps
+   * `updated_at` with the server's clock, so anything newly live is necessarily
+   * past the cursor and still matches. */
+  private async readItemStateDelta(): Promise<ItemStateRow[] | null> {
+    const cursor = this.itemStateCursor;
+    if (cursor === null || this.updatedAtUnsupported) return null;
+    const since = new Date(
+      new Date(cursor).getTime() - INCREMENTAL_OVERLAP_MS,
+    ).toISOString();
+    let rows: ItemStateRow[];
+    let total: number | null;
+    try {
+      const res = await this.sb
+        .from('item_state')
+        // `count: 'exact'` is what makes overflow DETECTABLE. The row count alone
+        // cannot report it: PostgREST truncates every response at its own
+        // ceiling, which is ITEM_STATE_PAGE, so asking for one row more than a
+        // page still returns exactly a page and a "did I get everything?" test
+        // on `rows.length` can never fire. The client would then apply a partial
+        // delta, advance its cursor past it, and lose the omitted rows for good
+        // — silent cross-device data loss, and strictly worse than the tied-
+        // timestamp fallback loop it was meant to fix. The header count is
+        // computed BEFORE the limit, so comparing it against what arrived
+        // detects truncation whatever the server's ceiling happens to be.
+        .select(ITEM_STATE_COLS_WITH_CURSOR, { count: 'exact' })
+        .or(liveItemStateFilter())
+        .gte('updated_at', since)
+        .order('updated_at', { ascending: true })
+        .limit(ITEM_STATE_PAGE)
+        .not('item_id', 'eq', cacheBustUuid());
+      rows = this.unwrap<ItemStateRow[]>(res);
+      total = (res as { count?: number | null }).count ?? null;
+    } catch (err) {
+      if (isMissingColumnError(err)) {
+        this.updatedAtUnsupported = true;
+        this.itemStateCursor = null;
+        return null;
+      }
+      // Any other failure: let the caller's full read surface it, rather than
+      // silently applying a delta we never got.
+      throw err;
+    }
+    // Truncated → hand the caller a full read rather than a partial delta. A
+    // server that reports no count at all is treated as truncated whenever the
+    // response is page-sized: without the count there is no way to tell a
+    // complete page from a clipped one, and guessing wrong loses rows.
+    const truncated =
+      total === null
+        ? rows.length >= ITEM_STATE_PAGE
+        : total > rows.length;
+    return truncated ? null : rows;
+  }
+
+  /** Move the cursor to the newest server-stamped `updated_at` in `rows`. Only
+   * ever advances (a delta read with the overlap can legitimately return older
+   * rows than the cursor). */
+  private advanceItemStateCursor(
+    rows: ItemStateRow[],
+    /** Upper bound the cursor must not pass, or null for none. Set by a FULL
+     * read to the server's high-water mark from BEFORE it started paging. */
+    cap: string | null = null,
+  ): void {
+    if (this.updatedAtUnsupported) return;
+    let newest = this.itemStateCursor;
+    for (const r of rows) {
+      const at = r.updated_at;
+      if (typeof at !== 'string') continue;
+      if (cap !== null && at > cap) continue;
+      if (newest === null || at > newest) newest = at;
+    }
+    // Still null means no row has ever carried a stamp — an account with no
+    // item_state at all. Leave it null and keep doing full reads: seeding the
+    // cursor from `Date.now()` here would be the exact clock-skew bug this
+    // method exists to avoid, and a full read of an empty table is one cheap
+    // round trip anyway.
+    this.itemStateCursor = newest;
   }
 
   /** Epoch ms of the last successful server item_state pull, or null until the

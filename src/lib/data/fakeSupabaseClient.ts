@@ -168,6 +168,20 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
     return this;
   }
 
+  /** `>=` on a timestamptz column — the incremental hydrate's cursor filter.
+   * Date-compared (not string-compared) so a fixture written with a different
+   * ISO precision than the code produces still orders correctly. A NULL is not
+   * `>=` anything, as in SQL. */
+  gte(col: string, val: unknown): this {
+    const bound = Date.parse(String(val));
+    this.filters.push((r) => {
+      const v = r[col];
+      if (v === null || v === undefined) return false;
+      return Date.parse(String(v)) >= bound;
+    });
+    return this;
+  }
+
   gt(col: string, val: unknown): this {
     // String comparison matches how uuid/text columns order in the real DB for
     // the canonical ids these tests use — consistent with `order(col)` below, so
@@ -357,6 +371,7 @@ function runRpc(
         done: false, done_at: null,
         hidden: false, hidden_at: null,
         opened: false, opened_at: null,
+        updated_at: null,
       };
       states.push(row);
     }
@@ -376,6 +391,9 @@ function runRpc(
       if (curAt !== null && at < curAt) continue; // stale write loses
       row[f] = v;
       row[`${f}_at`] = atIso ?? new Date(at).toISOString();
+      // Mirror 0070's BEFORE trigger: any write stamps the server-side change
+      // clock, so an incremental hydrate can see this row past its cursor.
+      row.updated_at = new Date().toISOString();
     }
     return { data: row, error: null };
   }

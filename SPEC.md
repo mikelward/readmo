@@ -1159,7 +1159,11 @@ negligible and off every critical path. See the External services table in
   rows; `useStateSync` (mounted app-wide) fires it when the tab regains focus or
   visibility, or the device comes back online, so a pin / favorite / done made
   on another device syncs in without a manual pull-to-refresh. Overlapping calls
-  coalesce (one tab return can fire both `focus` and `visibilitychange`). The
+  coalesce (one tab return can fire both `focus` and `visibilitychange`). **How
+  long that takes is set by how much changed, not by how much triage the account
+  has ever done** — it does not degrade as a reading history accumulates, which
+  matters most for readers who mark done as they scroll and so write state for
+  every row they pass. The
   hydrate reconciles **per field by last-write-wins** on each field's `<f>At`
   clock — the same rule the server's `set_item_state` applies: an un-synced or
   just-made local change carries a newer clock than the (possibly pre-write)

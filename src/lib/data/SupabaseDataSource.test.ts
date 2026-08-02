@@ -55,12 +55,23 @@ function mkItem(id: string, feed_id: string, day: number, title: string) {
 }
 
 function mkState(item_id: string, over: Record<string, unknown>) {
-  return {
+  const row: Record<string, unknown> = {
     user_id: 'u1', item_id,
     pinned: false, pinned_at: null, favorite: false, favorite_at: null,
     done: false, done_at: null, hidden: false, hidden_at: null,
     opened: false, opened_at: null, ...over,
   };
+  // 0070's cursor column, defaulted the way the migration backfills it: the
+  // newest of the five per-field clocks. Tests that care set it explicitly.
+  if (row.updated_at === undefined) {
+    const clocks = ['pinned_at', 'favorite_at', 'done_at', 'hidden_at', 'opened_at']
+      .map((k) => row[k])
+      .filter((v): v is string => typeof v === 'string');
+    row.updated_at = clocks.length
+      ? clocks.reduce((a, b) => (a > b ? a : b))
+      : new Date(0).toISOString();
+  }
+  return row;
 }
 
 function setup(tables: FakeTables = seed()) {
@@ -76,10 +87,40 @@ const ids = (items: Array<{ item: { id: string } }>) => items.map((fi) => fi.ite
  * the awaited `{ data, count, error }` result. The real read pages by item_id;
  * these stubs return their whole (well-under-cap) snapshot on the first page, so
  * a single page is read (short page → no `.gt()` follow-up) and the loop ends. */
+/** Wrap an `item_state` interceptor so the high-water probe — the only read
+ * selecting the bare cursor column — passes through to the real fake instead of
+ * the test's stub, and does NOT advance the test's read counter.
+ *
+ * The probe is only identifiable at `.select()` time, but these interceptors
+ * count (and gate) at `from()` time, so without this every gated test would hold
+ * the probe open instead of the page read it meant to hold. Building the inner
+ * interceptor lazily keeps its counting tied to real page reads. */
+function withProbePassthrough<T>(
+  realFrom: (table: string) => unknown,
+  inner: (table: string) => unknown,
+): T {
+  return ((table: string) => {
+    if (table !== 'item_state') return inner(table);
+    let built: { select: (c?: string, o?: unknown) => unknown } | null = null;
+    return {
+      select: (cols?: string, opts?: unknown) => {
+        if (cols === 'updated_at') {
+          return (
+            realFrom('item_state') as { select: (c?: string, o?: unknown) => unknown }
+          ).select(cols, opts);
+        }
+        built ??= inner(table) as { select: (c?: string, o?: unknown) => unknown };
+        return built.select(cols, opts);
+      },
+    };
+  }) as T;
+}
+
 function itemStateReadStub(resolve: () => unknown): unknown {
   const chain = {
     select: () => chain,
     or: () => chain,
+    gte: () => chain,
     order: () => chain,
     limit: () => chain,
     gt: () => chain,
@@ -411,7 +452,7 @@ describe('SupabaseDataSource reads', () => {
     let bootStartedResolve!: () => void;
     const bootStarted = new Promise<void>((r) => (bootStartedResolve = r));
     let itemStateReads = 0;
-    fake.client.from = ((table: string) => {
+    fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
       if (table !== 'item_state') return realFrom(table);
       itemStateReads++;
       // Snapshot the rows at request time (server semantics): the boot read
@@ -431,7 +472,7 @@ describe('SupabaseDataSource reads', () => {
       }
       // Resync read: resolves immediately with the updated snapshot.
       return itemStateReadStub(() => settle) as ReturnType<typeof realFrom>;
-    }) as typeof fake.client.from;
+    }) as never) as typeof fake.client.from;
 
     const ds = new SupabaseDataSource(
       'readmo:item-state:test',
@@ -467,7 +508,7 @@ describe('SupabaseDataSource reads', () => {
     let resyncStartedResolve!: () => void;
     const resyncStarted = new Promise<void>((r) => (resyncStartedResolve = r));
     let reads = 0;
-    fake.client.from = ((table: string) => {
+    fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
       if (table !== 'item_state') return realFrom(table);
       reads += 1;
       // Snapshot the rows at request time (server semantics).
@@ -485,7 +526,7 @@ describe('SupabaseDataSource reads', () => {
         return itemStateReadStub(() => held) as ReturnType<typeof realFrom>;
       }
       return itemStateReadStub(() => settle) as ReturnType<typeof realFrom>;
-    }) as typeof fake.client.from;
+    }) as never) as typeof fake.client.from;
 
     const ds = new SupabaseDataSource(
       'readmo:item-state:test',
@@ -531,7 +572,7 @@ describe('SupabaseDataSource reads', () => {
     let resyncStartedResolve!: () => void;
     const resyncStarted = new Promise<void>((r) => (resyncStartedResolve = r));
     let reads = 0;
-    fake.client.from = ((table: string) => {
+    fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
       if (table !== 'item_state') return realFrom(table);
       reads += 1;
       const settle = {
@@ -547,7 +588,7 @@ describe('SupabaseDataSource reads', () => {
         return itemStateReadStub(() => held) as ReturnType<typeof realFrom>;
       }
       return itemStateReadStub(() => settle) as ReturnType<typeof realFrom>;
-    }) as typeof fake.client.from;
+    }) as never) as typeof fake.client.from;
 
     const ds = new SupabaseDataSource(
       'readmo:item-state:test',
@@ -597,7 +638,7 @@ describe('SupabaseDataSource reads', () => {
     let resyncStartedResolve!: () => void;
     const resyncStarted = new Promise<void>((r) => (resyncStartedResolve = r));
     let reads = 0;
-    fake.client.from = ((table: string) => {
+    fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
       if (table !== 'item_state') return realFrom(table);
       reads += 1;
       const settle = {
@@ -619,7 +660,7 @@ describe('SupabaseDataSource reads', () => {
         return itemStateReadStub(() => new Promise(() => {})) as ReturnType<typeof realFrom>;
       }
       return itemStateReadStub(() => settle) as ReturnType<typeof realFrom>;
-    }) as typeof fake.client.from;
+    }) as never) as typeof fake.client.from;
 
     const ds = new SupabaseDataSource(
       'readmo:item-state:test',
@@ -660,7 +701,7 @@ describe('SupabaseDataSource reads', () => {
     let resyncStartedResolve!: () => void;
     const resyncStarted = new Promise<void>((r) => (resyncStartedResolve = r));
     let reads = 0;
-    fake.client.from = ((table: string) => {
+    fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
       if (table !== 'item_state') return realFrom(table);
       reads += 1;
       const settle = {
@@ -681,7 +722,7 @@ describe('SupabaseDataSource reads', () => {
         return itemStateReadStub(() => new Promise(() => {})) as ReturnType<typeof realFrom>;
       }
       return itemStateReadStub(() => settle) as ReturnType<typeof realFrom>;
-    }) as typeof fake.client.from;
+    }) as never) as typeof fake.client.from;
 
     const ds = new SupabaseDataSource(
       'readmo:item-state:test',
@@ -723,7 +764,7 @@ describe('SupabaseDataSource reads', () => {
     let resyncStartedResolve!: () => void;
     const resyncStarted = new Promise<void>((r) => (resyncStartedResolve = r));
     let reads = 0;
-    fake.client.from = ((table: string) => {
+    fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
       if (table !== 'item_state') return realFrom(table);
       reads += 1;
       const settle = {
@@ -744,7 +785,7 @@ describe('SupabaseDataSource reads', () => {
         return itemStateReadStub(() => new Promise(() => {})) as ReturnType<typeof realFrom>;
       }
       return itemStateReadStub(() => settle) as ReturnType<typeof realFrom>;
-    }) as typeof fake.client.from;
+    }) as never) as typeof fake.client.from;
 
     const ds = new SupabaseDataSource(
       'readmo:item-state:test',
@@ -794,7 +835,7 @@ describe('SupabaseDataSource reads', () => {
     let resyncStartedResolve!: () => void;
     const resyncStarted = new Promise<void>((r) => (resyncStartedResolve = r));
     let reads = 0;
-    fake.client.from = ((table: string) => {
+    fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
       if (table !== 'item_state') return realFrom(table);
       reads += 1;
       const settle = {
@@ -815,7 +856,7 @@ describe('SupabaseDataSource reads', () => {
         return itemStateReadStub(() => new Promise(() => {})) as ReturnType<typeof realFrom>;
       }
       return itemStateReadStub(() => settle) as ReturnType<typeof realFrom>;
-    }) as typeof fake.client.from;
+    }) as never) as typeof fake.client.from;
 
     const ds = new SupabaseDataSource(
       'readmo:item-state:test',
@@ -852,14 +893,14 @@ describe('SupabaseDataSource reads', () => {
 
     // From now on every item_state read errors (e.g. the device went offline).
     const realFrom = env.fake.client.from.bind(env.fake.client);
-    env.fake.client.from = ((table: string) => {
+    env.fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
       if (table !== 'item_state') return realFrom(table);
       return itemStateReadStub(() => ({
         data: null,
         count: null,
         error: { message: 'offline' },
       })) as ReturnType<typeof realFrom>;
-    }) as typeof env.fake.client.from;
+    }) as never) as typeof env.fake.client.from;
 
     // The resync attempt fails and is swallowed (as the hook does).
     await env.ds.resyncState().catch(() => {});
@@ -892,12 +933,12 @@ describe('SupabaseDataSource reads', () => {
       return realRpc(name, params);
     }) as typeof env.fake.client.rpc;
     const realFrom = env.fake.client.from.bind(env.fake.client);
-    env.fake.client.from = ((table: string) => {
+    env.fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
       if (table !== 'item_state') return realFrom(table);
       return itemStateReadStub(() => ({ data: [], count: null, error: null })) as ReturnType<
         typeof realFrom
       >;
-    }) as typeof env.fake.client.from;
+    }) as never) as typeof env.fake.client.from;
 
     // A write on i2 → permanent reject → onPermanentReject → reconcile re-pull.
     // Resolve when the store emits the rolled-back (no-longer-pinned) i2, so the
@@ -941,13 +982,13 @@ describe('SupabaseDataSource reads', () => {
     let repullStarted!: () => void;
     const repullRan = new Promise<void>((r) => (repullStarted = r));
     const realFrom = env.fake.client.from.bind(env.fake.client);
-    env.fake.client.from = ((table: string) => {
+    env.fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
       if (table !== 'item_state') return realFrom(table);
       repullStarted();
       return itemStateReadStub(() => Promise.reject(new Error('offline'))) as ReturnType<
         typeof realFrom
       >;
-    }) as typeof env.fake.client.from;
+    }) as never) as typeof env.fake.client.from;
 
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => unhandled.push(reason);
@@ -985,11 +1026,11 @@ describe('SupabaseDataSource reads', () => {
     let hungReadStarted!: () => void;
     const hungRead = new Promise<void>((r) => (hungReadStarted = r));
     const realFrom = env.fake.client.from.bind(env.fake.client);
-    env.fake.client.from = ((table: string) => {
+    env.fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
       if (table !== 'item_state') return realFrom(table);
       hungReadStarted();
       return itemStateReadStub(() => new Promise(() => {})) as ReturnType<typeof realFrom>;
-    }) as typeof env.fake.client.from;
+    }) as never) as typeof env.fake.client.from;
 
     // Null the hydration memo so the next read would otherwise re-pull (and hang
     // on) item_state: a permanent write rejection clears the memo and kicks a
@@ -1025,7 +1066,7 @@ describe('SupabaseDataSource reads', () => {
     let bootStartedResolve!: () => void;
     const bootStarted = new Promise<void>((r) => (bootStartedResolve = r));
     let reads = 0;
-    fake.client.from = ((table: string) => {
+    fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
       if (table !== 'item_state') return realFrom(table);
       reads += 1;
       if (reads === 1) {
@@ -1039,7 +1080,7 @@ describe('SupabaseDataSource reads', () => {
         count: null,
         error: null,
       })) as ReturnType<typeof realFrom>;
-    }) as typeof fake.client.from;
+    }) as never) as typeof fake.client.from;
 
     let setCalls = 0;
     let lastParams: Record<string, unknown> | undefined;
@@ -1076,11 +1117,11 @@ describe('SupabaseDataSource reads', () => {
     try {
       const fake = makeFakeSupabase(seed());
       const realFrom = fake.client.from.bind(fake.client);
-      fake.client.from = ((table: string) => {
+      fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
         if (table !== 'item_state') return realFrom(table);
         // Hung item_state read: hydration never settles.
         return itemStateReadStub(() => new Promise(() => {})) as ReturnType<typeof realFrom>;
-      }) as typeof fake.client.from;
+      }) as never) as typeof fake.client.from;
 
       const ds = new SupabaseDataSource(
         'readmo:item-state:test',
@@ -1125,7 +1166,7 @@ describe('SupabaseDataSource reads', () => {
     let firstReadStartedResolve!: () => void;
     const firstReadStarted = new Promise<void>((r) => (firstReadStartedResolve = r));
     const realFrom = env.fake.client.from.bind(env.fake.client);
-    env.fake.client.from = ((table: string) => {
+    env.fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
       if (table !== 'item_state') return realFrom(table);
       resyncReads++;
       if (resyncReads === 1) {
@@ -1141,7 +1182,7 @@ describe('SupabaseDataSource reads', () => {
       return itemStateReadStub(() => ({ data: [], count: null, error: null })) as ReturnType<
         typeof realFrom
       >;
-    }) as typeof env.fake.client.from;
+    }) as never) as typeof env.fake.client.from;
 
     const a = env.ds.resyncState().catch(() => {}); // in flight (read #1)
     const b = env.ds.resyncState().catch(() => {}); // coalesces → sets pending
@@ -1165,7 +1206,7 @@ describe('SupabaseDataSource reads', () => {
     let firstStartedResolve!: () => void;
     const firstStarted = new Promise<void>((r) => (firstStartedResolve = r));
     const realFrom = env.fake.client.from.bind(env.fake.client);
-    env.fake.client.from = ((table: string) => {
+    env.fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
       if (table !== 'item_state') return realFrom(table);
       reads++;
       if (reads === 1) {
@@ -1178,7 +1219,7 @@ describe('SupabaseDataSource reads', () => {
       return itemStateReadStub(() => ({ data: [], count: null, error: null })) as ReturnType<
         typeof realFrom
       >;
-    }) as typeof env.fake.client.from;
+    }) as never) as typeof env.fake.client.from;
 
     const a = env.ds.resyncState(); // read #1 (held open)
     await firstStarted;
@@ -1205,14 +1246,14 @@ describe('SupabaseDataSource reads', () => {
 
     // Device goes offline: every item_state read now fails.
     const realFrom = fake.client.from.bind(fake.client);
-    fake.client.from = ((table: string) => {
+    fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
       if (table !== 'item_state') return realFrom(table);
       return itemStateReadStub(() => ({
         data: null,
         count: null,
         error: { message: 'offline' },
       })) as ReturnType<typeof realFrom>;
-    }) as typeof fake.client.from;
+    }) as never) as typeof fake.client.from;
 
     // A failed resync leaves the store untouched...
     await ds.resyncState().catch(() => {});
@@ -1291,7 +1332,7 @@ describe('SupabaseDataSource reads', () => {
     const fake = makeFakeSupabase(seed());
     const tokens: string[] = [];
     const realFrom = fake.client.from.bind(fake.client);
-    fake.client.from = ((table: string) => {
+    fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
       const q = realFrom(table) as ReturnType<typeof realFrom> & {
         not: (col: string, op: string, value: string) => unknown;
       };
@@ -1303,7 +1344,7 @@ describe('SupabaseDataSource reads', () => {
         };
       }
       return q;
-    }) as typeof fake.client.from;
+    }) as never) as typeof fake.client.from;
 
     const ds = new SupabaseDataSource(
       'readmo:item-state:test',
@@ -1473,14 +1514,14 @@ describe('SupabaseDataSource dispatch + writes', () => {
     // then succeeds and corrects the timestamp.
     const realFrom = fake.client.from.bind(fake.client);
     let readsWork = false;
-    fake.client.from = ((table: string) => {
+    fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
       if (table !== 'item_state' || readsWork) return realFrom(table);
       return itemStateReadStub(() => ({
         data: null,
         count: null,
         error: { message: 'offline' },
       })) as ReturnType<typeof realFrom>;
-    }) as typeof fake.client.from;
+    }) as never) as typeof fake.client.from;
 
     const ds = new SupabaseDataSource(
       'readmo:item-state:test',
@@ -2339,7 +2380,25 @@ describe('SupabaseDataSource dispatch + writes', () => {
 
   it('recovers hydration after a transient item_state failure', async () => {
     const fake = makeFakeSupabase(seed());
-    fake.failSelectOnce('item_state'); // first (eager) hydration attempt errors
+    // The full read issues a high-water probe select before its page select,
+    // and the probe tolerates its own failure by design. Re-arm the injection
+    // when the page read goes out, so the hydration itself is what errors.
+    fake.failSelectOnce('item_state');
+    const realFrom = fake.client.from.bind(fake.client);
+    let rearmed = false;
+    fake.client.from = ((table: string) => {
+      const q = realFrom(table) as { select: (c?: string, o?: unknown) => unknown };
+      if (table !== 'item_state') return q;
+      const realSelect = q.select.bind(q);
+      q.select = (c?: string, o?: unknown) => {
+        if (c !== 'updated_at' && !rearmed) {
+          rearmed = true;
+          fake.failSelectOnce('item_state');
+        }
+        return realSelect(c, o);
+      };
+      return q;
+    }) as typeof fake.client.from;
     const ds = new SupabaseDataSource(
       'readmo:item-state:test',
       fake.client as unknown as SupabaseClient,
@@ -3344,5 +3403,516 @@ describe('item_state hydrate — live-window filter', () => {
       mkState('past-the-margin', { done: true, done_at: ago(32 * DAY) }),
     ]);
     expect(got).toEqual(new Set(['just-inside-ttl', 'just-past-ttl']));
+  });
+});
+
+describe('item_state incremental hydrate (0070 cursor)', () => {
+  const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
+
+  /** Records each item_state read: the projection it asked for, and whether it
+   * was a DELTA (carries the `updated_at >= cursor` filter) or a full read. */
+  function setupCursor(tables: FakeTables = seed()) {
+    const fake = makeFakeSupabase(tables);
+    const reads: Array<{ cols?: string; delta: boolean }> = [];
+    const realFrom = fake.client.from.bind(fake.client);
+    // No withProbePassthrough here: this harness only RECORDS reads (nothing is
+    // gated on their count), so the full read's high-water probe should show up
+    // in the log like any other read.
+    fake.client.from = ((table: string) => {
+      const q = realFrom(table);
+      if (table !== 'item_state') return q;
+      const read: { cols?: string; delta: boolean } = { delta: false };
+      const realSelect = q.select.bind(q);
+      const realGte = q.gte.bind(q);
+      q.select = ((c?: string, o?: { count?: string }) => {
+        read.cols = c;
+        reads.push(read);
+        return realSelect(c, o);
+      }) as typeof q.select;
+      q.gte = ((c: string, v: unknown) => {
+        if (c === 'updated_at') read.delta = true;
+        return realGte(c, v);
+      }) as typeof q.gte;
+      return q;
+    }) as typeof fake.client.from;
+    const ds = new SupabaseDataSource(
+      'readmo:item-state:test',
+      fake.client as unknown as SupabaseClient,
+    );
+    return {
+      ds,
+      fake,
+      reads,
+      /** Reads since the last call — the constructor kicks a boot hydration, so
+       * tests measure spans rather than absolute counts. */
+      take: () => reads.splice(0, reads.length),
+      state: () => Object.fromEntries(ds.stateStore.entries()),
+    };
+  }
+
+  it('reads fully once, then only past the cursor', async () => {
+    const env = setupCursor();
+    await env.ds.resyncState();
+    const first = env.take();
+    // The very first read of the session is necessarily full — no cursor yet. A
+    // full read is the high-water probe (bare cursor column, the ceiling the
+    // cursor may not pass) followed by its page(s). Everything after it is a
+    // delta, including the resync above (boot already established the cursor).
+    expect(first[0].cols).toBe('updated_at');
+    expect(first[0].delta).toBe(false);
+    expect(first[1].delta).toBe(false);
+    expect(first[1].cols).toContain('updated_at');
+    expect(first.slice(2).every((r) => r.delta)).toBe(true);
+
+    // Another device pins an item AFTER our cursor.
+    env.fake.store.item_state.push(
+      mkState('i6', { pinned: true, pinned_at: iso(0), updated_at: iso(0) }),
+    );
+    await env.ds.resyncState();
+
+    const second = env.take();
+    expect(second).toHaveLength(1);
+    expect(second[0].delta).toBe(true);
+    expect(env.state()['i6']?.pinned).toBe(true);
+  });
+
+  // The whole point: a delta returns only what changed, but rows it does NOT
+  // mention must survive. Dropping them — as a full read legitimately does for
+  // absent rows — would wipe the library on the first incremental pull.
+  it('keeps rows the delta does not mention', async () => {
+    const env = setupCursor();
+    await env.ds.resyncState();
+    const before = Object.keys(env.state()).sort();
+    expect(before.length).toBeGreaterThan(1);
+    env.take();
+
+    env.fake.store.item_state.push(
+      mkState('i6', { pinned: true, pinned_at: iso(0), updated_at: iso(0) }),
+    );
+    await env.ds.resyncState();
+
+    expect(env.take().every((r) => r.delta)).toBe(true);
+    expect(Object.keys(env.state()).sort()).toEqual([...before, 'i6'].sort());
+  });
+
+  it('re-reads a window before the cursor, so a late commit is not stepped over', async () => {
+    const env = setupCursor();
+    await env.ds.resyncState();
+    env.take();
+    // Stamped slightly BEFORE the cursor: the commit-order case, where a slower
+    // transaction carries an earlier now() but commits after our read. A strict
+    // `> cursor` would miss it permanently; the overlap catches it.
+    env.fake.store.item_state.push(
+      mkState('i6', { done: true, done_at: iso(5_000), updated_at: iso(5_000) }),
+    );
+    await env.ds.resyncState();
+    expect(env.take().every((r) => r.delta)).toBe(true);
+    expect(env.state()['i6']?.done).toBe(true);
+  });
+
+  it('falls back to full reads against a backend without 0070', async () => {
+    const env = setupCursor();
+    env.fake.failSelectOnce('item_state', { code: '42703' });
+    await env.ds.resyncState();
+    const first = env.take();
+    // Asked with the column, was refused, retried without it — and the data landed.
+    expect(first[0].cols).toContain('updated_at');
+    expect(first.some((r) => r.cols && !r.cols.includes('updated_at'))).toBe(true);
+    expect(env.state()['i2']?.pinned).toBe(true);
+
+    // Latched for the session: never asks for the column again, never goes delta.
+    await env.ds.resyncState();
+    const later = env.take();
+    expect(later.length).toBeGreaterThan(0);
+    expect(later.every((r) => !r.delta && !r.cols?.includes('updated_at'))).toBe(true);
+  });
+
+  it('stays on full reads for an account with no item_state at all', async () => {
+    // No rows means no server-stamped value to seed a cursor from, and seeding it
+    // from the local clock is precisely the skew bug the cursor rules avoid. A
+    // full read of an empty table is one round trip anyway.
+    const tables = seed();
+    tables.item_state = [];
+    const env = setupCursor(tables);
+    await env.ds.resyncState();
+    await env.ds.resyncState();
+    expect(env.take().every((r) => !r.delta)).toBe(true);
+    expect(env.state()).toEqual({});
+  });
+
+  // The one correction that works by ABSENCE rather than by a newer clock: the
+  // server dropped the row, and hydrate rolls the optimistic local value back
+  // because the response omits it. A delta can never say that, so this path has
+  // to force a full read — otherwise the rollback silently stops happening.
+  it('forces a full read for the permanent-reject correction', async () => {
+    const env = setupCursor();
+    await env.ds.resyncState();
+    env.take();
+    // Prove we are in incremental mode before the reject.
+    await env.ds.resyncState();
+    expect(env.take().every((r) => r.delta)).toBe(true);
+
+    (env.ds as unknown as { forceFullGeneration: number }).forceFullGeneration += 1;
+    await env.ds.resyncState();
+    expect(env.take().every((r) => !r.delta)).toBe(true);
+  });
+});
+
+describe('item_state incremental hydrate — window/cursor agreement', () => {
+  const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
+  const DAY = 24 * 60 * 60 * 1000;
+
+  // Codex P2 on #593: the full read applies the live window but the delta did
+  // not, so the two disagreed about which rows exist. An aged-out row that gets
+  // re-stamped (a replayed offline write keeps its OLD action clocks but takes a
+  // NEW updated_at) was excluded from the full read yet hauled back by the
+  // delta — re-adding rows withRetention only collapses again, and letting them
+  // consume the page cap.
+  it('does not haul back an aged-out row that was merely re-stamped', async () => {
+    const fake = makeFakeSupabase(seed());
+    const ds = new SupabaseDataSource(
+      'readmo:item-state:test',
+      fake.client as unknown as SupabaseClient,
+    );
+    await ds.resyncState();
+    expect(Object.fromEntries(ds.stateStore.entries())['zz']).toBeUndefined();
+
+    // Action clocks well outside the window, but written just now.
+    fake.store.item_state.push(
+      mkState('zz', { done: true, done_at: iso(200 * DAY), updated_at: iso(0) }),
+    );
+    await ds.resyncState();
+
+    expect(Object.fromEntries(ds.stateStore.entries())['zz']).toBeUndefined();
+  });
+
+  it('still delivers a row that newly enters the window', async () => {
+    // The other side of that filter: entering the window requires a write, and
+    // a write always advances updated_at, so a newly-live row is past the cursor
+    // and still matches. This is what makes filtering the delta safe.
+    const fake = makeFakeSupabase(seed());
+    const ds = new SupabaseDataSource(
+      'readmo:item-state:test',
+      fake.client as unknown as SupabaseClient,
+    );
+    await ds.resyncState();
+
+    fake.store.item_state.push(
+      mkState('zz', { pinned: true, pinned_at: iso(0), updated_at: iso(0) }),
+    );
+    await ds.resyncState();
+
+    expect(Object.fromEntries(ds.stateStore.entries())['zz']?.pinned).toBe(true);
+  });
+});
+
+describe('item_state incremental hydrate — page-boundary and loss correction', () => {
+  const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
+
+  /** Track whether each item_state read was a delta (has the cursor filter). */
+  function setupReads(tables: FakeTables = seed()) {
+    const fake = makeFakeSupabase(tables);
+    const reads: Array<{ delta: boolean }> = [];
+    const realFrom = fake.client.from.bind(fake.client);
+    fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
+      const q = realFrom(table);
+      if (table !== 'item_state') return q;
+      const read = { delta: false };
+      const realSelect = q.select.bind(q);
+      const realGte = q.gte.bind(q);
+      q.select = ((c?: string, o?: { count?: string }) => {
+        reads.push(read);
+        return realSelect(c, o);
+      }) as typeof q.select;
+      q.gte = ((c: string, v: unknown) => {
+        if (c === 'updated_at') read.delta = true;
+        return realGte(c, v);
+      }) as typeof q.gte;
+      return q;
+    }) as never) as typeof fake.client.from;
+    const ds = new SupabaseDataSource(
+      'readmo:item-state:test',
+      fake.client as unknown as SupabaseClient,
+    );
+    return { ds, fake, reads, take: () => reads.splice(0, reads.length) };
+  }
+
+  // Codex P2 on #593: `now()` is transaction start, so one transaction writing a
+  // page's worth of rows (apply_newshacker_state caps its batch at exactly
+  // ITEM_STATE_PAGE) stamps them all identically. The overlap re-reads that clump
+  // every focus; asking for exactly a page made each read look like an overflow,
+  // and since the cursor can never advance past the tie, it fell back to a full
+  // read forever. Asking for one MORE than a page separates "full" from
+  // "truncated".
+  it('stays incremental when a whole page shares one timestamp', async () => {
+    const tables = seed();
+    const stamp = iso(1000);
+    tables.item_state = Array.from({ length: 1000 }, (_, i) =>
+      mkState(`bulk-${String(i).padStart(4, '0')}`, {
+        done: true,
+        done_at: stamp,
+        updated_at: stamp,
+      }),
+    );
+    const env = setupReads(tables);
+    // Model PostgREST's own row ceiling — without it these cases prove nothing,
+    // because the fake would happily return more rows than the real server ever
+    // will and overflow detection would look like it works when it can't.
+    env.fake.capRows('item_state', 1000);
+    await env.ds.resyncState();
+    env.take();
+
+    // Two further focuses: both must stay on the delta path.
+    await env.ds.resyncState();
+    await env.ds.resyncState();
+    const later = env.take();
+    expect(later.length).toBeGreaterThan(0);
+    expect(later.every((r) => r.delta)).toBe(true);
+  });
+
+  it('still falls back to a full read when more than a page changed', async () => {
+    const tables = seed();
+    tables.item_state = [mkState('a', { done: true, done_at: iso(5000), updated_at: iso(5000) })];
+    const env = setupReads(tables);
+    // The server ceiling clips the response at exactly a page, so a row-count
+    // test can never see overflow — only the header count can. Codex P1 on #593:
+    // an undetected truncation applies a partial delta and advances the cursor
+    // past the rows it dropped, losing them permanently.
+    env.fake.capRows('item_state', 1000);
+    await env.ds.resyncState();
+    env.take();
+
+    // More than ITEM_STATE_PAGE rows past the cursor — genuine overflow.
+    const stamp = iso(0);
+    for (let i = 0; i <= 1000; i++) {
+      env.fake.store.item_state.push(
+        mkState(`x-${String(i).padStart(4, '0')}`, {
+          done: true,
+          done_at: stamp,
+          updated_at: stamp,
+        }),
+      );
+    }
+    await env.ds.resyncState();
+    const reads = env.take();
+    // The delta was attempted, overflowed, and a full read followed.
+    expect(reads.some((r) => r.delta)).toBe(true);
+    expect(reads.some((r) => !r.delta)).toBe(true);
+  });
+
+  // The other Codex P2: an LWW loss is corrected by ADOPTING the winner, but a
+  // stale write replayed from a long-persisted outbox loses to a tombstone whose
+  // clocks are ALSO aged out — so the winning row matches neither read's window
+  // filter, and only the full read's drop-absent pass clears the optimistic
+  // value. A delta would leave the rejected pin on screen all session.
+  it('forces a full read for the LWW-loss correction', async () => {
+    const env = setupReads();
+    await env.ds.resyncState();
+    await env.ds.resyncState();
+    expect(env.take().some((r) => r.delta)).toBe(true);
+
+    (env.ds as unknown as { forceFullGeneration: number }).forceFullGeneration += 1;
+    await env.ds.resyncState();
+    expect(env.take().every((r) => !r.delta)).toBe(true);
+  });
+});
+
+describe('item_state forced full read survives a cursor advance', () => {
+  const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
+
+  // Codex P2 on #593. Hydrations are serialized, so a correction raised while
+  // another read is in flight had its cleared cursor overwritten by that read's
+  // own `advanceItemStateCursor` before the correction's read began — and the
+  // correction then ran as a delta, which can never drop the absent optimistic
+  // row it exists to remove. The constructor kicks boot hydration before the
+  // outbox flushes, so a stale replay lands in exactly that window. The fix is
+  // to latch the intent instead of encoding it in cursor state, which is what
+  // this asserts: an intervening cursor advance must not defeat it.
+  it('reads fully even after the cursor is re-advanced underneath it', async () => {
+    const fake = makeFakeSupabase(seed());
+    const reads: boolean[] = [];
+    const realFrom = fake.client.from.bind(fake.client);
+    fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
+      const q = realFrom(table);
+      if (table !== 'item_state') return q;
+      const realSelect = q.select.bind(q);
+      const realGte = q.gte.bind(q);
+      q.select = ((c?: string, o?: { count?: string }) => {
+        reads.push(false);
+        return realSelect(c, o);
+      }) as typeof q.select;
+      q.gte = ((c: string, v: unknown) => {
+        if (c === 'updated_at') reads[reads.length - 1] = true;
+        return realGte(c, v);
+      }) as typeof q.gte;
+      return q;
+    }) as never) as typeof fake.client.from;
+
+    const ds = new SupabaseDataSource(
+      'readmo:item-state:test',
+      fake.client as unknown as SupabaseClient,
+    );
+    const internals = ds as unknown as {
+      forceFullGeneration: number;
+      forceFullServed: number;
+      itemStateCursor: string | null;
+    };
+    await ds.resyncState();
+
+    // A correction raises the flag…
+    internals.forceFullGeneration += 1;
+    // …and a concurrent read lands first, re-advancing the cursor. Under the
+    // old design (clear the cursor) this is precisely what silently downgraded
+    // the correction back to a delta.
+    internals.itemStateCursor = iso(0);
+
+    reads.length = 0;
+    await ds.resyncState();
+    expect(reads.length).toBeGreaterThan(0);
+    expect(reads.every((wasDelta) => !wasDelta)).toBe(true);
+    // Consumed, so ordinary focuses go back to being incremental.
+    expect(internals.forceFullServed).toBe(internals.forceFullGeneration);
+    reads.length = 0;
+    await ds.resyncState();
+    expect(reads.every((wasDelta) => wasDelta)).toBe(true);
+  });
+});
+
+describe('item_state forced full read — overlapping corrections', () => {
+  // Codex P2 on #593. A boolean latch loses the SECOND correction: raised while
+  // a forced-full read is already running, it only re-sets an already-true flag,
+  // and that read's completion clears it — so the second correction's own read
+  // runs as a delta and reconciles nothing, leaving a wrong pin/done until a
+  // cold boot. The generation counter makes each request distinct.
+  it('does not let a completing read absorb a correction raised after it started', async () => {
+    const fake = makeFakeSupabase(seed());
+    const reads: boolean[] = [];
+    const realFrom = fake.client.from.bind(fake.client);
+    fake.client.from = withProbePassthrough(realFrom, ((table: string) => {
+      const q = realFrom(table);
+      if (table !== 'item_state') return q;
+      const realSelect = q.select.bind(q);
+      const realGte = q.gte.bind(q);
+      q.select = ((c?: string, o?: { count?: string }) => {
+        reads.push(false);
+        return realSelect(c, o);
+      }) as typeof q.select;
+      q.gte = ((c: string, v: unknown) => {
+        if (c === 'updated_at') reads[reads.length - 1] = true;
+        return realGte(c, v);
+      }) as typeof q.gte;
+      return q;
+    }) as never) as typeof fake.client.from;
+
+    const ds = new SupabaseDataSource(
+      'readmo:item-state:test',
+      fake.client as unknown as SupabaseClient,
+    );
+    const internals = ds as unknown as {
+      forceFullGeneration: number;
+      forceFullServed: number;
+    };
+    await ds.resyncState();
+
+    // Correction A is raised and served by a full read…
+    internals.forceFullGeneration += 1;
+    const servedByA = internals.forceFullGeneration;
+    // …but correction B arrives while that read is still in flight, i.e. after
+    // the read snapshotted its generation. Model that by bumping again before
+    // the read that serves A is accounted for.
+    internals.forceFullGeneration += 1;
+
+    reads.length = 0;
+    await ds.resyncState();
+    expect(reads.every((wasDelta) => !wasDelta)).toBe(true);
+    // B's request must still be outstanding after A's read completed, so the
+    // NEXT read is full too rather than silently dropping to a delta.
+    expect(internals.forceFullServed).toBeGreaterThanOrEqual(servedByA);
+
+    internals.forceFullServed = servedByA; // as if only A's read had completed
+    reads.length = 0;
+    await ds.resyncState();
+    expect(reads.length).toBeGreaterThan(0);
+    expect(reads.every((wasDelta) => !wasDelta)).toBe(true);
+  });
+});
+
+describe('item_state full read — cursor cannot pass the pre-read high-water mark', () => {
+  // Codex P2 on #593. A full read is many requests, each its own transaction, so
+  // a row in an already-read page can be updated mid-read and be missed while a
+  // row in a later page is updated afterwards and IS returned. Advancing to the
+  // plain maximum would put the cursor past the missed update, and the next
+  // delta (cursor minus the overlap) would never reach it again this session.
+  const cursorOf = (ds: SupabaseDataSource) =>
+    (ds as unknown as { itemStateCursor: string | null }).itemStateCursor;
+
+  it('ignores rows stamped after the pre-read high-water mark', async () => {
+    const tables = seed();
+    const beforeRead = '2026-07-01T00:00:00+00:00';
+    tables.item_state = [{ ...mkState('i2', { pinned: true, pinned_at: recent }), updated_at: beforeRead }];
+    const fake = makeFakeSupabase(tables);
+    const realFrom = fake.client.from.bind(fake.client);
+    // The probe sees only the pre-read row; the PAGE read additionally returns a
+    // row stamped later — exactly what a write landing mid-read looks like.
+    const duringRead = '2026-07-01T00:05:00+00:00';
+    fake.client.from = ((table: string) => {
+      const q = realFrom(table) as { select: (c?: string, o?: unknown) => unknown };
+      if (table !== 'item_state') return q;
+      const realSelect = q.select.bind(q);
+      q.select = (c?: string, o?: unknown) => {
+        const chain = realSelect(c, o);
+        if (c === 'updated_at') return chain;
+        return {
+          ...(chain as object),
+          or: () => chain,
+          order: () => chain,
+          limit: () => chain,
+          gt: () => chain,
+          not: async () => {
+            const res = (await (chain as { not: (...a: unknown[]) => Promise<unknown> }).not(
+              'item_id',
+              'eq',
+              '00000000-0000-0000-0000-000000000000',
+            )) as { data: unknown[]; error: unknown };
+            return {
+              ...res,
+              data: [
+                ...(res.data ?? []),
+                { ...mkState('i6', { pinned: true, pinned_at: recent }), updated_at: duringRead },
+              ],
+            };
+          },
+        };
+      };
+      return q;
+    }) as typeof fake.client.from;
+
+    const ds = new SupabaseDataSource(
+      'readmo:item-state:test',
+      fake.client as unknown as SupabaseClient,
+    );
+    await ds.resyncState();
+    // The mid-read row was applied, but must NOT drag the cursor past the mark:
+    // a row missed between pages could sit anywhere below it.
+    expect(cursorOf(ds)).not.toBe(duringRead);
+    expect(cursorOf(ds)).toBe(beforeRead);
+  });
+
+  it('leaves the cursor unadvanced when the high-water probe fails', async () => {
+    const fake = makeFakeSupabase(seed());
+    // Consumed by the probe, which is the full read's first select. Not 42703 —
+    // that means "no such column" and latches the pre-0070 fallback instead.
+    fake.failSelectOnce('item_state', { code: '08006', message: 'connection failure' });
+    const ds = new SupabaseDataSource(
+      'readmo:item-state:test',
+      fake.client as unknown as SupabaseClient,
+    );
+    // The constructor's boot hydration is the read that fails the probe; don't
+    // resync afterwards or a second, succeeding probe would seed the cursor.
+    await new Promise((r) => setTimeout(r));
+    // Rows still landed — the probe is non-fatal — but with no safe ceiling the
+    // cursor stays put, so the next read is another full one.
+    expect(Object.fromEntries(ds.stateStore.entries())['i2']?.pinned).toBe(true);
+    expect(cursorOf(ds)).toBeNull();
   });
 });
