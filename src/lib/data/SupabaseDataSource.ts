@@ -3,6 +3,7 @@ import {
   FunctionsHttpError,
 } from '@supabase/supabase-js';
 import {
+  LIVE_STATE_MAX_AGE_MS,
   type Feed,
   type FeedId,
   type FeedItem,
@@ -130,6 +131,32 @@ const ID_LOOKUP_CHUNK = 200;
  * (1000 rows). An account whose grouped view overflows it still pages by row
  * cursor, so later sections aren't silently dropped. */
 const GROUPED_WINDOW_ROW_CAP = 1000;
+
+/** PostgREST `or=` filter selecting the item_state rows that can still affect
+ * what this client renders — everything else is dead weight the hydrate no
+ * longer fetches (see {@link LIVE_STATE_MAX_AGE_MS}).
+ *
+ * A row qualifies when it is pinned or favorite (the two permanent states, kept
+ * however old their clocks are), or when ANY of its five `<f>_at` clocks is
+ * inside the window. All five, including the clocks of fields that are
+ * currently FALSE: since 0023 those are retained precisely so a stale offline
+ * replay still loses the last-write-wins compare, so a recent un-pin or
+ * un-dismiss has to come back even though every flag on the row reads false.
+ * Only when a row is stale on all five at once is it safe to leave behind.
+ *
+ * Built per read so the cutoff tracks the clock rather than process start. */
+function liveItemStateFilter(now: number = Date.now()): string {
+  const cutoff = new Date(now - LIVE_STATE_MAX_AGE_MS).toISOString();
+  return [
+    'pinned.is.true',
+    'favorite.is.true',
+    `pinned_at.gte.${cutoff}`,
+    `favorite_at.gte.${cutoff}`,
+    `done_at.gte.${cutoff}`,
+    `hidden_at.gte.${cutoff}`,
+    `opened_at.gte.${cutoff}`,
+  ].join(',');
+}
 
 /** Page size for the full item_state hydrate read. PostgREST caps a single
  * response at 1000 rows (see GROUPED_WINDOW_ROW_CAP), so an account that has
@@ -665,7 +692,7 @@ export class SupabaseDataSource implements DataSource {
     // live-or-fail under any worker version, so the deleted stale-snapshot guards
     // stay unneeded.
     //
-    // Read the FULL set in KEYSET pages (by item_id): PostgREST truncates a
+    // Read the full LIVE set in KEYSET pages (by item_id): PostgREST truncates a
     // single response at its row cap, and a truncated read would make `hydrate`
     // mistake every row past the cap for a genuinely-absent (stale) one and drop
     // its local pin/favorite/done — resurfacing swept items on a large account.
@@ -673,6 +700,17 @@ export class SupabaseDataSource implements DataSource {
     // two page reads can't shift a window and skip an already-existing row. A
     // page shorter than ITEM_STATE_PAGE is the last one. Any page read failing
     // throws, so a partial set is never applied (the store keeps last-good).
+    //
+    // "Live" is the `liveItemStateFilter` window, NOT the whole table. item_state
+    // is append-only in practice — nothing ever deletes a row, and every open
+    // writes one — so an unfiltered read grows for the life of the account and
+    // eventually runs the paged read into the 5s `authenticated` statement
+    // timeout (0015), at which point a resync simply fails and a cross-device pin
+    // stops landing until some later read gets lucky. Aged-out rows dropping out
+    // of the response is exactly equivalent to keeping them: `hydrate` discards
+    // them as absent, and `withRetention` was already collapsing them to their
+    // defaults at read time. So "absent = stale" still holds, now reading as
+    // "absent = stale or aged past anything that could change the UI".
     const rows: ItemStateRow[] = [];
     let afterId: string | null = null;
     try {
@@ -680,6 +718,7 @@ export class SupabaseDataSource implements DataSource {
         let q = this.sb
           .from('item_state')
           .select(ITEM_STATE_COLS)
+          .or(liveItemStateFilter())
           .order('item_id', { ascending: true })
           .limit(ITEM_STATE_PAGE)
           .not('item_id', 'eq', cacheBustUuid());

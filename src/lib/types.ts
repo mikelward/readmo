@@ -201,6 +201,21 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * and the feed's dismiss state aligned. */
 export const TTL_MS = 30 * DAY_MS;
 
+/** How far back the item_state hydrate read reaches. A row older than this on
+ * EVERY one of its five clocks, and neither pinned nor favorite, can no longer
+ * affect what the client renders: `withRetention` collapses its Done/Hidden/
+ * Opened flags to their defaults anyway, and its clocks are far too old to win
+ * a last-write-wins compare against any write a client could still replay.
+ * Fetching such rows only grows the read forever (item_state is never deleted —
+ * every pin/favorite/done/hide/**open** adds a row that outlives its own
+ * usefulness), so the hydrate filters them out server-side.
+ *
+ * Deliberately a day MORE than TTL_MS so the read is strictly more inclusive
+ * than `withRetention`: the cutoff is computed from the client clock while the
+ * stamps come from the server's, and this margin means ordinary skew can never
+ * drop a row the client would still have shown. */
+export const LIVE_STATE_MAX_AGE_MS = TTL_MS + DAY_MS;
+
 /** Home / folder / feed list views only serve items younger than this — the
  * feed freshness window (SPEC.md *Feed freshness window*). Pinned items are
  * exempt: a pin keeps an item in the list regardless of age. This is the single
