@@ -34,13 +34,21 @@ export const NEWSHACKER_LINK_QUERY_KEY = ['newshacker-link'] as const;
  */
 export function useNewshackerSync(): void {
   const ds = useDataSource();
+  // A failed probe must not read as "not linked". `getNewshackerLink` throws on
+  // anything but a genuinely-old backend, so the query errors instead of caching
+  // a false negative — and re-probes on focus/reconnect, the same triggers the
+  // reverse pull below already uses. Without that, one blip at app start (an
+  // offline PWA launch, a JWT refresh) left this hook — mounted once at the App
+  // root, never remounted — with `linked: false` for the whole session, silently
+  // disabling BOTH mirror directions until a reload.
   const { data } = useQuery({
     queryKey: NEWSHACKER_LINK_QUERY_KEY,
     queryFn: () =>
       ds.getNewshackerLink?.() ??
       Promise.resolve({ linked: false, supported: false }),
     staleTime: 5 * 60 * 1000,
-    retry: false,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
   const linked = data?.linked ?? false;
 

@@ -3232,3 +3232,55 @@ describe('synced settings (user_settings, 0064)', () => {
     await expect(env.ds.getSyncedSettings()).resolves.toEqual({ groupByFeed: true });
   });
 });
+
+describe('newshacker link probe (getNewshackerLink)', () => {
+  /** A SupabaseDataSource whose only wired RPC is `newshacker_link_status`,
+   * answering with whatever this test wants. */
+  function withLinkRpc(answer: () => { data?: unknown; error?: unknown; status?: number }) {
+    const fake = makeFakeSupabase(seed());
+    const realRpc = fake.client.rpc.bind(fake.client);
+    fake.client.rpc = ((name: string, params?: Record<string, unknown>) =>
+      name === 'newshacker_link_status'
+        ? { then: (onF: (v: unknown) => unknown) => Promise.resolve(answer()).then(onF) }
+        : realRpc(name, params)) as typeof fake.client.rpc;
+    return new SupabaseDataSource(
+      'readmo:item-state:test',
+      fake.client as unknown as SupabaseClient,
+    );
+  }
+
+  it('reports the link when the RPC answers', async () => {
+    await expect(withLinkRpc(() => ({ data: true })).getNewshackerLink()).resolves.toEqual({
+      linked: true,
+      supported: true,
+    });
+    await expect(withLinkRpc(() => ({ data: false })).getNewshackerLink()).resolves.toEqual({
+      linked: false,
+      supported: true,
+    });
+  });
+
+  it('reports unsupported (not an error) on a backend without the 0050 RPC', async () => {
+    const ds = withLinkRpc(() => ({
+      error: { code: 'PGRST202', message: 'unknown rpc' },
+    }));
+    await expect(ds.getNewshackerLink()).resolves.toEqual({
+      linked: false,
+      supported: false,
+    });
+  });
+
+  // The regression this section exists for: a transient failure used to resolve
+  // as `{ linked: false }`, which React Query caches as a real answer. Because
+  // useNewshackerSync mounts once at the App root and never remounts, that
+  // stranded BOTH mirror directions off for the whole session. It must reject so
+  // the query can retry and re-probe instead.
+  it.each([
+    ['offline / network blip', { error: { message: 'Failed to fetch' } }],
+    ['auth blip while the JWT refreshes', { error: { message: 'JWT expired' }, status: 401 }],
+    ['backend error', { error: { message: 'internal' }, status: 500 }],
+  ])('throws rather than reporting "not linked" on a %s', async (_label, answer) => {
+    const ds = withLinkRpc(() => answer);
+    await expect(ds.getNewshackerLink()).rejects.toThrow();
+  });
+});
