@@ -347,6 +347,7 @@ export function parseFeed(raw: string, feedUrl: string): ParsedFeed {
   } catch (err) {
     throw new Error(
       `Failed to parse XML feed: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
     );
   }
 
@@ -790,7 +791,7 @@ export function parseFeedBody(body: string, feedUrl: string, contentType: string
     parsed = parseFeed(body, feedUrl);
   } catch (err) {
     if (contentType.includes('text/html')) {
-      throw new Error(`non-feed response (${contentType})`);
+      throw new Error(`non-feed response (${contentType})`, { cause: err });
     }
     throw err;
   }

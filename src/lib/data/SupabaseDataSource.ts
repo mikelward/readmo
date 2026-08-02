@@ -1193,8 +1193,8 @@ export class SupabaseDataSource implements DataSource {
     applied: number;
     ok?: boolean;
   }> {
-    let linked = false;
-    let applied = 0;
+    let linked: boolean;
+    let applied: number;
     let ok: boolean | undefined;
     try {
       const { data, error } = await this.sb.functions.invoke('newshacker-sync', {

@@ -83,7 +83,7 @@ async function pullOnce(ds: ReversePullSource): Promise<boolean> {
   const before = new Map<ItemId, string>(
     pending.map((id) => [id, fingerprint(ds.stateStore.get(id))]),
   );
-  let consulted = false;
+  let consulted: boolean;
   try {
     const res = await ds.pullNewshackerState!();
     // The live source never throws — it maps every transport/backend failure
