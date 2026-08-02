@@ -191,7 +191,7 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
           if (aNull && bNull) continue;
           return (aNull ? -1 : 1) * (nullsFirst ? 1 : -1) * 1;
         }
-        let c = 0;
+        let c: number;
         if (col.endsWith('_at') || col === 'published_at') {
           c = Date.parse(String(av)) - Date.parse(String(bv));
         } else if (typeof av === 'number' && typeof bv === 'number') {

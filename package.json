@@ -16,7 +16,10 @@
     "feeds:check": "node scripts/checkFeeds.mjs"
   },
   "engines": {
-    "node": "^24.13.0"
+    "node": "^24.15.0"
+  },
+  "overrides": {
+    "glob": "^13.0.6"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
@@ -42,9 +45,9 @@
   },
   "devDependencies": {
     "@babel/core": "^8.0.1",
-    "@eslint/js": "^9.39.5",
+    "@eslint/js": "^10.0.1",
     "@rolldown/plugin-babel": "^0.2.3",
-    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/babel__core": "^7.20.5",
@@ -60,7 +63,7 @@
     "eslint-plugin-react-refresh": "^0.5.3",
     "fake-indexeddb": "^6.2.5",
     "globals": "^17.7.0",
-    "jsdom": "^29.1.1",
+    "jsdom": "^30.0.1",
     "minimatch": "^10.2.6",
     "msw": "^2.15.0",
     "react-compiler-healthcheck": "^1.0.0",

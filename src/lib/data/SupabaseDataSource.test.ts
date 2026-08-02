@@ -3143,7 +3143,7 @@ describe('synced settings (user_settings, 0064)', () => {
     now.mockReturnValue(1_000_000 + 5 * 60 * 1000);
     // Whichever side of the boundary this write resolves on, it must not
     // RESOLVE without having sent the value.
-    let acked = false;
+    let acked: boolean;
     try {
       await env.ds.setSyncedSettings({ hideOnScrollRemove: false });
       acked = true;

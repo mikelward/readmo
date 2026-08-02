@@ -125,7 +125,7 @@ export function discoverAnchorFeeds(html: string, baseUrl: string): FeedCandidat
   // The page's own address, sans fragment — used to drop self-referential
   // anchors (a bare `#anchor` or a link back to this page) that would otherwise
   // match when the page's own path is feed-shaped (e.g. `/about-us/rss-feeds`).
-  let selfKey: string | null = null;
+  let selfKey: string | null;
   try {
     const b = new URL(baseUrl);
     selfKey = `${b.origin}${b.pathname}${b.search}`;

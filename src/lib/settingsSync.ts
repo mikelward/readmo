@@ -172,7 +172,7 @@ function isValid<K extends SyncedSettingKey>(
 }
 
 function readDirty(): Set<SyncedSettingKey> {
-  let raw: string | null = null;
+  let raw: string | null;
   try {
     raw = window.localStorage.getItem(DIRTY_SETTINGS_KEY);
   } catch {
@@ -215,7 +215,7 @@ export function markSettingDirty(key: SyncedSettingKey): void {
 }
 
 function readAcked(uid: string): Partial<SyncedSettings> {
-  let raw: string | null = null;
+  let raw: string | null;
   try {
     raw = window.localStorage.getItem(ackedSettingsKey(uid));
   } catch {
