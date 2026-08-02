@@ -387,6 +387,13 @@ export class ItemStateStore {
     rows: Array<[ItemId, ItemState]>,
     pending: ReadonlyMap<ItemId, ChangedFields> = new Map(),
     now: number = Date.now(),
+    /** `partial: true` when `rows` is an INCREMENTAL read (everything changed
+     * since a cursor) rather than the caller's complete set. Absent then means
+     * "unchanged since the cursor", not "gone", so the drop pass below is
+     * skipped and every local row survives. Getting this wrong in either
+     * direction is silent data loss, so it is an explicit flag rather than
+     * anything inferred from the row count. */
+    opts: { partial?: boolean } = {},
   ): void {
     const serverIds = new Set(rows.map(([id]) => id));
     const next: Record<ItemId, ItemState> = {};
@@ -436,9 +443,13 @@ export class ItemStateStore {
       }
     }
     // Keep a local-only row (absent from the server) only while it has a pending
-    // write; otherwise it's genuinely gone.
+    // write; otherwise it's genuinely gone. On a PARTIAL read there is no such
+    // signal to read — the query asked only for rows past a cursor, so every
+    // untouched row is legitimately missing — and dropping them would wipe the
+    // entire library on the first incremental pull.
     for (const id of Object.keys(this.map)) {
-      if (!serverIds.has(id) && pending.has(id)) next[id] = this.map[id];
+      if (serverIds.has(id)) continue;
+      if (opts.partial || pending.has(id)) next[id] = this.map[id];
     }
     if (sameMap(this.map, next)) return;
     this.map = next;

@@ -854,3 +854,78 @@ describe('dropFromUndo', () => {
     expect(store.undoLast(2000)).toEqual(['a']);
   });
 });
+
+describe('ItemStateStore.hydrate — partial (incremental) reads', () => {
+  // Recent: reads apply withRetention, so a 30-day-old Done/Opened clock would
+  // collapse to its default and mask what these cases are actually asserting.
+  const at = Date.now() - 60_000;
+  const st = (over: Partial<ItemState> = {}): ItemState => ({
+    ...DEFAULT_ITEM_STATE,
+    ...over,
+  });
+
+  function storeWith(rows: Array<[string, ItemState]>) {
+    let saved: Record<string, ItemState> = {};
+    const s = new ItemStateStore({
+      load: () => saved,
+      save: (m) => {
+        saved = m;
+      },
+    });
+    s.hydrate(rows);
+    return s;
+  }
+
+  it('drops a server-absent row on a FULL read', () => {
+    const s = storeWith([
+      ['a', st({ pinned: true, pinnedAt: at })],
+      ['b', st({ done: true, doneAt: at })],
+    ]);
+    s.hydrate([['a', st({ pinned: true, pinnedAt: at })]]);
+    expect(Object.keys(Object.fromEntries(s.entries()))).toEqual(['a']);
+  });
+
+  // The invariant the incremental hydrate depends on. A delta names only what
+  // changed, so absence carries no information — dropping on it would clear the
+  // whole library on the first incremental pull.
+  it('keeps a row the PARTIAL read did not mention', () => {
+    const s = storeWith([
+      ['a', st({ pinned: true, pinnedAt: at })],
+      ['b', st({ done: true, doneAt: at })],
+    ]);
+    s.hydrate([['a', st({ pinned: true, pinnedAt: at })]], new Map(), Date.now(), {
+      partial: true,
+    });
+    expect(Object.keys(Object.fromEntries(s.entries())).sort()).toEqual(['a', 'b']);
+  });
+
+  it('still applies last-write-wins to the rows a PARTIAL read DOES carry', () => {
+    const s = storeWith([['a', st({ pinned: true, pinnedAt: at })]]);
+    // Another device unpinned it later — newer clock, so it wins.
+    s.hydrate(
+      [['a', st({ pinned: false, pinnedAt: at + 1000 })]],
+      new Map(),
+      Date.now(),
+      { partial: true },
+    );
+    expect(Object.fromEntries(s.entries())['a'].pinned).toBe(false);
+    // …and an older server clock still loses, exactly as on a full read.
+    s.hydrate(
+      [['a', st({ pinned: true, pinnedAt: at - 1000 })]],
+      new Map(),
+      Date.now(),
+      { partial: true },
+    );
+    expect(Object.fromEntries(s.entries())['a'].pinned).toBe(false);
+  });
+
+  it('adds a row a PARTIAL read introduces', () => {
+    const s = storeWith([['a', st({ pinned: true, pinnedAt: at })]]);
+    s.hydrate([['z', st({ done: true, doneAt: at })]], new Map(), Date.now(), {
+      partial: true,
+    });
+    const out = Object.fromEntries(s.entries());
+    expect(out['a'].pinned).toBe(true);
+    expect(out['z'].done).toBe(true);
+  });
+});

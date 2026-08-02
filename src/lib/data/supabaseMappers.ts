@@ -174,6 +174,10 @@ export interface ItemStateRow {
   hidden_at: string | null;
   opened: boolean;
   opened_at: string | null;
+  /** Server-assigned change clock (0070), the cursor for the incremental
+   * hydrate. Optional: absent from a pre-0070 backend's rows, and from the
+   * projection this client falls back to once it detects that. */
+  updated_at?: string | null;
 }
 
 export interface SubscriptionRow {
