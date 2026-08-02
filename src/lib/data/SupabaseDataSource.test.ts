@@ -79,6 +79,7 @@ const ids = (items: Array<{ item: { id: string } }>) => items.map((fi) => fi.ite
 function itemStateReadStub(resolve: () => unknown): unknown {
   const chain = {
     select: () => chain,
+    or: () => chain,
     order: () => chain,
     limit: () => chain,
     gt: () => chain,
@@ -3282,5 +3283,66 @@ describe('newshacker link probe (getNewshackerLink)', () => {
   ])('throws rather than reporting "not linked" on a %s', async (_label, answer) => {
     const ds = withLinkRpc(() => answer);
     await expect(ds.getNewshackerLink()).rejects.toThrow();
+  });
+});
+
+describe('item_state hydrate — live-window filter', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+  /** Hydrate with only item_state seeded, and report which ids landed. */
+  async function hydratedIds(rows: Array<ReturnType<typeof mkState>>) {
+    const tables = seed();
+    tables.item_state = rows;
+    const { ds } = setup(tables);
+    await ds.resyncState();
+    return new Set(Object.keys(Object.fromEntries(ds.stateStore.entries())));
+  }
+
+  it('drops rows whose every clock has aged out, and keeps the permanent states', async () => {
+    const got = await hydratedIds([
+      // Opened once, months ago, never touched again — the shape that dominates
+      // a long-lived account and the whole reason the table balloons.
+      mkState('old-open', { opened: true, opened_at: ago(200 * DAY) }),
+      mkState('old-done', { done: true, done_at: ago(90 * DAY) }),
+      // Pinned/favorite are permanent: kept however old the clock is.
+      mkState('ancient-pin', { pinned: true, pinned_at: ago(400 * DAY) }),
+      mkState('ancient-fav', { favorite: true, favorite_at: ago(400 * DAY) }),
+      // Recent activity stays.
+      mkState('fresh-open', { opened: true, opened_at: ago(2 * DAY) }),
+    ]);
+    expect(got).toEqual(new Set(['ancient-pin', 'ancient-fav', 'fresh-open']));
+  });
+
+  // A row's clocks are only ever stamped by an action on that item (a mutation
+  // stamps the action field AND its exclusivity-cleared siblings with the SAME
+  // `now`), so the newest of the five IS the item's last-touched time. "Stale on
+  // all five" therefore just means "untouched for the window" — which is why the
+  // filter still sheds the bulk of a long-lived account.
+  it('keeps a row on ONE recent clock even when every flag reads false', async () => {
+    const got = await hydratedIds([
+      // Un-pinned yesterday: nothing is true, but pinned_at is load-bearing —
+      // it's what makes a stale offline replay lose the LWW compare (0023).
+      mkState('just-unpinned', { pinned_at: ago(1 * DAY) }),
+      // Same row shape, but the un-pin was long ago: nothing left to protect.
+      mkState('long-unpinned', { pinned_at: ago(200 * DAY) }),
+      // Opened long ago but dismissed recently — one fresh clock is enough.
+      mkState('stale-open-fresh-done', {
+        opened: true, opened_at: ago(200 * DAY),
+        done: true, done_at: ago(3 * DAY),
+      }),
+    ]);
+    expect(got).toEqual(new Set(['just-unpinned', 'stale-open-fresh-done']));
+  });
+
+  it('reaches a day past the render-time TTL so clock skew cannot drop a live row', async () => {
+    // withRetention collapses Done at 30d; the read must not have already
+    // dropped the row by then, or a still-rendering item would vanish.
+    const got = await hydratedIds([
+      mkState('just-inside-ttl', { done: true, done_at: ago(29 * DAY) }),
+      mkState('just-past-ttl', { done: true, done_at: ago(30.5 * DAY) }),
+      mkState('past-the-margin', { done: true, done_at: ago(32 * DAY) }),
+    ]);
+    expect(got).toEqual(new Set(['just-inside-ttl', 'just-past-ttl']));
   });
 });

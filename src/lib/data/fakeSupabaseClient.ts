@@ -126,6 +126,43 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
     return this;
   }
 
+  /** PostgREST `or=(a,b,c)` — a disjunction of `col.op.value` terms, matching
+   * ANY of them. Only the operators the app actually sends are implemented, and
+   * an unrecognized one THROWS rather than being ignored: a silently-skipped
+   * term would turn a filtered read into an unfiltered one, and every test
+   * asserting the filter would keep passing while the real query changed
+   * meaning. */
+  or(spec: string): this {
+    const terms = spec.split(',').map((term) => {
+      // Split into exactly three parts — an ISO timestamp value contains its own
+      // ':' and '-' but no ',', so only the first two dots are separators.
+      const first = term.indexOf('.');
+      const second = term.indexOf('.', first + 1);
+      if (first === -1 || second === -1) {
+        throw new Error(`fake supabase: unparsable or() term "${term}"`);
+      }
+      const col = term.slice(0, first);
+      const op = term.slice(first + 1, second);
+      const value = term.slice(second + 1);
+      if (op === 'is') {
+        const want = value === 'true' ? true : value === 'false' ? false : null;
+        return (r: Row) => r[col] === want;
+      }
+      if (op === 'gte') {
+        const bound = Date.parse(value);
+        return (r: Row) => {
+          const v = r[col];
+          // A NULL clock is not >= anything, exactly as in SQL.
+          if (v === null || v === undefined) return false;
+          return Date.parse(String(v)) >= bound;
+        };
+      }
+      throw new Error(`fake supabase: unsupported or() operator "${op}"`);
+    });
+    this.filters.push((r) => terms.some((t) => t(r)));
+    return this;
+  }
+
   eq(col: string, val: unknown): this {
     this.filters.push((r) => r[col] === val);
     return this;
