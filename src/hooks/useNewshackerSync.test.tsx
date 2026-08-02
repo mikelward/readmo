@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  focusManager,
+  QueryClient,
+  QueryClientProvider,
+} from '@tanstack/react-query';
 import { DataSourceProvider } from '../lib/data/context';
 import {
   useNewshackerSync,
@@ -231,5 +235,61 @@ describe('useNewshackerSync', () => {
     // The effect never subscribes when unlinked.
     expect(fake.hasListener()).toBe(false);
     expect(fake.syncNewshackerState).not.toHaveBeenCalled();
+  });
+});
+
+describe('useNewshackerSync — link probe recovery', () => {
+  // Regression: `getNewshackerLink` used to degrade every failure to
+  // `{ linked: false }`, which React Query caches as a successful answer. This
+  // hook mounts once at the App root and never remounts, and the app disables
+  // refetch-on-focus globally — so a single blip at app start (an offline PWA
+  // launch, a JWT refresh) left the mirror off for the entire session, both
+  // directions, until a full reload. The probe now rejects and the query
+  // re-probes on focus, so the mirror comes up on its own.
+  function mountLive(source: DataSource) {
+    const client = new QueryClient({
+      // Mirror main.tsx: the app disables focus refetching GLOBALLY, so this
+      // must be false here or the test would pass on React Query's own default
+      // and prove nothing about the hook's per-query override.
+      defaultOptions: {
+        queries: { retry: false, gcTime: 0, refetchOnWindowFocus: false },
+      },
+    });
+    function Harness() {
+      useNewshackerSync();
+      return null;
+    }
+    render(
+      <QueryClientProvider client={client}>
+        <DataSourceProvider source={source}>
+          <Harness />
+        </DataSourceProvider>
+      </QueryClientProvider>,
+    );
+    return client;
+  }
+
+  it('activates the mirror once a failed probe re-probes successfully', async () => {
+    const fake = makeFakeSource([hnItem('a', '12345')]);
+    let attempt = 0;
+    (fake.source as { getNewshackerLink: () => Promise<unknown> }).getNewshackerLink =
+      vi.fn(async () => {
+        attempt += 1;
+        if (attempt === 1) throw new Error('Failed to fetch');
+        return { linked: true, supported: true };
+      });
+
+    mountLive(fake.source);
+
+    // First probe failed: the mirror is correctly inactive (we don't know the
+    // link state) — but it must not STAY that way.
+    await vi.waitFor(() => expect(attempt).toBe(1));
+    expect(fake.hasListener()).toBe(false);
+
+    // A tab return re-probes, and this time the answer lands.
+    focusManager.setFocused(false);
+    focusManager.setFocused(true);
+
+    await vi.waitFor(() => expect(fake.hasListener()).toBe(true));
   });
 });

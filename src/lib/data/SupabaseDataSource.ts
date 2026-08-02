@@ -786,17 +786,29 @@ export class SupabaseDataSource implements DataSource {
 
   /** Whether this account has a newshacker link, and whether the backend even
    * supports it. `supported` is true ONLY on a successful RPC response, so a
-   * backend that predates the 0050 RPC (PGRST202) — or any error — reports
-   * `supported: false`, and the Settings section hides rather than offering a
-   * control whose RPC would 404 (guardrail #11). The mirror also stays off. */
+   * backend that predates the 0050 RPC (PGRST202) reports `supported: false`,
+   * and the Settings section hides rather than offering a control whose RPC
+   * would 404 (guardrail #11). The mirror also stays off.
+   *
+   * Only that old-backend case is swallowed. Any OTHER failure — an offline or
+   * cold-radio app start, a 401 while the JWT refreshes, a PostgREST/DB blip —
+   * **throws**, exactly as `loadSharedItem` does for the same reason: those are
+   * "couldn't ask", not "not linked", and returning the latter would be cached
+   * by React Query as a successful answer. This hook mounts once at the App
+   * root and never remounts, so one such blip used to strand BOTH mirror
+   * directions off for the whole session (and hide the Settings section) until
+   * a full reload. Throwing lets the query retry and re-probe on focus/
+   * reconnect like every other sync path. */
   async getNewshackerLink(): Promise<{ linked: boolean; supported: boolean }> {
-    try {
-      const { data, error } = await this.sb.rpc('newshacker_link_status');
-      if (error) return { linked: false, supported: false };
-      return { linked: data === true, supported: true };
-    } catch {
-      return { linked: false, supported: false };
+    const { data, error, status } = await this.sb.rpc('newshacker_link_status');
+    if (error) {
+      const code = (error as { code?: string } | null)?.code;
+      if (code === 'PGRST202' || status === 404) {
+        return { linked: false, supported: false };
+      }
+      throw toRequestError({ error, status });
     }
+    return { linked: data === true, supported: true };
   }
 
   async setNewshackerToken(token: string): Promise<void> {

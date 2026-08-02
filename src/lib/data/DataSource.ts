@@ -443,7 +443,11 @@ export interface DataSource {
    * dismissals to newshacker*). Feature-detects a backend without the
    * `newshacker_link_status` RPC and returns `{ linked: false }`, so an old
    * backend just behaves as "not linked". Optional — the mock implements it in
-   * memory; a source without it is treated as unlinked. */
+   * memory; a source without it is treated as unlinked.
+   *
+   * **Rejects** when the link simply couldn't be read (offline, auth blip,
+   * backend error). Callers must not treat that as "not linked" — it's an
+   * unknown, and caching it as an answer strands the mirror off. */
   getNewshackerLink?(): Promise<{ linked: boolean; supported: boolean }>;
   /** Store (or replace) this account's newshacker app token — the credential
    * the `newshacker-sync` Edge Function forwards. Throws on an invalid token or

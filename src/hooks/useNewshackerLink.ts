@@ -22,7 +22,8 @@ export function useNewshackerLink() {
       ds.getNewshackerLink?.() ??
       Promise.resolve({ linked: false, supported: false }),
     staleTime: 5 * 60 * 1000,
-    retry: false,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
     enabled: typeof ds.getNewshackerLink === 'function',
   });
   // `supported` comes from the backend's own answer (true only on a successful
