@@ -782,7 +782,9 @@ export class SupabaseDataSource implements DataSource {
     // them as absent, and `withRetention` was already collapsing them to their
     // defaults at read time. So "absent = stale" still holds, now reading as
     // "absent = stale or aged past anything that could change the UI".
-    let rows: ItemStateRow[] = [];
+    // No initializer: every path out of the try below either assigns `rows` or
+    // throws, so a placeholder `[]` would only mask a future path that forgot to.
+    let rows: ItemStateRow[];
     // Whether `rows` is a cursor delta rather than the caller's complete set —
     // decides the drop pass in `hydrate`, so it must reflect what actually ran,
     // not what was intended (an incremental attempt can fall back mid-flight).
