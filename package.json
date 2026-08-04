@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "typecheck": "tsc -b --noEmit",
     "icons:generate": "node scripts/generate-icons.mjs",
+    "import-map:sync": "node scripts/sync-import-map.mjs",
     "feeds:check": "node scripts/checkFeeds.mjs"
   },
   "engines": {
