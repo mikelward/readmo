@@ -26,12 +26,14 @@ import { describe, expect, it } from 'vitest';
 interface PackageRule {
   groupName?: string;
   matchPackageNames?: string[];
+  matchDepNames?: string[];
   matchUpdateTypes?: string[];
   matchManagers?: string[];
   matchCurrentVersion?: string;
   automerge?: boolean;
   minimumReleaseAge?: string;
   enabled?: boolean;
+  dependencyDashboardApproval?: boolean;
 }
 
 interface RenovateConfig {
@@ -167,6 +169,14 @@ describe('renovate.json package grouping', () => {
 // Both are last-wins accidents, so the assertions below resolve a query the way
 // Renovate does rather than inspecting rules individually.
 
+//  - the nvm manager kept re-offering `node` itself. `.nvmrc` holds a bare
+//    major by design, Renovate's nvm manager can only write a full version,
+//    and nodeVersion.test.ts asserts the bare major — so every Node patch
+//    opened a PR that could not go green, in all three repos, forever. The
+//    rules that stop that are worth exactly as much as the assertions below,
+//    because a disable rule that stops matching looks identical to one that
+//    works.
+
 interface Query {
   updateType: string;
   currentVersion?: string;
@@ -184,6 +194,12 @@ const ruleApplies = (rule: PackageRule, q: Query): boolean => {
   if (
     rule.matchPackageNames &&
     !(q.depName && rule.matchPackageNames.some((p) => matches(p, q.depName!)))
+  ) {
+    return false;
+  }
+  if (
+    rule.matchDepNames &&
+    !(q.depName && rule.matchDepNames.some((p) => matches(p, q.depName!)))
   ) {
     return false;
   }
@@ -214,6 +230,9 @@ const resolve = (q: Query): PackageRule =>
               minimumReleaseAge: rule.minimumReleaseAge,
             }),
             ...(rule.enabled !== undefined && { enabled: rule.enabled }),
+            ...(rule.dependencyDashboardApproval !== undefined && {
+              dependencyDashboardApproval: rule.dependencyDashboardApproval,
+            }),
           }
         : acc,
     {},
@@ -276,6 +295,44 @@ describe('renovate.json effective rules', () => {
         depName: 'typescript',
       }).enabled,
     ).toBe(false);
+  });
+
+  it.each(['minor', 'patch'])(
+    'does not offer a Node runtime %s',
+    (updateType) => {
+      // `.nvmrc` deliberately holds the bare major, and the nvm manager can
+      // only write a full version — so this update type has no mergeable
+      // form. The runtime already picks up patches without a commit.
+      expect(
+        resolve({ updateType, currentVersion: '24.17.0', depName: 'node' })
+          .enabled,
+      ).toBe(false);
+    },
+  );
+
+  it('holds a Node major on the dashboard rather than opening a PR', () => {
+    // Not `enabled: false`: a new LTS is the one Node change we do want to
+    // hear about. Approval is the seam between "Renovate noticed" and "a human
+    // is doing the three-file migration".
+    const major = resolve({
+      updateType: 'major',
+      currentVersion: '24.17.0',
+      depName: 'node',
+    });
+    expect(major.enabled).not.toBe(false);
+    expect(major.dependencyDashboardApproval).toBe(true);
+  });
+
+  it('leaves other packages beginning with "node" alone', () => {
+    // `matchDepNames: ["node"]` is exact under minimatch, but a later edit to
+    // `node*` would silently mute a whole family of real dependencies.
+    expect(
+      resolve({
+        updateType: 'patch',
+        currentVersion: '9.0.0',
+        depName: 'node-html-parser',
+      }).enabled,
+    ).not.toBe(false);
   });
 
   it('still offers typescript minors', () => {

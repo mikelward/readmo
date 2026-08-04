@@ -335,6 +335,17 @@ build/routing/deploy.
 - **A `@types/node` major is a runtime migration, not a dependency update.** A
   packageRule disables that major so it stops arriving as an unmergeable
   weekly PR. When you do move the runtime, move all three pins in one commit.
+- **Renovate does not bump the Node runtime either, and can't be made to.**
+  `.nvmrc` holds the bare major on purpose — every consumer resolves the newest
+  release of it on its own — but Renovate's nvm manager can only write a *full*
+  version, so `Update Node.js to v24.18.1` rewrote `.nvmrc` to `24.18.1` and
+  `nodeVersion.test.ts` failed it, in all three repos, every time a Node patch
+  shipped. There was never a mergeable version of that PR: the upgrade it
+  offers already happens at runtime without a commit. Patches and minors are
+  off; a **major** is held behind `dependencyDashboardApproval`, so a new LTS
+  still shows up on the dashboard without opening a PR nobody can merge.
+  Checking that box means "I am doing the migration now" — expect to restore
+  the bare major in `.nvmrc` by hand in that branch.
 - **Assert the `@types/node` version npm *resolved*, not the range declared.**
   `vite`, `vitest` and `msw` all depend on it with ranges permissive enough to
   resolve any newer major, so a declared-range check stays green while `tsc`
