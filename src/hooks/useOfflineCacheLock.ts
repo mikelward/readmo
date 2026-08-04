@@ -7,7 +7,7 @@ import {
 import { useDataSource } from '../lib/data/context';
 import { useOnlineStatus } from './useOnlineStatus';
 import { useAuth } from './useAuth';
-import { fullTextStaleTime, isFullTextSettled, looksTruncated } from '../lib/fullText';
+import { fullTextStaleTime, isFullTextSettled } from '../lib/fullText';
 import { summaryStaleTime } from '../lib/summary';
 import { summaryQueryKey } from './useSummary';
 import { useAutoSummarizePinned } from './useReadingPrefs';
@@ -39,7 +39,10 @@ function prefetchImages(html: string): void {
  * lists). While an item is in either bucket we keep its reader queries alive in
  * the persisted React Query cache so it reads offline:
  *   - `['item', id]`     — the item detail + sanitized feed body,
- *   - `['fulltext', id]` — the extracted reading body, for truncated feeds, and
+ *   - `['fulltext', id]` — the extracted reading body (fetched for every saved
+ *                          item whose row doesn't already carry one — saving is
+ *                          the reader asking for the whole article, not just as
+ *                          much of it as the feed chose to publish), and
  *   - `['summary', id]`  — the AI summary (the 0058 ride-along seeds it here via
  *                          `useSummary`; retaining it keeps the gist offline like
  *                          the body, rather than only in the GC-able feed cache).
@@ -177,9 +180,9 @@ export function useOfflineCacheLock(): void {
 
   // Populate an item's reader queries (idempotent). No-op when offline or
   // already warmed. An id is only marked warmed once it's FULLY cached — detail
-  // present, and for a truncated feed a *terminal* full-text result (ok/empty/
-  // auth). A detail miss or a transient `unreachable` full-text leaves it
-  // unwarmed so a later sync / reconnect retries it.
+  // present, plus a *terminal* full-text result (ok/empty/auth) unless the row
+  // already carries the full body. A detail miss or a transient `unreachable`
+  // full-text leaves it unwarmed so a later sync / reconnect retries it.
   const warm = useCallback(
     (id: string) => {
       if (restoringRef.current || !onlineRef.current) return;
@@ -222,14 +225,26 @@ export function useOfflineCacheLock(): void {
           // Prefetch images from feed body so the SW caches them for offline.
           prefetchImages(fi.item.contentHtml);
           // fullContentHtml may already be populated (e.g. fetched on a prior
-          // open or by another device); scan it now before the truncation check
-          // so its images are cached even when looksTruncated returns false.
+          // open or by another device); scan it now, before the early return
+          // below, so its images are cached too.
           if (fi.item.fullContentHtml) prefetchImages(fi.item.fullContentHtml);
 
-          if (!looksTruncated(fi.item)) {
-            warmed.add(id); // nothing more to fetch
+          if (fi.item.fullContentHtml) {
+            warmed.add(id); // the whole article is already on the row
             return;
           }
+          // NB: deliberately NOT gated on `looksTruncated`. The reader uses that
+          // heuristic to decide whether an *unopened* article is worth a
+          // background extraction, and its ~600-char floor is tuned for that:
+          // a feed publishing two or three real paragraphs reads as "not
+          // truncated". For a SAVED item that floor is the wrong question — a
+          // publisher that gives you the first few paragraphs of a long piece
+          // clears it easily, and the reader who pinned the article for offline
+          // then finds only the opening on the plane. Saving an item is the
+          // reader asking for the whole thing, so warm the full body for every
+          // saved item whose row doesn't already carry one, and let the
+          // extraction's own `empty` outcome be the answer when there's nothing
+          // more to get (terminal → cached forever, so it costs one call).
           // Reading mode is allowlist-gated. Read the capability VALUE live from
           // the cache so a just-written membership change is honored immediately.
           //  - DENIED (armed allowlist, off-list): the fulltext call would only

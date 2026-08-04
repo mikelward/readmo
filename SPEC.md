@@ -3503,9 +3503,14 @@ uid the page announces to the worker; the fonts cache alone stays shared.
 - **Offline reader cache (`useOfflineCacheLock`).** Mounted once at the app root,
   it tracks the offline buckets (**pinned OR favorited**, matching `/offline`)
   via the shared item-state store and, while an item is bucketed, holds its
-  reader queries — `['item', id]` (detail + sanitized feed body) and, for
-  truncated feeds, `['fulltext', id]` (the extracted reading body) — in the
-  persisted cache so the item reads offline. An idle (`enabled:false`)
+  reader queries — `['item', id]` (detail + sanitized feed body) and
+  `['fulltext', id]` (the extracted reading body) — in the persisted cache so the
+  item reads offline. **Saving an item downloads the whole article**, not as much
+  of it as the feed chose to publish: unlike the reader's on-open extraction it
+  does *not* defer to the truncation heuristic, whose floor a publisher clears by
+  running the first few paragraphs — which is exactly how a pinned article used to
+  stop mid-story on a plane. Nothing more to fetch (the row already carries the
+  full body) skips the call. An idle (`enabled:false`)
   `QueryObserver` per query blocks GC while bucketed and re-locks from hydrated
   state on mount (so a reload doesn't drop them); an entry is evicted only once
   the item is in NO bucket (so unpinning an item that's still favorited keeps its
