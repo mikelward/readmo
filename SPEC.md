@@ -3527,6 +3527,13 @@ uid the page announces to the worker; the fonts cache alone stays shared.
   dismissed (Done/Hidden) — so losing connectivity never costs the articles
   already pulled: the last fetch is offline reading material by default,
   pinning just makes it durable.
+  That saved-first sort is how the list **opens**, not a rule it keeps enforcing:
+  once rows are on screen their order is held, so pinning a row here changes its
+  button and nothing else — it doesn't slide up into the saved block under the
+  finger that tapped it, and unpinning doesn't drop it back down. Rows still
+  appear and disappear; they just don't reshuffle. A fresh visit re-sorts. (Same
+  intent as *A stable set of articles* on the feed views: nothing you didn't ask
+  for moves the rows you're looking at.)
   The list re-derives on cache mutations (a just-warmed pin appears live) and is
   guarded by `useIsRestoring` so it doesn't flash the empty copy mid-hydration.
   Its empty state reflects what's actually true: if IndexedDB is unusable

@@ -141,6 +141,75 @@ describe('OfflinePage', () => {
     expect(ids).toContain('item-1');
   });
 
+  it('does not move a row when the reader pins it', async () => {
+    // Pinning promotes a row into the saved block, which would slide it to the
+    // top of the list under the finger that just tapped it. The order the page
+    // opened with has to survive the pin.
+    const source = new MockDataSource(`test-${Math.random()}`);
+
+    const queryClient = cacheClient();
+    const seed = new MockDataSource(`seed-${Math.random()}`);
+    const page = await seed.getHomeItems();
+    queryClient.setQueryData(['feed', 'home-all:test'], {
+      pages: [page],
+      pageParams: [null],
+    });
+
+    renderWithProviders(<OfflinePage />, { route: '/offline', source, queryClient });
+    const idsShown = () =>
+      [...document.querySelectorAll('[data-item-id]')].map((el) =>
+        el.getAttribute('data-item-id'),
+      );
+    await screen.findAllByTestId('item-row');
+    const before = idsShown();
+    // Pin something that isn't already first, so a promotion would be visible.
+    const target = before[before.length - 1]!;
+    expect(target).not.toBe(before[0]);
+
+    await act(async () => {
+      source.stateStore.set(target, 'pinned', true);
+    });
+    expect(idsShown()).toEqual(before);
+
+    // …and unpinning doesn't drop it back down either.
+    await act(async () => {
+      source.stateStore.set(target, 'pinned', false);
+    });
+    expect(idsShown()).toEqual(before);
+  });
+
+  it('keeps the order when a pin is made from the row button', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+
+    const queryClient = cacheClient();
+    const seed = new MockDataSource(`seed-${Math.random()}`);
+    const page = await seed.getHomeItems();
+    queryClient.setQueryData(['feed', 'home-all:test'], {
+      pages: [page],
+      pageParams: [null],
+    });
+
+    renderWithProviders(<OfflinePage />, { route: '/offline', source, queryClient });
+    const idsShown = () =>
+      [...document.querySelectorAll('[data-item-id]')].map((el) =>
+        el.getAttribute('data-item-id'),
+      );
+    const rows = await screen.findAllByTestId('item-row');
+    const before = idsShown();
+    expect(rows.length).toBeGreaterThan(1);
+
+    const lastRow = rows[rows.length - 1]!;
+    const pin = lastRow.parentElement!.querySelector<HTMLElement>(
+      '[data-testid="pin-btn"]',
+    )!;
+    await act(async () => {
+      await userEvent.click(pin);
+    });
+
+    expect(idsShown()).toEqual(before);
+    expect(source.stateStore.get(before[before.length - 1]!).pinned).toBe(true);
+  });
+
   it('drops a dismissed article from the cached tail (Done is the completion log, not offline reading)', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
 

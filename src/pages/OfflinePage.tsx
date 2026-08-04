@@ -11,6 +11,7 @@ import { useDataSource } from '../lib/data/context';
 import { ItemRows } from '../components/ItemRows';
 import { ListPage } from '../components/ListPage';
 import { collectCachedFeedItems, findCachedFeedItem } from '../lib/offlineItem';
+import { applyStableOrder } from '../lib/stableOrder';
 import type { ItemStateStore } from '../lib/data/itemState';
 import type { FeedItem } from '../lib/types';
 
@@ -86,11 +87,13 @@ export function OfflinePage() {
  * render↔event feedback loop a naive `getQueryCache().subscribe(() =>
  * bumpState())` causes here.
  *
- * The list is the saved ids' rows first (pinned ∪ favorited, resolved from
+ * The list OPENS as the saved ids' rows first (pinned ∪ favorited, resolved from
  * the warmed `['item', id]` details with a cached-list fallback), then every
  * other cached article (`collectCachedFeedItems`) that the reader hasn't
  * dismissed — Done/Hidden rows are the completion log, not offline reading
- * material.
+ * material. After that first paint the order is held (`applyStableOrder`), so
+ * pinning a row here doesn't slide it up into the saved block under the reader's
+ * finger.
  *
  * Two things make it loop-proof:
  *  1. We only wake on events that change query *data* (`added`/`removed`/
@@ -110,6 +113,10 @@ function useOfflineItems(
   // Holds the last snapshot so getSnapshot can return the same reference while
   // nothing relevant changed (useSyncExternalStore's stability rule).
   const last = useRef<FeedItem[]>([]);
+  // The row order currently painted, by id. Seeded on the first snapshot and
+  // then preserved across re-derivations so the list can't reshuffle under the
+  // reader — see `applyStableOrder`.
+  const order = useRef<string[]>([]);
 
   const getSnapshot = useCallback((): FeedItem[] => {
     const savedIds = new Set(ids);
@@ -125,7 +132,20 @@ function useOfflineItems(
       const st = stateStore.get(fi.item.id);
       return !st.done && !st.hidden;
     });
-    const next = [...saved, ...cached];
+    // The natural order — saved first, then the cached tail — is only how the
+    // list *opens*. Pinning a row from the cached tail promotes it into the
+    // saved block, which would slide it to the top under the finger that just
+    // tapped it (and unpinning would drop it back down); a background warm
+    // landing new rows would shuffle things the same way. `applyStableOrder`
+    // holds every row already on screen where it is, so a pin here changes only
+    // the button. A fresh visit to /offline re-sorts.
+    const natural = [...saved, ...cached];
+    const byId = new Map(natural.map((fi) => [fi.item.id, fi]));
+    order.current = applyStableOrder(
+      natural.map((fi) => fi.item.id),
+      order.current,
+    );
+    const next = order.current.map((id) => byId.get(id)!);
     // Compare by element identity, not just id: React Query's structural
     // sharing hands back a new object only when the row data actually changed,
     // so this also re-renders when a row already shown from a cached feed list
