@@ -627,12 +627,21 @@ describe('useOfflineCacheLock', () => {
     await waitFor(() => expect(qc.getQueryData(['item', 'item-2'])).toBeTruthy());
   });
 
-  it('does not fetch the full body for an item whose feed body is complete', async () => {
+  it('fetches the full body for a saved item even when the feed body is long', async () => {
+    // The reader's truncation heuristic asks whether an UNOPENED article is
+    // worth a background extraction, and a feed that publishes a few real
+    // paragraphs of a long piece clears its floor easily. Saving an item asks
+    // for the whole article, so the warm must not defer to that heuristic —
+    // otherwise a pinned article read on a plane stops after the excerpt.
     class LongBodySource extends MockDataSource {
       async getItem(id: string) {
         const fi = await super.getItem(id);
         if (fi) {
-          fi.item = { ...fi.item, contentHtml: `<p>${'plenty of words '.repeat(60)}</p>` };
+          fi.item = {
+            ...fi.item,
+            contentHtml: `<p>${'plenty of words '.repeat(60)}</p>`,
+            fullContentHtml: null,
+          };
         }
         return fi;
       }
@@ -642,7 +651,31 @@ describe('useOfflineCacheLock', () => {
 
     source.stateStore.set('item-1', 'pinned', true);
     await waitFor(() => expect(qc.getQueryData(['item', 'item-1'])).toBeTruthy());
-    // Body is long enough → not truncated → no full-text fetch.
+    await waitFor(() => expect(qc.getQueryData(['fulltext', 'item-1'])).toBeTruthy());
+  });
+
+  it('does not fetch the full body when the row already carries it', async () => {
+    const fullText = vi.fn();
+    class AlreadyFullSource extends MockDataSource {
+      async getItem(id: string) {
+        const fi = await super.getItem(id);
+        if (fi) {
+          fi.item = { ...fi.item, fullContentHtml: '<p>the whole article</p>' };
+        }
+        return fi;
+      }
+      async fetchFullText(id: string) {
+        fullText(id);
+        return super.fetchFullText(id);
+      }
+    }
+    const source = new AlreadyFullSource(`test-${Math.random()}`);
+    const qc = setup(source);
+
+    source.stateStore.set('item-1', 'pinned', true);
+    await waitFor(() => expect(qc.getQueryData(['item', 'item-1'])).toBeTruthy());
+    // Nothing left to extract — the article is on the row already.
+    expect(fullText).not.toHaveBeenCalled();
     expect(qc.getQueryData(['fulltext', 'item-1'])).toBeUndefined();
   });
 });
