@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useDataSource } from '../lib/data/context';
+import { isDeviceOffline } from '../lib/networkStatus';
 
 /**
  * Re-pull item state from the server whenever the tab regains focus or
@@ -28,6 +29,11 @@ export function useStateSync() {
       ) {
         return;
       }
+      // The device itself reports no network: the read can only fail, and it
+      // fails on its own clock (up to the 8s read cap), so a return to a
+      // disconnected tab would sit in a refresh nobody asked for. The `online`
+      // listener below is the trigger that matters here, and it still fires.
+      if (isDeviceOffline()) return;
       // A transient/offline re-pull failure self-heals (ensureHydrated clears
       // its memo so the next read retries); swallow it here so it isn't an
       // unhandled rejection.

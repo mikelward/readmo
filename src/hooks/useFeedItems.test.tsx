@@ -1,6 +1,7 @@
 import { renderHook, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { vi } from 'vitest';
+import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query';
+import { afterEach, vi } from 'vitest';
+import { _resetNetworkStatusForTests } from '../lib/networkStatus';
 import { useFeedItems } from './useFeedItems';
 import type { FetchPage } from './useFeedItems';
 import { MockDataSource } from '../lib/data/MockDataSource';
@@ -150,5 +151,113 @@ describe('useFeedItems', () => {
     // All three real pages are reachable — the tail was not stranded.
     const ids = new Set(result.current.items.map((fi) => fi.item.id));
     for (const fi of all.slice(6, 9)) expect(ids.has(fi.item.id)).toBe(true);
+  });
+
+  describe('automatic refetch while the device reports no network', () => {
+    afterEach(() => {
+      Object.defineProperty(window.navigator, 'onLine', {
+        configurable: true,
+        value: true,
+      });
+      window.dispatchEvent(new Event('online'));
+      _resetNetworkStatusForTests();
+    });
+
+    function goOffline() {
+      Object.defineProperty(window.navigator, 'onLine', {
+        configurable: true,
+        value: false,
+      });
+      window.dispatchEvent(new Event('offline'));
+    }
+
+    /** A wrapper whose feed data is already cached and STALE, so a mount or a
+     * focus would refetch if the trigger were allowed to. */
+    function staleCacheWrapper(page: Page<FeedItem>) {
+      const queryClient = new QueryClient({
+        // `offlineFirst` as production sets it (main.tsx): React Query does NOT
+        // pause the first attempt when it believes we're offline, so without the
+        // hook's own guard these triggers really do fire a read.
+        defaultOptions: {
+          queries: { retry: false, staleTime: 0, networkMode: 'offlineFirst' },
+        },
+      });
+      queryClient.setQueryData(['feed', 'home-all'], {
+        pages: [page],
+        pageParams: [null],
+      });
+      return function Wrapper({ children }: { children: React.ReactNode }) {
+        return (
+          <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+        );
+      };
+    }
+
+    it('does not refetch on mount', async () => {
+      // The reader asked for nothing here: a remount (a Back, a route change)
+      // while the radio is down can only spin a "Refreshing" state over their
+      // cached list until the read gives up.
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const page: Page<FeedItem> = {
+        items: (await source.getHomeItems()).items.slice(0, 2),
+        nextCursor: null,
+      };
+      const fetchPage = vi.fn(() => Promise.resolve(page));
+      goOffline();
+
+      const { result } = renderHook(
+        () => useFeedItems('home-all', fetchPage as FetchPage),
+        { wrapper: staleCacheWrapper(page) },
+      );
+
+      await waitFor(() => expect(result.current.items).toHaveLength(2));
+      expect(fetchPage).not.toHaveBeenCalled();
+    });
+
+    it('does not refetch on window focus', async () => {
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const page: Page<FeedItem> = {
+        items: (await source.getHomeItems()).items.slice(0, 2),
+        nextCursor: null,
+      };
+      const fetchPage = vi.fn(() => Promise.resolve(page));
+
+      const { result } = renderHook(
+        () => useFeedItems('home-all', fetchPage as FetchPage),
+        { wrapper: staleCacheWrapper(page) },
+      );
+      await waitFor(() => expect(result.current.items).toHaveLength(2));
+      fetchPage.mockClear();
+
+      goOffline();
+      focusManager.setFocused(true);
+      focusManager.setFocused(undefined);
+
+      await waitFor(() => expect(result.current.isFetching).toBe(false));
+      expect(fetchPage).not.toHaveBeenCalled();
+    });
+
+    it('still refetches on focus once the device has a network again', async () => {
+      // The guard is about not spending seconds on a read the radio can't
+      // carry — it must not survive the radio coming back.
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const page: Page<FeedItem> = {
+        items: (await source.getHomeItems()).items.slice(0, 2),
+        nextCursor: null,
+      };
+      const fetchPage = vi.fn(() => Promise.resolve(page));
+
+      const { result } = renderHook(
+        () => useFeedItems('home-all', fetchPage as FetchPage),
+        { wrapper: staleCacheWrapper(page) },
+      );
+      await waitFor(() => expect(result.current.items).toHaveLength(2));
+      fetchPage.mockClear();
+
+      focusManager.setFocused(true);
+      focusManager.setFocused(undefined);
+
+      await waitFor(() => expect(fetchPage).toHaveBeenCalled());
+    });
   });
 });
