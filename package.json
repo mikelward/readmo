@@ -16,7 +16,8 @@
     "feeds:check": "node scripts/checkFeeds.mjs"
   },
   "engines": {
-    "node": "^24.15.0"
+    "node": "^24.15.0",
+    "npm": ">=11.10.0"
   },
   "overrides": {
     "glob": "^13.0.6"
