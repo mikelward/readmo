@@ -1159,7 +1159,10 @@ negligible and off every critical path. See the External services table in
   rows; `useStateSync` (mounted app-wide) fires it when the tab regains focus or
   visibility, or the device comes back online, so a pin / favorite / done made
   on another device syncs in without a manual pull-to-refresh. Overlapping calls
-  coalesce (one tab return can fire both `focus` and `visibilitychange`). **How
+  coalesce (one tab return can fire both `focus` and `visibilitychange`). Focus
+  and visibility are skipped while the **device reports no network** — the same
+  rule as the feed refetches above: a return to a disconnected tab shouldn't
+  start a read that can only fail. Reconnect is exempt; it *is* the recovery. **How
   long that takes is set by how much changed, not by how much triage the account
   has ever done** — it does not degrade as a reading history accumulates, which
   matters most for readers who mark done as they scroll and so write state for
@@ -1623,7 +1626,18 @@ negligible and off every critical path. See the External services table in
      fails or the device is offline), a **return or window focus past the 6h
      freshness TTL** (`FEED_STALE_MS`; the TTL gates the in-session paths —
      remount, window-focus, and the warm-on-open prefetch), or an explicit
-     **pull-to-refresh**. **More** extends the set *downward* with older articles
+     **pull-to-refresh**. **None of them run while the device itself reports no
+     network.** The browser already knows the answer, so spending the reader's
+     next several seconds on reads that can only fail — with a **Refreshing**
+     state over their cached list the whole time — is the worst of both: the
+     refresh they didn't ask for is the one that costs them most, since it starts
+     under them on a return or a remount. The automatic triggers simply don't
+     fire, and an explicit pull completes at once, leaving the cached list
+     untouched — silently, since the header's Offline pill is already saying it.
+     A **reconnect** always refetches — that's the trigger
+     the wait exists for — and a pull is still attempted when only our own read
+     evidence says offline, since that can be a latch a pull is exactly how to
+     clear. **More** extends the set *downward* with older articles
      (an explicit, non-jumping addition at the bottom) but does **not** pull newer
      top rows in — it pages the existing cursor, so only PTR or the TTL bring the
      top current. This is the "quiet" contract: you can read the news a couple of

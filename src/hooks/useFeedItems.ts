@@ -4,6 +4,7 @@ import {
 import type { FeedItem } from '../lib/types';
 import type { Page } from '../lib/data/DataSource';
 import { recordFeedFetch } from '../lib/lastFetch';
+import { isDeviceOffline } from '../lib/networkStatus';
 
 /** Page fetcher for a feed view. `signal` is React Query's per-fetch abort
  * signal, threaded through so a wrapper can tell whether the fetch it observed
@@ -81,6 +82,21 @@ export function useFeedItems(
       adjustNextCursor
         ? adjustNextCursor(lastPage.nextCursor, allPages)
         : lastPage.nextCursor,
+    // …and neither automatic trigger fires while the DEVICE reports no network.
+    // `networkMode: 'offlineFirst'` (main.tsx) deliberately lets the first
+    // attempt through even when React Query believes we're offline — that's what
+    // makes a cache-servable read work — but for these two triggers the reader
+    // asked for nothing, so all that buys is a "Refreshing" state spinning over
+    // their list for as long as the read takes to fail (the primary feed read is
+    // a POST RPC, which Workbox can't answer from cache at all, so it runs to
+    // its 8s cap on a radio that hangs rather than refuses). The browser already
+    // told us; don't spend the reader's seconds re-deriving it. Returning a
+    // boolean keeps React Query's own staleness gating intact, and this is
+    // evaluated at trigger time, so it reflects the radio at that moment.
+    // Deliberately only the DEVICE signal, and deliberately NOT
+    // refetchOnReconnect: an evidence-derived Offline can be a latch we're wrong
+    // about, and reconnect is when we most want to re-read.
+    refetchOnMount: () => !isDeviceOffline(),
     // refetchOnWindowFocus: true so a tab regaining focus past the freshness
     // TTL re-materializes the set. That TTL is 6h for feed queries
     // (configureFeedFreshness, main.tsx), NOT the 5-min global default: the
@@ -94,7 +110,7 @@ export function useFeedItems(
     // refetchOnMount uses the RQ default (true-when-stale), not 'always', so
     // navigating between feed views doesn't hammer the DB either.
     // See SPEC.md *Feed views → A stable set of articles*.
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: () => !isDeviceOffline(),
   });
 
   const items: FeedItem[] = dedupeFeedPages(query.data?.pages ?? []);

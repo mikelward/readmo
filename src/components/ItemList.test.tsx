@@ -6,7 +6,7 @@ import { renderWithProviders } from '../test/renderWithProviders';
 import { ItemList } from './ItemList';
 import type { FetchPage } from '../hooks/useFeedItems';
 import { MockDataSource } from '../lib/data/MockDataSource';
-import { _resetNetworkStatusForTests } from '../lib/networkStatus';
+import { _resetNetworkStatusForTests, reportFetchFailure } from '../lib/networkStatus';
 import { DEFAULT_ITEM_STATE, type FeedItem } from '../lib/types';
 import { resetPromoDismissedCacheForTest } from '../hooks/usePromoDismissed';
 import {
@@ -6692,6 +6692,69 @@ describe('ItemList', () => {
       );
       await screen.findAllByTestId('item-row');
 
+      await pullToRefresh();
+
+      await waitFor(() => expect(resyncSpy).toHaveBeenCalledWith(true));
+    });
+
+    it('answers a pull-to-refresh immediately when the device reports no network', async () => {
+      // Every leg of the refresh needs the network and each fails on its own
+      // clock, so running them while the radio is down buys the reader several
+      // seconds to reach a conclusion the browser already handed us. Silent —
+      // the header's Offline pill is the message; the list is left untouched.
+      const { source, mk } = await makeRows();
+      const refreshSpy = vi.spyOn(source, 'refresh');
+      const resyncSpy = vi.spyOn(source, 'resyncState');
+      const fetchPage = vi.fn(() =>
+        Promise.resolve({ items: [mk('A', 'Feed A', 1)], nextCursor: null }),
+      );
+      renderWithProviders(
+        <ItemList viewKey={`ptr-offline-${viewKeySeq++}`} fetchPage={fetchPage} emptyLabel="x" />,
+        { source },
+      );
+      await screen.findAllByTestId('item-row');
+      const pagesBefore = fetchPage.mock.calls.length;
+
+      await act(async () => {
+        Object.defineProperty(window.navigator, 'onLine', {
+          configurable: true,
+          value: false,
+        });
+        window.dispatchEvent(new Event('offline'));
+      });
+      const titlesBefore = screen
+        .getAllByTestId('item-title')
+        .map((el) => el.textContent);
+      await pullToRefresh();
+
+      expect(refreshSpy).not.toHaveBeenCalled();
+      expect(resyncSpy).not.toHaveBeenCalled();
+      expect(fetchPage.mock.calls.length).toBe(pagesBefore);
+      // The rows the reader was already looking at are still there.
+      expect(
+        screen.getAllByTestId('item-title').map((el) => el.textContent),
+      ).toEqual(titlesBefore);
+    });
+
+    it('still runs a pull-to-refresh when only our own read evidence says offline', async () => {
+      // An evidence-derived Offline (a read that threw) can be a latch we're
+      // wrong about, and a pull is exactly the user-salient retry that clears
+      // it — so the short-circuit above keys on the DEVICE signal only.
+      const { source, mk } = await makeRows();
+      const resyncSpy = vi.spyOn(source, 'resyncState');
+      const fetchPage = vi.fn(() =>
+        Promise.resolve({ items: [mk('A', 'Feed A', 1)], nextCursor: null }),
+      );
+      renderWithProviders(
+        <ItemList viewKey={`ptr-latched-${viewKeySeq++}`} fetchPage={fetchPage} emptyLabel="x" />,
+        { source },
+      );
+      await screen.findAllByTestId('item-row');
+
+      // navigator.onLine stays true; a failed fetch is what flipped us offline.
+      act(() => {
+        reportFetchFailure(new TypeError('Failed to fetch'));
+      });
       await pullToRefresh();
 
       await waitFor(() => expect(resyncSpy).toHaveBeenCalledWith(true));

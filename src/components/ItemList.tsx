@@ -13,6 +13,7 @@ import {
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
+import { isDeviceOffline } from '../lib/networkStatus';
 import { useFeedItems, dedupeFeedPages, type FetchPage } from '../hooks/useFeedItems';
 import type { ItemSort, Page } from '../lib/data/DataSource';
 import { useInViewIds } from '../hooks/useInViewIds';
@@ -3310,6 +3311,18 @@ export function ItemList({
 
       <PullToRefresh
         onRefresh={async () => {
+          // The device itself reports no network, so every leg below — the
+          // server re-poll, the state resync, the reverse pull, the refetch,
+          // the SW update check — can only fail, and each fails on its own
+          // clock (an Edge call is uncapped, a read waits out its 8s cap).
+          // Spending those seconds to arrive at a conclusion the browser
+          // already handed us is the bad experience: answer now instead.
+          // Deliberately keyed on the DEVICE signal, not our connectivity
+          // status — an evidence-derived 'offline' can be a latch we're wrong
+          // about, and a pull is exactly the user-salient retry that clears it.
+          // Silent: the header's Offline pill is already saying it, so the pull
+          // just completes its spin and leaves the cached list alone.
+          if (isDeviceOffline()) return;
           // The server-side re-poll is best-effort freshness: if it fails —
           // the refresh function's per-caller rate limit (429, easy to hit
           // when the reader pulls repeatedly), a timeout, offline — the pull

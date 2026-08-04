@@ -182,6 +182,19 @@ export function getConnectivityStatus(): ConnectivityStatus {
   return computeStatus();
 }
 
+/**
+ * Whether the DEVICE itself reports no network (`navigator.onLine === false`) —
+ * a narrower question than `getConnectivityStatus() === 'offline'`, which is
+ * also reached from evidence (a read that threw) and can therefore be a latch
+ * we're wrong about. Callers use this to skip network work that provably cannot
+ * succeed: with the radio down there is no request to make, no probe to run, and
+ * nothing to wait out. An evidence-derived 'offline' deliberately does NOT
+ * qualify — a user-salient retry is exactly how that latch clears.
+ */
+export function isDeviceOffline(): boolean {
+  return !browserOnline;
+}
+
 export function subscribeOnline(fn: Listener): () => void {
   listeners.add(fn);
   return () => {
