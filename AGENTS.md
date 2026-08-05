@@ -366,14 +366,35 @@ build/routing/deploy.
   best-effort beneath them.** The publish job re-derives every `package.json`
   range change from the diff and stops the run on a crossing, so nothing you
   declare can cross a major. A *subdependency* whose own range is `*` or
-  `>=x` can, without anything appearing in the `package.json` diff — the
-  workflow's lockfile check is what covers that, and it is explicitly not
-  exact: it compares two tree snapshots by path, by name and by edge, and a
-  crossing that hides inside a hoist or a duplicate consumer still slips
-  through. Rebuilding it around instance matching, as a checked-in script
-  with its own tests, is a tracked follow-up. Don't read a green run as proof
-  that nothing transitive crossed. Two things in it are load-bearing, both
-  guarding failures that would otherwise be silent:
+  `>=x` can, without anything appearing in the `package.json` diff, and
+  `scripts/check-dependency-update.mjs` is what covers that.
+- **The lockfile check MATCHES package instances across the two trees; it does
+  not key them.** That distinction cost five review rounds, because both
+  obvious keys are wrong in opposite directions and each fix reopened the
+  other's hole. An npm path is a *location*: key on it and a consumer that
+  hoists looks deleted-and-recreated, so the major it just crossed reads as an
+  edge that never existed. A name is an *aggregate*: key on it and two copies
+  of one consumer collapse, so a swap between them cancels out. `name@version`
+  is not the third option either — the consumer being bumped is the normal
+  case here, so that key changes on nearly every instance and its crossings go
+  uncompared. So the script pairs instances by strongest available evidence
+  (same location, then same version, then same major, preferring the candidate
+  whose location is most similar), reports anything left unpaired instead of
+  dropping it, and compares the major each matched consumer *resolves* for
+  each edge it declares on both sides. Three rules run: by path, by name, and
+  by matched instance. The third subsumes the other two on every fixture —
+  measured, by running the suite against a copy with the first two removed —
+  and they are kept anyway, because "the new rule subsumes the old one" is the
+  exact reasoning that was wrong every previous round. It is a script rather
+  than a `node -e` string in the YAML for a reason that already bit: a
+  single-quoted shell argument ends at the first apostrophe, and one in a
+  comment silently truncated the program to valid JavaScript that exited 0
+  with half its rules gone. `scripts/check-dependency-update.test.ts` covers
+  the shapes (in-place bump, hoist, dedupe, duplicate-consumer swap, consumer
+  bumped and hoisted while crossing, clean batch); each guard there was
+  verified by reintroducing the defect and watching it go red. Two things in
+  the workflow are load-bearing, both guarding failures that would otherwise
+  be silent:
   - **The job runs the full check suite itself.** A PR opened by `GITHUB_TOKEN`
     does not trigger `on: pull_request` workflows — that is GitHub's
     loop-prevention rule, with no per-repo opt-out short of a PAT — so `ci.yml`
