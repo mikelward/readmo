@@ -357,10 +357,24 @@ build/routing/deploy.
 
 ## Dependency updates
 
-- **Dependency updates are one batched PR a month**, from
-  `.github/workflows/dependency-update.yml`. It runs `npm update --save` on the
-  1st, and on demand from the Actions tab (*Run workflow*), so every dependency
-  moves to the newest version its **existing range** allows. A major stays a
+- **Dependency updates are one batched PR a week**, from
+  `.github/workflows/dependency-update.yml`. It runs `npm update --save` early
+  on Thursdays, and on demand from the Actions tab (*Run workflow*), so every
+  dependency moves to the newest version its **existing range** allows. The
+  branch and PR title are keyed on the **run date**, not the month — a
+  month-scoped name would collide with the previous Thursday's and send every
+  run but the first down the same-batch-rerun fallback. **The PR is assigned to
+  the repo owner and requests their review**, derived from
+  `github.repository_owner` rather than a hard-coded handle; without that it
+  only ever appears in the repo's PR list, which is exactly where an unattended
+  job's output goes unnoticed. That step is deliberately non-fatal — the branch
+  is already pushed by the time it runs, so a refused review request must not
+  turn an opened PR into no PR.
+  **Weekly rather than monthly is a volume decision, not a freshness one**:
+  `.npmrc`'s `min-release-age` still holds every resolution back 5 days, so a
+  weekly cadence takes the same versions sooner in smaller batches, and a
+  smaller batch is a shorter diff to review and a narrower blast radius when
+  something breaks. A major stays a
   deliberate migration you start yourself; an unattended job must not be able
   to produce one. **That is a guarantee for direct dependencies and
   best-effort beneath them.** The publish job re-derives every `package.json`
@@ -418,7 +432,7 @@ build/routing/deploy.
   shared-path major and the by-name set, and both fire on a legitimate batch.
   Only a consumer can tell those apart, and an aggregate has no consumer to
   ask — so there was no gated version of them to keep. Corroboration that
-  raises false alarms is not corroboration, and for an unattended job a monthly
+  raises false alarms is not corroboration, and for an unattended job a weekly
   cry-wolf is worse than the silent miss they never actually covered.
   **A consumer's edge fields have to include `devDependencies`.** They were
   left out on the reasoning that a dependency's dev deps are never installed —
@@ -470,11 +484,11 @@ build/routing/deploy.
   - **The job runs the full check suite itself.** A PR opened by `GITHUB_TOKEN`
     does not trigger `on: pull_request` workflows — that is GitHub's
     loop-prevention rule, with no per-repo opt-out short of a PAT — so `ci.yml`
-    never runs on the monthly PR and a PR with no red tick would read as
+    never runs on the weekly PR and a PR with no red tick would read as
     verified when nothing had verified it. Results go in the PR body. Pushing
     any commit to the branch makes CI run normally from then on.
   - **`dependency-update.test.ts` asserts those checks stay in step with
-    `ci.yml`.** Add a step to one and not the other and the monthly PR is
+    `ci.yml`.** Add a step to one and not the other and the weekly PR is
     quietly verified by a weaker suite than `main`, looking identical either
     way. It also pins the `.nvmrc`-as-single-source rule, `workflow_dispatch`,
     and first-party-actions-only.
@@ -486,7 +500,7 @@ build/routing/deploy.
   use" and was loosened deliberately when the publish job needed
   `upload-artifact`/`download-artifact` — GitHub's own actions, which `ci.yml`
   has no reason to run. **Cost:** negligible — Actions minutes are free on public repos,
-  and one ~5-minute run a month is far inside the free tier on private ones.
+  and one ~5-minute run a week is far inside the free tier on private ones.
   **Every runtime `ci.yml` checks has to be checked here too.** The first
   version of the parity test compared only npm commands, so `ci.yml`'s whole
   Deno `edge` job was silently absent from the update job while the PR body
