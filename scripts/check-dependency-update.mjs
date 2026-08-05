@@ -33,8 +33,20 @@ export const DEP_SECTIONS = [
 // The fields npm records for a package's own dependency edges. Listing them
 // explicitly rather than walking every key keeps `engines` and friends out.
 // An optional or peer edge npm DID install is a real consumer resolving to a
-// real copy and can cross a major like any other, so all three count.
-const EDGE_FIELDS = ["dependencies", "optionalDependencies", "peerDependencies"];
+// real copy and can cross a major like any other, so all four count.
+//
+// `devDependencies` belongs here even though a dependency's dev deps are never
+// installed, because npm does not record them for a dependency: it strips the
+// field from an installed tarball's entry and writes it only for the root and
+// for `link: true` workspace entries — exactly the places where those edges ARE
+// installed and resolve to a real copy. Omitting it left the root's dev edges
+// uncompared, which is most of what this repo declares.
+const EDGE_FIELDS = [
+  "dependencies",
+  "devDependencies",
+  "optionalDependencies",
+  "peerDependencies",
+];
 
 const canon = (v) =>
   v === null || typeof v !== "object"
@@ -136,14 +148,6 @@ export function manifestFailures(before, after) {
 
 const ROOT = "";
 
-export const nameOf = (path) =>
-  path.slice(path.lastIndexOf("node_modules/") + "node_modules/".length);
-
-// The root entry has no `node_modules/`; link and workspace records carry no
-// version. Neither is a resolved package.
-const isPackage = (path, entry) =>
-  path.includes("node_modules/") && !!entry && typeof entry.version === "string";
-
 export const majorOf = (version) => {
   const m = /^\d+/.exec(String(version));
   return m ? m[0] : null;
@@ -154,101 +158,21 @@ export const majorOf = (version) => {
  * walk up through each ancestor node_modules until one holds the name. That is
  * the copy the consumer actually gets.
  */
-export function resolveEdge(packages, fromPath, name) {
+export function resolveEdgeInstance(packages, fromPath, name) {
   let prefix = fromPath;
   for (;;) {
     const candidate = (prefix ? prefix + "/" : "") + "node_modules/" + name;
     const entry = packages[candidate];
-    if (entry && entry.version) return entry.version;
+    if (entry && entry.version) return { path: candidate, name, version: entry.version, entry };
     if (!prefix) return null;
     const cut = prefix.lastIndexOf("/node_modules/");
     prefix = cut === -1 ? "" : prefix.slice(0, cut);
   }
 }
 
-const instancesByName = (packages) => {
-  const byName = new Map();
-  for (const [path, entry] of Object.entries(packages)) {
-    if (!isPackage(path, entry)) continue;
-    const name = nameOf(path);
-    if (!byName.has(name)) byName.set(name, []);
-    byName.get(name).push({ path, name, version: entry.version, entry });
-  }
-  for (const list of byName.values()) list.sort((x, y) => (x.path < y.path ? -1 : 1));
-  return byName;
-};
-
-/**
- * Pair up the instances of ONE package name across the two trees.
- *
- * This is the part the earlier keyed-by-X versions of this check kept getting
- * wrong, in both directions. An npm path is a LOCATION, not an identity: key an
- * instance by its path and a consumer that hoists looks deleted-and-recreated,
- * so the crossing it just made reads as an edge that never existed. Key it by
- * name instead and two copies of one consumer collapse into one bucket, so a
- * swap between them cancels out. Neither key dominates — each catches exactly
- * what the other misses — and no third key fixes it either: `name@version`
- * changes the moment the consumer is itself bumped, which is the normal case
- * in this workflow.
- *
- * So: match, do not key. Strongest evidence first, and anything left unpaired
- * is reported as an addition or removal rather than quietly dropped.
- */
-export function matchInstances(before, after) {
-  const pairs = [];
-  const leftBefore = [...before];
-  const leftAfter = [...after];
-
-  // Among the candidates a pass accepts, take the one whose location is most
-  // like the original. Picking the first acceptable candidate instead is not
-  // merely arbitrary, it is exploitable: two copies of one package at the SAME
-  // version, both relocated in the same batch, are indistinguishable to the
-  // version pass, so an arbitrary pairing can cross them over and cancel a
-  // swap that really happened. Depth and shared prefix are what tell those two
-  // apart, and they are stable under the reshapes npm actually performs.
-  const affinity = (b, a) => {
-    if (b.path === a.path) return Number.MAX_SAFE_INTEGER;
-    let shared = 0;
-    while (shared < b.path.length && shared < a.path.length && b.path[shared] === a.path[shared]) {
-      shared += 1;
-    }
-    return shared;
-  };
-
-  const take = (isMatch) => {
-    for (let i = leftBefore.length - 1; i >= 0; i--) {
-      const b = leftBefore[i];
-      let best = -1;
-      let bestScore = -1;
-      for (let j = 0; j < leftAfter.length; j++) {
-        if (!isMatch(b, leftAfter[j])) continue;
-        const score = affinity(b, leftAfter[j]);
-        if (score > bestScore) {
-          bestScore = score;
-          best = j;
-        }
-      }
-      if (best === -1) continue;
-      pairs.push({ before: b, after: leftAfter[best] });
-      leftBefore.splice(i, 1);
-      leftAfter.splice(best, 1);
-    }
-  };
-
-  take((b, a) => b.path === a.path); // same location — the ordinary case
-  take((b, a) => b.version === a.version); // same copy, moved by a hoist or dedupe
-  take((b, a) => majorOf(b.version) === majorOf(a.version)); // bumped within its range
-
-  // Whatever is left is an instance at some major disappearing while one at a
-  // different major appears. Pairing them is not a guess that they are "the
-  // same" — it is what surfaces that as a crossing instead of as an unrelated
-  // add and remove that cancel in the reporting.
-  while (leftBefore.length && leftAfter.length) {
-    pairs.push({ before: leftBefore.shift(), after: leftAfter.shift() });
-  }
-
-  pairs.sort((x, y) => (x.before.path < y.before.path ? -1 : 1));
-  return { pairs, removed: leftBefore, added: leftAfter };
+export function resolveEdge(packages, fromPath, name) {
+  const found = resolveEdgeInstance(packages, fromPath, name);
+  return found ? found.version : null;
 }
 
 const edgeNames = (entry) => {
@@ -272,104 +196,163 @@ const label = (instance) =>
  * range of `*` or `>=x` permits a major — which would never show up in the
  * manifest diff.
  *
- * THREE rules. Rule (3) is the load-bearing one and, on every fixture in
- * check-dependency-update.test.ts, it rejects everything (1) and (2) reject —
- * that was measured, not assumed, by running the fixtures against a copy with
- * the first two removed.
+ * ONE rule, and the two that used to sit beside it are gone — which reverses a
+ * decision recorded here at length, so here is the reasoning.
  *
- * (1) and (2) are kept anyway, for two reasons and NOT because a gap in (3) is
- * known: they name the ordinary in-place bump in one line instead of as a
- * consumer edge, which is what a human reading a failed run wants first; and
- * four earlier rounds of this check each REPLACED its predecessor when it
- * should have joined it, so "the new rule subsumes the old one" is precisely
- * the reasoning that has been wrong here every time it was applied. Cheap
- * corroboration from a different angle is worth more than the lines it costs.
+ * They were a BY PATH comparison (an entry present before and after whose own
+ * major moved) and a BY NAME one (the set of majors a package resolves to,
+ * changed in either direction). Both were kept as cheap corroboration after
+ * measurement showed the instance rule already rejected everything they
+ * rejected, on the principle that "the new rule subsumes the old one" had been
+ * wrong every previous round.
+ *
+ * What that principle is about is COVERAGE, and it still holds there. It says
+ * nothing about correctness, and these two turned out to be unsound in a way
+ * the instance rule is not: they are aggregates over the whole tree, so they
+ * cannot tell a crossing from an add-and-drop. One package dropping `bar@1`
+ * while an unrelated one picks up `bar@2` changes the by-name major set and
+ * moves the major at a shared path, and both fire — rejecting a legitimate
+ * monthly batch. Liveness is what distinguishes those cases, and an aggregate
+ * has no consumer to ask, so there is no version of them that could be gated.
+ *
+ * Corroboration that raises false alarms is not corroboration. Keeping them
+ * would trade a silent miss (which the instance rule does not have on any
+ * fixture) for a noisy stop on ordinary updates, which is the worse failure
+ * for an unattended job: a run that cries wolf every month gets ignored, and
+ * then the real one is ignored too.
  */
 export function lockfileFailures(beforePackages, afterPackages) {
   const out = [];
 
-  // (1) BY PATH — an entry present before and after whose own major moved.
-  //     The cheapest rule and the one that catches an ordinary in-place bump.
-  for (const [path, entry] of Object.entries(beforePackages)) {
-    if (!isPackage(path, entry)) continue;
-    const now = afterPackages[path];
-    if (!isPackage(path, now)) continue;
-    if (majorOf(entry.version) !== majorOf(now.version)) {
-      out.push(
-        `${path} crossed a major in the lockfile: ${entry.version} -> ${now.version}. Even a transitive major is a deliberate migration, not a monthly batch.`,
-      );
-    }
-  }
-
-  const beforeByName = instancesByName(beforePackages);
-  const afterByName = instancesByName(afterPackages);
-
-  // (2) BY NAME — the SET of majors a package resolves to, changed in either
-  //     direction. A major disappearing counts as much as one appearing: the
-  //     last consumer of it went somewhere.
-  for (const [name, instances] of [...afterByName].sort()) {
-    const had = beforeByName.get(name);
-    // A package that is entirely new is a new subdependency of something that
-    // moved in range, which rule (1) and the manifest check already bound.
-    if (!had) continue;
-    const before = new Set(had.map((i) => majorOf(i.version)));
-    const now = new Set(instances.map((i) => majorOf(i.version)));
-    if ([...before].some((m) => !now.has(m)) || [...now].some((m) => !before.has(m))) {
-      out.push(
-        `${name} changed which majors it resolves to: ${[...before].sort().join(", ")} -> ${[...now].sort().join(", ")}. Even a transitive major is a deliberate migration, not a monthly batch.`,
-      );
-    }
-  }
-
-  // (3) BY MATCHED INSTANCE — the exact one, and the reason the first two are
-  //     not enough on their own. They summarize the tree, and a summary can
-  //     hold perfectly still while a consumer moves underneath it: drop a
-  //     nested foo@1 so its dependent falls through to an already-hoisted
-  //     foo@2, and as long as some other dependent kept a foo@1, no path
-  //     changed major and the major set for foo is still {1,2}.
+  // BY MATCHED INSTANCE. A summary of the tree can hold perfectly still while
+  // a consumer moves underneath it — drop a nested foo@1 so its dependent
+  // falls through to an already-hoisted foo@2, and as long as some other
+  // dependent kept a foo@1, no path changed major and the major set for foo is
+  // still {1,2}. Only the consumer's own resolution sees that.
+  //
+  // The root and any workspaces are seeded directly. They have a stable
+  // identity — a path in the repo, which `npm update` does not move — and real
+  // installed edges of their own, so pairing them with themselves is a fact
+  // rather than the hypothesis the matcher produces for a resolved copy.
+  //
+  // A workspace needs seeding here or it is invisible: npm splits it across two
+  // entries, and neither is a resolved package. The versioned one sits at its repo
+  // path (`packages/a`) with no `node_modules/` segment; the one under
+  // `node_modules` is a bare `link: true` record with no version. Its
+  // devDependencies ARE installed — that is why `EDGE_FIELDS` includes the
+  // field at all — so leaving it out would have gone on claiming a walk of the
+  // dev-tooling tree that never happened for a workspace repo.
   const consumers = [];
-  if (beforePackages[ROOT] && afterPackages[ROOT]) {
-    // The root has a stable identity and real edges of its own, so it is
-    // paired with itself rather than run through the matcher.
+  for (const path of Object.keys(beforePackages)) {
+    // The root, plus every workspace: a `packages` key with no `node_modules/`
+    // segment is one or the other. Everything else is a resolved copy and
+    // belongs to the matcher.
+    if (path.includes("node_modules/")) continue;
+    const before = beforePackages[path];
+    const after = afterPackages[path];
+    if (!before || !after) continue;
+    const name = path === ROOT ? ROOT : String(before.name || path);
     consumers.push({
-      before: { path: ROOT, name: ROOT, version: "", entry: beforePackages[ROOT] },
-      after: { path: ROOT, name: ROOT, version: "", entry: afterPackages[ROOT] },
+      before: { path, name, version: before.version || "", entry: before },
+      after: { path, name, version: after.version || "", entry: after },
     });
   }
-  for (const [name, instances] of [...beforeByName].sort()) {
-    consumers.push(...matchInstances(instances, afterByName.get(name) || []).pairs);
-  }
+  // Everything the matcher could not pair by LOCATION needs its liveness
+  // established before its edges are compared. Three shapes, one question.
+  //
+  //   removed  — an instance vanished. When two identical copies dedupe to
+  //              one, the matcher pairs a survivor and leaves the other here;
+  //              if the vanished copy resolved a different major than the
+  //              survivor does, whoever depended on it crossed, and both
+  //              summaries can hold still through it.
+  //   added    — the mirror: a package that used to fall through to a hoisted
+  //              copy now has its own nested one, and its dependents moved
+  //              onto it.
+  //   moved    — the matcher paired two instances at different locations
+  //              (same version, or same major). That pairing is a hypothesis,
+  //              not a fact: one dependency dropping `bar@1` while an
+  //              unrelated one adds `bar@1` produces exactly this shape out of
+  //              two copies that have nothing to do with each other.
+  //
+  // The question in all three: did a real consumer move FROM the before
+  // instance TO the after instance? It has to declare the name on BOTH sides
+  // — resolution is positional, so an instance merely being reachable from a
+  // consumer is not evidence it was used, and a consumer that only declares it
+  // on one side is an add or a drop rather than a crossing — and its own
+  // resolution has to land on this exact pair at both ends.
+  //
+  // TO A FIXED POINT, because liveness chains. Two levels can dedupe in the
+  // same update — both the `a` copies and the `bar` copies collapse — and then
+  // the orphaned `bar` is used only by the orphaned `a`. Asking against a
+  // SNAPSHOT of the location-matched pairs answers "nobody" for `bar` and
+  // drops it, with every summary holding still. An admitted pair is a real
+  // consumer: it got in only by proving its own live dependent, so every chain
+  // terminates at a location-matched pair and nothing bootstraps itself in.
+  // THE TRAVERSAL. Start from the seeded consumers and follow every edge they
+  // declare on BOTH sides: compare the major each side resolves, then recurse
+  // into the pair that edge lands on.
+  //
+  // The pair comes from the CONSUMER'S OWN RESOLUTION, never from guessing
+  // which instance "became" which. Earlier rounds of this check derived pairs
+  // by matching instances across the two trees and then asked whether some
+  // consumer had moved across each guess. That is strictly weaker, in a way
+  // that is not obvious: a matcher produces an EXCLUSIVE one-to-one pairing,
+  // so when consumers merely REDISTRIBUTE across copies that all survive —
+  // one dependent stays on the nested copy while another moves to the hoisted
+  // one — the move is not any pairing. Both copies pair with themselves, both
+  // are vouched for by whichever dependent stayed, and the dependent that
+  // moved is represented nowhere. Its transitive major crosses in silence.
+  //
+  // Asking the consumer removes the guess, and with it the entire apparatus
+  // built to compensate for guessing: hypotheses, splitting a rejected
+  // pairing, the order to split them in, and the cycle in that order.
+  //
+  // `seen` keys on the PAIR, not on either path. The same instance can be
+  // reached from several consumers, and two consumers landing on different
+  // after-copies of it are two different moves — both have to be walked.
+  const seen = new Set();
+  for (let i = 0; i < consumers.length; i++) {
+    const pair = consumers[i];
+    const key = pair.before.path + "\u0000" + pair.after.path;
+    if (seen.has(key)) continue;
+    seen.add(key);
 
-  for (const pair of consumers) {
     const declaredBefore = edgeNames(pair.before.entry);
     const declaredAfter = edgeNames(pair.after.entry);
     for (const dep of [...declaredBefore].sort()) {
       // An edge the bump added or dropped is a legitimate change of what this
       // package depends on, not a crossing. Only edges present on BOTH sides
-      // have a before-and-after to compare.
+      // have a before-and-after to compare — which is also what keeps a
+      // legitimately dropped dependency from being read as one.
       if (!declaredAfter.has(dep)) continue;
 
-      const was = resolveEdge(beforePackages, pair.before.path, dep);
-      const now = resolveEdge(afterPackages, pair.after.path, dep);
+      const was = resolveEdgeInstance(beforePackages, pair.before.path, dep);
+      const now = resolveEdgeInstance(afterPackages, pair.after.path, dep);
 
       // Neither resolves: an optional or peer edge npm declined to install on
       // both sides. Nothing to compare.
-      if (was === null && now === null) continue;
-      if (was === null || now === null) {
+      if (!was && !now) continue;
+      if (!was || !now) {
         out.push(
-          `${label(pair.before)} declares ${dep} on both sides but it resolves to a copy on only one of them (${was ?? "nothing"} -> ${now ?? "nothing"}). This job cannot tell whether that crossed a major.`,
+          `${label(pair.before)} declares ${dep} on both sides but it resolves to a copy on only one of them (${was ? was.version : "nothing"} -> ${now ? now.version : "nothing"}). This job cannot tell whether that crossed a major.`,
         );
         continue;
       }
-      if (majorOf(was) !== majorOf(now)) {
+      if (majorOf(was.version) !== majorOf(now.version)) {
         out.push(
-          `${label(pair.before)} now resolves ${dep} to a different major: ${was} -> ${now}. Even a transitive major is a deliberate migration, not a monthly batch.`,
+          `${label(pair.before)} now resolves ${dep} to a different major: ${was.version} -> ${now.version}. Even a transitive major is a deliberate migration, not a monthly batch.`,
         );
       }
+      // Whatever this consumer resolves to is a live pair by construction, so
+      // its own edges are next.
+      consumers.push({ before: was, after: now });
     }
   }
 
-  return out;
+  // A replacement instance can be reached both as a matched pair and as the
+  // fall-through for a deduped copy, so the same crossing can be described
+  // twice. Report each distinct one once.
+  return [...new Set(out)];
 }
 
 export function allFailures({ manifestBefore, manifestAfter, lockBefore, lockAfter }) {
