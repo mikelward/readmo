@@ -443,6 +443,11 @@ export class SupabaseDataSource implements DataSource {
    * account switch (guardrail #8). The reported symptom is per-FOCUS latency,
    * and every focus after boot is incremental. */
   private itemStateCursor: string | null = null;
+  /** Set once the boot pinned-first read has been attempted, so it runs at most
+   * once a session (see {@link applyPinnedPrime}). Every later hydration is
+   * either incremental or the authoritative full read, and neither is helped by
+   * re-reading the pinned slice ahead of it. */
+  private pinnedPrimed = false;
   /** Set when the backend rejects `updated_at` (pre-0070, 42703): this client
    * stops asking for the column and stays on full reads for the session. */
   private updatedAtUnsupported = false;
@@ -602,6 +607,34 @@ export class SupabaseDataSource implements DataSource {
       if (note) note.set(id, { ...note.get(id), ...changed });
       this.outbox.enqueue(id, changed, at);
     });
+    // Land the caller's PINS first, in one round trip, ahead of the full read
+    // below — a cross-device pin is what the reader notices missing when they
+    // open the app on a second device, and the full read makes them wait out a
+    // high-water probe plus every keyset page before it shows. See
+    // primePinnedState; this chains ahead of the hydration, not beside it.
+    //
+    // Only when this boot RESTORED last-good state, which is the case the prime
+    // is for: the gap it closes is between what localStorage remembers and what
+    // the server now says. A store that boots empty (brand-new or cache-purged
+    // device) has no such gap — every flag arrives with the full read whatever
+    // we do — and priming it would be actively wrong, because the populated
+    // store would then read as "last-good state available" and stop the first
+    // feed/library read waiting out its bounded cold hydration, painting
+    // default done/opened flags it currently waits to get right (see
+    // ensureHydratedForRead).
+    if (this.stateStore.hasEntries()) {
+      void this.primePinnedState().catch((err) => {
+        // Non-fatal by construction: the full hydration chained behind this one
+        // reads every row anyway, so the only loss is the head start. Logged
+        // rather than swallowed so a pinned read that fails every boot is
+        // visible as an error instead of just looking slow. Message only — the
+        // request URL carries the caller's JWT.
+        console.warn(
+          '[readmo] boot pinned-state read failed; falling back to the full hydration:',
+          err instanceof Error ? err.message : String(err),
+        );
+      });
+    }
     // Kick off item_state hydration at boot so the library routes (/pinned,
     // /favorites, …), which derive their ids from the store, populate even when
     // no feed view has run yet. ensureHydrated is memoized; when the rows land
@@ -908,6 +941,100 @@ export class SupabaseDataSource implements DataSource {
       );
       return null;
     }
+  }
+
+  /**
+   * Chain a boot-only PINNED-first read ahead of the full hydration, so a pin
+   * made on another device lands after one round trip instead of waiting out
+   * the whole cold-boot read.
+   *
+   * Why it's worth its own request. A cold boot always hydrates FULLY (the
+   * cursor is in-memory, so nothing is incremental yet), and that is a
+   * high-water probe followed by one or more keyset pages, strictly serialized
+   * — at least two round trips before this client learns the pin exists. And
+   * nothing else tells it: `feed_items` returns the row inside its server-side
+   * pinned block, but the rows carry no pin flag, so `overlayLocalState` reads
+   * the local store — which still says un-pinned — and sorts it into the body
+   * run. The feed set is deliberately never refetched on a hydration either
+   * (useFeedInvalidation), so the pin surfaces through the store overlay alone,
+   * exactly when this read lands. That wait is the whole of the delay a reader
+   * sees on opening the app on their second device.
+   *
+   * `pinned.is.true` is one small request over an already-filtered slice, and
+   * it names no `updated_at`, so it lands in a single round trip against any
+   * backend version (a pre-0070 one included) and can't trip the 42703 fallback
+   * the cursor projections carry.
+   *
+   * Applied as a PARTIAL hydrate — additive, no drop pass — which is what makes
+   * it safe to run against an incomplete view of the table. A truncated
+   * response (an account with more pins than the row cap) can only mean the
+   * remaining pins arrive with the full read behind it, never that a local row
+   * is mistaken for a deleted one. The full read still performs the
+   * authoritative drop pass, so "absent = stale" is untouched, and the cursor
+   * is deliberately NOT advanced from these rows: this read speaks only for the
+   * pinned slice and says nothing about what else changed.
+   *
+   * Chained onto {@link hydrationChain} rather than run beside the full read,
+   * so hydrations stay strictly one-at-a-time and the ordering argument on
+   * {@link runHydration} still holds. The cost is that the full read starts one
+   * short round trip later, which nothing user-visible depends on.
+   */
+  private primePinnedState(): Promise<void> {
+    const run = this.hydrationChain.then(
+      () => this.applyPinnedPrime(),
+      // A prior hydration's failure must not poison the chain — still run ours.
+      () => this.applyPinnedPrime(),
+    );
+    this.hydrationChain = run.then(
+      () => {},
+      () => {},
+    );
+    return run;
+  }
+
+  /** One serialized pinned-first read. Only called via {@link primePinnedState}. */
+  private async applyPinnedPrime(): Promise<void> {
+    // One attempt per session: a failure is covered by the full read already
+    // chained behind this one, so retrying here would only spend a request.
+    if (this.pinnedPrimed) return;
+    this.pinnedPrimed = true;
+    // Same pending bookkeeping as applyHydration: snapshot the outbox at the
+    // read's start, capture anything written while it's in flight, and union
+    // both with what's still queued — so an un-synced local pin isn't reverted
+    // by a tied server clock and a brand-new local row isn't dropped.
+    const startPending = new Map(this.outbox.pendingChanges());
+    const writtenDuringRead = new Map<ItemId, ChangedFields>();
+    const prevWritten = this.hydrationWrittenChanges;
+    this.hydrationWrittenChanges = writtenDuringRead;
+    let rows: ItemStateRow[];
+    try {
+      rows = this.unwrap<ItemStateRow[]>(
+        await this.sb
+          .from('item_state')
+          .select(ITEM_STATE_COLS)
+          .eq('pinned', true)
+          .order('item_id', { ascending: true })
+          .limit(ITEM_STATE_PAGE)
+          // Same cache-buster as the full read: a newly-deployed bundle can run
+          // for a moment under the previous service worker, whose `/rest/v1/`
+          // NetworkFirst route could otherwise answer from cache.
+          .not('item_id', 'eq', cacheBustUuid()),
+      );
+    } finally {
+      this.hydrationWrittenChanges = prevWritten;
+    }
+    const pending = new Map<ItemId, ChangedFields>();
+    const fold = (id: ItemId, ch: ChangedFields) =>
+      pending.set(id, { ...pending.get(id), ...ch });
+    for (const [id, ch] of startPending) fold(id, ch);
+    for (const [id, ch] of writtenDuringRead) fold(id, ch);
+    for (const [id, ch] of this.outbox.pendingChanges()) fold(id, ch);
+    this.stateStore.hydrate(
+      rows.map((r) => [r.item_id, mapItemState(r)] as [ItemId, ItemState]),
+      pending,
+      Date.now(),
+      { partial: true },
+    );
   }
 
   /** The FULL live-window set, in keyset pages by `item_id`. PostgREST truncates
