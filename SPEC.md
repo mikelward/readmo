@@ -1674,6 +1674,14 @@ negligible and off every critical path. See the External services table in
      navigation that remounts the list (returning from an article). More
      deliberately does *not* compact on-screen rows — pulling rows out mid-page
      would shift what's below as the reader pages down.
+   - **Your place survives the round trip to an article.** Coming back from an
+     article leaves the reader looking at the **same article they left** —
+     including when rows have gone from *above* them in the meantime, which is
+     routine: the one they just opened on a *mark done when opening* feed, the
+     struck-in-place run that compacts on this very return (above), a
+     late-landing refresh. None of that may slide the list under them, on the
+     navigation where they were surest of their place. Their own scroll outranks
+     it: once they touch the list, it's theirs.
    - **A dismiss never refetches — it settles locally.** Marking an item
      Done/Hidden, pinning, and Sweep update the rendered list **from the local
      store overlay alone**: `visibleItems` drops Done/Hidden rows and pins

@@ -3,6 +3,7 @@ import { lazy, Suspense, type ReactNode } from 'react';
 import { AppHeader } from './components/AppHeader';
 import { AppUpdateWatcher } from './components/AppUpdateWatcher';
 import { ScrollToTop } from './components/ScrollToTop';
+import { ListScrollRestore } from './components/ListScrollRestore';
 import { KeyboardShortcutsOverlay } from './components/KeyboardShortcutsOverlay';
 import { FeedBarProvider } from './components/FeedBarContext';
 import { useAuth } from './hooks/useAuth';
@@ -107,6 +108,7 @@ export default function App() {
     <FeedBarProvider>
       <AppUpdateWatcher />
       <ScrollToTop />
+      <ListScrollRestore />
       <AppHeader />
       <main className="app-main">
         <Suspense fallback={null}>
