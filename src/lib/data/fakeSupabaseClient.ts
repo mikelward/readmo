@@ -56,6 +56,8 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
   private mode: 'select' | 'update' | 'upsert' | 'delete' = 'select';
   private patch: Row | null = null;
   private onConflictCol: string | null = null;
+  /** The projection this query asked for, for namedMissingColumn. */
+  private selectedCols: string | undefined;
 
   constructor(
     private readonly table: string,
@@ -70,6 +72,14 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
        * failSelectOnce — used to model an undefined-column write against a
        * pre-migration backend. */
       failUpdateOnce: Map<string, unknown>;
+      /** Columns a table does NOT have, modeling a backend that hasn't run a
+       * migration yet. Unlike failSelectOnce this is PERMANENT and
+       * content-aware: every select naming one errors 42703 and every write
+       * carrying one errors PGRST204, exactly as PostgREST does — which is what
+       * a client that probes DOWN a projection ladder needs, since a one-shot
+       * error would let its second probe "succeed" on a projection the real
+       * backend would also reject. */
+      missingColumns: Map<string, Set<string>>;
       ignoreNotIn: boolean;
       selectCounts: Map<string, number>;
       /** Last `select(cols)` projection string requested per table (lets tests
@@ -86,6 +96,7 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
 
   select(cols?: string, opts?: { count?: string }): this {
     this.mode = 'select';
+    this.selectedCols = cols;
     this.control.selectCols.set(this.table, cols);
     if (opts?.count) this.wantCount = true;
     return this;
@@ -263,6 +274,31 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
     return Promise.resolve(this.run()).then(onfulfilled, onrejected);
   }
 
+  /** The first column this request touches that the table doesn't have, or
+   * null. Reads are checked against the requested projection, writes against
+   * the payload's own keys — a write only fails on a column it actually
+   * carries, which is what lets an older setting still sync (guardrail #11). */
+  private namedMissingColumn(): string | null {
+    const absent = this.control.missingColumns.get(this.table);
+    if (!absent || absent.size === 0) return null;
+    if (this.mode === 'select') {
+      const cols = this.selectedCols;
+      if (!cols || cols.trim() === '*') return null;
+      const named = new Set(cols.split(',').map((c) => c.trim()));
+      for (const col of absent) if (named.has(col)) return col;
+      return null;
+    }
+    const payload = this.patch;
+    if (!payload) return null;
+    const rows = Array.isArray(payload) ? payload : [payload];
+    for (const row of rows) {
+      for (const col of absent) {
+        if (Object.prototype.hasOwnProperty.call(row as object, col)) return col;
+      }
+    }
+    return null;
+  }
+
   private run(): { data: unknown; count: number | null; error: unknown } {
     if (this.mode === 'delete') {
       const survivors = this.rows.filter((r) => !this.filters.every((f) => f(r)));
@@ -279,6 +315,17 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
           error: injected ?? { message: `injected update error for ${this.table}` },
         };
       }
+      const absentWrite = this.namedMissingColumn();
+      if (absentWrite) {
+        return {
+          data: null,
+          count: null,
+          error: {
+            code: 'PGRST204',
+            message: `Could not find the '${absentWrite}' column of '${this.table}' in the schema cache`,
+          },
+        };
+      }
       for (const r of this.filtered()) Object.assign(r, this.patch);
       return { data: null, count: null, error: null };
     }
@@ -291,6 +338,17 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
           data: null,
           count: null,
           error: injected ?? { message: `injected upsert error for ${this.table}` },
+        };
+      }
+      const absentUpsert = this.namedMissingColumn();
+      if (absentUpsert) {
+        return {
+          data: null,
+          count: null,
+          error: {
+            code: 'PGRST204',
+            message: `Could not find the '${absentUpsert}' column of '${this.table}' in the schema cache`,
+          },
         };
       }
       const rows = (this.store[this.table] ??= []);
@@ -320,6 +378,20 @@ class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; er
         data: null,
         count: null,
         error: injected ?? { message: `injected error for ${this.table}` },
+      };
+    }
+    // A column the table doesn't have fails the WHOLE row, as PostgREST does —
+    // an explicit projection naming it is a hard 42703, however many other
+    // columns it asks for.
+    const absentRead = this.namedMissingColumn();
+    if (absentRead) {
+      return {
+        data: null,
+        count: null,
+        error: {
+          code: '42703',
+          message: `column ${this.table}.${absentRead} does not exist`,
+        },
       };
     }
     const matched = this.filtered();
@@ -598,6 +670,12 @@ export function makeFakeSupabase(tables: FakeTables): {
   /** Make the next `update` on `table` return an error once. Pass `error` to
    * control what's surfaced (e.g. `{ code: '42703' }` for a missing column). */
   failUpdateOnce: (table: string, error?: unknown) => void;
+  /** Model a pre-migration backend: `table` permanently lacks `columns`, so any
+   * select naming one fails 42703 and any write carrying one fails PGRST204. */
+  missingColumns: (table: string, columns: string[]) => void;
+  /** The operator running `make migrate` mid-session: `table` gains `columns`
+   * back, so a client whose memo has expired can re-probe and find them. */
+  addColumns: (table: string, columns: string[]) => void;
   /** Make `.not('…','in',…)` a no-op, simulating the server-side exclusion filter
    * being skipped (exclusion set over the cap). */
   ignoreNotInFilter: () => void;
@@ -622,6 +700,7 @@ export function makeFakeSupabase(tables: FakeTables): {
   const control = {
     failSelectOnce: new Map<string, unknown>(),
     failUpdateOnce: new Map<string, unknown>(),
+    missingColumns: new Map<string, Set<string>>(),
     ignoreNotIn: false,
     selectCounts: new Map<string, number>(),
     selectCols: new Map<string, string | undefined>(),
@@ -638,6 +717,16 @@ export function makeFakeSupabase(tables: FakeTables): {
       control.failSelectOnce.set(table, error),
     failUpdateOnce: (table: string, error?: unknown) =>
       control.failUpdateOnce.set(table, error),
+    missingColumns: (table: string, columns: string[]) => {
+      const set = control.missingColumns.get(table) ?? new Set<string>();
+      for (const c of columns) set.add(c);
+      control.missingColumns.set(table, set);
+    },
+    addColumns: (table: string, columns: string[]) => {
+      const set = control.missingColumns.get(table);
+      if (!set) return;
+      for (const c of columns) set.delete(c);
+    },
     ignoreNotInFilter: () => {
       control.ignoreNotIn = true;
     },

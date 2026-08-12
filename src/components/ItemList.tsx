@@ -22,7 +22,9 @@ import {
   useHideOnScrollRemove,
   useBottomBarPosition,
   useEffectiveHideSpoilers,
+  useTitleFilters,
 } from '../hooks/useReadingPrefs';
+import { compileFilters, titleIsFiltered } from '../lib/titleFilter';
 import { useCapabilities, canUseFullText } from '../hooks/useCapabilities';
 import { useCollapsedFeeds } from '../hooks/useCollapsedFeeds';
 import { useTopChromeHeight } from '../hooks/useTopChromeHeight';
@@ -359,6 +361,10 @@ export function ItemList({
           // it in its offset sequence (pinned exempt), and the display shows it
           // (see `visibleItems`), so it must count toward the offset, not be
           // subtracted as dismissed.
+          // A KEYWORD-FILTERED row counts as live too, and deliberately isn't
+          // mentioned here: this backend still returns it in its offset
+          // sequence, so subtracting it would make "More" skip real rows. Once
+          // the server-side predicate ships it won't be in `pages` at all.
           if (!st.pinned && (st.done || st.hidden)) dismissed += 1;
           else live.add(fi.item.id);
         }
@@ -487,6 +493,10 @@ export function ItemList({
   const { registerSweep } = useFeedBar();
   const { hideOnScroll } = useHideOnScroll();
   const { hideOnScrollRemove } = useHideOnScrollRemove();
+  // The reader's filtered words, normalized once per change rather than per row
+  // (visibleItems matches every loaded row against these).
+  const { titleFilters } = useTitleFilters();
+  const activeFilters = useMemo(() => compileFilters(titleFilters), [titleFilters]);
 
   // Auto-hide-on-scroll: when enabled, mark unpinned rows Done the moment they
   // scroll off the top of the viewport (the user scrolled past them without
@@ -1738,6 +1748,16 @@ export function ItemList({
         visible.push(fi);
         continue;
       }
+      // Keyword filter (SPEC.md *Filtered words*): a row whose title matches one
+      // of the reader's filtered words is simply not here — no gray, no strike,
+      // no Undo affordance, since removing the word in Settings restores every
+      // one of them at once. Checked AFTER the pin branch so a pin still wins
+      // (as it does over every other reason a row would leave), and against the
+      // ORIGINAL title: a spoiler-free rewrite is derived from it, so the
+      // original is the superset of what a reader could have meant.
+      if (activeFilters.length > 0 && titleIsFiltered(fi.item.title, activeFilters)) {
+        continue;
+      }
       if (!st.done && !st.hidden) {
         visible.push(fi);
         continue;
@@ -1776,7 +1796,7 @@ export function ItemList({
     // when a grayed row leaves the screen. The refs are intentionally excluded
     // (they're updated in lockstep with these deps).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mergedRaw, storeVersion, viewportVersion, ds]);
+  }, [mergedRaw, storeVersion, viewportVersion, ds, activeFilters]);
 
   // Undo a grayed (cross-device-dismissed) row via its right-side button: clear
   // done/hidden with a fresh clock so it wins last-write-wins and un-dismisses

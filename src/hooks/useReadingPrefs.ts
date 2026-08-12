@@ -18,8 +18,10 @@ import {
   SHOW_GROUP_FAVICON_KEY,
   HIDE_SPORTS_SPOILERS_KEY,
   AUTO_SUMMARIZE_PINNED_KEY,
+  TITLE_FILTERS_KEY,
   type SyncedSettingKey,
 } from '../lib/settingsSync';
+import { normalizeFilter } from '../lib/titleFilter';
 import { usePersistentStore } from './usePersistentStore';
 
 // Re-exported so existing callers can keep importing `ListLayout` from here; the
@@ -88,6 +90,7 @@ export {
   SHOW_GROUP_FAVICON_KEY,
   HIDE_SPORTS_SPOILERS_KEY,
   AUTO_SUMMARIZE_PINNED_KEY,
+  TITLE_FILTERS_KEY,
 };
 export const BOTTOM_BAR_KEY = 'readmo:bottom-bar';
 export const LIST_LAYOUT_KEY = 'readmo:list-layout';
@@ -171,6 +174,20 @@ const showRowFaviconStore = syncedBoolStore('showRowFavicon', false);
 const hideSportsSpoilersStore = syncedBoolStore('hideSportsSpoilers', true);
 const showGroupFaviconStore = syncedBoolStore('showGroupFavicon', true);
 const autoSummarizePinnedStore = syncedBoolStore('autoSummarizePinned', true);
+
+/** The reader's filtered words (SPEC.md *Filtered words*), normalized. The one
+ * non-scalar synced pref; createPersistentStore memoizes the parsed array by
+ * its raw string, so the snapshot stays Object.is-stable for useSyncExternalStore. */
+const titleFiltersStore = markDirtyOnSet(
+  'titleFilters',
+  createPersistentStore<string[]>({
+    storageKey: SYNCED_SETTINGS.titleFilters.storageKey,
+    changeEvent: CHANGE_EVENT,
+    defaultValue: [],
+    parse: SYNCED_SETTINGS.titleFilters.parse,
+    serialize: SYNCED_SETTINGS.titleFilters.serialize,
+  }),
+);
 
 // Device-local (unsynced) prefs.
 const debugScrollJumpsStore = createPersistentStore<boolean>({
@@ -481,6 +498,37 @@ export function useDebugScrollJumps(): {
   return { debugScrollJumps, setDebugScrollJumps };
 }
 
+/** The reader's filtered words: titles matching any entry vanish from the feed
+ * views (SPEC.md *Filtered words*). Entries are stored normalized, so callers
+ * can match against them directly. Add/remove rather than a whole-list setter —
+ * every caller edits one word at a time, and normalizing here is what keeps the
+ * stored list in the form the matcher expects. Per-account, synced. */
+export function useTitleFilters(): {
+  titleFilters: string[];
+  addTitleFilter: (raw: string) => void;
+  removeTitleFilter: (entry: string) => void;
+} {
+  const titleFilters = usePersistentStore(titleFiltersStore);
+  const addTitleFilter = useCallback((raw: string) => {
+    const entry = normalizeFilter(raw);
+    if (!entry) return;
+    const current = titleFiltersStore.get();
+    if (current.includes(entry)) return;
+    titleFiltersStore.set([...current, entry]);
+  }, []);
+  const removeTitleFilter = useCallback((entry: string) => {
+    const target = normalizeFilter(entry);
+    if (!target) return;
+    const current = titleFiltersStore.get();
+    // Compare NORMALIZED on both sides. Stored entries are normalized by every
+    // path that writes them, but a hand-edited localStorage value needn't be —
+    // and an entry Remove can't delete is a chip the reader is stuck with.
+    const next = current.filter((e) => normalizeFilter(e) !== target);
+    if (next.length !== current.length) titleFiltersStore.set(next);
+  }, []);
+  return { titleFilters, addTitleFilter, removeTitleFilter };
+}
+
 /** Test-only: drop the stores' parse memos so `localStorage.clear()` alone
  * resets state between cases. */
 export function resetReadingPrefsCacheForTest(): void {
@@ -492,6 +540,7 @@ export function resetReadingPrefsCacheForTest(): void {
   showGroupFaviconStore.resetForTest();
   hideSportsSpoilersStore.resetForTest();
   autoSummarizePinnedStore.resetForTest();
+  titleFiltersStore.resetForTest();
   bottomBarStore.resetForTest();
   itemSortStore.resetForTest();
   listLayoutStore.resetForTest();

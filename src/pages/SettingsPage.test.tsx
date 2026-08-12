@@ -16,6 +16,7 @@ import {
   SHOW_GROUP_FAVICON_KEY,
   SAVE_SERVICE_KEY,
   AUTO_SAVE_ON_FAVORITE_KEY,
+  TITLE_FILTERS_KEY,
   resetReadingPrefsCacheForTest,
 } from '../hooks/useReadingPrefs';
 import { SettingsPage } from './SettingsPage';
@@ -480,5 +481,69 @@ describe('SettingsPage — Read later', () => {
     expect(
       screen.getByRole('checkbox', { name: 'Auto-save on favorite' }),
     ).toBeChecked();
+  });
+});
+
+
+describe('SettingsPage — Filtered words', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+
+  it('adds a typed word, normalized, and lists it as a chip', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+
+    await user.type(screen.getByLabelText('Word or phrase to filter'), '  Trump  ');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(JSON.parse(window.localStorage.getItem(TITLE_FILTERS_KEY)!)).toEqual(['trump']);
+    expect(screen.getByText('trump')).toBeInTheDocument();
+    // The field clears, so adding a second word doesn't need a manual wipe.
+    expect(screen.getByLabelText('Word or phrase to filter')).toHaveValue('');
+  });
+
+  it('will not add an empty or duplicate entry', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    // Empty: the control is disabled rather than silently doing nothing.
+    expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled();
+
+    const field = screen.getByLabelText('Word or phrase to filter');
+    await user.type(field, 'Trump');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+    await user.type(field, 'trump');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(JSON.parse(window.localStorage.getItem(TITLE_FILTERS_KEY)!)).toEqual(['trump']);
+  });
+
+  it('removes an entry that was stored unnormalized', async () => {
+    // Belt-and-braces beside the mapper's normalization: a hand-edited value
+    // must still be removable, or the reader is stuck with a chip forever.
+    window.localStorage.setItem(TITLE_FILTERS_KEY, JSON.stringify(['Trump']));
+    resetReadingPrefsCacheForTest();
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+
+    await user.click(screen.getByRole('button', { name: 'Remove Trump' }));
+    expect(JSON.parse(window.localStorage.getItem(TITLE_FILTERS_KEY)!)).toEqual([]);
+  });
+
+  it('removes a word — the feature\u2019s undo', async () => {
+    window.localStorage.setItem(TITLE_FILTERS_KEY, JSON.stringify(['trump', 'musk']));
+    resetReadingPrefsCacheForTest();
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+
+    await user.click(screen.getByRole('button', { name: 'Remove trump' }));
+
+    expect(JSON.parse(window.localStorage.getItem(TITLE_FILTERS_KEY)!)).toEqual(['musk']);
+    expect(screen.queryByText('trump')).toBeNull();
   });
 });

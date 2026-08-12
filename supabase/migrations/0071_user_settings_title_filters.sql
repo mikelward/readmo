@@ -1,0 +1,41 @@
+-- The reader's filtered words (SPEC.md *Filtered words*): titles matching any
+-- entry vanish from the feed views.
+--
+-- Account intent, not device ergonomics — you don't want to re-teach each
+-- device what you never want to read — so it joins the synced prefs in
+-- user_settings (0064) rather than staying device-local.
+--
+-- A text[] rather than its own table: the list is edited rarely (a few taps a
+-- year), so per-column last-write-wins is a fine conflict story, and it rides
+-- the existing settings-sync engine with no new read path. The cost of that
+-- shortcut is that two devices editing the list before either syncs resolve
+-- LWW over the whole list, not per word. A `title_filters` child table is the
+-- fix if that ever actually bites.
+--
+-- Entries are stored NORMALIZED by the client (folded to lowercase, diacritics
+-- stripped, punctuation collapsed to single spaces — src/lib/titleFilter.ts),
+-- so matching never has to case-fold at read time. Nothing here enforces that:
+-- the client repairs anything it reads (compileFilters), which keeps an older
+-- or hand-edited value from silently ceasing to match.
+--
+-- NULL = "not set", as with every other column here — the client default (an
+-- empty list) applies. That is deliberately distinct from an empty array, which
+-- means "the reader cleared their list"; both filter nothing, so the difference
+-- is only ever observable to a syncing peer.
+--
+-- Privacy: a reader's filtered words are their own data — RLS pins the row to
+-- its owner exactly as 0064 does, and this column is never read by any shared
+-- or SECURITY DEFINER path that could surface it to another account.
+--
+-- Backwards compatible (guardrail #11): purely additive. A client meeting a
+-- backend without this column steps down to the pre-0071 projection and keeps
+-- the list device-local until `make migrate` lands (see USER_SETTINGS_
+-- PROJECTIONS in src/lib/data/SupabaseDataSource.ts); an old cached client
+-- never names the column at all. Goes live via `make migrate`.
+--
+-- Cost: negligible — one nullable array column on a one-row-per-user table,
+-- no index (it is only ever read as part of the caller's own single row), no
+-- new infra and no external calls.
+
+alter table public.user_settings
+  add column if not exists title_filters text[];

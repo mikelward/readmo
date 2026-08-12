@@ -1333,6 +1333,31 @@ negligible and off every critical path. See the External services table in
    - **Mute feed** — stays subscribed but excluded from the aggregate feed;
      still reachable on its own page. (This is per-feed; per-item dismissal is
      **Done** (dismiss), unchanged from newshacker.)
+   - **Filtered words** — a per-account list of words and phrases; an article
+     whose **title** matches one is **not served** in the feed views. Distinct
+     from *Mute feed*, which is per-feed and leaves the articles reachable —
+     a filtered article simply isn't in the list.
+     - **Account-wide, across every feed.** You don't want to re-teach each
+       device — or each feed — what you never want to read.
+     - **Matched articles vanish**: no placeholder, no count, no Undo
+       affordance. Removing the word in Settings restores every article it was
+       hiding, so nothing is consumed and the filter needs no confirmation step
+       before it applies.
+     - **Whole words, not substrings** — a `trump` filter must not hide an
+       article about a trumpet. A filter also matches its simple plural, but
+       **never a shorter word**: stripping a suffix would turn `news` into
+       `new` and hide most of a feed. Where a reader might want the shorter
+       form, it's offered as its own choice rather than inferred.
+     - **Pinned articles are exempt**, as they are from every other reason a
+       row would leave a list.
+     - **Feed views only.** `/search` and the library lists (`/pinned`,
+       `/done`, …) are unfiltered — the same way Done items still show on
+       `/done`. Search is deliberately the way back to a filtered article, and
+       is what makes vanishing safe.
+     - Managed in **Settings → Filtered words** (add a word; remove one to
+       undo), and added straight from an article's **row menu → Filter…**,
+       which offers terms taken from that title — capitalized names first, the
+       rest of its words behind **More…**, and **Other…** to type your own.
    - **Open original / Open on newshacker** — the per-feed **open mode**: a
      single mutually-exclusive choice of where that feed's article rows open on
      tap.
@@ -1580,6 +1605,7 @@ negligible and off every critical path. See the External services table in
          refresh shows "Loading…".
    - **Done and Hidden filtered out**; **Opened** items render with the faded
      title.
+   - **Filtered words filtered out** — see *Filtered words* below.
    - **Initial paint one page (30 items)** in the flat river; the grouped view
      instead opens each feed at its pinned rows plus its first
      **`PER_FEED_WINDOW` (10)** articles — from one deep read that already
@@ -1975,9 +2001,10 @@ negligible and off every critical path. See the External services table in
       appears below it. Both per-device (see *Settings scope*).
     - **Settings scope.** Reading-*behavior* settings are **per-account and
       sync across devices**: Sort order, Group by feed, Mark Done as you
-      scroll, both Feed icons toggles, Hide sports spoilers, and Auto generate
-      summaries (stored in `user_settings`, one nullable column per setting —
-      unset means the default; RLS-gated like every per-user table). A change
+      scroll, both Feed icons toggles, Hide sports spoilers, Auto generate
+      summaries, and the **Filtered words** list (stored in `user_settings`,
+      one nullable column per setting — unset means the default; RLS-gated like
+      every per-user table). A change
       lands on other devices on their next launch/focus/reconnect; when two
       devices disagree, the **latest change to each individual setting wins**.
       Settings that are really *device ergonomics* stay **per-device**:

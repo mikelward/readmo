@@ -518,3 +518,96 @@
   align-items: center;
   gap: 8px;
 }
+
+/* Filtered words: an add field, then the current list as removable chips.
+   One tap zone per chip (the ×) — the word itself is a label, not a control. */
+.settings__filter-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.settings__filter-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: var(--rm-tap);
+  padding: 0 12px;
+  font-size: 1rem;
+  color: var(--rm-text);
+  background: var(--rm-bg-card);
+  border: 1px solid var(--rm-border);
+  border-radius: var(--rm-radius);
+}
+
+.settings__filter-submit {
+  flex: 0 0 auto;
+  min-height: var(--rm-tap);
+  padding: 0 16px;
+  font-size: 1rem;
+  color: var(--rm-accent-contrast);
+  background: var(--rm-accent);
+  border: none;
+  border-radius: var(--rm-radius);
+  cursor: pointer;
+}
+
+.settings__filter-submit:active {
+  background: var(--rm-accent-strong);
+}
+
+.settings__filter-submit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.settings__filter-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.settings__filter-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 12px;
+  /* The input takes any length, and a long unbroken entry would otherwise hold
+     the chip open at its intrinsic width — pushing Remove, the feature's only
+     undo, off the side of a phone. */
+  max-width: 100%;
+  min-width: 0;
+  background: var(--rm-bg-card);
+  border: 1px solid var(--rm-border);
+  border-radius: var(--rm-radius);
+}
+
+.settings__filter-word {
+  font-size: 0.95rem;
+  color: var(--rm-text);
+}
+
+.settings__filter-word {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings__filter-remove {
+  /* Never shrink: the tap target is the floor, so the word wraps instead. */
+  flex: 0 0 auto;
+  min-width: var(--rm-tap);
+  min-height: var(--rm-tap);
+  padding: 0;
+  font-size: 1.25rem;
+  line-height: 1;
+  color: var(--rm-meta);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.settings__filter-remove:active {
+  color: var(--rm-text);
+}

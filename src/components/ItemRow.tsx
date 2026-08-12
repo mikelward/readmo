@@ -14,7 +14,12 @@ import { usePointerDevice } from '../hooks/usePointerDevice';
 import { useWideViewport } from '../hooks/useWideViewport';
 import { useSwipeToDismiss } from '../hooks/useSwipeToDismiss';
 import { useItemState } from '../hooks/useItemState';
-import { useEffectiveHideSpoilers, useListLayout } from '../hooks/useReadingPrefs';
+import {
+  useEffectiveHideSpoilers,
+  useListLayout,
+  useTitleFilters,
+} from '../hooks/useReadingPrefs';
+import { filterCandidates } from '../lib/titleFilter';
 import { leadImageUrl, itemPreviewText } from '../lib/itemPreview';
 import { useCapabilities, canUseFullText } from '../hooks/useCapabilities';
 import { displayTitle } from '../lib/spoilerHeadline';
@@ -209,6 +214,38 @@ export function ItemRow({
   const handleTogglePin = useCallback(() => toggle('pinned'), [toggle]);
   const handleMarkUnread = useCallback(() => set('opened', false), [set]);
   const handleShare = useCallback(() => onShare?.(feedItem), [onShare, feedItem]);
+  const { titleFilters, addTitleFilter } = useTitleFilters();
+  // The filter submenu: capitalized terms from this title up front, the rest of
+  // its content words behind More…, free text last. Built lazily by the menu
+  // (it only runs when the reader steps into the level) and read from the
+  // ORIGINAL title, which is what the matcher sees.
+  const buildFilterMenu = useCallback((): ItemRowMenuItem[] => {
+    const { primary, more } = filterCandidates(item.title, titleFilters);
+    const term = (value: string, prefix: string): ItemRowMenuItem => ({
+      key: `${prefix}-${value}`,
+      label: value,
+      onSelect: () => addTitleFilter(value),
+    });
+    const other: ItemRowMenuItem = {
+      key: 'filter-other',
+      label: 'Other…',
+      prompt: {
+        placeholder: 'Word or phrase',
+        submitLabel: 'Filter',
+        onSubmit: (value) => addTitleFilter(value),
+      },
+    };
+    const entries = primary.map((value) => term(value, 'filter'));
+    if (more.length > 0) {
+      entries.push({
+        key: 'filter-more',
+        label: 'More…',
+        submenu: () => [...more.map((value) => term(value, 'filter-more')), other],
+      });
+    }
+    entries.push(other);
+    return entries;
+  }, [item.title, titleFilters, addTitleFilter]);
   const markOpened = useCallback(() => set('opened', true), [set]);
   // Opening this row's EXTERNAL target — the original source (open-original mode
   // or the `o` shortcut) or the newshacker discussion (newshacker mode) — marks
@@ -379,6 +416,11 @@ export function ItemRow({
     if (onShare) {
       items.push({ key: 'share', label: 'Share', onSelect: handleShare });
     }
+    // Filtering is about the article's SUBJECT rather than this copy of it, so
+    // it's offered on every row regardless of state — including a pinned one,
+    // where filtering the term is a statement about future articles and leaves
+    // this pin alone (pins are exempt from the filter, see ItemList).
+    items.push({ key: 'filter', label: 'Filter…', submenu: buildFilterMenu });
     return items;
   }, [
     pinned,
@@ -389,6 +431,7 @@ export function ItemRow({
     handleTogglePin,
     handleMarkUnread,
     handleShare,
+    buildFilterMenu,
   ]);
 
   const rowClass =

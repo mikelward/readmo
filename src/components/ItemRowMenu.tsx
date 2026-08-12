@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { usePopoverDismiss } from '../hooks/usePopoverDismiss';
 import './ItemRowMenu.css';
@@ -9,7 +9,18 @@ import './ItemRowMenu.css';
 export interface ItemRowMenuItem {
   key: string;
   label: string;
-  onSelect: () => void;
+  /** Leaf: act and close. Exactly one of onSelect/submenu/prompt is set. */
+  onSelect?: () => void;
+  /** Step INTO a deeper level of this same menu rather than opening a nested
+   * one. A second popover would need its own anchoring, and a bottom sheet
+   * can't nest at all — so a level swaps the list in place and `Back` pops it.
+   * Deep levels are built lazily (a thunk) so a menu that's never opened
+   * doesn't pay to compute them. */
+  submenu?: () => ItemRowMenuItem[];
+  /** Free-text entry rendered inline in the sheet, for the tail of a list of
+   * suggestions ("Other…"). Submitting acts and closes; an empty value is
+   * ignored. */
+  prompt?: { placeholder: string; submitLabel: string; onSubmit: (value: string) => void };
 }
 
 interface Props {
@@ -31,19 +42,56 @@ export function ItemRowMenu({ open, title, items, anchorEl, onClose }: Props) {
   const previouslyFocused = useRef<Element | null>(null);
   const popover = open && !!anchorEl;
   const [pos, setPos] = useState<PopoverPosition | null>(null);
+  // The path into nested levels: each entry is the item stepped through, so the
+  // list rendered is the deepest one's submenu and `Back` pops one level.
+  const [path, setPath] = useState<ItemRowMenuItem[]>([]);
+  // Which prompt item (if any) has its inline field open at this level.
+  const [prompting, setPrompting] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+
+  // A closed menu always reopens at the top level: the path is navigation
+  // state, not a preference, and reopening two levels deep on an unrelated row
+  // would be baffling. Adjusted DURING RENDER rather than in an effect — React's
+  // documented pattern for state that derives from a prop change. An effect
+  // would paint the stale level for a frame first, and re-entering the menu is
+  // exactly when that frame is visible.
+  const [openWas, setOpenWas] = useState(open);
+  if (openWas !== open) {
+    setOpenWas(open);
+    setPath([]);
+    setPrompting(null);
+    setDraft('');
+  }
+
+  // Built once per level rather than per render — the thunk does real work
+  // (scanning the title for candidates).
+  const level = useMemo(
+    () => (path.length > 0 ? (path[path.length - 1].submenu?.() ?? []) : items),
+    [path, items],
+  );
 
   useEffect(() => {
     if (!open) return;
     previouslyFocused.current = document.activeElement;
-    const firstBtn = sheetRef.current?.querySelector<HTMLButtonElement>(
-      'button[data-menu-item]',
-    );
-    firstBtn?.focus();
     return () => {
       const prev = previouslyFocused.current;
       if (prev instanceof HTMLElement) prev.focus();
     };
   }, [open]);
+
+  // Focus follows the LEVEL, not just open/close. Stepping into a submenu (or
+  // popping back out) unmounts the button that had focus, which drops focus to
+  // the body — and from there the next Tab leaves the menu entirely for whatever
+  // follows it in the document. Re-anchoring on the new level's first item keeps
+  // the keyboard inside the menu. Keyed on DEPTH rather than the level array: it
+  // is rebuilt whenever the candidate thunk reruns, and refocusing on that would
+  // yank focus back to the top while the reader is arrowing through the list.
+  useEffect(() => {
+    if (!open) return;
+    sheetRef.current
+      ?.querySelector<HTMLButtonElement>('button[data-menu-item]')
+      ?.focus();
+  }, [open, path.length]);
 
   // Dismissal (Escape, outside-press, first-press-only swallow) is the shared
   // contract — see usePopoverDismiss. The anchor is treated as "inside" so
@@ -111,13 +159,40 @@ export function ItemRowMenu({ open, title, items, anchorEl, onClose }: Props) {
       window.removeEventListener('scroll', scheduleRaf, true);
       if (rafId) window.cancelAnimationFrame(rafId);
     };
-  }, [popover, anchorEl, items]);
+    // `level`/`prompting` re-place the popover: stepping into a submenu or
+    // opening the inline field changes the sheet's height, and a stale position
+    // would leave it hanging off the anchor (or off-screen).
+  }, [popover, anchorEl, level, prompting]);
 
   if (!open) return null;
   if (typeof document === 'undefined') return null;
 
   const handleSelect = (item: ItemRowMenuItem) => {
-    item.onSelect();
+    if (item.submenu) {
+      setPath((prev) => [...prev, item]);
+      setPrompting(null);
+      setDraft('');
+      return;
+    }
+    if (item.prompt) {
+      setPrompting(item.key);
+      setDraft('');
+      return;
+    }
+    item.onSelect?.();
+    onClose();
+  };
+
+  const goBack = () => {
+    setPath((prev) => prev.slice(0, -1));
+    setPrompting(null);
+    setDraft('');
+  };
+
+  const submitPrompt = (item: ItemRowMenuItem) => {
+    const value = draft.trim();
+    if (!value) return;
+    item.prompt?.onSubmit(value);
     onClose();
   };
 
@@ -164,20 +239,69 @@ export function ItemRowMenu({ open, title, items, anchorEl, onClose }: Props) {
           {title}
         </div>
         <ul className="item-menu__list" role={popover ? 'presentation' : 'menu'}>
-          {items.map((item) => (
-            <li key={item.key} role="none">
+          {level.map((item) =>
+            prompting === item.key && item.prompt ? (
+              <li key={item.key} role="none">
+                <form
+                  className="item-menu__prompt"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    submitPrompt(item);
+                  }}
+                >
+                  {/* Focused on open: the reader chose this field by selecting
+                      the item, so it saves a second tap on the surface where
+                      taps are dearest. */}
+                  <input
+                    autoFocus
+                    type="text"
+                    className="item-menu__prompt-input"
+                    data-testid={`item-row-menu-${item.key}-input`}
+                    aria-label={item.label}
+                    placeholder={item.prompt.placeholder}
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                  />
+                  <button
+                    type="submit"
+                    className="item-menu__prompt-submit"
+                    data-testid={`item-row-menu-${item.key}-submit`}
+                    disabled={draft.trim().length === 0}
+                  >
+                    {item.prompt.submitLabel}
+                  </button>
+                </form>
+              </li>
+            ) : (
+              <li key={item.key} role="none">
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-menu-item
+                  data-testid={`item-row-menu-${item.key}`}
+                  className="item-menu__item"
+                  aria-haspopup={item.submenu ? 'menu' : undefined}
+                  onClick={() => handleSelect(item)}
+                >
+                  {item.label}
+                </button>
+              </li>
+            ),
+          )}
+          {path.length > 0 ? (
+            <li role="none">
               <button
                 type="button"
                 role="menuitem"
                 data-menu-item
-                data-testid={`item-row-menu-${item.key}`}
-                className="item-menu__item"
-                onClick={() => handleSelect(item)}
+                data-testid="item-row-menu-back"
+                className="item-menu__item item-menu__item--back"
+                onClick={goBack}
               >
-                {item.label}
+                Back
               </button>
             </li>
-          ))}
+          ) : null}
         </ul>
         {popover ? null : (
           <button

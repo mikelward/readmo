@@ -5,6 +5,7 @@ import {
   DIRTY_SETTINGS_KEY,
   GROUP_BY_FEED_KEY,
   HIDE_SPORTS_SPOILERS_KEY,
+  TITLE_FILTERS_KEY,
   ITEM_SORT_KEY,
   markSettingDirty,
   READING_PREF_CHANGE_EVENT,
@@ -76,6 +77,59 @@ describe('createSettingsSyncEngine.reconcile', () => {
     expect(set).toHaveBeenCalledTimes(1);
     expect(set).toHaveBeenCalledWith({ hideSportsSpoilers: false });
     expect(acked()).toEqual({ hideSportsSpoilers: false, groupByFeed: true });
+  });
+
+  // A list is the one non-scalar synced setting, so every comparison in the
+  // engine that used identity had to become a value comparison. Identity says
+  // "changed" for a freshly parsed array every single time, which would make
+  // the setting permanently pending: re-pushed on every scheduler tick, forever,
+  // and never adoptable from another device.
+  it('settles a filter list rather than re-pushing it forever', async () => {
+    window.localStorage.setItem(TITLE_FILTERS_KEY, JSON.stringify(['trump']));
+    const { transport, set } = makeTransport();
+
+    const engine = createSettingsSyncEngine(UID, transport);
+    await engine.reconcile();
+    expect(set).toHaveBeenCalledWith({ titleFilters: ['trump'] });
+    expect(acked()).toEqual({ titleFilters: ['trump'] });
+
+    // Second pass with nothing changed: the equal-but-not-identical list must
+    // read as settled, so there is no diff left to send.
+    set.mockClear();
+    await engine.reconcile();
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it('adopts a filter list from another device when the local one is settled', async () => {
+    window.localStorage.setItem(TITLE_FILTERS_KEY, JSON.stringify(['trump']));
+    window.localStorage.setItem(
+      ackedSettingsKey(UID),
+      JSON.stringify({ titleFilters: ['trump'] }),
+    );
+    const { transport, get, set } = makeTransport();
+    get.mockResolvedValue({ titleFilters: ['trump', 'musk'] });
+
+    const engine = createSettingsSyncEngine(UID, transport);
+    await engine.reconcile();
+
+    expect(window.localStorage.getItem(TITLE_FILTERS_KEY)).toBe(
+      JSON.stringify(['trump', 'musk']),
+    );
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it('keeps a pending local filter list rather than adopting the server one', async () => {
+    window.localStorage.setItem(TITLE_FILTERS_KEY, JSON.stringify(['trump', 'musk']));
+    const { transport, get, set } = makeTransport();
+    get.mockResolvedValue({ titleFilters: ['tariffs'] });
+
+    const engine = createSettingsSyncEngine(UID, transport);
+    await engine.reconcile();
+
+    expect(window.localStorage.getItem(TITLE_FILTERS_KEY)).toBe(
+      JSON.stringify(['trump', 'musk']),
+    );
+    expect(set).toHaveBeenCalledWith({ titleFilters: ['trump', 'musk'] });
   });
 
   it('adopts a server change for a setting whose local value is settled (acked)', async () => {
@@ -343,6 +397,6 @@ describe('exports', () => {
     // The purge list is derived from SYNCED_SETTINGS, so this length is the
     // guard that adding a synced pref can't quietly skip the account-change
     // wipe (guardrail #8) — bump it deliberately when you add one.
-    expect(SYNCED_SETTINGS_STORAGE_KEYS).toHaveLength(8);
+    expect(SYNCED_SETTINGS_STORAGE_KEYS).toHaveLength(9);
   });
 });

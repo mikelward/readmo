@@ -52,6 +52,11 @@ export interface SyncedSettings {
   showGroupFavicon: boolean;
   hideSportsSpoilers: boolean;
   autoSummarizePinned: boolean;
+  /** Normalized filtered words (src/lib/titleFilter.ts). The only non-scalar
+   * synced setting: it resolves last-write-wins over the WHOLE list rather
+   * than per word, which is the accepted trade for a list edited a few times
+   * a year (see 0071's header). */
+  titleFilters: string[];
 }
 
 export type SyncedSettingKey = keyof SyncedSettings;
@@ -66,6 +71,7 @@ export const SHOW_ROW_FAVICON_KEY = 'readmo:show-row-favicon';
 export const SHOW_GROUP_FAVICON_KEY = 'readmo:show-group-favicon';
 export const HIDE_SPORTS_SPOILERS_KEY = 'readmo:hide-sports-spoilers';
 export const AUTO_SUMMARIZE_PINNED_KEY = 'readmo:auto-summarize-pinned';
+export const TITLE_FILTERS_KEY = 'readmo:title-filters';
 
 /** The change event every reading-pref store dispatches on set (and the sync
  * engine dispatches after applying server values), so all mounted stores —
@@ -77,6 +83,13 @@ interface SettingSpec<T> {
   /** Parse a stored string, or undefined for garbage (treated as unset). */
   parse: (raw: string) => T | undefined;
   serialize: (value: T) => string;
+  /** Value equality, for the scalar settings just identity. A NON-SCALAR
+   * setting must supply this: every comparison below (is this pending? did the
+   * server value differ? did the local value change while the write was in
+   * flight?) is a value question, and identity answers it wrong for an array —
+   * a freshly parsed list never equals its stored twin, so the setting would
+   * read as permanently pending and re-push on every scheduler tick, forever. */
+  equals?: (a: T, b: T) => boolean;
 }
 
 const boolSpec = (storageKey: string): SettingSpec<boolean> => ({
@@ -102,6 +115,23 @@ export const SYNCED_SETTINGS: {
   showGroupFavicon: boolSpec(SHOW_GROUP_FAVICON_KEY),
   hideSportsSpoilers: boolSpec(HIDE_SPORTS_SPOILERS_KEY),
   autoSummarizePinned: boolSpec(AUTO_SUMMARIZE_PINNED_KEY),
+  titleFilters: {
+    storageKey: TITLE_FILTERS_KEY,
+    // JSON rather than a delimiter: an entry is arbitrary reader-typed text,
+    // and any separator character could appear inside one.
+    parse: (raw) => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        return undefined;
+      }
+      if (!Array.isArray(parsed)) return undefined;
+      return parsed.every((e) => typeof e === 'string') ? (parsed as string[]) : undefined;
+    },
+    serialize: (value) => JSON.stringify(value),
+    equals: (a, b) => a.length === b.length && a.every((entry, i) => entry === b[i]),
+  },
 };
 
 const SYNCED_KEYS = Object.keys(SYNCED_SETTINGS) as SyncedSettingKey[];
@@ -157,6 +187,21 @@ export interface SettingsSyncEngine {
   cancel(): void;
 }
 
+/** Whether two values of a setting are the same, per its spec (identity for
+ * the scalars, structural for a list — see SettingSpec.equals). Both sides may
+ * be absent, which compares equal only to another absence. */
+function sameValue<K extends SyncedSettingKey>(
+  key: K,
+  a: SyncedSettings[K] | undefined,
+  b: SyncedSettings[K] | undefined,
+): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  const equals = SYNCED_SETTINGS[key].equals as
+    | ((x: SyncedSettings[K], y: SyncedSettings[K]) => boolean)
+    | undefined;
+  return equals ? equals(a, b) : Object.is(a, b);
+}
+
 /** A value is well-formed iff it round-trips its own encoding — guards the
  * JSON snapshot (and the transport's output) against foreign shapes. */
 function isValid<K extends SyncedSettingKey>(
@@ -165,7 +210,8 @@ function isValid<K extends SyncedSettingKey>(
 ): value is SyncedSettings[K] {
   const spec = SYNCED_SETTINGS[key];
   try {
-    return spec.parse(spec.serialize(value as SyncedSettings[K])) === value;
+    const round = spec.parse(spec.serialize(value as SyncedSettings[K]));
+    return round !== undefined && sameValue(key, round as SyncedSettings[K], value as SyncedSettings[K]);
   } catch {
     return false;
   }
@@ -294,7 +340,7 @@ export function createSettingsSyncEngine(
       // Dirty keys push even when the value matches the ack — a flip that
       // ended back on the acked value is still the newest action for the
       // setting and must reach the server to win the cross-device race.
-      if (dirty.has(key) || lv !== acked[key]) {
+      if (dirty.has(key) || !sameValue(key, lv, acked[key])) {
         (patch as Record<string, unknown>)[key] = lv;
       }
     }
@@ -312,7 +358,7 @@ export function createSettingsSyncEngine(
     const localNow = readLocal();
     let dirtyChanged = false;
     for (const key of Object.keys(patch) as SyncedSettingKey[]) {
-      if (dirtyNow.has(key) && localNow[key] === patch[key]) {
+      if (dirtyNow.has(key) && sameValue(key, localNow[key], patch[key])) {
         dirtyNow.delete(key);
         dirtyChanged = true;
       }
@@ -342,9 +388,9 @@ export function createSettingsSyncEngine(
         // acked value — is an unpushed user action, newer than anything
         // fetched, so the server value must not clobber it; doPush below sends
         // it instead.
-        if (lv !== undefined && (dirty.has(key) || lv !== acked[key])) continue;
+        if (lv !== undefined && (dirty.has(key) || !sameValue(key, lv, acked[key]))) continue;
         (acked as Record<string, unknown>)[key] = sv;
-        if (lv !== sv) apply.push([key, sv]);
+        if (!sameValue(key, lv, sv)) apply.push([key, sv]);
       }
       // Ack BEFORE applying: the change event below wakes the push scheduler,
       // and with the snapshot already advanced its diff is empty (no echo).

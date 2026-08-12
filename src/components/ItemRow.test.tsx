@@ -18,6 +18,7 @@ import { recallHackerNewsItemId } from '../lib/newshackerItemIds';
 import {
   HIDE_SPORTS_SPOILERS_KEY,
   LIST_LAYOUT_KEY,
+  TITLE_FILTERS_KEY,
   resetReadingPrefsCacheForTest,
   useEffectiveHideSpoilers,
 } from '../hooks/useReadingPrefs';
@@ -688,6 +689,86 @@ describe('ItemRow', () => {
     const menu = await screen.findByTestId('item-row-menu');
     expect(within(menu).getByTestId('item-row-menu-pin')).toBeInTheDocument();
     expect(within(menu).getByTestId('item-row-menu-hide')).toBeInTheDocument();
+  });
+
+  describe('Filter… menu', () => {
+    // Each case starts from an empty list — the store is module-level, so a
+    // filter added by one case would otherwise be missing from the next case's
+    // candidates (already-filtered terms aren't offered).
+    beforeEach(() => {
+      window.localStorage.removeItem(TITLE_FILTERS_KEY);
+      resetReadingPrefsCacheForTest();
+    });
+
+    const FILTERABLE: typeof FEED_ITEM = {
+      ...FEED_ITEM,
+      item: { ...FEED_ITEM.item, title: "Trump's tariffs hit soybean farmers" },
+    };
+
+    const openFilterMenu = async (user: ReturnType<typeof userEvent.setup>) => {
+      screen.getByTestId('item-title').focus();
+      await user.keyboard(' ');
+      const menu = await screen.findByTestId('item-row-menu');
+      await user.click(within(menu).getByTestId('item-row-menu-filter'));
+      return menu;
+    };
+
+    it('offers capitalized terms up front and steps into More… for the rest', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ItemRow feedItem={FILTERABLE} />);
+      const menu = await openFilterMenu(user);
+
+      // Tier 1: the name, one tap in.
+      expect(within(menu).getByTestId('item-row-menu-filter-Trump')).toBeInTheDocument();
+      // Tier 2 is behind More…, not cluttering the first level.
+      expect(within(menu).queryByTestId('item-row-menu-filter-tariffs')).toBeNull();
+
+      await user.click(within(menu).getByTestId('item-row-menu-filter-more'));
+      expect(
+        within(menu).getByTestId('item-row-menu-filter-more-tariffs'),
+      ).toBeInTheDocument();
+      // The stem is offered beside the plural so the reader picks the form.
+      expect(
+        within(menu).getByTestId('item-row-menu-filter-more-tariff'),
+      ).toBeInTheDocument();
+      // Back pops one level rather than closing the menu.
+      await user.click(within(menu).getByTestId('item-row-menu-back'));
+      expect(within(menu).getByTestId('item-row-menu-filter-Trump')).toBeInTheDocument();
+    });
+
+    it('stores a normalized entry when a term is chosen', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ItemRow feedItem={FILTERABLE} />);
+      const menu = await openFilterMenu(user);
+      await user.click(within(menu).getByTestId('item-row-menu-filter-Trump'));
+
+      expect(JSON.parse(window.localStorage.getItem(TITLE_FILTERS_KEY)!)).toEqual(['trump']);
+    });
+
+    it('takes a typed word from Other…', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ItemRow feedItem={FILTERABLE} />);
+      const menu = await openFilterMenu(user);
+      await user.click(within(menu).getByTestId('item-row-menu-filter-other'));
+      await user.type(
+        within(menu).getByTestId('item-row-menu-filter-other-input'),
+        'Elon Musk',
+      );
+      await user.click(within(menu).getByTestId('item-row-menu-filter-other-submit'));
+
+      expect(JSON.parse(window.localStorage.getItem(TITLE_FILTERS_KEY)!)).toEqual([
+        'elon musk',
+      ]);
+    });
+
+    it('does not offer a term already filtered', async () => {
+      window.localStorage.setItem(TITLE_FILTERS_KEY, JSON.stringify(['trump']));
+      resetReadingPrefsCacheForTest();
+      const user = userEvent.setup();
+      renderWithProviders(<ItemRow feedItem={FILTERABLE} />);
+      const menu = await openFilterMenu(user);
+      expect(within(menu).queryByTestId('item-row-menu-filter-Trump')).toBeNull();
+    });
   });
 
   it('does not render the wide-viewport Done button on narrow screens', () => {

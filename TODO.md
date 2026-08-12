@@ -3,6 +3,51 @@
 Deferred work, tracked here so it isn't lost. Each item links to where the
 constraint is documented in more detail.
 
+## Decisions needing review
+
+Calls that haven't been settled — guesses autopilot made without asking, and
+decisions deliberately postponed — recorded so they don't silently become
+permanent by default. Each is cheap to change.
+
+- **UNDECIDED: whether to hold a remotely-adopted filter list until the list
+  rematerializes** (Codex P2 on #623). A filter list adopted from another device
+  currently applies to the list already on screen, removing rows under a reader
+  who did nothing — against the stable-set invariant. A *local* add must stay
+  immediate (the reader just tapped Filter… and SPEC promises the article
+  vanishes), so only the remote case would defer, and telling them apart means
+  threading provenance from the settings store into `visibleItems`, which already
+  carries two overlays with their own retention rules (`struckIdsRef`,
+  `localDismissedIdsRef`). **The decision is postponed, not made** — shipped as-is
+  for now because it needs a cross-device edit against a still-open tab to
+  trigger and the effect is the feature applying early rather than data loss.
+  Worth noting the premise is arguable: a filter set on one device taking effect
+  on another reads as sync working, not as a violation — the invariant is about
+  content moving under a reader's thumb, and a list that quietly loses rows the
+  reader has already filtered elsewhere may be exactly what they want. Revisit
+  when the server-side follow-up touches that materialization path; the options
+  are to defer remote adoption there, or to accept the current behavior
+  deliberately and say so in SPEC.
+- **Keyword filtering: the server-side half is a follow-up, not this PR**
+  (#623). `feed_items` / `feed_unread_counts` still need the same title
+  predicate so badge counts stay honest and a filtered article **frees its slot
+  in the per-feed floor** — without it, a feed whose newest 10 all match shows
+  nothing instead of the next 10. Alternative was one larger PR spanning both
+  halves; split because the client half is useful alone and needs no deploy to
+  be correct. Reversible: the follow-up is additive.
+- **`title_filters` is a `text[]` on `user_settings`, not its own table**
+  (0071). Consequence: two devices editing the list before either syncs resolve
+  last-write-wins over the **whole list**, not per word. Judged fine for a list
+  edited a few times a year, and it rides the existing sync engine with no new
+  read path. Reversible: a `title_filters` child table is the fix if it bites.
+- **A short all-caps acronym folds onto its lowercase homograph** — filtering
+  `US` also matches the pronoun "us". Recorded in a test rather than fixed; the
+  menu never offers it (`us` is a stopword), so it takes typing `US` by hand,
+  and removing the entry undoes it. The fix is case-preserving storage plus
+  case-sensitive matching for all-caps entries, which is its own change.
+- **Filtered words is its own Settings section**, between Reading and
+  Appearance, rather than a subsection of Reading. Purely presentational;
+  reversible in one edit.
+
 ## Offline / PWA
 
 - **Background Sync API.** Writes queued in the outbox while offline are
@@ -185,6 +230,7 @@ constraint is documented in more detail.
   `0013_user_query_statement_timeout.sql` and SCALING.md.
 
 ## UI / layout
+
 
 - **Consider upping the tap targets and/or the min row height to match
   newshacker's density.** readmo currently keys the list row body's `min-height`

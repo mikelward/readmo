@@ -3127,12 +3127,13 @@ describe('synced settings (user_settings, 0064)', () => {
     expect(env.fake.selectCount('user_settings')).toBe(0);
   });
 
-  it.each([
-    ['read', '42703', 'column user_settings.hide_on_scroll_remove does not exist'],
-    ['write', 'PGRST204', "Could not find the 'hide_on_scroll_remove' column"],
-  ])(
-    'falls back to the pre-0069 projection when only the new COLUMN is missing, on %s (guardrail #11)',
-    async (_op, code, message) => {
+  // Read and write are one case now rather than an it.each over an injected
+  // error code: the fake models the missing column itself, and issues the right
+  // code per operation (42703 on select, PGRST204 on write), so a single body
+  // exercises both paths against one backend.
+  it(
+    'falls back to an older projection when only a newer COLUMN is missing (guardrail #11)',
+    async () => {
       // Deploy-order skew: the client ships before `make migrate`. The read
       // names an explicit column list, so the un-migrated column fails the whole
       // row — but that must degrade ONLY the new preference. Every 0064 setting
@@ -3141,8 +3142,10 @@ describe('synced settings (user_settings, 0064)', () => {
         ...seed(),
         user_settings: [{ user_id: 'u1', group_by_feed: true }],
       });
-      env.fake.failSelectOnce('user_settings', { code, message });
-      env.fake.failUpdateOnce('user_settings', { code, message });
+      // A backend that permanently lacks the column, not a one-shot error: the
+      // client probes DOWN its projection ladder, so a transient failure would
+      // let the second probe "succeed" on a projection this backend rejects too.
+      env.fake.missingColumns('user_settings', ['hide_on_scroll_remove', 'title_filters']);
 
       // The retry on the older projection still hydrates the existing prefs.
       await expect(env.ds.getSyncedSettings()).resolves.toEqual({
@@ -3162,10 +3165,7 @@ describe('synced settings (user_settings, 0064)', () => {
 
   it('keeps the new pref pending (never fake-acks it) against a pre-0069 backend', async () => {
     const env = setup({ ...seed(), user_settings: [] });
-    env.fake.failUpdateOnce('user_settings', {
-      code: 'PGRST204',
-      message: "Could not find the 'hide_on_scroll_remove' column",
-    });
+    env.fake.missingColumns('user_settings', ['hide_on_scroll_remove', 'title_filters']);
 
     // A patch carrying BOTH: the older column lands, the new one must not be
     // acked — a resolved set() would strand it device-local forever once the
@@ -3191,10 +3191,7 @@ describe('synced settings (user_settings, 0064)', () => {
     const env = setup({ ...seed(), user_settings: [] });
     const now = vi.spyOn(Date, 'now');
     now.mockReturnValue(1_000_000);
-    env.fake.failUpdateOnce('user_settings', {
-      code: 'PGRST204',
-      message: "Could not find the 'hide_on_scroll_remove' column",
-    });
+    env.fake.missingColumns('user_settings', ['hide_on_scroll_remove', 'title_filters']);
     await expect(
       env.ds.setSyncedSettings({ hideOnScrollRemove: false }),
     ).rejects.toThrow('not deployed');
@@ -3225,16 +3222,14 @@ describe('synced settings (user_settings, 0064)', () => {
     const now = vi.spyOn(Date, 'now');
     now.mockReturnValue(1_000_000);
     const env = setup({ ...seed(), user_settings: [] });
-    env.fake.failSelectOnce('user_settings', {
-      code: '42703',
-      message: 'column user_settings.hide_on_scroll_remove does not exist',
-    });
+    env.fake.missingColumns('user_settings', ['hide_on_scroll_remove', 'title_filters']);
     await expect(env.ds.getSyncedSettings()).resolves.toEqual({});
     await expect(
       env.ds.setSyncedSettings({ hideOnScrollRemove: false }),
     ).rejects.toThrow('not deployed');
 
     // The operator runs `make migrate` while this tab stays open.
+    env.fake.addColumns('user_settings', ['hide_on_scroll_remove', 'title_filters']);
     now.mockReturnValue(1_000_000 + 6 * 60 * 1000);
     await env.ds.setSyncedSettings({ hideOnScrollRemove: false });
     expect(env.fake.store.user_settings).toEqual([
@@ -3252,6 +3247,65 @@ describe('synced settings (user_settings, 0064)', () => {
     await expect(env.ds.getSyncedSettings()).resolves.toEqual({
       hideOnScrollRemove: false,
     });
+  });
+
+  it('round-trips the title_filters list (0071)', async () => {
+    const env = setup({ ...seed(), user_settings: [] });
+    await env.ds.setSyncedSettings({ titleFilters: ['trump', 'trade war'] });
+    expect(env.fake.store.user_settings).toEqual([
+      { title_filters: ['trump', 'trade war'] },
+    ]);
+    await expect(env.ds.getSyncedSettings()).resolves.toEqual({
+      titleFilters: ['trump', 'trade war'],
+    });
+  });
+
+  it('drops non-string members rather than losing the whole filter list', async () => {
+    // A hand-edited row shouldn't cost the reader every filter they set.
+    const env = setup({
+      ...seed(),
+      user_settings: [{ user_id: 'u1', title_filters: ['trump', 7, null, 'musk'] }],
+    });
+    await expect(env.ds.getSyncedSettings()).resolves.toEqual({
+      titleFilters: ['trump', 'musk'],
+    });
+  });
+
+  it('normalizes and dedupes an unnormalized stored list', async () => {
+    // The store's invariant is that entries ARE normalized — Settings keys its
+    // remove button on that — so a raw `Trump` arriving from a hand-edited row
+    // would render a chip whose Remove does nothing, and let `trump` be added
+    // again beside it (Codex P2 on #623).
+    const env = setup({
+      ...seed(),
+      user_settings: [{ user_id: 'u1', title_filters: ['Trump', '  TRUMP ', 'Elon Musk'] }],
+    });
+    await expect(env.ds.getSyncedSettings()).resolves.toEqual({
+      titleFilters: ['trump', 'elon musk'],
+    });
+  });
+
+  it('degrades only title_filters against a backend with 0069 but not 0071', async () => {
+    // The ladder's whole point (guardrail #11): this client ships before
+    // `make migrate`, so the newest column must not strand the older ones.
+    const env = setup({ ...seed(), user_settings: [{ user_id: 'u1', group_by_feed: true }] });
+    env.fake.missingColumns('user_settings', ['title_filters']);
+
+    // Everything through 0069 still hydrates...
+    await expect(env.ds.getSyncedSettings()).resolves.toEqual({ groupByFeed: true });
+    // ...and still writes.
+    await env.ds.setSyncedSettings({ hideOnScrollRemove: false });
+    expect(env.fake.store.user_settings).toEqual([
+      { user_id: 'u1', group_by_feed: true, hide_on_scroll_remove: false },
+    ]);
+
+    // The filter list, though, must stay PENDING rather than be fake-acked —
+    // a resolved set() would leave local == acked and no diff to push once the
+    // migration lands, stranding it device-local forever.
+    await expect(
+      env.ds.setSyncedSettings({ titleFilters: ['trump'] }),
+    ).rejects.toThrow('title_filters is not deployed');
+    expect(env.fake.store.user_settings[0].title_filters).toBeUndefined();
   });
 
   it('setSyncedSettings rethrows a transient failure so the sync engine keeps the diff pending', async () => {

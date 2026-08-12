@@ -11,6 +11,7 @@ import type {
 } from '../types';
 import type { AiCall, AiCallKind } from './DataSource';
 import type { SyncedSettings } from '../settingsSync';
+import { compileFilters } from '../titleFilter';
 
 // Pure row→domain mappers for the Supabase (PostgREST) shapes. Kept separate
 // from SupabaseDataSource so they can be unit-tested without a client. PostgREST
@@ -343,6 +344,7 @@ export interface UserSettingsRow {
   show_group_favicon?: boolean | null;
   hide_sports_spoilers?: boolean | null;
   auto_summarize_pinned?: boolean | null;
+  title_filters?: string[] | null;
 }
 
 /** `user_settings` row → the synced-settings patch (0064). A null/absent
@@ -362,6 +364,18 @@ export function mapUserSettings(row: UserSettingsRow): Partial<SyncedSettings> {
   if (typeof row.show_group_favicon === 'boolean') out.showGroupFavicon = row.show_group_favicon;
   if (typeof row.hide_sports_spoilers === 'boolean') out.hideSportsSpoilers = row.hide_sports_spoilers;
   if (typeof row.auto_summarize_pinned === 'boolean') out.autoSummarizePinned = row.auto_summarize_pinned;
+  // Normalized (and deduped) on the way in, not just filtered for strings. The
+  // store's invariant is that entries ARE normalized — the Settings list keys
+  // its remove button on that — so letting a raw `Trump` through from a
+  // hand-edited row would render a chip whose Remove does nothing and let
+  // `trump` be added again beside it. Non-string members are dropped rather
+  // than failing the whole list, so one bad element can't cost the reader every
+  // filter they set.
+  if (Array.isArray(row.title_filters)) {
+    out.titleFilters = compileFilters(
+      row.title_filters.filter((e): e is string => typeof e === 'string'),
+    );
+  }
   return out;
 }
 
