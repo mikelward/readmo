@@ -83,6 +83,39 @@ describe('ItemRowMenu', () => {
   });
 });
 
+describe('ItemRowMenu focus management across levels', () => {
+  const nested = () =>
+    [
+      { key: 'pin', label: 'Pin', onSelect: vi.fn() },
+      {
+        key: 'filter',
+        label: 'Filter\u2026',
+        submenu: () => [
+          { key: 'trump', label: 'Trump', onSelect: vi.fn() },
+          { key: 'musk', label: 'Musk', onSelect: vi.fn() },
+        ],
+      },
+    ] as ItemRowMenuItem[];
+
+  it('focuses the first item of a level the reader steps into', () => {
+    render(<ItemRowMenu open title="An item" items={nested()} onClose={vi.fn()} />);
+    expect(screen.getByTestId('item-row-menu-pin')).toHaveFocus();
+
+    // Stepping in unmounts the focused button; without re-anchoring, focus falls
+    // to the body and the next Tab escapes the menu entirely.
+    fireEvent.click(screen.getByTestId('item-row-menu-filter'));
+    expect(screen.getByTestId('item-row-menu-trump')).toHaveFocus();
+    expect(document.body).not.toHaveFocus();
+  });
+
+  it('restores focus to the outer level when Back pops it', () => {
+    render(<ItemRowMenu open title="An item" items={nested()} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('item-row-menu-filter'));
+    fireEvent.click(screen.getByTestId('item-row-menu-back'));
+    expect(screen.getByTestId('item-row-menu-pin')).toHaveFocus();
+  });
+});
+
 describe('ItemRowMenu popover mode (anchor supplied)', () => {
   it('renders as a popover whenever an anchor is supplied', () => {
     const anchor = anchorAt({ top: 100, bottom: 148, left: 200, right: 248, x: 200, y: 100 });

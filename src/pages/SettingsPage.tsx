@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTheme } from '../hooks/useTheme';
 import {
@@ -13,6 +14,7 @@ import {
   useListLayout,
   useSaveService,
   useAutoSaveOnFavorite,
+  useTitleFilters,
   type BottomBarPosition,
   type ListLayout,
 } from '../hooks/useReadingPrefs';
@@ -46,6 +48,8 @@ export function SettingsPage() {
   const { hideSportsSpoilers, setHideSportsSpoilers } = useHideSportsSpoilers();
   const { autoSummarizePinned, setAutoSummarizePinned } =
     useAutoSummarizePinned();
+  const { titleFilters, addTitleFilter, removeTitleFilter } = useTitleFilters();
+  const [filterDraft, setFilterDraft] = useState('');
   const { listLayout, setListLayout } = useListLayout();
   const { saveService, setSaveService } = useSaveService();
   const { autoSaveOnFavorite, setAutoSaveOnFavorite } = useAutoSaveOnFavorite();
@@ -196,6 +200,55 @@ export function SettingsPage() {
             </button>
           ))}
         </div>
+      </section>
+
+      {/* Filtered words — the keyword filter's management surface (SPEC.md
+          *Filtered words*). Sits with Reading rather than Appearance: it decides
+          what you're served, not how it looks. Removing a word here is also the
+          feature's undo, which is why filtering from a row needs no confirm. */}
+      <section className="settings__section">
+        <h2 className="settings__heading">Filtered words</h2>
+        <form
+          className="settings__filter-add"
+          onSubmit={(e) => {
+            e.preventDefault();
+            addTitleFilter(filterDraft);
+            setFilterDraft('');
+          }}
+        >
+          <input
+            type="text"
+            className="settings__filter-input"
+            aria-label="Word or phrase to filter"
+            placeholder="Word or phrase"
+            value={filterDraft}
+            onChange={(e) => setFilterDraft(e.target.value)}
+          />
+          <button
+            type="submit"
+            className="settings__filter-submit"
+            disabled={filterDraft.trim().length === 0}
+          >
+            Add
+          </button>
+        </form>
+        {titleFilters.length > 0 ? (
+          <ul className="settings__filter-list">
+            {titleFilters.map((entry) => (
+              <li key={entry} className="settings__filter-chip">
+                <span className="settings__filter-word">{entry}</span>
+                <button
+                  type="button"
+                  className="settings__filter-remove"
+                  aria-label={`Remove ${entry}`}
+                  onClick={() => removeTitleFilter(entry)}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </section>
 
       {/* Appearance — how things look/lay out. The four theme controls are folded

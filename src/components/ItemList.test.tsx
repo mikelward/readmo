@@ -13,6 +13,7 @@ import {
   BOTTOM_BAR_KEY,
   HIDE_ON_SCROLL_KEY,
   HIDE_ON_SCROLL_REMOVE_KEY,
+  TITLE_FILTERS_KEY,
   resetReadingPrefsCacheForTest,
 } from '../hooks/useReadingPrefs';
 import {
@@ -1229,6 +1230,46 @@ describe('ItemList', () => {
       expect(within(after[0]).getByTestId('item-title')).not.toHaveTextContent(
         targetTitle!,
       );
+    });
+  });
+
+  describe('filtered words', () => {
+    it('drops a row whose title matches, and restores it when the word goes', async () => {
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const page = await source.getHomeItems();
+      const target = page.items[2].item;
+      const word = target.title.split(/\s+/).find((w) => w.length > 4)!;
+      window.localStorage.setItem(TITLE_FILTERS_KEY, JSON.stringify([word.toLowerCase()]));
+      resetReadingPrefsCacheForTest();
+
+      const { unmount } = renderHome(source);
+      await waitFor(() => expect(screen.getAllByRole('article').length).toBeGreaterThan(0));
+      expect(screen.queryByText(target.title)).toBeNull();
+      unmount();
+
+      // Clearing the list is the feature's undo: nothing was consumed, so the
+      // row comes back on the next render with no refetch needed.
+      window.localStorage.setItem(TITLE_FILTERS_KEY, JSON.stringify([]));
+      resetReadingPrefsCacheForTest();
+      renderHome(source);
+      await waitFor(() => expect(screen.getByText(target.title)).toBeInTheDocument());
+    });
+
+    it('keeps a pinned row even when its title matches', async () => {
+      // A pin beats every other reason a row would leave the list; the filter
+      // is not the exception.
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const page = await source.getHomeItems();
+      const target = page.items[2].item;
+      const word = target.title.split(/\s+/).find((w) => w.length > 4)!;
+      source.stateStore.hydrate([
+        [target.id, { ...DEFAULT_ITEM_STATE, pinned: true, pinnedAt: 1000 }],
+      ]);
+      window.localStorage.setItem(TITLE_FILTERS_KEY, JSON.stringify([word.toLowerCase()]));
+      resetReadingPrefsCacheForTest();
+
+      renderHome(source);
+      await waitFor(() => expect(screen.getByText(target.title)).toBeInTheDocument());
     });
   });
 

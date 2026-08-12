@@ -106,17 +106,36 @@ const ITEM_STATE_COLS_WITH_CURSOR =
 const SUBSCRIPTION_COLS =
   'feed_id, folder, title_override, muted, open_original, open_newshacker, mark_done_on_open, list_layout, sort';
 /** The synced reading-behavior settings columns (`user_settings`, 0064) — the
- * caller's own row only (RLS); `user_id`/`updated_at` never leave the server. */
-const USER_SETTINGS_COLS =
-  'item_sort, group_by_feed, hide_on_scroll, hide_on_scroll_remove, show_row_favicon, show_group_favicon, hide_sports_spoilers, auto_summarize_pinned';
-/** The same projection minus 0069's `hide_on_scroll_remove` — what a backend
- * that has 0064 but not yet 0069 can actually serve. Because the read names an
- * explicit column list, one un-migrated column fails the WHOLE row, which would
- * strand every other setting device-local; falling back to this projection
- * keeps the seven older prefs syncing while only the new one waits for
- * `make migrate` (Codex P1 on #546). */
-const USER_SETTINGS_COLS_PRE_0069 =
+ * caller's own row only (RLS); `user_id`/`updated_at` never leave the server.
+ * Columns added by a later migration than the one that created the table are
+ * NOT listed here; they hang off the projection ladder below. */
+const USER_SETTINGS_COLS_BASE =
   'item_sort, group_by_feed, hide_on_scroll, show_row_favicon, show_group_favicon, hide_sports_spoilers, auto_summarize_pinned';
+
+/** Each settings column added after 0064, newest migration first.
+ *
+ * Because a read names an explicit column list, ONE un-migrated column fails
+ * the WHOLE row — which would strand every other setting device-local (Codex P1
+ * on #546). So the client walks this ladder: it asks for everything, and on a
+ * 42703 drops the newest column and retries, repeatedly, until the projection
+ * is one the backend can actually serve. Every setting the deployed backend
+ * knows keeps syncing; only the ones still waiting on `make migrate` are held
+ * back, and they stay PENDING rather than being acked (see setSyncedSettings).
+ *
+ * Newest first is what makes one rung per retry correct: a backend missing
+ * column N is missing everything after it too, so stepping down one rung at a
+ * time converges on the right projection without needing to know which column
+ * the error named. Add a new staged column to the FRONT of this list. */
+const USER_SETTINGS_STAGED_COLS = ['title_filters', 'hide_on_scroll_remove'] as const;
+
+/** Projections newest-first: rung 0 names every column this client knows, each
+ * later rung drops one more staged column, and the last is 0064's own set. */
+const USER_SETTINGS_PROJECTIONS: readonly string[] = [
+  ...USER_SETTINGS_STAGED_COLS.map((_, i) =>
+    [USER_SETTINGS_COLS_BASE, ...USER_SETTINGS_STAGED_COLS.slice(i)].join(', '),
+  ),
+  USER_SETTINGS_COLS_BASE,
+];
 
 /** How long a "backend can't serve user_settings" detection — no table, or no
  * column this client's select names (see isMissingSchemaError) — is trusted before
@@ -393,11 +412,13 @@ export class SupabaseDataSource implements DataSource {
    * a still-missing table just re-stamps it (Codex P2 on #494). */
   private syncedSettingsUnsupportedAt: number | null = null;
 
-  /** Epoch ms of the last `user_settings` read/write that said the backend has
-   * 0064's table but not 0069's `hide_on_scroll_remove` column. Null until seen.
-   * Separate from {@link syncedSettingsUnsupportedAt} so a pre-0069 backend
-   * degrades ONE setting instead of all of them. */
-  private settingsColumnUnsupportedAt: number | null = null;
+  /** How far down {@link USER_SETTINGS_PROJECTIONS} this backend has forced us:
+   * 0 = it serves every column this client knows. Separate from
+   * {@link syncedSettingsUnsupportedAt} so a backend missing a recent migration
+   * degrades only the settings that migration added, not all of them. */
+  private settingsProjectionRung = 0;
+  /** Epoch ms the rung above was last stamped, or null while it's 0. */
+  private settingsProjectionRungAt: number | null = null;
 
   /** Whether the backend was recently seen without `user_settings`, expiring
    * the memo when its retry window has passed. */
@@ -410,16 +431,28 @@ export class SupabaseDataSource implements DataSource {
     return false;
   }
 
-  /** Whether the backend was recently seen without 0069's column, expiring on
-   * the same schedule as the table memo so a long-lived tab starts syncing the
-   * new pref within minutes of `make migrate` — no reload. */
-  private settingsColumnUnsupported(): boolean {
-    if (this.settingsColumnUnsupportedAt === null) return false;
-    if (Date.now() - this.settingsColumnUnsupportedAt < SETTINGS_UNSUPPORTED_RETRY_MS) {
-      return true;
+  /** The projection rung to use right now, expiring on the same schedule as
+   * the table memo so a long-lived tab starts syncing a newly-migrated column
+   * within minutes of `make migrate` — no reload. */
+  private currentProjectionRung(): number {
+    if (this.settingsProjectionRungAt === null) return 0;
+    if (Date.now() - this.settingsProjectionRungAt < SETTINGS_UNSUPPORTED_RETRY_MS) {
+      return this.settingsProjectionRung;
     }
-    this.settingsColumnUnsupportedAt = null;
-    return false;
+    this.settingsProjectionRungAt = null;
+    this.settingsProjectionRung = 0;
+    return 0;
+  }
+
+  /** Remember that `rung` failed, so the next attempt starts one lower. */
+  private dropToProjectionRung(rung: number): void {
+    this.settingsProjectionRung = Math.min(rung, USER_SETTINGS_PROJECTIONS.length - 1);
+    this.settingsProjectionRungAt = Date.now();
+  }
+
+  /** The settings columns a given rung omits — the staged columns above it. */
+  private omittedAtRung(rung: number): readonly string[] {
+    return USER_SETTINGS_STAGED_COLS.slice(0, rung);
   }
   private resyncing: Promise<void> | null = null;
   /** A resync was requested while one was already in flight — re-run a fresh one
@@ -2281,32 +2314,29 @@ export class SupabaseDataSource implements DataSource {
     if (this.settingsBackendUnsupported()) return null;
     const read = (cols: string) =>
       this.sb.from('user_settings').select(cols).maybeSingle();
-    const { data, error } = await read(
-      this.settingsColumnUnsupported()
-        ? USER_SETTINGS_COLS_PRE_0069
-        : USER_SETTINGS_COLS,
-    );
-    if (error) {
-      if (isMissingColumnError(error)) {
-        // Pre-0069 backend meeting a post-0069 client: remember, and re-read on
-        // the older projection so this deploy-order skew costs only the one
-        // setting it actually affects.
-        this.settingsColumnUnsupportedAt = Date.now();
-        const retry = await read(USER_SETTINGS_COLS_PRE_0069);
-        if (retry.error) {
-          if (isMissingTableError(retry.error)) {
-            this.syncedSettingsUnsupportedAt = Date.now();
-          }
-          return null;
-        }
-        return retry.data ? mapUserSettings(retry.data as UserSettingsRow) : {};
+    // Walk down the projection ladder: an un-migrated column fails the whole
+    // row, so drop the newest and retry until the backend can serve what we
+    // ask for. Bounded by the ladder's length (one retry per staged column).
+    for (let rung = this.currentProjectionRung(); ; rung += 1) {
+      const { data, error } = await read(USER_SETTINGS_PROJECTIONS[rung]);
+      if (!error) {
+        // Deliberately does NOT re-stamp the memo: it was stamped when we
+        // stepped down, and its whole job is to EXPIRE so a long-lived tab
+        // re-probes after `make migrate`. Re-stamping on every successful read
+        // would refresh it forever and strand the newer settings until reload.
+        return data ? mapUserSettings(data as UserSettingsRow) : {};
       }
       if (isMissingTableError(error)) {
         this.syncedSettingsUnsupportedAt = Date.now();
+        return null;
       }
-      return null;
+      if (!isMissingColumnError(error) || rung >= USER_SETTINGS_PROJECTIONS.length - 1) {
+        return null;
+      }
+      // This deploy-order skew costs only the settings the missing migration
+      // added; everything older keeps syncing on the next rung down.
+      this.dropToProjectionRung(rung + 1);
     }
-    return data ? mapUserSettings(data as UserSettingsRow) : {};
   }
 
   async setSyncedSettings(patch: Partial<SyncedSettings>): Promise<void> {
@@ -2320,6 +2350,7 @@ export class SupabaseDataSource implements DataSource {
     if (patch.showGroupFavicon !== undefined) row.show_group_favicon = patch.showGroupFavicon;
     if (patch.hideSportsSpoilers !== undefined) row.hide_sports_spoilers = patch.hideSportsSpoilers;
     if (patch.autoSummarizePinned !== undefined) row.auto_summarize_pinned = patch.autoSummarizePinned;
+    if (patch.titleFilters !== undefined) row.title_filters = patch.titleFilters;
     if (Object.keys(row).length === 0) return;
     // An unsupported backend REJECTS rather than resolving: a resolved set()
     // is the sync engine's cue to acknowledge the patch as delivered, and a
@@ -2355,57 +2386,69 @@ export class SupabaseDataSource implements DataSource {
         ? e
         : new Error(String((e as { message?: string }).message ?? e));
     };
-    // Same split as the read: a pre-0069 backend can still take the other
-    // settings, so drop just the new column and push the rest. The new value is
-    // NOT acked — the throw at the end keeps it pending until the migration.
-    const olderOnly = (payload: Record<string, unknown>) => {
-      const { hide_on_scroll_remove: _drop, ...rest } = payload;
+    // Same ladder as the read: a backend missing a recent migration can still
+    // take the older settings, so drop just the staged columns it can't serve
+    // and push the rest. A dropped value is NOT acked — the throw at the end
+    // keeps it pending until the migration lands.
+    const without = (payload: Record<string, unknown>, cols: readonly string[]) => {
+      const rest = { ...payload };
+      for (const col of cols) delete rest[col];
       return rest;
     };
-    const newPrefPending = row.hide_on_scroll_remove !== undefined;
-    // Read the memo ONCE. It is time-based and self-clearing, so two calls can
-    // straddle its expiry and disagree — strip the column on the first, then
-    // skip arming `deferredNewPref` on the second. A patch carrying only the new
-    // pref would then send an empty payload and RESOLVE, which the sync engine
-    // reads as delivered: the exact fake-ack that strands a value device-local
-    // forever (Codex P2 on #546).
-    const columnUnsupported = this.settingsColumnUnsupported();
-    let payload = columnUnsupported ? olderOnly(row) : row;
-    let deferredNewPref = newPrefPending && columnUnsupported;
-    if (Object.keys(payload).length > 0) {
+    /** The staged columns this patch actually carries — the ones whose delivery
+     * we have to be honest about. Computed from `row` (the full patch) rather
+     * than from whatever we end up sending. */
+    const stagedInPatch = USER_SETTINGS_STAGED_COLS.filter((col) => row[col] !== undefined);
+    // Read the rung ONCE. It is time-based and self-clearing, so two calls can
+    // straddle its expiry and disagree — strip a column on the first, then skip
+    // arming `deferred` on the second. A patch carrying only that column would
+    // then send an empty payload and RESOLVE, which the sync engine reads as
+    // delivered: the exact fake-ack that strands a value device-local forever
+    // (Codex P2 on #546).
+    const lastRung = USER_SETTINGS_PROJECTIONS.length - 1;
+    const payloadAt = (r: number) => without(row, this.omittedAtRung(r));
+    let rung = this.currentProjectionRung();
+    let payload = payloadAt(rung);
+    while (Object.keys(payload).length > 0) {
       const { error } = await write(payload);
-      if (error) {
-        if (isMissingColumnError(error)) {
-          this.settingsColumnUnsupportedAt = Date.now();
-          payload = olderOnly(payload);
-          deferredNewPref = newPrefPending;
-          if (Object.keys(payload).length > 0) {
-            const retry = await write(payload);
-            if (retry.error) {
-              if (isMissingTableError(retry.error)) {
-                this.syncedSettingsUnsupportedAt = Date.now();
-              }
-              raise(retry.error);
-            }
-          }
-        } else {
-          if (isMissingTableError(error)) {
-            this.syncedSettingsUnsupportedAt = Date.now();
-          }
-          // Missing table or transient (offline/5xx) alike: throw so the sync
-          // engine keeps the diff pending — it retries on the next change/
-          // online/focus, and post-migration the pending values sync for real.
-          raise(error);
-        }
+      if (!error) break;
+      if (isMissingTableError(error)) {
+        this.syncedSettingsUnsupportedAt = Date.now();
+        raise(error);
       }
+      if (!isMissingColumnError(error) || rung >= lastRung) {
+        // Transient (offline/5xx) or out of rungs: throw so the sync engine
+        // keeps the diff pending — it retries on the next change/online/focus,
+        // and post-migration the pending values sync for real.
+        raise(error);
+      }
+      // Step down until the payload actually LOSES a column (or we run out of
+      // rungs). Stopping at the first rung would often leave the request
+      // byte-identical — a rung that drops a column this patch never carried
+      // changes nothing — and re-sending it just buys the same error. The
+      // error names a column, but which one isn't reliably parseable, so the
+      // payload shrinking is the usable signal that the retry is worth making.
+      const before = Object.keys(payload).length;
+      while (rung < lastRung && Object.keys(payload).length === before) {
+        rung += 1;
+        payload = payloadAt(rung);
+      }
+      this.dropToProjectionRung(rung);
+      // Retry even if nothing was dropped: the error still told us this backend
+      // is older than we thought, and the loop's own `rung >= lastRung` check
+      // raises on the next failure rather than spinning.
     }
-    // The older columns landed; the 0069 one couldn't. Throw so the engine keeps
-    // THIS setting pending (a resolved set() would ack it as delivered and
-    // strand it device-local forever — same reasoning as the missing-table case
-    // above). The already-written columns are simply re-sent on the retry, which
-    // is idempotent, and only until the migration lands.
-    if (deferredNewPref) {
-      throw new Error('hide_on_scroll_remove is not deployed on this backend');
+    // Computed from the rung we finished on, so it covers both the columns a
+    // remembered rung stripped up front and any this write's retries dropped.
+    const deferred = stagedInPatch.filter((col) => this.omittedAtRung(rung).includes(col));
+    // The older columns landed; the staged ones above this rung couldn't. Throw
+    // so the engine keeps THOSE settings pending (a resolved set() would ack
+    // them as delivered and strand them device-local forever — same reasoning
+    // as the missing-table case above). The already-written columns are simply
+    // re-sent on the retry, which is idempotent, and only until the migration
+    // lands.
+    if (deferred.length > 0) {
+      throw new Error(`${deferred.join(', ')} is not deployed on this backend`);
     }
   }
 
