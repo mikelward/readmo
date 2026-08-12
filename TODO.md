@@ -9,6 +9,15 @@ Calls that haven't been settled — guesses autopilot made without asking, and
 decisions deliberately postponed — recorded so they don't silently become
 permanent by default. Each is cheap to change.
 
+- **NEEDS AN ANSWER: how to stop 0072 hiding articles, now that it is live.**
+  The defect and its four candidate fixes are under *Server RPCs* below. This
+  is here rather than decided there because none of the four is both cheap and
+  correct, and the cheapest remediation is to revert a fix that shipped hours
+  ago — reverting someone's just-applied migration is not an autopilot call.
+  The question for the owner is narrow: **take the stopgap revert now and
+  choose the real fix unhurried, or leave the hiding live while the real fix
+  is built?** Nothing else in that entry is blocked on the answer.
+
 - **UNDECIDED: whether to hold a remotely-adopted filter list until the list
   rematerializes** (Codex P2 on #623). A filter list adopted from another device
   currently applies to the list already on screen, removing rows under a reader
@@ -155,21 +164,225 @@ permanent by default. Each is cheap to change.
 
 ## Server RPCs
 
-- **Remove the second implementation of the title matcher rather than keeping
-  it in step.** 0072 transcribes `src/lib/titleFilter.ts` into SQL so the badge
-  counts and the per-feed floor can honor the filters. The weak seam is
-  `title_fold`: JS says `\p{M}`, Postgres has no property classes, so the mark
-  ranges are enumerated by hand — and Codex found a gap in that list twice in
-  one review round (Arabic/Hebrew/Indic, then Japanese dakuten). The list is a
-  losing method even when it's currently correct. The structural fix is to stop
-  folding in SQL at all: have the poller store a normalized-title column
-  computed with the same JS the client runs, and have the RPCs match against
-  that. One implementation, no drift possible. Deferred because it's a bigger
-  change than 0072 — a new column, a backfill, and a poller change — and the
-  enumeration's failure direction is safe in the meantime: a mark it misses
-  means the server under-filters while the client filters correctly, i.e. the
-  pre-0072 split, never a row wrongly hidden. Do it if the gaps keep coming.
+- **0072's fold can HIDE an article, not just miscount one — LIVE, fix next.**
+  0072 has been applied, so this is in production rather than pending. (An
+  earlier draft of this entry said "not yet applied — fix before
+  `make migrate`"; the migration was run while the entry was being written.)
+  A mark `title_fold` doesn't strip
+  survives into `title_tokens`, which splits on it, so one word becomes several
+  fragments server-side while the client folds the mark away and keeps the word
+  whole. A filter entry equal to a fragment then matches on the server and not
+  on the client, and `feed_items` withholds a row the reader would otherwise
+  see (Codex P2 on #626). Affects **every mark `\p{M}` covers that isn't in one
+  of the nine blocks `title_fold` strips** — don't try to name them, see the
+  entry below for why the enumerations kept coming up short.
 
+  This is the direction 0072 spent three review rounds establishing it must not
+  fail in, and its header, its test corpus and the entry below all still claim
+  it can't. The claim was reasoned about one way only: rounds two and three
+  asked whether a *deleted* character could join tokens, and never asked
+  whether a *retained* one could split them.
+
+  *Live exposure — NOT limited to readers of non-Latin scripts.* A draft of
+  this paragraph claimed the fragments are always in the marked word's script,
+  so an English filter could never match one. That is wrong (Codex P2 on #626):
+  a combining mark attaches to whatever base precedes it, and nothing stops one
+  landing between two Latin letters. `a<mark>b` is `{a,b}` to SQL and `ab` to
+  the client, so the fragments are Latin and a Latin filter entry hides the
+  row. Publisher titles are untrusted input, so a stray or decorative mark
+  inside a Latin word is not a case we get to rule out.
+
+  What genuinely bounds it is the coincidence required, not the reader's
+  language: a title must carry an unstripped mark *inside* a word, AND some
+  stored filter entry must equal one of the fragments that mark creates. Rare,
+  and available to any reader with any filter list.
+
+  The under-filtering direction is live and much more common — any title in a
+  script whose marks fall outside the nine blocks — but that one only
+  over-counts a badge and spends floor slots.
+
+  Options. **None is both cheap and correct — that is the finding, and an
+  earlier draft of this list hid it** by recommending the second one as the
+  default on the grounds that it "needs no new Unicode knowledge" (Codex P2 on
+  #626). It does; see below.
+
+  - **Stop filtering server-side: revert `feed_items` / `feed_unread_counts` to
+    their pre-0072 bodies.** Removes the article-hiding outright, needs no
+    Unicode reasoning at all, and lands the app in a state it shipped in for
+    months — badges over-count filtered articles and filtered rows spend floor
+    slots, which is what #625 set out to fix. Gives up that fix entirely, and
+    is trivially re-appliable once the fold is trustworthy. The only option
+    whose cost is fully known today.
+  - **Refuse to filter titles the server can't fold reliably.** Attractive
+    until you have to define "reliably". The dangerous characters are marks
+    outside the nine stripped blocks — and not being able to identify marks in
+    SQL is the premise of this whole problem, so the predicate degrades to
+    something coarse. Make it ASCII-only and every headline with a curly
+    apostrophe, em dash, emoji or accented name skips server filtering, which
+    is most of them: the same badge and floor loss as the option above, minus
+    the simplicity, and applied far beyond the affected scripts. Make it
+    broader and you must classify which characters JS and Postgres treat
+    identically as token characters, marks and separators — the Unicode-parity
+    work the option claimed to avoid.
+  - **Enumerate the missing mark ranges after all**, character by character
+    against the Unicode tables rather than by eye. The method that produced
+    the Malayalam letter-deletion bug, and the reason it was abandoned.
+  - **Retire the SQL matcher** (see below) — the expensive answer, currently
+    rejected, and it closes today's gap without closing the failure class.
+
+  Given that, the live hiding argues for the first as a **stopgap** — it is the
+  only one that stops the bleeding without new Unicode reasoning — with the
+  real choice made afterwards, not under time pressure. But reverting a
+  just-shipped fix is the repo owner's call, so it waits for a real answer
+  rather than an autopilot guess.
+
+  Whichever wins, `supabase/tests/title_filters.sql` needs cases asserting the
+  fragment-match direction — **including a mixed-script one** (a mark between
+  two Latin letters, matched by a Latin filter), since that is the case the
+  exposure paragraph above got wrong and a same-script case would not have
+  caught it. Today its Arabic and Hebrew cases assert only the under-filtering
+  half and are labeled "safe direction".
+
+- **DECIDED AGAINST: retiring the SQL transcription of the title matcher.**
+  0072 transcribes `src/lib/titleFilter.ts` into SQL so the badge counts and the
+  per-feed floor can honor the filters. Its known weakness is `title_fold`: JS
+  says `\p{M}`, Postgres has no property classes, so the mark ranges are
+  enumerated by hand and several scripts' marks are missed. The obvious fix —
+  precompute a normalized title with the same JS the client runs, and have SQL
+  do only plain string work — was designed in full and **rejected on cost**.
+  Recorded so it isn't re-proposed from scratch.
+
+  *What it would buy.* Correct filtering for every script whose marks fall
+  outside the nine blocks `title_fold` strips. **State it that way and do not
+  enumerate**: two drafts of this entry tried, and both were short. The first
+  named three scripts, copied from 0072's summary line; the second named the
+  six 0072 lists twelve lines above that, which turned out to be only the spans
+  someone had once hand-added and reverted — not a survey of anything. The
+  actual set includes Syriac, Thaana, N'Ko, Samaritan, Mandaic, Lao and Khmer
+  as well, and those are examples too, not a third attempt at a list (Codex P2
+  on #626). It is most of the world's mark-using scripts; the nine stripped
+  blocks essentially cover Latin, Greek, Cyrillic and kana.
+
+  That the scope was understated twice by two different methods is itself
+  evidence for the entry below: the hand-enumeration is not merely
+  hard to get right, it is hard to know you have got wrong.
+
+  The cost of the gap has been understated twice as well, so state that fully
+  too:
+
+  - **Under-filtering, the common case.** A retained mark separates one word
+    into fragments, so the server fails to match a title the client matches.
+    The badge over-counts — and, less obviously, those rows still **consume
+    per-feed floor slots**, with the client dropping them after that cut, so
+    the feed can render EMPTY while unfiltered older articles sit just behind
+    the floor. That is precisely the failure 0072 was written to fix, still
+    live for these scripts.
+  - **OVER-filtering, and this one hides articles.** The same fragmenting runs
+    the other way: a filter entry that equals one of the fragments matches
+    server-side, while the client folds the mark away, keeps the word whole,
+    and does not match. The server then withholds an article the client would
+    have shown. Not unreachable, though — an earlier draft said "no way to
+    reach it" and that was wrong (Codex P2 on #626): `/search` queries `items`
+    directly rather than through `feed_items`, so it is unfiltered, and SPEC
+    names it as the way back to a filtered article. What is missing is the
+    CUE, not the path. A reader who filters a word knows roughly what it
+    hides; here the row is hidden by a fragment they never typed, the badge
+    excludes it too, and nothing indicates there is anything to search for.
+    So: hidden from feed views with no signal, recoverable only by someone who
+    already suspects the article exists. `مُحَمَّد` tokenizes to
+    fragments in SQL and to one token on the client, so an entry equal to a
+    fragment hides that row (Codex P2 on #626).
+
+  The second one falsifies the safety property this gap was accepted under.
+  0072's header, `supabase/tests/title_filters.sql`, and two earlier drafts of
+  this entry all assert that a missed mark can only under-filter and never
+  wrongly hide — that is wrong, and it is tracked as a defect in its own right
+  below rather than buried here.
+
+  *What it would cost.* A materialized derived column; a normalization version;
+  a bounded backfill pass that must converge; an index that serves the
+  versioned backlog — a plain B-tree on `(version, id)` does it across bumps,
+  NOT the per-version partial index an earlier draft claimed, which would have
+  meant recurring DDL and inflated this list by a standing cost that isn't
+  there (Codex P2 on #626); a
+  compare-and-swap on that pass; a SECOND bounded-backlog mechanism with its own
+  epoch for repairing stored filter entries (the database can't tell which are
+  non-canonical — that needs the JS normalizer); a compare-and-swap there too;
+  a compatibility window for service-worker-cached clients; and a server-to-
+  client signal that doesn't exist today (an Edge Function can't dispatch a
+  browser event, and a value comparison can't see the repair because the client
+  mapper already normalizes on read).
+
+  Keep this list honest in both directions. It is the load-bearing half of the
+  decision, so an inflated entry is as much a defect as an understated benefit
+  — the index above was one, and if another turns out to be cheaper than
+  written, correct it here even though doing so argues against the conclusion.
+
+  *What decided it.* The cost above, weighed against a benefit smaller than the
+  design's headline claim. That claim was "one implementation, no drift
+  possible" — and it does not survive: byte-identical source files do not
+  guarantee identical folding, because `normalize()` and the property tables
+  come from each runtime's own Unicode data, so a Deno upgrade or an older
+  browser engine can fold differently with nothing changed and no version
+  bumped. The duplicate-and-pin mechanism does not pin the thing that determines
+  the output. Drift goes from structural to residual, not to zero — which is a
+  real improvement, and not the absolute guarantee that justified two backlogs,
+  two epochs, two compare-and-swaps and a signal path this app doesn't have.
+
+  **Be clear about which way that cuts, because an earlier draft used it as a
+  reason to prefer the status quo and that was wrong** (Codex P2 on #626). On
+  the Unicode-drift axis the retained design is strictly WORSE, not better:
+  0072 runs Postgres's `normalize()` and `[[:alnum:]]` against the client's JS
+  `normalize()` and `\p{L}`/`\p{N}`, so its two implementations are certain to
+  differ rather than merely liable to — that is what the hand-enumerated mark
+  ranges are, and why review found three defects in that one regex. Runtime
+  drift argues against both designs and hardest against the one being kept. It
+  belongs here only as a discount on the replacement's benefit; the decision
+  rests on the cost paragraph and on no reader having hit the gap.
+
+  **This decision is the weaker for the over-filtering defect above**, and that
+  should be said rather than left for a reader to notice. Retiring the SQL
+  matcher would close the gap that causes it today — but **not the failure
+  class**, and an earlier draft claiming it fixes the defect "outright"
+  contradicted the runtime-drift paragraph directly above it (Codex P2 on
+  #626). The same residue produces the same hiding: if Deno recognizes a
+  newly-assigned mark that a service-worker-cached browser does not, the
+  materialized title joins the letters either side of it while that client
+  splits them, and an `ab` filter withholds `a<mark>b` from a reader who would
+  otherwise see it. Rarer than today's gap by a wide margin, and the same
+  shape. **A client-compatibility window does not close this** — an earlier
+  draft said it could, and that was wrong (Codex P2 on #626): a window sheds
+  old application code, while the disagreement is in the browser ENGINE's
+  Unicode tables. Shipping a new bundle to a device does not update the engine
+  underneath it, and a PWA client lags arbitrarily anyway, so the window ends
+  with the same engine still disagreeing with Deno. Only pinning the Unicode
+  implementation on both sides — or negotiating the normalization contract per
+  client — closes the class, and neither is in the design as costed. Absent
+  one, this residue is indefinite rather than transitional.
+
+  It stays rejected because the two cheaper options above also close today's
+  gap, at a fraction of the cost — but if both turn out to be unworkable, the
+  cost/benefit here has genuinely moved and this entry should be reopened
+  rather than cited.
+
+  Fourteen review rounds on the design found twenty-one real defects, several
+  introduced by the fixes for earlier ones; the full exploration is in PR #626
+  if this is ever reopened.
+
+  *What would change the decision.* A reader actually reporting the gap; the
+  two cheaper fixes above both proving unworkable; or the fold becoming
+  reliable in one place — Postgres gaining property classes, an ICU collation
+  that supports the substring matching the whole-word rule needs, or a pinned
+  Unicode implementation shared by both runtimes.
+
+  **Absent one of those, keep 0072 — but keeping it is conditional on closing
+  the over-filtering direction, which is now shipped rather than pending**
+  (Codex P2 on #626). An earlier version of this line read "keep 0072 and its
+  documented, safe-direction gap", which an operator could reasonably act on by
+  applying the migration — and that is what happened, before the correction
+  landed. There is no safe-direction gap to document any more. Retaining the
+  SQL matcher and fixing what it currently does are one decision, not two, and
+  the fix is now remedial rather than preventive.
 
 - **Server-side subscription-scoped feed RPC for very large libraries.** Home/
   folder reads use `.in('feed_id', feedIds)`; a user with hundreds of
