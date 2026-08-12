@@ -23,17 +23,15 @@ permanent by default. Each is cheap to change.
   Worth noting the premise is arguable: a filter set on one device taking effect
   on another reads as sync working, not as a violation — the invariant is about
   content moving under a reader's thumb, and a list that quietly loses rows the
-  reader has already filtered elsewhere may be exactly what they want. Revisit
-  when the server-side follow-up touches that materialization path; the options
-  are to defer remote adoption there, or to accept the current behavior
-  deliberately and say so in SPEC.
-- **Keyword filtering: the server-side half is a follow-up, not this PR**
-  (#623). `feed_items` / `feed_unread_counts` still need the same title
-  predicate so badge counts stay honest and a filtered article **frees its slot
-  in the per-feed floor** — without it, a feed whose newest 10 all match shows
-  nothing instead of the next 10. Alternative was one larger PR spanning both
-  halves; split because the client half is useful alone and needs no deploy to
-  be correct. Reversible: the follow-up is additive.
+  reader has already filtered elsewhere may be exactly what they want. **Narrowed
+  by 0072's client half (#625):** a remotely-adopted list now also triggers a
+  feed REFETCH, not just an overlay re-run, because the rows the server excluded
+  aren't in the cache to restore. So the remote case is now a full
+  re-materialization — more reflow, not less — and it arrived for correctness
+  rather than as an answer to this question. What's left open is only whether
+  that re-materialization should be deferred to the next natural one (return
+  past the TTL, pull-to-refresh, More) instead of happening on focus; the
+  alternative is to accept it and say so in SPEC.
 - **`title_filters` is a `text[]` on `user_settings`, not its own table**
   (0071). Consequence: two devices editing the list before either syncs resolve
   last-write-wins over the **whole list**, not per word. Judged fine for a list
@@ -156,6 +154,22 @@ permanent by default. Each is cheap to change.
   politeness logic (it already honors `Retry-After`/`ttl`).
 
 ## Server RPCs
+
+- **Remove the second implementation of the title matcher rather than keeping
+  it in step.** 0072 transcribes `src/lib/titleFilter.ts` into SQL so the badge
+  counts and the per-feed floor can honor the filters. The weak seam is
+  `title_fold`: JS says `\p{M}`, Postgres has no property classes, so the mark
+  ranges are enumerated by hand — and Codex found a gap in that list twice in
+  one review round (Arabic/Hebrew/Indic, then Japanese dakuten). The list is a
+  losing method even when it's currently correct. The structural fix is to stop
+  folding in SQL at all: have the poller store a normalized-title column
+  computed with the same JS the client runs, and have the RPCs match against
+  that. One implementation, no drift possible. Deferred because it's a bigger
+  change than 0072 — a new column, a backfill, and a poller change — and the
+  enumeration's failure direction is safe in the meantime: a mark it misses
+  means the server under-filters while the client filters correctly, i.e. the
+  pre-0072 split, never a row wrongly hidden. Do it if the gaps keep coming.
+
 
 - **Server-side subscription-scoped feed RPC for very large libraries.** Home/
   folder reads use `.in('feed_id', feedIds)`; a user with hundreds of

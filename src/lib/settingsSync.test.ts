@@ -6,6 +6,7 @@ import {
   GROUP_BY_FEED_KEY,
   HIDE_SPORTS_SPOILERS_KEY,
   TITLE_FILTERS_KEY,
+  SETTINGS_SYNCED_EVENT,
   ITEM_SORT_KEY,
   markSettingDirty,
   READING_PREF_CHANGE_EVENT,
@@ -249,6 +250,85 @@ describe('createSettingsSyncEngine.push', () => {
     const { transport, set } = makeTransport();
     await createSettingsSyncEngine(UID, transport).push();
     expect(set).not.toHaveBeenCalled();
+  });
+
+  it('announces the pushed keys once the server has acknowledged them', async () => {
+    // The other half of useFeedInvalidation's contract: the feed refetch keys
+    // on this event rather than on the local write, because the push is a
+    // debounce plus a round trip behind it and a refetch fired early reads the
+    // server's OLD values and marks the query fresh (Codex P1 on #625).
+    window.localStorage.setItem(TITLE_FILTERS_KEY, JSON.stringify(['trump']));
+    const { transport, set } = makeTransport();
+    const pushed = vi.fn();
+    window.addEventListener(SETTINGS_SYNCED_EVENT, pushed);
+
+    await createSettingsSyncEngine(UID, transport).push();
+
+    window.removeEventListener(SETTINGS_SYNCED_EVENT, pushed);
+    expect(set).toHaveBeenCalledWith({ titleFilters: ['trump'] });
+    expect(pushed).toHaveBeenCalledTimes(1);
+    expect(
+      (pushed.mock.calls[0][0] as CustomEvent<{ keys: string[] }>).detail.keys,
+    ).toEqual(['titleFilters']);
+  });
+
+  it('announces keys adopted from another device, not just pushed ones', async () => {
+    // Both halves of "this device and the server now agree". Emitting only on
+    // push meant a list changed on another device updated the local overlay and
+    // never refetched, so the rows the server excluded stayed missing (Codex P2
+    // on #625).
+    const { transport, get } = makeTransport();
+    get.mockResolvedValue({ titleFilters: ['musk'] });
+    const synced = vi.fn();
+    window.addEventListener(SETTINGS_SYNCED_EVENT, synced);
+
+    await createSettingsSyncEngine(UID, transport).reconcile();
+
+    window.removeEventListener(SETTINGS_SYNCED_EVENT, synced);
+    expect(window.localStorage.getItem(TITLE_FILTERS_KEY)).toBe(
+      JSON.stringify(['musk']),
+    );
+    // Exactly once: the ack is advanced before the apply, so the push that
+    // follows has an empty patch and emits nothing.
+    expect(synced).toHaveBeenCalledTimes(1);
+    expect(
+      (synced.mock.calls[0][0] as CustomEvent<{ keys: string[] }>).detail.keys,
+    ).toEqual(['titleFilters']);
+  });
+
+  it('announces nothing when a reconcile changes no local value', async () => {
+    // A hydration that agrees with what's already here must not reflow the feed.
+    window.localStorage.setItem(TITLE_FILTERS_KEY, JSON.stringify(['musk']));
+    window.localStorage.setItem(
+      ackedSettingsKey(UID),
+      JSON.stringify({ titleFilters: ['musk'] }),
+    );
+    const { transport, get } = makeTransport();
+    get.mockResolvedValue({ titleFilters: ['musk'] });
+    const synced = vi.fn();
+    window.addEventListener(SETTINGS_SYNCED_EVENT, synced);
+
+    await createSettingsSyncEngine(UID, transport).reconcile();
+
+    window.removeEventListener(SETTINGS_SYNCED_EVENT, synced);
+    expect(synced).not.toHaveBeenCalled();
+  });
+
+  it('does not announce a push the server rejected', async () => {
+    // Nothing to refetch against: the server still holds the old list, so an
+    // event here would send the feed to re-read exactly what it already has.
+    window.localStorage.setItem(TITLE_FILTERS_KEY, JSON.stringify(['trump']));
+    const { transport, set } = makeTransport();
+    set.mockRejectedValueOnce(new Error('offline'));
+    const pushed = vi.fn();
+    window.addEventListener(SETTINGS_SYNCED_EVENT, pushed);
+
+    await expect(createSettingsSyncEngine(UID, transport).push()).rejects.toThrow(
+      'offline',
+    );
+
+    window.removeEventListener(SETTINGS_SYNCED_EVENT, pushed);
+    expect(pushed).not.toHaveBeenCalled();
   });
 });
 

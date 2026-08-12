@@ -1344,12 +1344,29 @@ negligible and off every critical path. See the External services table in
        hiding, so nothing is consumed and the filter needs no confirmation step
        before it applies.
      - **Whole words, not substrings** — a `trump` filter must not hide an
-       article about a trumpet. A filter also matches its simple plural, but
+       article about a trumpet. Accents and case don't matter: *Peña*, *peña*
+       and *Pena* are one word. In scripts written with their own vowel marks
+       (Arabic, Hebrew, the Indic scripts) a marked headline may still be
+       counted in a feed's badge even though the list correctly hides it — the
+       list is always right, and erring that way is deliberate, since the
+       alternative risked hiding articles that shouldn't be. A filter also matches its simple plural, but
        **never a shorter word**: stripping a suffix would turn `news` into
        `new` and hide most of a feed. Where a reader might want the shorter
        form, it's offered as its own choice rather than inferred.
      - **Pinned articles are exempt**, as they are from every other reason a
        row would leave a list.
+     - **A filtered article doesn't hold a place in the feed.** It doesn't
+       count toward a feed's unread badge, and it doesn't occupy one of the
+       slots in the newest-articles floor a feed is always allowed — so a feed
+       whose latest articles all match still shows you the ones behind them,
+       rather than looking empty. Looking behind them is bounded: if a feed's
+       whole recent run matches, it serves nothing rather than digging
+       arbitrarily far back through its archive — at that point you've filtered
+       essentially the entire feed, and the cost of the search would be paid on
+       every load by everyone. This is what separates filtering from
+       dismissing: dismissing acts on an article you were shown and shrinks the
+       feed, while a filter is a standing rule about articles you never wanted
+       shown, and enforcing it should never cost you a feed you still read.
      - **Feed views only.** `/search` and the library lists (`/pinned`,
        `/done`, …) are unfiltered — the same way Done items still show on
        `/done`. Search is deliberately the way back to a filtered article, and

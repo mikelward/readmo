@@ -146,6 +146,17 @@ export const SYNCED_SETTINGS_STORAGE_KEYS: readonly string[] = SYNCED_KEYS.map(
  * ever meet a leftover snapshot that no longer matches the wiped prefs (a
  * stale ack would make a fresh flip to the acked value look already-delivered,
  * and a later reconcile would overwrite the user's change — Codex P2 on #494). */
+/** Fired when this device and the server AGREE on a set of settings
+ * (`detail.keys`) — either because a push was acknowledged, or because a
+ * reconcile adopted the server's value. Distinct from
+ * READING_PREF_CHANGE_EVENT, which fires on the local write: the gap between
+ * them is the push debounce plus a round trip, so anything that must read
+ * SERVER truth (a refetch whose result depends on a server-side setting) has to
+ * wait for this one. Both emitters matter — keying only on the push half means
+ * a list changed on another device updates the local overlay and never
+ * refetches (Codex P2 on #625). */
+export const SETTINGS_SYNCED_EVENT = 'readmo:settings-synced';
+
 export const ACKED_SETTINGS_KEY_PREFIX = 'readmo:settings-acked:';
 
 /** The dirty-marker set: keys of settings the user has changed on this device
@@ -351,6 +362,18 @@ export function createSettingsSyncEngine(
     // and must not be resurrected.
     if (cancelled) return;
     writeAcked(uid, { ...readAcked(uid), ...patch });
+    // Announce what the SERVER now has. A local store change is not the same
+    // event: anything that must act on server truth (useFeedInvalidation's
+    // refetch, which would otherwise re-read the feed with the old filters
+    // still applied and mark it fresh) has to wait for this, 400 ms of debounce
+    // plus a round trip later. Dispatched after writeAcked so a listener that
+    // reads the snapshot sees the acked values, and only for keys actually
+    // sent, so an unrelated push wakes nobody.
+    window.dispatchEvent(
+      new CustomEvent(SETTINGS_SYNCED_EVENT, {
+        detail: { keys: Object.keys(patch) as SyncedSettingKey[] },
+      }),
+    );
     // Clear a pushed key's dirty marker only while its local value still
     // matches what was sent — a flip made while the write was in flight is a
     // NEW action that must stay dirty for the next push.
@@ -407,6 +430,19 @@ export function createSettingsSyncEngine(
           // Storage unavailable — the stores keep their defaults.
         }
         window.dispatchEvent(new Event(READING_PREF_CHANGE_EVENT));
+        // Adopting the server's value is the OTHER way this device and the
+        // server come to agree, and a listener that needs server truth cares
+        // about it identically. Emitting only from doPush would mean a list
+        // changed on another device updates the local overlay and never
+        // refetches — the rows the server excluded stay missing, and the ones a
+        // removal should restore never arrive (Codex P2 on #625). doPush below
+        // sends an empty patch here (the ack was already advanced), so it emits
+        // nothing and there is no double-fire.
+        window.dispatchEvent(
+          new CustomEvent(SETTINGS_SYNCED_EVENT, {
+            detail: { keys: apply.map(([key]) => key) },
+          }),
+        );
       }
     }
     await doPush();

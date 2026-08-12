@@ -6,6 +6,8 @@ import { ItemList } from '../components/ItemList';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import { DEFAULT_ITEM_STATE, type FeedItem } from '../lib/types';
 import type { FetchPage } from './useFeedItems';
+import { useTitleFilters } from './useReadingPrefs';
+import { SETTINGS_SYNCED_EVENT } from '../lib/settingsSync';
 
 /**
  * Regression: after a persisted-cache restore, preexisting Done/Hidden item
@@ -127,6 +129,106 @@ describe('useFeedInvalidation query scoping', () => {
       .getQueryCache()
       .find({ queryKey: ['feed', 'home-all'] });
     expect(feedItemsQuery?.isStale()).toBe(false);
+  });
+
+  it('refetches the feed when a title-filter push is acknowledged', async () => {
+    // The one deliberate exception to the frozen-set rule (Codex P1 on #625).
+    // Once the server filters too (0072), the rows it excluded are not in the
+    // cache — so removing a word cannot restore them by overlay, and SPEC
+    // promises removal "restores every article it was hiding". The articles
+    // that rise into the floor slots a new filter frees have likewise never
+    // been fetched. Neither is expressible as an overlay, which is the test the
+    // frozen-set rule uses.
+    //
+    // Keyed on the SERVER ACK rather than the local write: see the hook doc.
+    // This asserts the wiring; that the engine emits the event after a
+    // successful push is asserted in settingsSync.test.ts.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const itemsFetch = vi.fn().mockResolvedValue({ items: [], nextCursor: null });
+    const countsFetch = vi.fn().mockResolvedValue({ 'feed-a': 1 });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: 60_000 } },
+    });
+
+    function Probe() {
+      useQuery({ queryKey: ['feed', 'home-all'], queryFn: itemsFetch });
+      useQuery({ queryKey: ['feed', 'unread-counts', 'feed-a'], queryFn: countsFetch });
+      return null;
+    }
+    renderWithProviders(<Probe />, { source, queryClient });
+    await waitFor(() => expect(itemsFetch).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(countsFetch).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(SETTINGS_SYNCED_EVENT, { detail: { keys: ['titleFilters'] } }),
+      );
+    });
+
+    // Both halves: the rows, and the badges that count what the rows serve.
+    await waitFor(() => expect(itemsFetch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(countsFetch).toHaveBeenCalledTimes(2));
+  });
+
+  it('does not refetch the feed when an unrelated setting is pushed', async () => {
+    // The exception has to stay narrow — a push of any other setting must not
+    // reflow the list.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const itemsFetch = vi.fn().mockResolvedValue({ items: [], nextCursor: null });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: 60_000 } },
+    });
+
+    function Probe() {
+      useQuery({ queryKey: ['feed', 'home-all'], queryFn: itemsFetch });
+      return null;
+    }
+    renderWithProviders(<Probe />, { source, queryClient });
+    await waitFor(() => expect(itemsFetch).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(SETTINGS_SYNCED_EVENT, { detail: { keys: ['itemSort'] } }),
+      );
+    });
+
+    // Asserted on staleness rather than by waiting to see whether a refetch
+    // arrives — there is no moment at which "it never happened" becomes true,
+    // so a timeout would only be testing the clock.
+    const feed = queryClient.getQueryCache().find({ queryKey: ['feed', 'home-all'] });
+    expect(feed?.isStale()).toBe(false);
+    expect(itemsFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not refetch the feed on a LOCAL filter change before the push lands', async () => {
+    // The bug the ack-keying exists to prevent (Codex P1 on #625, second pass):
+    // refetching on the local store write asks the server while it still holds
+    // the OLD list, gets the old rows, and marks the query fresh — after which
+    // the ack invalidates nothing and the feed keeps the stale set until a
+    // manual refresh. The reader still sees matched rows vanish at once; that
+    // is the overlay, which needs no refetch.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const itemsFetch = vi.fn().mockResolvedValue({ items: [], nextCursor: null });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: 60_000 } },
+    });
+
+    let filters!: ReturnType<typeof useTitleFilters>;
+    function Probe() {
+      useQuery({ queryKey: ['feed', 'home-all'], queryFn: itemsFetch });
+      filters = useTitleFilters();
+      return null;
+    }
+    renderWithProviders(<Probe />, { source, queryClient });
+    await waitFor(() => expect(itemsFetch).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      filters.addTitleFilter('trump');
+    });
+
+    const feed = queryClient.getQueryCache().find({ queryKey: ['feed', 'home-all'] });
+    expect(feed?.isStale()).toBe(false);
+    expect(itemsFetch).toHaveBeenCalledTimes(1);
   });
 
   it('leaves the frozen feed set alone on a cross-device hydration (but refreshes the unread count)', async () => {
