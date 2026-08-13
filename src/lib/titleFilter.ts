@@ -6,23 +6,19 @@
 // the row menu's candidate list all read it, so they can never disagree about
 // what "matches" means.
 //
-// Two rules carry the design (both were deliberate, see SPEC):
+// ONE RULE carries the design: WHOLE WORD, not substring. `trump` must not eat
+// "trumpet". Both the title and each filter entry are tokenized on
+// non-alphanumerics and compared token-for-token, so an entry only ever matches
+// a whole word — or, for a multi-word entry, a contiguous run of whole words.
 //
-//  - WHOLE WORD, not substring. `trump` must not eat "trumpet". Both the title
-//    and each filter entry are tokenized on non-alphanumerics and compared
-//    token-for-token, so an entry only ever matches a whole word (or, for a
-//    multi-word entry, a contiguous run of whole words).
-//  - ADD-ONLY plural tolerance. A filter matches its `+s` / `+es` forms and
-//    NEVER strips a suffix. Stripping is what produces a shorter, commoner word
-//    that swallows the language — `news` → `new` hides every headline with
-//    "new" in it, `US` → `u`/`us` hides almost everything. Adding can only ever
-//    produce a LONGER, more specific string, so it cannot overreach: a variant
-//    that isn't a real word (`tariffes`) simply never matches anything.
-//
-// The stem a reader might actually want (`tariffs` → `tariff`) is offered as a
-// visible one-tap candidate in the row menu instead — see filterCandidates. So
-// the stripping decision is made by the reader, with both forms in front of
-// them, rather than silently inside the matcher.
+// A filter matches exactly what you typed and nothing else. There was once an
+// add-only plural allowance (`tariff` also matching "tariffs") and a stem
+// offered beside each plural candidate in the row menu; both were removed
+// deliberately as scope this feature doesn't need. The reader who wants both
+// forms adds both — two taps, and the menu offers whichever forms the headline
+// actually contains. What that buys is a matcher with no linguistic knowledge
+// in it at all: nothing to get wrong for a language whose plurals don't work
+// like English's, and nothing to keep in step between the client and SQL.
 
 // `fold`, `tokenize` and `normalizeFilter` live in titleFilterCore.ts because
 // the poller needs them too — it writes items.title_normalized so the feed RPCs
@@ -33,51 +29,15 @@ import { fold, tokenize, normalizeFilter } from './titleFilterCore';
 
 export { fold, normalizeFilter };
 
-/** Whether a title token satisfies a filter token — exact, or one of the
- * filter's simple plurals. Add-only: never strips (see the module header).
- *
- * The `-ies` form has to be here because filterCandidates OFFERS that stem:
- * `companies` in a headline offers `company`, and without this the reader's
- * pick wouldn't even filter the row they picked it from. It stays add-only —
- * every variant is longer than what was typed — so it can't overreach. It's
- * restricted to consonant + `y` because that's the rule English follows;
- * `day` → `daies` isn't a word and would only ever match nothing. */
-function tokenMatches(titleToken: string, filterToken: string): boolean {
-  if (
-    titleToken === filterToken ||
-    titleToken === `${filterToken}s` ||
-    titleToken === `${filterToken}es`
-  ) {
-    return true;
-  }
-  return (
-    /[^aeiou]y$/.test(filterToken) && titleToken === `${filterToken.slice(0, -1)}ies`
-  );
-}
-
 /** Whether `title` matches a single already-normalized filter entry. A
  * multi-word entry matches a CONTIGUOUS run of title words, so `trade war`
- * matches "the trade war escalates" but not "war over trade". The plural
- * allowance applies to the entry's LAST token only — English pluralizes the
- * head noun (`trade war` → `trade wars`), and applying it to every token would
- * widen the match for no real gain. */
+ * matches "the trade war escalates" but not "war over trade". Every token
+ * compares exactly. */
 function titleMatchesFilter(titleTokens: string[], filter: string): boolean {
   const filterTokens = filter.split(' ').filter(Boolean);
   if (filterTokens.length === 0) return false;
-  const last = filterTokens.length - 1;
   for (let i = 0; i + filterTokens.length <= titleTokens.length; i += 1) {
-    let hit = true;
-    for (let j = 0; j < filterTokens.length; j += 1) {
-      const token = titleTokens[i + j];
-      const wanted = filterTokens[j];
-      // Interior tokens of a phrase must match exactly; only the head noun
-      // carries the plural allowance.
-      if (j === last ? !tokenMatches(token, wanted) : token !== wanted) {
-        hit = false;
-        break;
-      }
-    }
-    if (hit) return true;
+    if (filterTokens.every((wanted, j) => titleTokens[i + j] === wanted)) return true;
   }
   return false;
 }
@@ -135,9 +95,9 @@ const MAX_PHRASE_WORDS = 3;
 const MAX_PRIMARY = 6;
 const MAX_MORE = 10;
 
-/** Shortest stem worth offering. Below this, stripping produces noise (`us` →
- * `u`) rather than a word anyone meant. */
-const MIN_STEM_LENGTH = 3;
+/** Shortest word worth offering as a candidate. Below this it's a stub or an
+ * abbreviation the reader almost certainly didn't mean to filter on. */
+const MIN_CANDIDATE_LENGTH = 3;
 
 /** A word as it appears in the title, with the display form kept for the menu
  * label and the folded form for comparison. */
@@ -165,22 +125,6 @@ function titleWords(title: string): Word[] {
   return out;
 }
 
-/** The stem to offer beside a plural candidate, or null when there isn't a
- * sensible one. Handles the two forms worth covering — `-ies` → `-y`
- * (`companies` → `company`) and a plain trailing `-s` — and declines anything
- * that would leave a stub. Double-s words (`press`, `class`) are excluded: the
- * "stem" would be a non-word. */
-function stemOf(word: string): string | null {
-  if (word.length < MIN_STEM_LENGTH + 1) return null;
-  if (word.endsWith('ies')) {
-    const stem = `${word.slice(0, -3)}y`;
-    return stem.length >= MIN_STEM_LENGTH ? stem : null;
-  }
-  if (word.endsWith('ss') || !word.endsWith('s')) return null;
-  const stem = word.slice(0, -1);
-  return stem.length >= MIN_STEM_LENGTH ? stem : null;
-}
-
 /** The row menu's two tiers of one-tap filter candidates for a title.
  *
  *  - `primary` — capitalized terms: the names a reader almost always means.
@@ -190,10 +134,11 @@ function stemOf(word: string): string | null {
  *    Single words only: merging adjacent lowercase words gives you
  *    "hit soybean", which is nobody's filter.
  *
- * Both tiers are in title order (the only ordering a reader can predict), drop
- * anything already filtered, and offer a stem beside any plural candidate
- * (`tariffs`, then `tariff`) so the reader picks the form rather than the
- * matcher guessing. */
+ * Both tiers are in title order (the only ordering a reader can predict) and
+ * drop anything already filtered. Candidates are the words the headline
+ * actually contains, verbatim — no stem is derived beside a plural, because the
+ * matcher no longer has a plural rule for one to pair with. A reader who wants
+ * both forms adds both. */
 export function filterCandidates(
   title: string,
   active: readonly string[] = [],
@@ -203,17 +148,12 @@ export function filterCandidates(
   const primary: string[] = [];
   const more: string[] = [];
 
-  /** Add a candidate (and its stem, right after it) if it's new. */
+  /** Add a candidate if it's new. */
   const offer = (into: string[], display: string) => {
     const key = normalizeFilter(display);
     if (!key || taken.has(key)) return;
     taken.add(key);
     into.push(display);
-    const stem = stemOf(key);
-    if (stem && !taken.has(stem)) {
-      taken.add(stem);
-      into.push(stem);
-    }
   };
 
   // Tier 1. Stopwords break runs as well as being skipped, which covers both a
@@ -245,7 +185,7 @@ export function filterCandidates(
   for (const w of words) {
     if (usedInPrimary.has(w.folded)) continue;
     if (STOPWORDS.has(w.folded)) continue;
-    if (w.folded.length < MIN_STEM_LENGTH) continue;
+    if (w.folded.length < MIN_CANDIDATE_LENGTH) continue;
     if (/^\p{N}+$/u.test(w.folded)) continue;
     offer(more, w.display);
   }

@@ -1337,6 +1337,16 @@ negligible and off every critical path. See the External services table in
      whose **title** matches one is **not served** in the feed views. Distinct
      from *Mute feed*, which is per-feed and leaves the articles reachable —
      a filtered article simply isn't in the list.
+     - **Deliberately small, and not yet proven worth its keep.** Nobody has
+       used this in anger, so it is scoped to the simplest thing that works and
+       should stay there until real use argues otherwise. It had a plural
+       allowance and a stem offered beside each plural candidate; both were
+       removed as unearned complexity rather than fixed. Treat any proposal to
+       make the matching cleverer — stemming, synonyms, per-language rules,
+       regex — as needing evidence from actual reading first. The two things
+       that ARE worth their cost, and are why the server half stays: the unread
+       badge agrees with the list, and the word list follows you across
+       devices.
      - **Account-wide, across every feed.** You don't want to re-teach each
        device — or each feed — what you never want to read.
      - **Matched articles vanish**: no placeholder, no count, no Undo
@@ -1350,10 +1360,9 @@ negligible and off every critical path. See the External services table in
        the badge agree about it. "Whole word" needs word boundaries, so in a
        script written without spaces (Japanese, Chinese) a filter only matches a
        headline it spans entirely — the same rule, with nothing to anchor it.
-       A filter also matches its simple plural, but
-       **never a shorter word**: stripping a suffix would turn `news` into
-       `new` and hide most of a feed. Where a reader might want the shorter
-       form, it's offered as its own choice rather than inferred.
+       A filter matches **exactly the word you typed** — not its plural, not a
+       stem of it. Add both forms if you want both; the row menu offers
+       whichever ones the headline actually contains.
      - **Pinned articles are exempt**, as they are from every other reason a
        row would leave a list.
      - **A filtered article doesn't hold a place in the feed.** It doesn't

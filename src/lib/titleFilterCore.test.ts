@@ -2,20 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { normalizeTitle, tokenize, UNTITLED } from './titleFilterCore';
 import { compileFilters, titleIsFiltered } from './titleFilter';
 
-/** What migration 0073's SQL matcher does, in the two lines it takes: the
- * needle is the entry wrapped in spaces, the haystack is the stored column.
- * Reproduced here so the cases below can assert the CLIENT and the SERVER agree
- * — which is the only property that matters and the one 0072 got wrong. */
+/** What migration 0074's SQL matcher does, in the one line it takes: the needle
+ * is the entry wrapped in spaces, the haystack is the stored column. Reproduced
+ * here so the cases below can assert the CLIENT and the SERVER agree — the only
+ * property that matters, and the one 0072 got wrong. Both sides arrive folded
+ * and space-wrapped, so containment IS whole-word matching. */
 function serverMatches(stored: string, entries: string[]): boolean {
-  return entries.some((entry) => {
-    const toks = entry.split(' ').filter(Boolean);
-    if (toks.length === 0) return false;
-    const head = toks[toks.length - 1];
-    const lead = toks.length > 1 ? `${toks.slice(0, -1).join(' ')} ` : '';
-    const variants = [head, `${head}s`, `${head}es`];
-    if (/[^aeiou]y$/.test(head)) variants.push(`${head.slice(0, -1)}ies`);
-    return variants.some((v) => stored.includes(` ${lead}${v} `));
-  });
+  return entries.some((entry) => entry !== '' && stored.includes(` ${entry} `));
 }
 
 describe('normalizeTitle', () => {
@@ -57,16 +50,18 @@ describe('client and server agree', () => {
     ['The trumped-up charges', ['trump'], false, 'hyphen is a boundary'],
     ['Class action filed', ['as'], false, 'no substring inside a word'],
     ["Trump's tariffs hit farmers", ['trump'], true, 'possessive'],
-    ['New tariffs announced', ['tariff'], true, '+s'],
-    ['New taxes announced', ['tax'], true, '+es'],
-    ['Several companies withdrew', ['company'], true, '-ies'],
-    ['It took three days', ['day'], true, 'vowel+y takes plain +s'],
-    ['One company withdrew', ['companies'], false, 'never strips'],
-    ['A new dawn', ['news'], false, 'news does not become new'],
+    // No plural allowance: a filter matches exactly what was typed. Removed as
+    // unearned complexity for a small, unproven feature — see SPEC.
+    ['New tariffs announced', ['tariff'], false, 'singular does not match a plural'],
+    ['New tariffs announced', ['tariffs'], true, 'the plural matches when typed'],
+    ['Several companies withdrew', ['company'], false, 'no -ies rule'],
+    ['One company withdrew', ['companies'], false, 'and none in reverse'],
+    ['A new dawn', ['news'], false, 'never strips'],
     ['The trade war escalates', ['trade war'], true, 'contiguous run'],
     ['A war over trade rules', ['trade war'], false, 'same words, not a run'],
-    ['The trade wars escalate', ['trade war'], true, 'plural on the head noun'],
-    ['Trades war over rules', ['trade war'], false, 'no plural on an interior token'],
+    ['The trade wars escalate', ['trade war'], false, 'no plural on the head noun'],
+    ['The trade wars escalate', ['trade wars'], true, 'the phrase as typed'],
+    ['Trades war over rules', ['trade war'], false, 'nor on an interior token'],
     ['Trump announces tariffs', [], false, 'empty list'],
     ['!!! ???', ['trump'], false, 'title with no words'],
     ['Musk buys a company', ['trump', 'musk'], true, 'second entry matches'],

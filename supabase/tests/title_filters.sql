@@ -1,4 +1,5 @@
--- Regression test for 0073_title_normalized_column.sql.
+-- Regression test for 0073_title_normalized_column.sql and
+-- 0074_title_filter_exact_match.sql.
 --
 -- WHAT MOVED. 0072 transcribed src/lib/titleFilter.ts into SQL, and this file
 -- used to run the client's whole matching corpus against that transcription to
@@ -44,17 +45,19 @@ begin
       (' class action filed ',      array['as'],        false, 'no substring inside a word'),
       -- possessives fall out of the tokenizing done upstream
       (' trump s tariffs ',         array['trump'],     true,  'possessive'),
-      -- add-only plurals, built by concatenation (no Unicode needed)
-      (' new tariffs announced ',   array['tariff'],    true,  '+s'),
-      (' new taxes announced ',     array['tax'],       true,  '+es'),
-      (' several companies left ',  array['company'],   true,  '-ies'),
-      (' one company withdrew ',    array['companies'], false, 'never strips'),
-      (' a new dawn ',              array['news'],      false, 'news does not become new'),
+      -- exact only: 0074 dropped the plural allowance, so an entry matches the
+      -- words it contains and nothing else
+      (' new tariffs announced ',   array['tariff'],    false, 'singular does not match a plural'),
+      (' new tariffs announced ',   array['tariffs'],   true,  'the plural matches when typed'),
+      (' several companies left ',  array['company'],   false, 'no -ies rule'),
+      (' one company withdrew ',    array['companies'], false, 'and none in reverse'),
+      (' a new dawn ',              array['news'],      false, 'never strips'),
       -- phrases match a contiguous run only
       (' the trade war escalates ', array['trade war'], true,  'contiguous run'),
       (' a war over trade rules ',  array['trade war'], false, 'same words, not a run'),
-      (' the trade wars escalate ', array['trade war'], true,  'plural on the head noun'),
-      (' trades war over rules ',   array['trade war'], false, 'no plural on an interior token'),
+      (' the trade wars escalate ', array['trade war'], false, 'no plural on the head noun'),
+      (' the trade wars escalate ', array['trade wars'],true,  'the phrase as typed'),
+      (' trades war over rules ',   array['trade war'], false, 'nor on an interior token'),
       -- degenerate inputs
       (' trump announces tariffs ', '{}'::text[],       false, 'empty list'),
       ('  ',                        array['trump'],     false, 'tokenless title'),
@@ -82,9 +85,10 @@ begin
   if exists (
     select 1 from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'public' and p.proname in ('title_fold', 'title_tokens')
+    where n.nspname = 'public'
+      and p.proname in ('title_fold', 'title_tokens', 'title_token_variants')
   ) then
-    raise exception 'title_fold/title_tokens still exist — 0073 should have dropped them';
+    raise exception 'SQL still carries fold/tokenize/plural helpers — 0073/0074 drop them';
   end if;
   raise notice 'PASS SQL no longer folds or tokenizes';
 end $$;
