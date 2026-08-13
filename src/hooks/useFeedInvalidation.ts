@@ -28,9 +28,9 @@ import { SETTINGS_SYNCED_EVENT } from '../lib/settingsSync';
  *
  * - **A change to the FILTERED WORDS list** is the one thing that does
  *   invalidate the frozen feed-items set, and it is a deliberate exception to
- *   the paragraph above rather than an oversight. Once the server applies the
- *   filters too (migration 0072), the rows it excluded are not in the cache at
- *   all — so the overlay cannot restore them, and SPEC's promise that removing
+ *   the paragraph above rather than an oversight. The server applies the
+ *   filters too (migrations 0072/0073), so the rows it excluded are not in the
+ *   cache at all — so the overlay cannot restore them, and SPEC's promise that removing
  *   a word "restores every article it was hiding" would silently hold only
  *   until the next pull-to-refresh. The same applies in reverse: the articles
  *   that move up into the floor slots a new filter frees have never been
@@ -38,9 +38,9 @@ import { SETTINGS_SYNCED_EVENT } from '../lib/settingsSync';
  *   the test the frozen-set rule uses.
  *
  *   It stays narrow on purpose — only this list, so an unrelated settings write
- *   reflows nothing. Against a backend without 0072 the refetch returns the same
- *   rows and the overlay does the work, so this is safe to ship ahead of the
- *   migration (guardrail #11).
+ *   reflows nothing. Against a backend without the migration the refetch returns
+ *   the same rows and the overlay does the work, so the client never requires a
+ *   particular backend vintage (guardrail #11).
  *
  *   THE TIMING IS THE WHOLE POINT, and getting it wrong is silent. It keys on
  *   SETTINGS_SYNCED_EVENT — the server ACK — not on the local store change,

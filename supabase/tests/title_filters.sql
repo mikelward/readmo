@@ -1,12 +1,17 @@
--- Regression test for 0072_server_side_title_filters.sql.
+-- Regression test for 0073_title_normalized_column.sql.
 --
--- The matching contract lives in src/lib/titleFilter.ts and is TRANSCRIBED into
--- SQL by 0072 so the badge counts and the per-feed floor can honor it. Two
--- implementations of one contract can drift, and a drift is close to invisible
--- in the field — the list and the badge would simply disagree about one row.
--- So this file runs the SAME corpus of cases that src/lib/titleFilter.test.ts
--- runs, case for case. When you change one side, change both, and keep the two
--- corpora in step.
+-- WHAT MOVED. 0072 transcribed src/lib/titleFilter.ts into SQL, and this file
+-- used to run the client's whole matching corpus against that transcription to
+-- keep the two in step. There is no transcription any more: 0073 matches
+-- against items.title_normalized, which the poller computes with a
+-- byte-identical copy of the client module. So the corpus lives where the
+-- folding does — src/lib/titleFilterCore.test.ts asserts the client and the
+-- server agree case for case, and titleFilterCore.identity.test.ts asserts the
+-- two copies of the module are the same bytes. Both run in `npm test`.
+--
+-- What is left for SQL is what SQL still decides: whether the matcher finds a
+-- whole-word needle in a normalized haystack, and whether the floor and the
+-- badge honor it. That is what this file covers.
 --
 -- Plain SQL (no pgTAP), matching the convention of the other files here: each
 -- check raises an EXCEPTION on failure, so running under psql with
@@ -14,13 +19,18 @@
 --
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/title_filters.sql
 --
--- The matcher functions are pure (immutable, no auth, no tables), so this half
--- needs no fixtures at all. The floor/badge behavior that CONSUMES them is
--- exercised at the bottom, and that part does seed rows.
+-- NOTE this file is not run by CI (it needs a live database), so an assertion
+-- here that has never been executed is worse than no assertion. 0072's version
+-- had three: it inserted into the generated `sort_at` column, addressed the
+-- result rows as `(item).title` when feed_items' columns come back flat, and
+-- claimed a Japanese prefix match that is false on both sides. Every check
+-- below has been run against a real Postgres 16.
 
 \set ON_ERROR_STOP on
 
--- --- the matcher, case for case with titleFilter.test.ts -------------------
+-- --- the matcher over already-normalized text -------------------------------
+-- Every value below is in stored form: folded, tokenized, space-joined and
+-- space-wrapped. Producing that form is the JS module's job and is tested there.
 do $$
 declare
   c record;
@@ -28,95 +38,55 @@ declare
 begin
   for c in
     select * from (values
-      -- whole words, case- and diacritic-insensitive
-      ('Trump announces tariffs',        array['trump'],        true,  'exact word'),
-      ('TRUMP announces tariffs',        array['trump'],        true,  'case folded'),
-      ('Peña wins the race',             array['pena'],         true,  'diacritic folded'),
-      -- the rule that motivates tokenizing at all
-      ('A trumpet solo for the ages',    array['trump'],        false, 'not a substring'),
-      ('The trumped-up charges',         array['trump'],        false, 'hyphen is a boundary'),
-      ('Class action filed',             array['as'],           false, 'no substring inside a word'),
-      -- possessives fall out of tokenizing, with no possessive rule
-      ('Trump''s tariffs hit farmers',   array['trump'],        true,  'possessive'),
-      -- add-only plurals
-      ('New tariffs announced',          array['tariff'],       true,  '+s'),
-      ('New taxes announced',            array['tax'],          true,  '+es'),
-      ('Several companies withdrew',     array['company'],      true,  '-ies (the menu offers this stem)'),
-      ('Both countries agreed',          array['country'],      true,  '-ies again'),
-      ('It took three days',             array['day'],          true,  'vowel+y takes the plain +s'),
-      ('One company withdrew',           array['companies'],    false, 'never strips back to the singular'),
-      -- never strips: the whole reason the allowance is add-only
-      ('A new dawn for cycling',         array['news'],         false, 'news does not become new'),
-      ('It is up to us all',             array['USA'],          false, 'USA does not become us'),
-      ('One tariff was lifted',          array['tariffs'],      false, 'plural filter, singular title'),
-      -- known limitation, recorded rather than fixed (see TODO.md)
-      ('It is up to us now',             array['US'],           true,  'acronym folds onto its homograph'),
+      -- whole words, not substrings — the wrapping is what guarantees it
+      (' trump announces tariffs ', array['trump'],     true,  'exact word'),
+      (' a trumpet solo ',          array['trump'],     false, 'not a substring'),
+      (' class action filed ',      array['as'],        false, 'no substring inside a word'),
+      -- possessives fall out of the tokenizing done upstream
+      (' trump s tariffs ',         array['trump'],     true,  'possessive'),
+      -- add-only plurals, built by concatenation (no Unicode needed)
+      (' new tariffs announced ',   array['tariff'],    true,  '+s'),
+      (' new taxes announced ',     array['tax'],       true,  '+es'),
+      (' several companies left ',  array['company'],   true,  '-ies'),
+      (' one company withdrew ',    array['companies'], false, 'never strips'),
+      (' a new dawn ',              array['news'],      false, 'news does not become new'),
       -- phrases match a contiguous run only
-      ('The trade war escalates',        array['trade war'],    true,  'contiguous run'),
-      ('A war over trade rules',         array['trade war'],    false, 'same words, not a run'),
-      ('The trade wars escalate',        array['trade war'],    true,  'plural on the head noun'),
-      ('Trades war over rules',          array['trade war'],    false, 'no plural on an interior token'),
+      (' the trade war escalates ', array['trade war'], true,  'contiguous run'),
+      (' a war over trade rules ',  array['trade war'], false, 'same words, not a run'),
+      (' the trade wars escalate ', array['trade war'], true,  'plural on the head noun'),
+      (' trades war over rules ',   array['trade war'], false, 'no plural on an interior token'),
       -- degenerate inputs
-      ('Trump announces tariffs',        '{}'::text[],          false, 'empty list'),
-      ('!!! ???',                        array['trump'],        false, 'title with no words'),
-      ('Trump announces tariffs',        array['...'],          false, 'entry that normalizes to nothing'),
-      -- an unnormalized stored entry still matches (the mapper normalizes, but
-      -- a hand-edited row need not have)
-      ('Trump announces tariffs',        array['  TRUMP  '],    true,  'unnormalized entry'),
-      -- multiple entries: any one matching is enough
-      ('Musk buys another company',      array['trump','musk'], true,  'second entry matches'),
-      -- Kana voicing marks live in a Combining block, so NFD's decomposition of
-      -- が is folded away and the word stays one token, as on the client.
-      ('がくの話',                        array['がく'],          true,  'Japanese dakuten (NFD splits が)'),
-      -- The ACCEPTED GAP, asserted rather than left to be discovered: a script
-      -- whose marks live inside its own block is under-filtered here. The
-      -- client still filters these titles correctly, so the reader's list is
-      -- right and only a badge can over-count. Asserting `false` records that
-      -- this is known and chosen — the alternative was hand-built per-script
-      -- spans, and one of those deleted Malayalam LETTERS and hid an article
-      -- the client showed (Codex P2 on #625). Under-filtering is the safe
-      -- direction; over-filtering is not.
-      ('مُحَمَّد يفوز',                      array['محمد'],         false, 'Arabic marks: known gap, safe direction'),
-      ('שָׁלוֹם עולם',                      array['שלום'],         false, 'Hebrew points: known gap, safe direction'),
-      -- The regression guard for the dangerous direction: a Malayalam LETTER
-      -- must survive the fold, so the tokens either side of it are not joined
-      -- into a word a filter would match.
-      ('aൎb is unrelated',              array['ab'],           false, 'must not delete U+0D4E (category Lo)')
-    ) as t(title, filters, want, note)
+      (' trump announces tariffs ', '{}'::text[],       false, 'empty list'),
+      ('  ',                        array['trump'],     false, 'tokenless title'),
+      -- a NULL normalization (not yet backfilled) must match nothing rather
+      -- than error: that is the under-filtering direction, which costs the
+      -- reader nothing.
+      (null,                        array['trump'],     false, 'NULL is not yet normalized')
+    ) as t(norm, filters, want, note)
   loop
-    got := public.title_is_filtered(c.title, c.filters);
+    got := public.title_is_filtered(c.norm, c.filters);
     if got is distinct from c.want then
       raise exception 'title_is_filtered(%, %) = %, want % — %',
-        c.title, c.filters, got, c.want, c.note;
+        c.norm, c.filters, got, c.want, c.note;
     end if;
   end loop;
   raise notice 'PASS title_is_filtered: all cases';
 end $$;
 
--- --- fold / tokenize, the pieces the matcher is built from -----------------
+-- --- the fold is gone from SQL ---------------------------------------------
+-- Asserted rather than assumed: while these exist someone can call them, and
+-- every caller inherits the hand-enumerated mark ranges and the word-splitting
+-- they caused.
 do $$
 begin
-  if public.title_fold('Peña') <> 'pena' then
-    raise exception 'title_fold strips diacritics: got %', public.title_fold('Peña');
-  end if;
-  if public.title_fold('TRUMP') <> 'trump' then
-    raise exception 'title_fold lowercases';
-  end if;
-  if public.title_tokens('Trump''s tariffs') <> array['trump','s','tariffs'] then
-    raise exception 'title_tokens splits possessives: got %', public.title_tokens('Trump''s tariffs');
-  end if;
-  if public.title_tokens('!!! ???') <> '{}'::text[] then
-    raise exception 'title_tokens of a wordless string is empty';
-  end if;
-  -- Add-only, stated as an invariant rather than a case list: every variant is
-  -- longer than the token itself, which is WHY the allowance cannot overreach.
   if exists (
-    select 1 from unnest(public.title_token_variants('company')) as v
-    where length(v) <= length('company') and v <> 'company'
+    select 1 from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname in ('title_fold', 'title_tokens')
   ) then
-    raise exception 'title_token_variants produced a variant no longer than its input';
+    raise exception 'title_fold/title_tokens still exist — 0073 should have dropped them';
   end if;
-  raise notice 'PASS title_fold / title_tokens / title_token_variants';
+  raise notice 'PASS SQL no longer folds or tokenizes';
 end $$;
 
 -- --- the floor frees a filtered slot ---------------------------------------
@@ -140,12 +110,18 @@ insert into public.user_settings (user_id, title_filters)
 
 -- 12 items: the newest 10 all match the filter, 2 older ones don't. Dated well
 -- outside the 3-day freshness window so the FLOOR is the only thing serving
--- them — that's the path under test.
-insert into public.items (feed_id, guid, url, title, sort_at)
+-- them — that's the path under test. title_normalized is written here the way
+-- the poller writes it (the JS form for these ASCII titles is mechanical).
+-- sort_at is generated (coalesce(published_at, created_at)), so seed
+-- published_at and let it derive. 0072's version of this file inserted sort_at
+-- directly, which is rejected outright — more evidence it had never been run.
+insert into public.items (feed_id, guid, url, title, title_normalized, title_normalized_version, published_at)
 select :'F',
        'g' || n,
        'https://example.com/' || n,
        case when n <= 10 then 'Trump story ' || n else 'Ordinary story ' || n end,
+       case when n <= 10 then ' trump story ' || n || ' ' else ' ordinary story ' || n || ' ' end,
+       1,
        now() - (n || ' days')::interval - interval '5 days'
 from generate_series(1, 12) as n;
 
@@ -155,7 +131,7 @@ declare
   n_trump int;
 begin
   perform set_config('request.jwt.claim.sub', '33333333-3333-3333-3333-333333333333', true);
-  select count(*), count(*) filter (where (item).title like 'Trump%')
+  select count(*), count(*) filter (where title like 'Trump%')
     into n_rows, n_trump
     from public.feed_items('feed', null, 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'::uuid, 30);
 
@@ -184,6 +160,92 @@ begin
   raise notice 'PASS feed_unread_counts: badge excludes filtered articles';
 end $$;
 
+-- --- an un-backfilled row is served, not hidden -----------------------------
+-- The rollout property: between the migration and the poller's backfill pass a
+-- row has no normalization. It must be UNDER-filtered (shown, and counted) —
+-- never withheld — because that is the direction that costs the reader nothing.
+do $$
+declare
+  n_rows int;
+begin
+  update public.items set title_normalized = null, title_normalized_version = null
+   where feed_id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee' and guid = 'g1';
+  perform set_config('request.jwt.claim.sub', '33333333-3333-3333-3333-333333333333', true);
+  select count(*) into n_rows
+    from public.feed_items('feed', null, 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'::uuid, 30)
+   where guid = 'g1';
+  if n_rows <> 1 then
+    raise exception 'an un-normalized row must be served, not hidden: got % rows', n_rows;
+  end if;
+  raise notice 'PASS feed_items: a NULL normalization under-filters';
+  update public.items
+     set title_normalized = ' trump story 1 ', title_normalized_version = 1
+   where feed_id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee' and guid = 'g1';
+end $$;
+
+-- --- the batch normalization write and its compare-and-swap -----------------
+-- The poller folds titles in JS and sends the batch back through this RPC in a
+-- single round trip. The CAS is the part that must not regress: a title that
+-- moved between the pass reading it and this writing must leave the row ALONE,
+-- so it stays in the backlog. Writing the old title's normalization instead
+-- would land a stale value at the current version, which no later batch
+-- revisits — the server would filter that article forever on text it no longer
+-- has.
+do $$
+declare
+  n_updated int;
+  v_id uuid;
+begin
+  select id into v_id from public.items
+   where feed_id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee' and guid = 'g11';
+
+  -- A matching title: the write lands, and the count reflects it.
+  select public.apply_title_normalizations(jsonb_build_array(jsonb_build_object(
+    'id', v_id, 'title', 'Ordinary story 11',
+    'title_normalized', ' ordinary story 11 ', 'title_normalized_version', 1)))
+    into n_updated;
+  if n_updated <> 1 then
+    raise exception 'batch write should have updated 1 row, got %', n_updated;
+  end if;
+
+  -- A title that no longer matches: nothing is written, nothing is reported.
+  select public.apply_title_normalizations(jsonb_build_array(jsonb_build_object(
+    'id', v_id, 'title', 'Something else entirely',
+    'title_normalized', ' wrong value ', 'title_normalized_version', 1)))
+    into n_updated;
+  if n_updated <> 0 then
+    raise exception 'CAS should have rejected the stale title, got % updated', n_updated;
+  end if;
+  if (select title_normalized from public.items where id = v_id) <> ' ordinary story 11 ' then
+    raise exception 'CAS let a stale normalization through';
+  end if;
+
+  raise notice 'PASS apply_title_normalizations: batch write + compare-and-swap';
+end $$;
+
+-- An untitled row must be writable too: `= NULL` is never true, so an `eq`
+-- guard would leave it in the backlog forever.
+do $$
+declare
+  n_updated int;
+  v_id uuid;
+begin
+  insert into public.items (feed_id, guid, url, title, published_at)
+  values ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', 'gnull', 'https://example.com/null', null, now())
+  on conflict do nothing;
+  select id into v_id from public.items
+   where feed_id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee' and guid = 'gnull';
+
+  select public.apply_title_normalizations(jsonb_build_array(jsonb_build_object(
+    'id', v_id, 'title', null,
+    'title_normalized', ' untitled ', 'title_normalized_version', 1)))
+    into n_updated;
+  if n_updated <> 1 then
+    raise exception 'null-titled row must satisfy its own CAS, got % updated', n_updated;
+  end if;
+  raise notice 'PASS apply_title_normalizations: null title is null-safe';
+end $$;
+
 -- --- a pin outranks a filter ----------------------------------------------
 -- Same rule as the client overlay, which checks the pin branch before the
 -- filter branch: a pin is a to-do the reader placed on this article, and it
@@ -200,7 +262,7 @@ begin
   on conflict (user_id, item_id) do update set pinned = true, pinned_at = now();
 
   perform set_config('request.jwt.claim.sub', '33333333-3333-3333-3333-333333333333', true);
-  select count(*) filter (where (item).title like 'Trump%')
+  select count(*) filter (where title like 'Trump%')
     into n_trump
     from public.feed_items('feed', null, 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'::uuid, 30);
 

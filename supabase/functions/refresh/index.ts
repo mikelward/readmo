@@ -13,7 +13,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { parseFeedBody } from '../_shared/parser.ts';
 import { clampInterval, recordFailure, resolveStoredFavicon } from '../_shared/poller.ts';
 import { fetchViaJinaHtml } from '../_shared/jina.ts';
-import { sanitizeContent } from '../_shared/sanitize.ts';
+import { toItemRow } from '../_shared/itemRow.ts';
 import { safeFetch } from '../_shared/ssrf.ts';
 import { feedsToRefresh } from '../_shared/refreshScope.ts';
 import { preflight } from '../_shared/cors.ts';
@@ -271,22 +271,11 @@ async function fetchAndStore(service: any, feed: any): Promise<boolean> {
     })
     .eq('id', feed.id);
   if (metaError) throw new Error(`feed meta update failed: ${metaError.message}`);
+  // Row shape (sanitizing and title_normalized included) comes from
+  // _shared/itemRow.ts, shared with the cron poller so the two cannot diverge.
   const rows = parsed.items.map((it) => ({
     feed_id: feed.id,
-    guid: it.guid,
-    url: it.url,
-    comments_url: it.commentsUrl,
-    title: it.title,
-    author: it.author,
-    published_at: it.publishedAt,
-    content_html: sanitizeContent(it.contentHtml, it.url ?? parsed.siteUrl),
-    // The summary is publisher HTML too — never stored raw (same as poller.ts).
-    summary:
-      it.summary == null
-        ? null
-        : sanitizeContent(it.summary, it.url ?? parsed.siteUrl),
-    enclosures: it.enclosures,
-    content_hash: it.guid,
+    ...toItemRow(it, parsed.siteUrl),
   }));
   if (rows.length > 0) {
     // Same RPC the cron poller uses (migration 0013): ON CONFLICT can only

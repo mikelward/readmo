@@ -1345,11 +1345,12 @@ negligible and off every critical path. See the External services table in
        before it applies.
      - **Whole words, not substrings** — a `trump` filter must not hide an
        article about a trumpet. Accents and case don't matter: *Peña*, *peña*
-       and *Pena* are one word. In scripts written with their own vowel marks
-       (Arabic, Hebrew, the Indic scripts) a marked headline may still be
-       counted in a feed's badge even though the list correctly hides it — the
-       list is always right, and erring that way is deliberate, since the
-       alternative risked hiding articles that shouldn't be. A filter also matches its simple plural, but
+       and *Pena* are one word, in any script — a headline written with its own
+       vowel marks matches the same word written without them, and the feed and
+       the badge agree about it. "Whole word" needs word boundaries, so in a
+       script written without spaces (Japanese, Chinese) a filter only matches a
+       headline it spans entirely — the same rule, with nothing to anchor it.
+       A filter also matches its simple plural, but
        **never a shorter word**: stripping a suffix would turn `news` into
        `new` and hide most of a feed. Where a reader might want the shorter
        form, it's offered as its own choice rather than inferred.

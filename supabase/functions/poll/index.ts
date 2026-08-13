@@ -26,6 +26,7 @@ import {
   parseSpoilerResult,
   type SpoilerGeneration,
 } from '../_shared/spoilerTitle.ts';
+import { runTitleNormalizeBackfill } from '../_shared/titleNormalizeBackfill.ts';
 import { jsonBare as json } from '../_shared/respond.ts';
 import { rejectNonServiceCaller } from '../_shared/serviceAuth.ts';
 import { recordAiCall } from '../_shared/aiCallLog.ts';
@@ -162,6 +163,16 @@ async function handle(req: Request): Promise<Response> {
     return null;
   });
 
+  // Fill items.title_normalized for any rows the writers didn't cover — rows
+  // that predate the column, and rows left behind by a TITLE_NORMALIZED_VERSION
+  // bump. Deliberately NOT scoped to processedFeedIds (see the module header):
+  // paused and failing feeds are exactly the ones re-polling never reaches.
+  // Soft — the items are already stored, so a failure here never fails the poll.
+  const titleNormalize = await runTitleNormalizeBackfill(supabase).catch((err) => {
+    console.error('poll: title-normalize backfill failed:', err);
+    return null;
+  });
+
   // Best-effort retention for the AI call log (0067) so it can't grow unbounded
   // without a scheduled job — one cheap indexed delete per poll. Soft: a failure
   // (or an old backend without the function) never affects the poll.
@@ -176,9 +187,14 @@ async function handle(req: Request): Promise<Response> {
       (spoiler
         ? ` spoilerProcessed=${spoiler.processed} spoilerRewritten=${spoiler.rewritten}` +
           ` spoilerFailed=${spoiler.failed}${spoiler.budgetHit ? ' spoilerBudgetHit' : ''}`
+        : '') +
+      (titleNormalize
+        ? ` titleNormalizeConsidered=${titleNormalize.considered}` +
+          ` titleNormalizeWritten=${titleNormalize.written}` +
+          ` titleNormalizeFailed=${titleNormalize.failed}`
         : ''),
   );
-  return json({ processed, failed, considered, spoiler });
+  return json({ processed, failed, considered, spoiler, titleNormalize });
 }
 
 /** Run the Gemini spoiler-title pass over the polled feeds. Wires the real

@@ -7,7 +7,7 @@
 import { cleanFaviconUrl, parseFeedBody } from './parser.ts';
 import type { ParsedFeed } from './parser.ts';
 import { discoverIconFromHtml } from './discover.ts';
-import { sanitizeContent } from './sanitize.ts';
+import { toItemRow } from './itemRow.ts';
 import { safeFetch } from './ssrf.ts';
 import type { SafeFetchOptions, SafeFetchResult } from './ssrf.ts';
 import type { JinaHtmlFetch } from './jina.ts';
@@ -136,26 +136,11 @@ export async function pollOne(
     })
     .eq('id', feed.id);
 
-  // Upsert items. SANITIZE every body before storing (guardrail #6).
+  // Upsert items. The row shape (and the sanitizing, and title_normalized)
+  // lives in _shared/itemRow.ts so this and refresh/index.ts cannot diverge.
   const rows = parsed.items.map((it) => ({
     feed_id: feed.id,
-    guid: it.guid,
-    url: it.url,
-    comments_url: it.commentsUrl,
-    title: it.title,
-    author: it.author,
-    published_at: it.publishedAt,
-    content_html: sanitizeContent(it.contentHtml, it.url ?? parsed.siteUrl),
-    // The summary is publisher HTML too (RSS <description>, Atom
-    // <summary type="html">) — never stored raw. Null (no distinct summary)
-    // survives; sanitizeContent would collapse it to ''.
-    summary:
-      it.summary == null
-        ? null
-        : sanitizeContent(it.summary, it.url ?? parsed.siteUrl),
-    enclosures: it.enclosures,
-    // content_hash detects edits → update in place rather than duplicate.
-    content_hash: it.guid,
+    ...toItemRow(it, parsed.siteUrl),
   }));
   if (rows.length === 0) {
     console.log(`poll: feed ${feed.id} — 0 items to upsert, skipping`);
