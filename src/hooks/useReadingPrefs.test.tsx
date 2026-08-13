@@ -12,6 +12,8 @@ import {
   SHOW_ROW_FAVICON_KEY,
   SAVE_SERVICE_KEY,
   AUTO_SAVE_ON_FAVORITE_KEY,
+  TITLE_FILTERS_KEY,
+  useTitleFilters,
   resetReadingPrefsCacheForTest,
   useBottomBarPosition,
   useDebugScrollJumps,
@@ -506,6 +508,33 @@ describe('useReadingPrefs', () => {
       act(() => screen.getByRole('button').click());
       expect(screen.getByRole('button')).toHaveTextContent('off');
       expect(window.localStorage.getItem(AUTO_SAVE_ON_FAVORITE_KEY)).toBe('0');
+    });
+  });
+  describe('useTitleFilters', () => {
+    // Migration 0073's SQL matcher splits each stored entry on ' ' and uses it
+    // as a needle WITHOUT folding it — folding in SQL is precisely what that
+    // migration removes. That is only sound because every entry is written
+    // canonical, so the invariant is pinned here rather than left as a comment:
+    // a non-canonical row would under-filter server-side (the badge over-counts
+    // and the row spends a floor slot) while the client hid it correctly.
+    function FilterProbe() {
+      const { titleFilters, addTitleFilter } = useTitleFilters();
+      return (
+        <button type="button" onClick={() => addTitleFilter("  Peña's  TARIFFS!! ")}>
+          {titleFilters.join('|') || 'none'}
+        </button>
+      );
+    }
+
+    it('stores entries already folded, tokenized and space-joined', () => {
+      render(<FilterProbe />);
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('pena s tariffs');
+      // What actually reaches the server — the value the SQL needle is built
+      // from — not just what the hook reports back.
+      expect(JSON.parse(window.localStorage.getItem(TITLE_FILTERS_KEY) ?? '[]')).toEqual([
+        'pena s tariffs',
+      ]);
     });
   });
 });

@@ -24,21 +24,14 @@
 // the stripping decision is made by the reader, with both forms in front of
 // them, rather than silently inside the matcher.
 
-/** Case- and diacritic-folded form used for every comparison, so `Peña`,
- * `peña` and `Pena` are one word. */
-export function fold(value: string): string {
-  return value
-    .normalize('NFD')
-    .replace(/\p{M}/gu, '')
-    .toLowerCase();
-}
+// `fold`, `tokenize` and `normalizeFilter` live in titleFilterCore.ts because
+// the poller needs them too — it writes items.title_normalized so the feed RPCs
+// can filter without folding in SQL. That module is duplicated into
+// supabase/functions/_shared/ under a byte-identity test; everything below is
+// client-only and stays here.
+import { fold, tokenize, normalizeFilter } from './titleFilterCore';
 
-/** Split text into comparable word tokens. Splitting on every non-alphanumeric
- * is what makes possessives work for free: `Trump's` tokenizes to `trump` +
- * `s`, so a `trump` filter matches it without a possessive rule. */
-function tokenize(value: string): string[] {
-  return fold(value).match(/[\p{L}\p{N}]+/gu) ?? [];
-}
+export { fold, normalizeFilter };
 
 /** Whether a title token satisfies a filter token — exact, or one of the
  * filter's simple plurals. Add-only: never strips (see the module header).
@@ -60,14 +53,6 @@ function tokenMatches(titleToken: string, filterToken: string): boolean {
   return (
     /[^aeiou]y$/.test(filterToken) && titleToken === `${filterToken.slice(0, -1)}ies`
   );
-}
-
-/** Canonical stored form of a filter entry: folded, with runs of punctuation
- * and whitespace collapsed to single spaces. Returns null for an entry with no
- * word characters at all (typing spaces, or `...`), which callers reject. */
-export function normalizeFilter(raw: string): string | null {
-  const tokens = tokenize(raw);
-  return tokens.length > 0 ? tokens.join(' ') : null;
 }
 
 /** Whether `title` matches a single already-normalized filter entry. A
