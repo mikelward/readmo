@@ -727,10 +727,11 @@ describe('ItemRow', () => {
       expect(
         within(menu).getByTestId('item-row-menu-filter-more-tariffs'),
       ).toBeInTheDocument();
-      // The stem is offered beside the plural so the reader picks the form.
+      // Only the word the headline contains — no stem is derived beside it,
+      // since the matcher has no plural rule for one to pair with.
       expect(
-        within(menu).getByTestId('item-row-menu-filter-more-tariff'),
-      ).toBeInTheDocument();
+        within(menu).queryByTestId('item-row-menu-filter-more-tariff'),
+      ).toBeNull();
       // Back pops one level rather than closing the menu.
       await user.click(within(menu).getByTestId('item-row-menu-back'));
       expect(within(menu).getByTestId('item-row-menu-filter-Trump')).toBeInTheDocument();
