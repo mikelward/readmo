@@ -75,6 +75,22 @@ bad minute doesn't page.
 | **Slow queries** | DB-wide mean query time — `pg_stat_statements_total_time_seconds / …total_queries` | 5m | warning |
 | **API request storm** | total request rate >3× the last hour and >50/s — `http_status_codes_total` | 5m | warning |
 | **DB query storm** | DB-wide query rate >3× the last hour and >100/s — `pg_stat_statements_total_queries` | 5m | warning |
+| **API erroring** | 5xx share of responses >50% (and any real traffic) — `http_status_codes_total` | 5m | critical (page) |
+| **Transaction aborts** | rollbacks >50% of transactions and >5/s — `pg_stat_database_xact_rollback` / `…_xact_commit` | 10m | warning |
+
+> **Why the last two watch something other than the database.** Every rule above
+> them assumes the way readmo breaks is that Postgres gets busy. It can also
+> break with Postgres perfectly idle: if the layer in front of it stops serving,
+> the metrics scrape still succeeds, CPU and query rate stay flat, and **not one
+> of the DB rules moves** while every user request fails. *API erroring* is the
+> rule that fires in that state — a 5xx majority is the only signal there is.
+> *Transaction aborts* covers the mirror-image blind spot inside Postgres: a
+> statement that fails before parse-analysis is never assigned a queryid, so
+> `pg_stat_statements` never records it and the query-rate and mean-time rules
+> stay flat no matter how many transactions are opened and thrown away. Both are
+> ratios with an absolute floor, because readmo's normal volume is a few thousand
+> requests a *day* — a bare rate threshold is meaningless at that scale, and a
+> bare ratio pages on two requests.
 
 > **Note — what the Metrics API does *not* expose.** There's no per-`queryid`
 > breakdown (only aggregate `pg_stat_statements_total_*`) and no query-duration
