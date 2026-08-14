@@ -1,5 +1,10 @@
 import { useEffect, type ReactNode } from 'react';
-import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useIsRestoring,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useStateBucket } from '../hooks/useItemState';
 import { useConnectivityStatus } from '../hooks/useOnlineStatus';
@@ -33,6 +38,12 @@ export function LibraryItemList({
   const status = useConnectivityStatus();
   const store = ds.stateStore;
   const ids = useStateBucket(field);
+  // Boot window: the persisted query cache is still hydrating out of IndexedDB
+  // and nothing may fetch yet, so React Query reports `isLoading === false`
+  // with no data (see useFeedItems for the mechanism). Without this the view
+  // announces "Your reading list is empty." over a cache that's about to hand
+  // it the pinned rows.
+  const isRestoring = useIsRestoring();
 
   const query = useQuery({
     queryKey: ['library', field, ids.join(',')],
@@ -63,6 +74,7 @@ export function LibraryItemList({
   // via hydrate) must not present the stale empty label as this fetch's
   // result. A non-empty held list stays visible — that's the point above.
   const loading =
+    isRestoring ||
     query.isLoading ||
     (query.isFetching && query.isPlaceholderData && libraryItems.length === 0);
   // A genuine failure with nothing to fall back to (resolveSavedItems already

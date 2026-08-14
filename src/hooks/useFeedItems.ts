@@ -1,5 +1,6 @@
 import {
   useInfiniteQuery,
+  useIsRestoring,
 } from '@tanstack/react-query';
 import type { FeedItem } from '../lib/types';
 import type { Page } from '../lib/data/DataSource';
@@ -62,6 +63,15 @@ export function useFeedItems(
     pages: Array<Page<FeedItem>>,
   ) => string | null,
 ) {
+  // True for the first moments of every boot, while PersistQueryClientProvider
+  // reads the persisted query cache out of IndexedDB. React Query holds each
+  // query's `fetchStatus` at 'idle' across that window (nothing may fetch until
+  // restoration finishes), and `isLoading` is `isPending && isFetching` — so it
+  // reports FALSE with no data, which reads exactly like a settled empty feed.
+  // That's what put "You're all caught up." on screen for a beat on every cold
+  // load, before the cache landed and the fetch replaced it with the articles.
+  const isRestoring = useIsRestoring();
+
   const query = useInfiniteQuery({
     queryKey: ['feed', viewKey],
     // Record every settled feed fetch for /debug's "Last fetch" row — the
@@ -117,7 +127,13 @@ export function useFeedItems(
 
   return {
     items,
-    isLoading: query.isLoading,
+    // Restoration counts as loading: there is no result yet, and the cache
+    // about to land is the first thing that could fill the view. Every caller
+    // treats this as "don't draw a verdict on an empty list yet" — ItemList
+    // renders the spinner off it AND suppresses the offline miss-state, so a
+    // cold offline start doesn't flash "You're offline" over a cache that has
+    // articles in it either.
+    isLoading: isRestoring || query.isLoading,
     isError: query.isError,
     // The underlying read failure (initial or background refetch). Surfaced so
     // the view can show the *actual* error rather than a generic connectivity

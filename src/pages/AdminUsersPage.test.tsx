@@ -360,3 +360,25 @@ describe('AdminUsersPage', () => {
     expect(screen.queryByText(/open to everyone/i)).not.toBeInTheDocument();
   });
 });
+
+describe('AdminUsersPage — restore window', () => {
+  beforeEach(() => window.localStorage.setItem('readmo:mock-signed-in', '1'));
+  afterEach(() => window.localStorage.clear());
+
+  // Two claims this page must not make off an unread cache: that the operator
+  // has no access (the `admin` default is false), and — once past that — that
+  // the allowlist is empty, which reads as "the gates are open to everyone".
+  // Nothing may fetch while the persisted cache hydrates, and React Query
+  // reports isLoading false throughout it, so both used to render.
+  it('neither denies access nor reports the gates open while the persisted cache is restoring', () => {
+    renderWithProviders(<AdminUsersPage />, {
+      route: '/admin/users',
+      isRestoring: true,
+    });
+
+    expect(screen.queryByText(/don.t have access/i)).toBeNull();
+    expect(screen.queryByText(/no one is on the allowlist/i)).toBeNull();
+    expect(screen.queryByText(/no registered users yet/i)).toBeNull();
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+  });
+});

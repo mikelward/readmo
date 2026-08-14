@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useCapabilities } from '../hooks/useCapabilities';
 import { usePageTitle } from '../hooks/useDocumentTitle';
 import { AdminDenied } from './AdminDenied';
+import { useAdminGate } from './AdminGate';
 import './AdminPage.css';
 
 /** Operator console hub. Gated on the `admin` capability; it only links to the
@@ -10,7 +11,9 @@ import './AdminPage.css';
 export function AdminPage() {
   usePageTitle('Admin');
   const { admin } = useCapabilities();
+  const gate = useAdminGate('Admin');
 
+  if (gate) return gate;
   if (!admin) return <AdminDenied title="Admin" />;
 
   return (

@@ -105,3 +105,19 @@ describe('AiCallsPage', () => {
     );
   });
 });
+
+describe('AiCallsPage — restore window', () => {
+  beforeEach(() => window.localStorage.setItem('readmo:mock-signed-in', '1'));
+  afterEach(() => window.localStorage.clear());
+
+  it('neither denies access nor reports "No AI calls recorded yet." while the persisted cache is restoring', () => {
+    renderWithProviders(<AiCallsPage />, {
+      route: '/admin/ai',
+      isRestoring: true,
+    });
+
+    expect(screen.queryByText(/don.t have access/i)).toBeNull();
+    expect(screen.queryByTestId('ai-calls-empty')).toBeNull();
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+  });
+});

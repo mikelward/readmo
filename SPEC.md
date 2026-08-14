@@ -2107,6 +2107,15 @@ negligible and off every critical path. See the External services table in
     management sub-pages: **Manage users** (`/admin/users`), **Manage feeds**
     (`/admin/feeds`), and **View AI calls** (`/admin/ai`).
 
+    Every admin page **waits to say whether the caller has access**: until it
+    knows, it shows a plain loading state, then either the console or the
+    no-access message. It never guesses in between — an operator opening an
+    admin URL directly is not told they've been locked out while the answer is
+    still on its way. And when the access check itself **fails** — offline, or
+    the backend not answering — the page says *that*, with the same load-failure
+    panel and Retry every other view uses. A check that couldn't run is not a
+    denial.
+
     - **Users** — `/admin/users`: user management, reached from the Admin hub's
       *Users* link. Two sections:
       - **Trusted-user allowlist** — lists the current allowlist (email, who
@@ -3715,6 +3724,19 @@ uid the page announces to the worker; the fonts cache alone stays shared.
   short-circuit it) and holds a loading state until it settles; an already
   in-flight read (e.g. the user's Retry) is adopted as that confirming fetch
   rather than duplicated.
+- **No view answers for a read it hasn't done.** Opening the app reads the
+  on-device cache before anything can be shown, and until that read finishes a
+  view has no result — not an empty one. So a view that would otherwise render
+  an empty state, a "nothing here" label, or a connectivity miss-state holds its
+  loading state until it has an answer to report: a cold load never flashes
+  "You're all caught up." over a cache full of articles, and never accuses the
+  network before it has looked. The rule covers *any* not-yet-known answer, not
+  just cached articles — the admin pages don't say who has access until they
+  know, and an access check that *fails* reads as a failure with a Retry rather
+  than as a denial (see *Admin*). **Known gap:** a library view on a device that
+  has never synced still claims to be empty while the saved-item state itself is
+  arriving — that state is held separately from the article cache and has no
+  settled/unsettled signal yet. Tracked in `TODO.md`.
 - **An empty feed is confirmed against a live server, not the SW cache, before
   claiming caught up.** `status === 'online'` alone isn't proof the *server*
   answered: the `readmo-data` route is Workbox `NetworkFirst` with a 6s cache

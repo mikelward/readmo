@@ -5,6 +5,7 @@ import { useDataSource } from '../lib/data/context';
 import { useCapabilities } from '../hooks/useCapabilities';
 import { usePageTitle } from '../hooks/useDocumentTitle';
 import { AdminDenied } from './AdminDenied';
+import { useAdminGate } from './AdminGate';
 import './AdminPage.css';
 
 interface AdminDrilldownProps<T> {
@@ -41,6 +42,10 @@ function AdminDrilldownPage<T>({
   backLabel,
 }: AdminDrilldownProps<T>) {
   const { admin } = useCapabilities();
+  // Also covers the persisted-cache restore window for the read below, whose
+  // "Loading…" branch would otherwise fall through to `emptyLabel`. See
+  // AdminGate.
+  const gate = useAdminGate(title);
 
   const {
     data: rows = [],
@@ -49,6 +54,7 @@ function AdminDrilldownPage<T>({
     refetch,
   } = useQuery({ queryKey, queryFn, enabled: admin && enabled });
 
+  if (gate) return gate;
   if (!admin) return <AdminDenied title={title} />;
 
   return (

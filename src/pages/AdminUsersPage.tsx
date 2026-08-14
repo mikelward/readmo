@@ -3,10 +3,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useAuth } from '../hooks/useAuth';
-import { useCapabilities, CAPABILITIES_QUERY_KEY } from '../hooks/useCapabilities';
+import {
+  useCapabilities,
+  CAPABILITIES_QUERY_KEY,
+} from '../hooks/useCapabilities';
 import { useToast } from '../hooks/useToast';
 import { usePageTitle } from '../hooks/useDocumentTitle';
 import { AdminDenied } from './AdminDenied';
+import { useAdminGate } from './AdminGate';
 import { ItemRowMenu, type ItemRowMenuItem } from '../components/ItemRowMenu';
 import { usePointerDevice } from '../hooks/usePointerDevice';
 import './AdminPage.css';
@@ -26,6 +30,12 @@ export function AdminUsersPage() {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const { admin, canManageUsers, canViewSubscriptions } = useCapabilities();
+  // Holds the page until the flags settle — which also covers the
+  // persisted-cache restore window for the three reads below, whose "Loading…"
+  // branches would otherwise fall through to their empty copy (here: a claim
+  // about the *gates* — "reading mode and Google News feeds are open to
+  // everyone" — off a list that was never read). See AdminGate.
+  const gate = useAdminGate('Users');
   const { user } = useAuth();
   const navigate = useNavigate();
   const selfEmail = user?.email?.toLowerCase() ?? null;
@@ -196,6 +206,7 @@ export function AdminUsersPage() {
     }
   }
 
+  if (gate) return gate;
   if (!admin) return <AdminDenied title="Users" />;
 
   return (
