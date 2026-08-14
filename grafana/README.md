@@ -21,9 +21,15 @@ rules before trusting them — confirm each metric the rules use actually exists
 ```sh
 curl -s -u "service_role:$SUPABASE_SERVICE_ROLE_KEY" \
   "https://$SUPABASE_PROJECT_REF.supabase.co/customer/v1/privileged/metrics" \
-  | grep -E '^(node_cpu_seconds_total|node_memory_MemAvailable_bytes|node_filesystem_avail_bytes|pgrst_db_pool_timeouts_total|pg_stat_statements_total_queries|pg_stat_statements_total_time_seconds|http_status_codes_total)' \
+  | grep -E '^(node_cpu_seconds_total|node_memory_MemAvailable_bytes|node_filesystem_avail_bytes|pgrst_db_pool_timeouts_total|pg_stat_statements_total_queries|pg_stat_statements_total_time_seconds|http_status_codes_total|pg_stat_database_xact_rollback|pg_stat_database_xact_commit)' \
   | sort -u
 ```
+
+Check the **labels**, not just the family names: `ReadmoApiErrorsHigh` selects
+`http_status_codes_total{code=~"5.."}`, so if your project spells that label
+something other than `code` the selector matches nothing and the rule never
+fires — indistinguishable from a healthy API. Print one full line
+(`… | grep -m1 '^http_status_codes_total'`) and read the label set.
 
 If a metric is **missing entirely** (empty result for a line), the project
 doesn't emit that family — find the equivalent in the full catalog
