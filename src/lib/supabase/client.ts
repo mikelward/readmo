@@ -164,11 +164,11 @@ function isBoundedRead(input: RequestInfo | URL, init?: RequestInit): boolean {
 }
 
 /**
- * The bounded reads the circuit breaker guards: the **network-authoritative**
- * ones — a subset of {@link isBoundedRead} the service worker never answers from
- * cache. The breaker's half-open probe must be network-authoritative: its result
- * decides whether the backend recovered, so a response that didn't reach the
- * backend would close the circuit on a lie. Two kinds qualify:
+ * The bounded reads whose **success** is authoritative about backend health: the
+ * ones the service worker never answers from cache. Every bounded read now goes
+ * through the breaker (a failing loop on any of them is shed), but only these may
+ * CLOSE it — a response that didn't reach the backend would close the circuit on
+ * a lie. Two kinds qualify:
  *
  *   1. The read-only RPCs (`feed_items`, `feed_unread_counts`) — POSTs, and the
  *      SW's `NetworkFirst` runtime cache is GET-only (`vite.config.ts`), so it
@@ -179,19 +179,31 @@ function isBoundedRead(input: RequestInfo | URL, init?: RequestInit): boolean {
  *      every feed read (`ensureHydratedForRead`), so a failing feed loop's
  *      hydration GET must be shed alongside the RPC, not bypass the breaker.
  *
- * Every OTHER GET `/rest/v1/` read is `NetworkFirst`-cached: it can be answered
- * from a stale Workbox cache (a `200` the backend never saw), so it keeps the read
- * *timeout* (a hung GET must still abort) but bypasses the *breaker* — letting a
- * cached `200` probe close the circuit would falsely recover it mid-outage. A
- * failing cacheable-GET loop is already bounded by the retry discipline
- * (`queryRetry.ts`, no 4xx/5xx retries) plus NetworkFirst's own cache fallback;
- * a *succeeding* high-rate loop is the gateway's job (SCALING.md), which the
- * failure-based breaker never caught anyway.
+ * Every OTHER GET `/rest/v1/` read (`subscriptions`, `user_settings`, `folders`,
+ * `feeds_public`, `items`) is `NetworkFirst`-cached, so a cached `200` the backend
+ * never saw is possible. Those reads are still admitted, shed and FAILURE-counted
+ * by the breaker — a loop on them is exactly what went uncapped before, and they
+ * were the reads failing in the Aug 14 outage — but a success on one settles as
+ * *inconclusive* (`settleInconclusive`) so it can neither close the circuit
+ * mid-outage nor clear a failure run.
+ *
+ * The asymmetry is the point: a cache can manufacture a success but it cannot
+ * manufacture a failure. A read that FAILED is one the cache could not answer,
+ * which is real evidence of backend health and the shape a runaway loop takes.
+ *
+ * The cost, accepted deliberately: while the circuit is open these reads are shed
+ * before reaching the service worker, so they lose their cache fallback for the
+ * cooldown. That only bites after six straight failures — by which point the app
+ * is already showing its offline/Down state — and capping the loop is worth more
+ * than one more cached list mid-outage.
  *
  * (Keep the item_state path in sync with `supabaseItemStatePattern` in
  * vite.config.ts — both encode that item_state is the NetworkOnly read.)
  */
-function isBreakerScopedRead(input: RequestInfo | URL, init?: RequestInit): boolean {
+function isNetworkAuthoritativeRead(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): boolean {
   const u = requestUrl(input);
   if (READ_RPC_PATHS.some((path) => u.includes(path))) return true;
   return requestMethod(input, init) === 'GET' && u.includes('/rest/v1/item_state');
@@ -207,18 +219,18 @@ function isBreakerScopedRead(input: RequestInfo | URL, init?: RequestInit): bool
  * Query cancelling a superseded query) still aborts; the timeout adds a second
  * abort reason without clobbering it.
  */
-// Client-side flood guard for the network-authoritative bounded reads — the read
-// RPCs (feed_items, feed_unread_counts) and the NetworkOnly item_state hydration
-// GET that precedes every feed read (see isBreakerScopedRead). A failing loop
-// trips the breaker after a burst of failures and is SHED, failing fast instead
-// of pinning Postgres. Healthy bursts (e.g. a large offline warmup) never trip it
-// — it's failure-based, not rate-based. The additive backstop behind the retry
-// discipline (src/lib/queryRetry.ts); the server-side `x-readmo-build` gate sheds
-// a known-bad *build*, this caps a failing loop in the live build. NetworkFirst-
-// cached GET /rest/v1/ reads keep the read timeout but bypass the breaker (a cache
-// fallback isn't a backend-liveness signal — see isBreakerScopedRead); writes
-// (outbox-owned), auth, Edge Functions, storage and realtime bypass it too — see
-// supabaseFetch for why.
+// Client-side flood guard for EVERY bounded read — the read RPCs (feed_items,
+// feed_unread_counts) and every GET /rest/v1/ read, including the cacheable ones
+// (subscriptions, user_settings, folders, feeds_public, items). A failing loop on
+// any of them trips the breaker after a burst of failures and is SHED, failing
+// fast instead of pinning Postgres. Healthy bursts (e.g. a large offline warmup)
+// never trip it — it's failure-based, not rate-based. The additive backstop behind
+// the retry discipline (src/lib/queryRetry.ts); the server-side `x-readmo-build`
+// gate sheds a known-bad *build*, this caps a failing loop in the live build.
+// What the path decides is not whether a read is guarded but whether its SUCCESS
+// can close the circuit — only the reads the SW never serves from cache can (see
+// isNetworkAuthoritativeRead). Writes (outbox-owned), auth, Edge Functions,
+// storage and realtime bypass the breaker entirely — see supabaseFetch for why.
 let requestBreaker = new RequestCircuitBreaker();
 
 /** Test-only: reset the module-level breaker between cases (it's a singleton). */
@@ -237,14 +249,91 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
-// Any error response counts as a breaker FAILURE. The breaker is scoped to the
-// network-authoritative reads (the read RPCs + the item_state hydration GET; see
-// isBreakerScopedRead), which return 2xx in normal use — so a 4xx is NOT a benign
-// app response here: a PostgREST 404 (the feed_items/feed_unread_counts function
-// missing on a stale or schema-mismatched backend), 400, or 422 is a genuinely
-// failed read that a refetch loop would otherwise repeat forever without ever
-// tripping the circuit. So only 2xx/3xx is healthy; 4xx and 5xx (including
-// 401/403/408/429) count as failures.
+// Only 2xx/3xx is healthy. On the authoritative reads (see
+// isNetworkAuthoritativeRead) a 4xx is NOT a benign app response — they return
+// 2xx in normal use, so a PostgREST 404 (the feed_items/feed_unread_counts
+// function missing on a stale or schema-mismatched backend), 400, or 422 is a
+// genuinely failed read that a refetch loop would repeat forever without ever
+// tripping the circuit. 5xx counts everywhere; which 4xx counts on a cacheable
+// table read is decided at the settle site below.
+/** The statuses PostgREST answers a missing table/column/function with. A cheap
+ *  pre-filter only — the status alone never earns the exemption, it just decides
+ *  whether the body is worth reading (see isSchemaMismatchResponse). */
+function isSchemaMismatchStatus(status: number): boolean {
+  return status === 400 || status === 404;
+}
+
+/** PostgREST/SQLSTATE codes for "the deployed schema doesn't have what this
+ *  client named": missing table (PGRST205 / 42P01), missing column
+ *  (PGRST204 / 42703), missing function (PGRST202). Kept in step with
+ *  isMissingTableError / isMissingColumnError in data/supabaseMappers.ts, which
+ *  is what the callers themselves use to detect the same skew.
+ *
+ *  42501 (insufficient_privilege) is deliberately NOT here even though
+ *  isMissingTableError accepts it: a permission denial is a real failed read,
+ *  and a loop on one is exactly what the breaker exists to cap. */
+const SCHEMA_MISMATCH_CODES = new Set([
+  'PGRST202',
+  'PGRST204',
+  'PGRST205',
+  '42P01',
+  '42703',
+]);
+
+/** How long the schema-code check will wait for a 4xx body. A PostgREST error
+ *  envelope is a few hundred bytes and its headers have already arrived, so this
+ *  is generous; its real job is to bound the wait, not to time anything. */
+const SCHEMA_BODY_READ_TIMEOUT_MS = 1_000;
+
+/**
+ * Whether a 4xx on a cacheable table read is a deliberate capability probe
+ * rather than backend failure — decided by the PostgREST error CODE, not the
+ * status. Status alone is far too broad: a malformed-query `400` on any table
+ * (or a `404` unrelated to the settings projection ladder) would be waved
+ * through, leaving a refetch loop on it uncounted.
+ *
+ * The exemption has to be EARNED: anything unreadable, non-JSON, uncoded or
+ * SLOW counts as a failure, which is the direction that can only over-protect
+ * the backend.
+ *
+ * The wait is bounded because the read cap is already gone by the time we get
+ * here — `boundedReadFetch` resolves on HEADERS and clears its 8s timer, so a
+ * response that stalls mid-body would leave this awaiting forever, and with it
+ * the breaker ticket: an unsettled half-open or probationary ticket parks every
+ * later bounded read behind it permanently. The clone's body is cancelled on
+ * that path so the stalled stream isn't left open (cancelling one tee branch
+ * leaves the caller's copy intact).
+ */
+async function isSchemaMismatchResponse(res: Response): Promise<boolean> {
+  const copy = res.clone();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const body: unknown = await Promise.race([
+      copy.json(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('schema-code body read timed out')),
+          SCHEMA_BODY_READ_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    const code = (body as { code?: unknown } | null)?.code;
+    return typeof code === 'string' && SCHEMA_MISMATCH_CODES.has(code);
+  } catch (err) {
+    // Non-JSON, unreadable or stalled body — can't positively identify a probe,
+    // so this stays a failure. Debug-level: a 4xx with no PostgREST envelope is
+    // normal enough (a gateway error page) that warning on it would be noise.
+    console.debug(
+      '[readmo] breaker: 4xx body not readable as PostgREST error, counting as failure:',
+      err instanceof Error ? err.message : String(err),
+    );
+    void copy.body?.cancel().catch(() => {});
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function isHealthyResponse(status: number): boolean {
   return status < 400;
 }
@@ -305,15 +394,12 @@ export function supabaseFetch(
     return trackedFetch(input, init);
   }
 
-  // A bounded read. It always gets the 8s timeout, but only the network-
-  // authoritative reads go through the breaker — the read RPCs (POSTs the GET-only
-  // SW cache never serves) and the item_state hydration GET (a NetworkOnly route).
-  // Every other GET /rest/v1/ read is NetworkFirst-cached, so a stale cache `200`
-  // could falsely close the breaker mid-outage; those bypass it (see
-  // isBreakerScopedRead).
-  if (!isBreakerScopedRead(input, init)) {
-    return boundedReadFetch(input, init);
-  }
+  // A bounded read: the 8s timeout AND the breaker, whatever the path. Whether a
+  // *success* counts as evidence the backend recovered depends on the path (see
+  // isNetworkAuthoritativeRead) — a NetworkFirst-cached read can be answered from
+  // the SW cache, so its success settles as inconclusive. Failures count either
+  // way: the cache can fake a 200, never a failure.
+  const authoritative = isNetworkAuthoritativeRead(input, init);
 
   const ticket = requestBreaker.shouldAllow();
   if (ticket === null) {
@@ -336,8 +422,46 @@ export function supabaseFetch(
     );
   }
   return boundedReadFetch(input, init).then(
-    (res) => {
-      requestBreaker.settle(ticket, isHealthyResponse(res.status));
+    async (res) => {
+      if (isHealthyResponse(res.status)) {
+        // On a cacheable read this may be the service worker's NetworkFirst
+        // fallback — a `200` the backend never saw — so it proves nothing about
+        // backend health and settles as inconclusive. Only a read the SW never
+        // serves from cache can close the circuit.
+        if (authoritative) requestBreaker.settle(ticket, true);
+        else requestBreaker.settleInconclusive(ticket);
+      } else if (
+        authoritative ||
+        res.status >= 500 ||
+        !isSchemaMismatchStatus(res.status)
+      ) {
+        // Includes 401/403 on a cacheable table: an expired-token loop is the
+        // exact failure class that melted the backend, and it must still trip.
+        requestBreaker.settle(ticket, false);
+      } else if (await isSchemaMismatchResponse(res)) {
+        // A schema-mismatch 4xx on a cacheable table read is not backend-failure
+        // evidence — it's a disagreement about the schema, and this app generates
+        // those on purpose. `getSyncedSettings` walks a projection ladder against
+        // `user_settings`, taking an expected coded 4xx per rung until it finds
+        // one the deployed backend can serve (guardrail 11 feature detection).
+        // Counting those would let a backend that is merely OLDER than the client
+        // trip a breaker meant for one that is FAILING, and shed reads for it.
+        //
+        // The 4xx-counts-as-failure rule survives where it was argued for: the
+        // authoritative reads, where a PostgREST 404 means the feed_items RPC
+        // itself is missing and a refetch loop would repeat forever. Nothing
+        // capability-probes those — the ladder only ever runs against tables.
+        //
+        // Not silently discarded either: a 4xx cannot come from the Workbox
+        // cache (it serves 200s), so the backend demonstrably answered. That is
+        // liveness evidence, which is exactly what `settleInconclusive` records.
+        requestBreaker.settleInconclusive(ticket);
+      } else {
+        // Same status, no schema code: an ordinary failed read (a malformed
+        // query, a 404 on something that should exist). A loop on one is what
+        // the breaker is for.
+        requestBreaker.settle(ticket, false);
+      }
       return res;
     },
     (err) => {
