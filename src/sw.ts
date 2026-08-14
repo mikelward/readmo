@@ -31,6 +31,7 @@ import {
   jwtSubject,
   scopedWorkboxCacheName,
   supabaseItemStatePattern,
+  stampSwSource,
   supabaseRestCachePattern,
   SW_SET_UID_MESSAGE,
   WORKBOX_RUNTIME_CACHE_BASES,
@@ -171,6 +172,15 @@ function bucketStrategy(
   return strategy;
 }
 
+/** FetchEvents whose network attempt succeeded, so the handler can tell a live
+ *  response from a cache fallback. Weak, so entries drop with the event. */
+const networkAnswered = new WeakSet<object>();
+
+/** FetchEvents whose network attempt FAILED outright (refused, DNS, TLS) before
+ *  the cache answered — as opposed to merely outrunning the 6s timeout while
+ *  still in flight. Only the former says anything about backend health. */
+const networkFailed = new WeakSet<object>();
+
 // Data reads from Supabase REST/RPC — NetworkFirst so a healthy network
 // always wins, with a cache fallback offline. Bucketed by the REQUEST'S OWN
 // JWT subject (see header comment); the announced uid only covers a read that
@@ -182,6 +192,14 @@ registerRoute(
     const uid =
       jwtSubject(request.headers.get('Authorization')) ??
       (await getAnnouncedUid());
+    // Which side answered this read? NetworkFirst silently falls back to cache
+    // when the network doesn't, so without this the page cannot tell a live 200
+    // from a cached one — the client breaker (requestCircuitBreaker.ts) would
+    // read a masked outage as health and never cap the loop still hammering the
+    // network underneath, and would never see the live success that ends
+    // probation. Keyed on the FetchEvent, which is unique per handler
+    // invocation — the strategy object is shared across requests, so anything
+    // captured in its plugins is not.
     const strategy = bucketStrategy(
       'readmo-data',
       uid,
@@ -199,10 +217,42 @@ registerRoute(
               maxAgeSeconds: 24 * 60 * 60,
             }),
             new CacheableResponsePlugin({ statuses: [0, 200] }),
+            {
+              // MUST use the event Workbox hands THESE callbacks, never the
+              // `event` in scope above: bucketStrategy memoizes one strategy
+              // per cache bucket, so this plugin object is built once, from the
+              // first request, and the captured `event` would stay that first
+              // request's forever. Every later network success would then be
+              // stamped as a fallback and counted as a failure — six healthy
+              // reads would open the circuit and shed live traffic.
+              fetchDidSucceed: async ({ response, event: networkEvent }) => {
+                if (networkEvent) networkAnswered.add(networkEvent);
+                return response;
+              },
+              // Fires only when the request itself failed. A timeout fallback
+              // does NOT come through here — the request is still in flight —
+              // which is exactly the distinction the stamp needs to carry.
+              fetchDidFail: async ({ event: networkEvent }) => {
+                if (networkEvent) networkFailed.add(networkEvent);
+              },
+            },
           ],
         }),
     );
-    return strategy.handle({ request, event });
+    const response = await strategy.handle({ request, event });
+    // `network` is what lets a cacheable read close the circuit and end
+    // probation; `cache-error` is what stops a warm cache masking an outage as a
+    // string of 200s. A fallback we can't attribute to a failed request is
+    // `cache-timeout`: the request outran networkTimeoutSeconds and is still in
+    // flight, so the backend is slow at worst — see SwSource.
+    return stampSwSource(
+      response,
+      event && networkAnswered.has(event)
+        ? 'network'
+        : event && networkFailed.has(event)
+          ? 'cache-error'
+          : 'cache-timeout',
+    );
   },
 );
 

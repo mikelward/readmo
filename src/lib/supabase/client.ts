@@ -6,6 +6,7 @@ import {
 } from '../networkStatus';
 import { buildInfo } from '../buildInfo';
 import { RequestCircuitBreaker } from '../data/requestCircuitBreaker';
+import { SW_SOURCE_HEADER, type SwSource } from '../swScope';
 
 // Hard ceiling on a single PostgREST GET read. Without it a request that never
 // answers (lie-fi, or the service worker's NetworkFirst awaiting a hung network
@@ -338,6 +339,23 @@ function isHealthyResponse(status: number): boolean {
   return status < 400;
 }
 
+/** Best-effort "the device has no network at all", so a failed network attempt
+ *  says nothing about the backend. */
+function isOffline(): boolean {
+  return typeof navigator !== 'undefined' && navigator.onLine === false;
+}
+
+/** What the service worker says became of the network attempt behind this read,
+ *  or `null` when it didn't say — a SW cached before the stamp shipped, or a
+ *  value this client doesn't know. Never read absence as "network": an old SW
+ *  can outlive many client deploys, and an unrecognized value is not a promise. */
+function swSource(res: Response): SwSource | null {
+  const value = res.headers.get(SW_SOURCE_HEADER);
+  return value === 'network' || value === 'cache-error' || value === 'cache-timeout'
+    ? value
+    : null;
+}
+
 function boundedReadFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
@@ -423,12 +441,35 @@ export function supabaseFetch(
   }
   return boundedReadFetch(input, init).then(
     async (res) => {
-      if (isHealthyResponse(res.status)) {
-        // On a cacheable read this may be the service worker's NetworkFirst
-        // fallback — a `200` the backend never saw — so it proves nothing about
-        // backend health and settles as inconclusive. Only a read the SW never
-        // serves from cache can close the circuit.
-        if (authoritative) requestBreaker.settle(ticket, true);
+      const source = swSource(res);
+      if (source === 'cache-error') {
+        // The service worker says the request FAILED and it served the cache
+        // instead. Without the stamp this arrives as a plain `200` and the
+        // masked outage reads as health — a loop on a warmed cache would hammer
+        // the network forever without ever advancing the count.
+        //
+        // Only `cache-error`, never a timeout fallback: a read that outran the
+        // worker's 6s window is still in flight and may succeed a moment later
+        // where nothing can see it, so a slow backend must not be counted as a
+        // failing one. One screen load's worth of concurrent slow reads would
+        // otherwise open the circuit — and then take away the cache fallback
+        // those reads were relying on.
+        //
+        // Offline is the exception, and it matters more than it looks: shedding
+        // happens BEFORE the service worker, so tripping the breaker while
+        // genuinely offline would take away the cache fallback that makes the
+        // app readable offline at all. A failed network attempt with no network
+        // is not evidence about the backend, so it settles as neither.
+        if (isOffline()) requestBreaker.settleCanceled(ticket);
+        else requestBreaker.settle(ticket, false);
+      } else if (isHealthyResponse(res.status)) {
+        // A `network`-stamped success is authoritative whatever the path: the SW
+        // is telling us the backend itself answered, which is exactly what
+        // "authoritative" means, so it closes the circuit and ends probation. A
+        // cacheable read with NO stamp still proves nothing — a service worker
+        // cached before the stamp shipped serves fallbacks unmarked, and an old
+        // SW can outlive many client deploys.
+        if (authoritative || source === 'network') requestBreaker.settle(ticket, true);
         else requestBreaker.settleInconclusive(ticket);
       } else if (
         authoritative ||
@@ -472,6 +513,14 @@ export function supabaseFetch(
       // timeout aborts with TimeoutError (a real failure), so AbortError here is
       // always a caller cancel.
       if (isAbortError(err)) requestBreaker.settleCanceled(ticket);
+      // Offline: the same carve-out as a cache-fallback read, and it has to be
+      // here too or the guarantee is empty — the reads that REJECT while offline
+      // are the ones that missed the cache (or are NetworkOnly, like item_state),
+      // and six of those would open the circuit and then shed the later reads
+      // that WOULD have hit a warm cache. Shedding happens before the service
+      // worker, so that trades the offline library for protection the backend
+      // isn't there to need: a request with no network never reached it.
+      else if (isOffline()) requestBreaker.settleCanceled(ticket);
       else requestBreaker.settle(ticket, false);
       throw err;
     },

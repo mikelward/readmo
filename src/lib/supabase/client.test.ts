@@ -460,6 +460,191 @@ describe('supabaseFetch', () => {
     ).rejects.toThrow(/circuit open/i);
   });
 
+  it('counts a service-worker cache fallback as a failure', async () => {
+    // The SW's NetworkFirst answers from cache when the network doesn't, so an
+    // outage arrives at the page as a plain 200. Without the stamp the breaker
+    // reads a masked outage as health and never caps the loop underneath.
+    const fetchMock = vi.fn(
+      async () =>
+        new Response('[]', {
+          status: 200,
+          headers: { 'x-readmo-sw-source': 'cache-error' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    for (let i = 0; i < 6; i++) {
+      await supabaseFetch('https://x.supabase.co/rest/v1/subscriptions?select=*');
+    }
+    await expect(
+      supabaseFetch('https://x.supabase.co/rest/v1/subscriptions?select=*'),
+    ).rejects.toThrow(/circuit open/i);
+  });
+
+  it('does NOT count a cache fallback while the device is offline', async () => {
+    // Shedding happens before the service worker, so tripping the breaker while
+    // genuinely offline would take away the cache fallback that makes the app
+    // readable offline at all. A failed network attempt with no network is not
+    // evidence about the backend.
+    const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    try {
+      const fetchMock = vi.fn(
+        async () =>
+          new Response('[]', {
+            status: 200,
+            headers: { 'x-readmo-sw-source': 'cache-error' },
+          }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      for (let i = 0; i < 20; i++) {
+        await supabaseFetch('https://x.supabase.co/rest/v1/subscriptions?select=*');
+      }
+      // Still serving the user their cached reads.
+      expect(
+        (await supabaseFetch('https://x.supabase.co/rest/v1/subscriptions?select=*'))
+          .status,
+      ).toBe(200);
+    } finally {
+      onLine.mockRestore();
+    }
+  });
+
+  it('does NOT count a cache fallback that only outran the worker timeout', async () => {
+    // NetworkFirst answers from cache after 6s while the request is STILL in
+    // flight, and it may succeed a moment later where nothing can see it. A slow
+    // backend is not a failing one — and counting these would let one screen
+    // load's worth of concurrent slow reads open the circuit and then take away
+    // the cache fallback those reads were relying on.
+    const fetchMock = vi.fn(
+      async () =>
+        new Response('[]', {
+          status: 200,
+          headers: { 'x-readmo-sw-source': 'cache-timeout' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    for (let i = 0; i < 20; i++) {
+      await supabaseFetch('https://x.supabase.co/rest/v1/subscriptions?select=*');
+    }
+    expect(
+      (await supabaseFetch('https://x.supabase.co/rest/v1/subscriptions?select=*'))
+        .status,
+    ).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(21);
+  });
+
+  it('does NOT count a read that fails outright while the device is offline', async () => {
+    // The other half of the offline carve-out, and the half that decides whether
+    // it means anything: the reads that REJECT offline are the ones that missed
+    // the cache (or are NetworkOnly, like item_state). Counting those would open
+    // the circuit and then shed the later reads that WOULD have hit a warm
+    // cache — shedding happens before the service worker — costing the reader
+    // their offline library to protect a backend the requests never reached.
+    const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    try {
+      const fetchMock = vi.fn(async () => {
+        throw new TypeError('Failed to fetch');
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      for (let i = 0; i < 20; i++) {
+        await expect(
+          supabaseFetch('https://x.supabase.co/rest/v1/item_state'),
+        ).rejects.toThrow(/failed to fetch/i);
+      }
+      // Still closed: the 21st read reaches the network (and so would reach the
+      // service worker's cache) rather than being shed.
+      await expect(
+        supabaseFetch('https://x.supabase.co/rest/v1/subscriptions?select=*'),
+      ).rejects.toThrow(/failed to fetch/i);
+      expect(fetchMock).toHaveBeenCalledTimes(21);
+    } finally {
+      onLine.mockRestore();
+    }
+  });
+
+  it('treats an UNSTAMPED cacheable 200 as inconclusive (old service worker)', async () => {
+    // A service worker cached before the stamp shipped marks nothing, and an old
+    // SW can outlive many client deploys. Absence must read as "unknown", never
+    // as "the network answered" — otherwise a masked outage closes the circuit.
+    const fetchMock = vi.fn(async () => new Response('[]', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    for (let i = 0; i < 20; i++) {
+      await supabaseFetch('https://x.supabase.co/rest/v1/subscriptions?select=*');
+    }
+    // Neither tripped (it isn't failure evidence) nor treated as recovery.
+    expect(fetchMock).toHaveBeenCalledTimes(20);
+  });
+
+  it('lets a network-stamped cacheable read end probation and restore parallelism', async () => {
+    // The gap Codex found in the probation design: a reader on a screen that
+    // loads only cacheable tables produced nothing authoritative, so admission
+    // stayed serialized indefinitely after the backend recovered. With the SW
+    // stamping the live side too, an ordinary `subscriptions` read is now proof
+    // the backend itself answered.
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
+    });
+    _resetRequestBreakerForTests();
+
+    let phase: 'trip' | 'unstamped' | 'live' = 'trip';
+    const gate: Array<() => void> = [];
+    const fetchMock = vi.fn(async () => {
+      if (phase === 'trip') return new Response('', { status: 503 });
+      // An OLD service worker: it may well be serving this from cache, but it
+      // says nothing, so the probe is inconclusive — closed, on probation. This
+      // is the state the stamp exists to get a client out of.
+      if (phase === 'unstamped') return new Response('[]', { status: 200 });
+      // Live phase: hold the response open so concurrency is observable — a
+      // serialized (probationary) peer would park instead of reaching fetch.
+      await new Promise<void>((resolve) => gate.push(resolve));
+      return new Response('[]', {
+        status: 200,
+        headers: { 'x-readmo-sw-source': 'network' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    for (let i = 0; i < 6; i++) {
+      await supabaseFetch('https://x.supabase.co/rest/v1/subscriptions?select=*');
+    }
+    await expect(
+      supabaseFetch('https://x.supabase.co/rest/v1/subscriptions?select=*'),
+    ).rejects.toThrow(/circuit open/i);
+
+    // Cooldown, then the half-open probe comes back unstamped: closed, but on
+    // probation — admission is one at a time until the backend confirms.
+    await vi.advanceTimersByTimeAsync(10_000);
+    phase = 'unstamped';
+    expect(
+      (await supabaseFetch('https://x.supabase.co/rest/v1/subscriptions?select=*'))
+        .status,
+    ).toBe(200);
+
+    // One live read, stamped `network`: the backend itself answered.
+    phase = 'live';
+    const callsBefore = fetchMock.mock.calls.length;
+    const confirming = supabaseFetch(
+      'https://x.supabase.co/rest/v1/subscriptions?select=*',
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    gate.shift()!();
+    await confirming;
+
+    // Probation is over: two concurrent reads BOTH reach the network instead of
+    // the second parking behind the first. Sequential admissions would pass even
+    // while serialized, which is why this asserts on an overlap.
+    const a = supabaseFetch('https://x.supabase.co/rest/v1/subscriptions?select=*');
+    const b = supabaseFetch('https://x.supabase.co/rest/v1/folders?select=*');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock.mock.calls.length).toBe(callsBefore + 3);
+    gate.forEach((release) => release());
+    await Promise.all([a, b]);
+  });
+
   it('counts a 401 loop on a cacheable table (expired token)', async () => {
     // The schema-probe exemption must not cover this: an expired-token loop is
     // the failure class that melted the backend in the first place.

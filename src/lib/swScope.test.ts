@@ -4,8 +4,10 @@ import {
   isRuntimeWorkboxCache,
   jwtSubject,
   scopedWorkboxCacheName,
+  stampSwSource,
   supabaseItemStatePattern,
   supabaseRestCachePattern,
+  SW_SOURCE_HEADER,
   WORKBOX_RUNTIME_CACHE_BASES,
 } from './swScope';
 
@@ -91,5 +93,41 @@ describe('supabase cache patterns', () => {
     expect(p.test('https://abc.supabase.co/rest/v1/item_state?select=*')).toBe(true);
     expect(p.test('https://abc.supabase.co/rest/v1/item_state')).toBe(true);
     expect(p.test('https://abc.supabase.co/rest/v1/items?select=*')).toBe(false);
+  });
+});
+
+describe('stampSwSource', () => {
+  it('marks which side answered, without changing the response otherwise', async () => {
+    const original = new Response('[{"id":1}]', {
+      status: 200,
+      statusText: 'OK',
+      headers: { 'content-type': 'application/json', etag: 'W/"abc"' },
+    });
+
+    const stamped = stampSwSource(original, 'network');
+
+    expect(stamped.headers.get(SW_SOURCE_HEADER)).toBe('network');
+    // Everything the page might act on survives: a stamp that dropped the body,
+    // the status or content-type would break the read it is describing.
+    expect(stamped.status).toBe(200);
+    expect(stamped.headers.get('content-type')).toBe('application/json');
+    expect(stamped.headers.get('etag')).toBe('W/"abc"');
+    expect(await stamped.json()).toEqual([{ id: 1 }]);
+  });
+
+  it('stamps a response whose headers are immutable (the Cache API case)', () => {
+    // The cache-fallback path is exactly where the headers cannot be mutated in
+    // place, and it is the path an offline reader depends on — so the helper
+    // copies rather than setting a header on the original.
+    const cached = new Response('[]', { status: 200 });
+    Object.defineProperty(cached.headers, 'set', {
+      value: () => {
+        throw new TypeError('Headers are immutable');
+      },
+    });
+
+    expect(stampSwSource(cached, 'cache-error').headers.get(SW_SOURCE_HEADER)).toBe(
+      'cache-error',
+    );
   });
 });
