@@ -173,3 +173,28 @@ describe('LibraryItemList', () => {
     expect(screen.queryByText('No pinned items.')).toBeNull();
   });
 });
+
+describe('LibraryItemList — persisted-cache restore window', () => {
+  // PersistQueryClientProvider paints children while it reads the persisted
+  // cache out of IndexedDB, and React Query pins fetchStatus to 'idle' for the
+  // whole window — so `isLoading` is false with no data, which is exactly what
+  // the empty label is gated on. A reader with a full reading list was told it
+  // was empty for a beat on every cold load.
+  it('shows the loading state, never the empty label, while the persisted cache is restoring', () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    source.stateStore.set('item-1', 'pinned', true);
+
+    renderWithProviders(
+      <LibraryItemList
+        field="pinned"
+        actionLabel="Unpin"
+        actionIcon={<PushPinFilled />}
+        emptyLabel="No pinned items."
+      />,
+      { route: '/pinned', source, isRestoring: true },
+    );
+
+    expect(screen.queryByText('No pinned items.')).toBeNull();
+    expect(screen.getByTestId('loading-state')).toBeInTheDocument();
+  });
+});

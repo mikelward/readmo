@@ -79,3 +79,18 @@ describe('AdminUserFeedsPage', () => {
     expect(await screen.findByText(/don.t have access/i)).toBeInTheDocument();
   });
 });
+
+describe('Admin drill-downs — restore window', () => {
+  it('neither denies access nor reports an empty subscriber list while the persisted cache is restoring', () => {
+    renderWithProviders(
+      <Routes>
+        <Route path="/admin/feeds/:feedId/users" element={<AdminFeedUsersPage />} />
+      </Routes>,
+      { route: '/admin/feeds/feed-1/users', isRestoring: true },
+    );
+
+    expect(screen.queryByText(/don.t have access/i)).toBeNull();
+    expect(screen.queryByText(/no one is subscribed to this feed/i)).toBeNull();
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+  });
+});

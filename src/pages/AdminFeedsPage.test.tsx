@@ -274,3 +274,19 @@ describe('AdminFeedsPage', () => {
     expect(back).toHaveAttribute('href', '/admin');
   });
 });
+
+describe('AdminFeedsPage — restore window', () => {
+  beforeEach(() => window.localStorage.setItem('readmo:mock-signed-in', '1'));
+  afterEach(() => window.localStorage.clear());
+
+  it('neither denies access nor reports "No feeds yet." while the persisted cache is restoring', () => {
+    renderWithProviders(<AdminFeedsPage />, {
+      route: '/admin/feeds',
+      isRestoring: true,
+    });
+
+    expect(screen.queryByText(/don.t have access/i)).toBeNull();
+    expect(screen.queryByText('No feeds yet.')).toBeNull();
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+  });
+});

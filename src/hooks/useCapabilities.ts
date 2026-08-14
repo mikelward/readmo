@@ -49,6 +49,59 @@ export function useCapabilities(): Capabilities {
   return useCapabilitiesQuery().data ?? DEFAULT_CAPABILITIES;
 }
 
+/** How far along the answer to "what may this caller do?" is. The admin pages
+ * gate on this because `admin: false` is the *default*, not a verdict — read
+ * straight, it puts "You don't have access to this page." in front of an
+ * operator who has every right to be there.
+ *
+ *   - `'checking'` — a signed-in caller's flags are genuinely still coming: the
+ *     persisted-cache restore window (React Query pins fetchStatus to 'idle'
+ *     and nothing may fetch — see useFeedItems) and the first read after it.
+ *   - `'unavailable'` — the read *failed*. Access was never determined, so this
+ *     is an operational failure to report and retry, NOT a denial: offline or
+ *     with the backend down, every admin page would otherwise accuse the
+ *     operator of not having access, with no way to try again.
+ *   - `'known'` — an answer is in hand, so {@link useCapabilities} is reporting
+ *     a verdict rather than a default. Also covers a caller with no user at
+ *     all: their query is disabled and never resolves, so waiting on it would
+ *     hold the page on "Loading…" for good, and someone signed out is
+ *     definitively not an admin. Nobody reaches that in practice —
+ *     `RequireAuth` (App.tsx) sends a signed-out visitor to `/signin` before
+ *     any admin page mounts — but a gate that can hang is worse than one that
+ *     answers, so this stays total.
+ */
+export type CapabilitiesPhase = 'checking' | 'unavailable' | 'known';
+
+export function useCapabilitiesPhase(): CapabilitiesPhase {
+  const { user } = useAuth();
+  const { data, isError } = useCapabilitiesQuery();
+  if (!user) return 'known';
+  // A cached answer is `known`, even if the refetch over it just failed. Two
+  // things make that right, and the second is easy to get backwards (Codex P2
+  // on #633 read this ordering as a bug):
+  //
+  //  1. This gate separates an *answer* from the `admin: false` DEFAULT — not
+  //     fresh from stale. An older answer is still an answer, so an admin whose
+  //     connection dropped keeps their console instead of a "couldn't check
+  //     your access" panel, and a cached denial stays accurate rather than
+  //     becoming a shrug. Staleness is bounded by the server, which re-checks
+  //     `is_admin()` on every admin RPC (guardrail 7).
+  //  2. `isError` can't contradict `data` here anyway. A background refetch
+  //     that fails over existing data leaves the QUERY state at status 'error',
+  //     but the observer this hook reads keeps reporting status 'success' with
+  //     `isError` false — only `query.error` is set (same v5 behavior
+  //     useFeedItems' `refreshFailed` relies on). So `isError` is true only
+  //     when there is no data at all, which is exactly `unavailable`. The order
+  //     below is therefore inert; it is written this way because the *intent*
+  //     in (1) should survive a change in that library behavior.
+  if (data) return 'known';
+  if (isError) return 'unavailable';
+  // Everything else is still in flight — including the restore window, where
+  // the query is pending with `fetchStatus` held at 'idle'. No `useIsRestoring`
+  // needed: "no data and no error" already covers it.
+  return 'checking';
+}
+
 /** Whether reading-mode full text and AI summaries are *known* to be allowed for
  * the caller — the conservative gate the reader and offline warmer use to decide
  * whether to issue a `fulltext` / `summary` Edge call. Allowed ONLY once we've

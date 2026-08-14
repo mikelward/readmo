@@ -5,6 +5,7 @@ import { useDataSource } from '../lib/data/context';
 import { useCapabilities } from '../hooks/useCapabilities';
 import { usePageTitle } from '../hooks/useDocumentTitle';
 import { AdminDenied } from './AdminDenied';
+import { useAdminGate } from './AdminGate';
 import type { AiCall, AiCallKind } from '../lib/data/DataSource';
 import './AdminPage.css';
 import './AiCallsPage.css';
@@ -61,6 +62,10 @@ export function AiCallsPage() {
   usePageTitle('AI calls');
   const ds = useDataSource();
   const { admin } = useCapabilities();
+  // Also covers the persisted-cache restore window for the two reads below,
+  // whose "Loading…" branch would otherwise fall through to "No AI calls
+  // recorded yet." See AdminGate.
+  const gate = useAdminGate('AI calls');
 
   const counts = useQuery({
     queryKey: COUNTS_KEY,
@@ -84,6 +89,7 @@ export function AiCallsPage() {
     return out;
   }, [counts.data]);
 
+  if (gate) return gate;
   if (!admin) return <AdminDenied title="AI calls" />;
 
   const loading = recent.isLoading || counts.isLoading;

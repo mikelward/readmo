@@ -281,6 +281,24 @@ permanent by default. Each is cheap to change.
 ## UI / layout
 
 
+- **A library view still claims to be empty before the first item-state
+  hydrate.** The remaining finding from the loading-placeholder audit that shut
+  down the persisted-cache restore flash. `useStateBucket` reads the item-state
+  store, which loads from localStorage *synchronously*, so on a device that has
+  synced before the buckets are right at first paint. On a device that hasn't —
+  a new browser, a cleared profile, a fresh sign-in — they're empty until the
+  server hydrate lands, and `/pinned` says "Your reading list is empty. Pin
+  items to read later." to a reader whose list is full. Same lie as the feed's
+  caught-up flash, but a different mechanism: it's the item-state store, not
+  React Query, so `useIsRestoring` doesn't see it and the fix isn't the same
+  one. Two things need deciding before it can be written: the store exposes
+  `subscribeHydrated` (which fires per map-changing hydrate and has no consumer
+  today) but no *first-hydrate-done* flag, and whatever flag replaces it has to
+  settle for the cases where a hydrate never comes at all — mock mode, a signed-
+  out reader, a failed read — or the empty label just becomes a permanent
+  spinner, which is the worse lie. See SPEC *No view answers for a read it
+  hasn't done*.
+
 - **Consider upping the tap targets and/or the min row height to match
   newshacker's density.** readmo currently keys the list row body's `min-height`
   to the bare `--rm-tap: 44px` touch floor (`ItemRow.css`), so a non-wrapping

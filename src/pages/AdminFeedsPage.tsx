@@ -5,6 +5,7 @@ import { useDataSource } from '../lib/data/context';
 import { useCapabilities } from '../hooks/useCapabilities';
 import { usePageTitle } from '../hooks/useDocumentTitle';
 import { AdminDenied } from './AdminDenied';
+import { useAdminGate } from './AdminGate';
 import { useToast } from '../hooks/useToast';
 import { usePointerDevice } from '../hooks/usePointerDevice';
 import { ItemRowMenu, type ItemRowMenuItem } from '../components/ItemRowMenu';
@@ -35,6 +36,10 @@ export function AdminFeedsPage() {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const { admin, canViewSubscriptions } = useCapabilities();
+  // Also covers the persisted-cache restore window for the read below, whose
+  // "Loading…" branch would otherwise fall through to "No feeds yet." See
+  // AdminGate.
+  const gate = useAdminGate('Feed status');
   const navigate = useNavigate();
   // Pointer devices get the anchored popover; touch gets the bottom sheet.
   const pointerDevice = usePointerDevice();
@@ -212,6 +217,7 @@ export function AdminFeedsPage() {
       ]
     : [];
 
+  if (gate) return gate;
   if (!admin) return <AdminDenied title="Feed status" />;
 
   return (

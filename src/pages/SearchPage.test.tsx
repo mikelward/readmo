@@ -85,3 +85,24 @@ describe('SearchPage', () => {
     expect(await screen.findByText(item.item.title)).toBeInTheDocument();
   });
 });
+
+describe('SearchPage — persisted-cache restore window', () => {
+  // No query may fetch while PersistQueryClientProvider hydrates the cache, and
+  // React Query reports `isLoading === false` throughout — so a search typed in
+  // that window answered "No matches." without having run.
+  it('shows the loading state, never "No matches.", while the persisted cache is restoring', () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderWithProviders(<SearchPage />, {
+      route: '/search',
+      source,
+      isRestoring: true,
+    });
+
+    fireEvent.change(screen.getByLabelText('Search'), {
+      target: { value: 'phone' },
+    });
+
+    expect(screen.queryByText('No matches.')).toBeNull();
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+  });
+});

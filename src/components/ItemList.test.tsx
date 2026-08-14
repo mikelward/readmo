@@ -9129,6 +9129,71 @@ describe('ItemList — Refreshing state', () => {
   });
 });
 
+describe('ItemList — persisted-cache restore window', () => {
+  beforeEach(() => {
+    installIntersectionObserverMock();
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+  afterEach(() => {
+    uninstallIntersectionObserverMock();
+    _resetNetworkStatusForTests();
+  });
+
+  // The reported bug: "You're all caught up." flashed on every cold load before
+  // the articles appeared. PersistQueryClientProvider paints children while it
+  // reads the persisted cache out of IndexedDB, and React Query pins each
+  // query's fetchStatus to 'idle' for that window — so `isLoading`
+  // (`isPending && isFetching`) is FALSE with no data, which is indistinguishable
+  // from a settled empty feed unless the restore flag is consulted.
+  it('shows the loading state, never the caught-up label, while the persisted cache is restoring', () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderWithProviders(
+      <ItemList
+        viewKey={`restoring-${viewKeySeq++}`}
+        fetchPage={(cursor) => source.getHomeItems({ cursor })}
+        emptyLabel="All caught up."
+      />,
+      { source, isRestoring: true },
+    );
+
+    expect(screen.queryByText('All caught up.')).toBeNull();
+    expect(screen.getByTestId('loading-state')).toBeInTheDocument();
+  });
+
+  // Same window, offline device: the miss-state is keyed on "not loading and
+  // still empty", so the restore flag has to suppress it too — otherwise a cold
+  // offline start accuses the network over a cache that holds the articles.
+  it('does not show the offline miss-state while the persisted cache is restoring', () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      value: false,
+    });
+    window.dispatchEvent(new Event('offline'));
+    try {
+      renderWithProviders(
+        <ItemList
+          viewKey={`restoring-offline-${viewKeySeq++}`}
+          fetchPage={(cursor) => source.getHomeItems({ cursor })}
+          emptyLabel="All caught up."
+        />,
+        { source, isRestoring: true },
+      );
+
+      expect(screen.queryByText(/you’re offline/i)).toBeNull();
+      expect(screen.queryByText('All caught up.')).toBeNull();
+      expect(screen.getByTestId('loading-state')).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(window.navigator, 'onLine', {
+        configurable: true,
+        value: true,
+      });
+      window.dispatchEvent(new Event('online'));
+    }
+  });
+});
+
 describe('keyboard dismiss focus flow', () => {
   beforeEach(() => {
     window.localStorage.clear();

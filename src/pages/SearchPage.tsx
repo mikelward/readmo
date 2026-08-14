@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useIsRestoring, useQuery } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { usePageTitle } from '../hooks/useDocumentTitle';
 import { ItemRows } from '../components/ItemRows';
@@ -11,6 +11,11 @@ export function SearchPage() {
   const ds = useDataSource();
   const [query, setQuery] = useState('');
   usePageTitle('Search');
+  // Nothing may fetch while the persisted cache is hydrating, and React Query
+  // reports `isLoading === false` throughout that window (see useFeedItems) —
+  // so a search typed into a cold-loaded page answered "No matches." without
+  // having run.
+  const isRestoring = useIsRestoring();
 
   // Every keystroke is a new query key with no data until its fetch settles.
   // keepPreviousData holds the prior keystroke's results on screen through the
@@ -28,7 +33,9 @@ export function SearchPage() {
   // placeholder stays visible (not the spinner) — that's the point of keeping
   // the previous results.
   const searching =
-    isLoading || (isFetching && isPlaceholderData && results.length === 0);
+    isRestoring ||
+    isLoading ||
+    (isFetching && isPlaceholderData && results.length === 0);
 
   return (
     <ListPage
