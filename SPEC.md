@@ -3802,26 +3802,23 @@ uid the page announces to the worker; the fonts cache alone stays shared.
   is the in-build complement to the server-side `x-readmo-build` shed (SCALING.md
   → *Shedding a runaway client*).
 - **Runaway-client flood guard (circuit breaker).** The additive backstop behind
-  the retry discipline: a **client-side request circuit breaker** in
-  `supabaseFetch` (`src/lib/data/requestCircuitBreaker.ts`) sheds the
-  **network-authoritative reads** — the read RPCs (`feed_items`,
-  `feed_unread_counts`) and the NetworkOnly `item_state` hydration GET that
-  precedes every feed read — after a burst of consecutive failures, so a *failing*
-  loop fails fast instead of pinning the DB, then a single half-open probe recovers
-  it. (Any non-2xx from those reads counts as a failure: a stale-backend
-  PostgREST `404`/`400`/`422` is a real failed read, not a benign response.) It's
-  failure-based, not rate-based — a legitimate bulk burst (e.g. an offline warmup)
-  never trips it; volume shedding belongs at the edge. The scope is exactly the
-  reads the service worker **never serves from cache**: the read RPCs are POSTs
-  (its `NetworkFirst` cache is GET-only) and `item_state` is NetworkOnly, so the
-  half-open probe's result always reflects real backend health. **Every other GET
-  `/rest/v1/` read keeps the 8s read *timeout* but bypasses the breaker** — those
-  are `NetworkFirst`-cached, so a cache fallback could answer a probe with a stale
-  `200` the backend never saw and falsely close the circuit mid-outage (and a
-  failing cacheable-GET loop is already bounded by the retry discipline + the cache
-  fallback). **Writes** (outbox-owned), **auth** (`/auth/v1/`) and Edge Functions
-  bypass it too — writes mustn't surface a spurious local failure, and auth must
-  stay reachable to recover an expired token / sign out.
+  the retry discipline: a **client-side request circuit breaker** sheds **reads**
+  after a burst of consecutive failures, so a *failing* loop fails fast instead of
+  pinning the DB, then recovers on its own. It's failure-based, not rate-based — a
+  legitimate bulk burst (e.g. an offline warmup) never trips it; volume shedding
+  belongs at the edge. **A backend that is merely behind the client is never
+  treated as one that is failing** — the app provokes errors on purpose when
+  feature-detecting an older backend (see *Client/server compatibility*), and
+  those must never shed anything. **Recovery is provisional until the backend
+  itself confirms it**: where the evidence could have come from the offline cache
+  rather than the server, reads resume gradually and re-shed at the first further
+  failure, because believing a recovery too readily just restarts the flood — but
+  a reader who only ever loads cached screens still recovers. While shed, reads don't
+  fall back to cache; by then the app is already showing its offline state, and
+  capping the loop is worth more than one more cached list. **Writes**
+  (outbox-owned), **auth** (`/auth/v1/`) and Edge Functions bypass the breaker —
+  writes mustn't surface a spurious local failure, and auth must stay reachable to
+  recover an expired token / sign out.
 
 ## Testing (inherited expectations)
 

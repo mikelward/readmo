@@ -204,3 +204,137 @@ describe('RequestCircuitBreaker — half-open peers wait for the probe', () => {
     expect(breaker.probeWait()).toBeNull(); // a peer would now be shed, not parked
   });
 });
+
+describe('RequestCircuitBreaker — inconclusive success (cache-served reads)', () => {
+  it('does not clear a failure run while closed', () => {
+    // A NetworkFirst read answered from the service-worker cache returns 200
+    // without the backend being involved, so it is not evidence of health. If it
+    // cleared the run, a cached read interleaved with real failures would hold
+    // the circuit closed through an entire outage.
+    const { breaker } = makeBreaker(); // failureThreshold 3
+    breaker.settle(admit(breaker), false);
+    breaker.settle(admit(breaker), false);
+    breaker.settleInconclusive(admit(breaker)); // must NOT reset the run
+    breaker.settle(admit(breaker), false); // third real failure
+    expect(breaker.getState()).toBe('open');
+  });
+
+  it('closes as the half-open probe, but on probation', () => {
+    // It closes on weak evidence deliberately (see the method comment): refusing
+    // to would strand a client that only reads cacheable tables. Probation is the
+    // safety — the failure run is left one short, so if the backend is in fact
+    // still down, the loop resumes for exactly ONE request.
+    const { breaker, clock } = makeBreaker(); // failureThreshold 3
+    for (let i = 0; i < 3; i++) breaker.settle(admit(breaker), false);
+    clock.t += 5_000;
+    breaker.settleInconclusive(admit(breaker)); // probe, cache-served 200
+    expect(breaker.getState()).toBe('closed');
+
+    // One failure — not another burst of three — puts it straight back.
+    breaker.settle(admit(breaker), false);
+    expect(breaker.getState()).toBe('open');
+  });
+
+  it('lets an authoritative success clear the probation', () => {
+    // The other half: if the backend really did recover, the next real read
+    // proves it and the breaker returns to a full failure budget rather than
+    // sitting one failure away from tripping forever.
+    const { breaker, clock } = makeBreaker();
+    for (let i = 0; i < 3; i++) breaker.settle(admit(breaker), false);
+    clock.t += 5_000;
+    breaker.settleInconclusive(admit(breaker)); // closed, on probation
+    breaker.settle(admit(breaker), true); // authoritative success clears the run
+
+    // Back to a full budget: two failures no longer suffice.
+    breaker.settle(admit(breaker), false);
+    breaker.settle(admit(breaker), false);
+    expect(breaker.getState()).toBe('closed');
+  });
+
+  it('serializes admission while on probation', () => {
+    // Closing the circuit is what releases the peers parked on probeWait(). If
+    // probation merely pre-loaded the failure count, they would ALL be admitted
+    // in the same tick and reach a still-failing backend together — only the
+    // first returning failure re-opens, and the rest are already in flight. So
+    // "one failure re-opens it" has to be backed by "one request at a time".
+    const { breaker, clock } = makeBreaker();
+    for (let i = 0; i < 3; i++) breaker.settle(admit(breaker), false);
+    clock.t += 5_000;
+    breaker.settleInconclusive(admit(breaker)); // closed, on probation
+    expect(breaker.getState()).toBe('closed');
+
+    admit(breaker); // the one probationary request…
+    expect(breaker.shouldAllow()).toBeNull(); // …and the crowd waits behind it
+    expect(breaker.probeWait()).not.toBeNull(); // parked, not failed
+  });
+
+  it('frees the probationary slot when its request is canceled', () => {
+    // Otherwise probation wedges: every peer parked behind a request that will
+    // never report, which is the deadlock settleCanceled already exists to stop.
+    const { breaker, clock } = makeBreaker();
+    for (let i = 0; i < 3; i++) breaker.settle(admit(breaker), false);
+    clock.t += 5_000;
+    breaker.settleInconclusive(admit(breaker));
+    const inFlight = admit(breaker);
+    expect(breaker.shouldAllow()).toBeNull();
+
+    breaker.settleCanceled(inFlight);
+    expect(breaker.shouldAllow()).not.toBeNull(); // slot freed, traffic moves
+  });
+
+  it('releases parked peers as each probationary request settles', async () => {
+    const { breaker, clock } = makeBreaker();
+    for (let i = 0; i < 3; i++) breaker.settle(admit(breaker), false);
+    clock.t += 5_000;
+    breaker.settleInconclusive(admit(breaker));
+    const inFlight = admit(breaker);
+    const wait = breaker.probeWait();
+    expect(wait).not.toBeNull();
+
+    breaker.settleInconclusive(inFlight); // another weak success
+    await wait; // must resolve, or a parked peer hangs forever
+    expect(breaker.getState()).toBe('closed');
+  });
+
+  it('an authoritative success ends probation and restores parallelism', () => {
+    const { breaker, clock } = makeBreaker();
+    for (let i = 0; i < 3; i++) breaker.settle(admit(breaker), false);
+    clock.t += 5_000;
+    breaker.settleInconclusive(admit(breaker));
+    breaker.settle(admit(breaker), true); // the backend itself answered
+
+    // No longer serialized — concurrent reads are admitted together again.
+    admit(breaker);
+    expect(breaker.shouldAllow()).not.toBeNull();
+  });
+
+  it('recovers a client that only ever sees cacheable reads', () => {
+    // The failure Codex caught in review: with nothing authoritative ever
+    // arriving, an inconclusive probe that left the circuit open would throttle
+    // this client to one request per cooldown FOREVER, long after the backend
+    // came back — a permanent degradation caused by recovery.
+    const { breaker, clock } = makeBreaker();
+    for (let i = 0; i < 3; i++) breaker.settle(admit(breaker), false);
+    clock.t += 5_000;
+    breaker.settleInconclusive(admit(breaker)); // the backend is back
+    expect(breaker.getState()).toBe('closed');
+
+    // And it STAYS closed under continuing cache-served traffic — no
+    // re-throttling, no shedding of concurrent reads.
+    for (let i = 0; i < 20; i++) breaker.settleInconclusive(admit(breaker));
+    expect(breaker.getState()).toBe('closed');
+  });
+
+  it('is ignored when its ticket is stale', () => {
+    const { breaker, clock } = makeBreaker();
+    const stale = admit(breaker); // admitted in the closed generation
+    for (let i = 0; i < 3; i++) breaker.settle(admit(breaker), false); // trips
+    clock.t += 5_000;
+    const probe = admit(breaker);
+    breaker.settleInconclusive(stale); // pre-outage read landing late
+    // The stale settle must not have returned the probe slot: the probe is still
+    // the one in flight, and settling IT is what moves the breaker.
+    breaker.settle(probe, true);
+    expect(breaker.getState()).toBe('closed');
+  });
+});

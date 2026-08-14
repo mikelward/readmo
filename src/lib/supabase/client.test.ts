@@ -402,10 +402,18 @@ describe('supabaseFetch', () => {
   it('does not let a cache-served GET 200 close a breaker an RPC outage opened', async () => {
     // In the installed PWA, GET /rest/v1/ reads are served by Workbox NetworkFirst
     // (vite.config.ts), so a "200" can be a stale cache fallback the backend never
-    // saw. The read RPCs are POSTs the GET-only cache never serves, so the breaker
-    // is scoped to them. Here the backend is down: every RPC fails, but a GET read
-    // returns the cache-fallback 200. The breaker must NOT treat that cached 200
-    // as recovery, or the failing RPC loop would resume.
+    // saw. Such a read IS guarded by the breaker (a failing loop on it must be
+    // shed), but its SUCCESS must never be read as recovery — otherwise the cache
+    // would close the circuit mid-outage and the failing RPC loop would resume.
+    //
+    // The sharp case is the cached read arriving as the half-open PROBE, which is
+    // the only moment a single success can close the circuit. Fake Date because
+    // the cooldown is Date.now()-based, and rebuild the breaker after installing
+    // the clock (it captures Date.now at construction).
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
+    });
+    _resetRequestBreakerForTests();
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const u = String(input instanceof Request ? input.url : input);
       // RPCs hit the (down) backend → 500; GET reads are answered from cache → 200.
@@ -420,18 +428,245 @@ describe('supabaseFetch', () => {
         body: '{}',
       });
     }
-    // A GET read goes straight through (it bypasses the open breaker — never shed)…
+    // Cooling down: the cacheable GET is shed too now — it no longer bypasses.
+    await expect(
+      supabaseFetch('https://x.supabase.co/rest/v1/feeds'),
+    ).rejects.toThrow(/circuit open/i);
+
+    // Past the cooldown the GET is admitted as the probe and answers 200 from
+    // cache. That DOES close the circuit — refusing to would strand a client
+    // that only reads cacheable tables — but on probation.
+    await vi.advanceTimersByTimeAsync(10_000);
     expect(
       (await supabaseFetch('https://x.supabase.co/rest/v1/feeds')).status,
     ).toBe(200);
-    // …and crucially its cache-served 200 did NOT close the breaker: the next RPC
-    // is still shed while the backend is still down.
+
+    // So the failing RPC loop resumes for exactly ONE request before the circuit
+    // slams shut again — not the six a fresh failure run would have cost. That
+    // bound is what makes trusting a cache-served 200 acceptable.
+    expect(
+      (
+        await supabaseFetch('https://x.supabase.co/rest/v1/rpc/feed_items', {
+          method: 'POST',
+          body: '{}',
+        })
+      ).status,
+    ).toBe(500);
     await expect(
       supabaseFetch('https://x.supabase.co/rest/v1/rpc/feed_items', {
         method: 'POST',
         body: '{}',
       }),
     ).rejects.toThrow(/circuit open/i);
+  });
+
+  it('counts a 401 loop on a cacheable table (expired token)', async () => {
+    // The schema-probe exemption must not cover this: an expired-token loop is
+    // the failure class that melted the backend in the first place.
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 401 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    for (let i = 0; i < 6; i++) {
+      await supabaseFetch('https://x.supabase.co/rest/v1/subscriptions?select=*');
+    }
+    await expect(
+      supabaseFetch('https://x.supabase.co/rest/v1/subscriptions?select=*'),
+    ).rejects.toThrow(/circuit open/i);
+  });
+
+  it('does not count a capability-probe 4xx on a cacheable read', async () => {
+    // getSyncedSettings walks a projection ladder against user_settings, taking
+    // an EXPECTED 4xx per rung until it finds one the deployed backend can serve
+    // (guardrail 11). Counting those would let a backend that is merely older
+    // than the client trip a breaker meant for one that is failing — and then
+    // shed unrelated reads, including their cache fallback.
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ code: '42703', message: 'column missing' }), {
+          status: 400,
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    // Far more probe cycles than the 6-failure threshold.
+    for (let i = 0; i < 20; i++) {
+      await supabaseFetch('https://x.supabase.co/rest/v1/user_settings?select=a,b');
+    }
+    // Still closed, and an unrelated read still reaches the network.
+    const other = await supabaseFetch('https://x.supabase.co/rest/v1/folders?select=*');
+    expect(other.status).toBe(400);
+    expect(fetchMock).toHaveBeenCalledTimes(21);
+  });
+
+  it('counts an UNCODED 400 on a cacheable table (a malformed-query loop)', async () => {
+    // The exemption is keyed on the PostgREST schema code, not the status: a
+    // repeated 400 that isn't a capability probe — a malformed query, a gateway
+    // error page — is an ordinary failed read, and a loop on one is exactly what
+    // the breaker exists to cap. Keying on the status alone waved these through.
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ code: 'PGRST100', message: 'parse error' }), {
+          status: 400,
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    for (let i = 0; i < 6; i++) {
+      await supabaseFetch('https://x.supabase.co/rest/v1/folders?select=*');
+    }
+    await expect(
+      supabaseFetch('https://x.supabase.co/rest/v1/folders?select=*'),
+    ).rejects.toThrow(/circuit open/i);
+  });
+
+  it('counts a 4xx whose body is not a PostgREST error at all', async () => {
+    // The exemption must be EARNED. An unreadable or non-JSON body cannot
+    // identify a probe, so it stays a failure — the direction that can only
+    // over-protect the backend.
+    const fetchMock = vi.fn(
+      async () => new Response('<html>Bad Request</html>', { status: 400 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    for (let i = 0; i < 6; i++) {
+      await supabaseFetch('https://x.supabase.co/rest/v1/folders?select=*');
+    }
+    await expect(
+      supabaseFetch('https://x.supabase.co/rest/v1/folders?select=*'),
+    ).rejects.toThrow(/circuit open/i);
+  });
+
+  it('settles a 4xx whose body never finishes, instead of parking forever', async () => {
+    // The read cap is gone by now — boundedReadFetch resolves on HEADERS and
+    // clears its 8s timer — so a body that stalls mid-stream would leave the
+    // schema-code check awaiting forever, and the breaker ticket unsettled. An
+    // unsettled probationary/half-open ticket parks every later bounded read
+    // behind it permanently, which is the deadlock class this whole file guards.
+    vi.useFakeTimers();
+    _resetRequestBreakerForTests();
+    const stalling = () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"code":'));
+            // …and never closes.
+          },
+        }),
+        { status: 400 },
+      );
+    const fetchMock = vi.fn(async () => stalling());
+    vi.stubGlobal('fetch', fetchMock);
+
+    for (let i = 0; i < 6; i++) {
+      const read = supabaseFetch('https://x.supabase.co/rest/v1/folders?select=*');
+      await vi.advanceTimersByTimeAsync(1_000); // the bounded body wait elapses
+      expect((await read).status).toBe(400);
+    }
+
+    // Settled as failures rather than hanging: the circuit is open and the next
+    // read is shed, which is only reachable if all six tickets settled.
+    await expect(
+      supabaseFetch('https://x.supabase.co/rest/v1/folders?select=*'),
+    ).rejects.toThrow(/circuit open/i);
+  });
+
+  it('counts a permission-denied 4xx even though it names the table', async () => {
+    // 42501 (insufficient_privilege) is grouped with the missing-table codes in
+    // supabaseMappers, but it is a real failed read here: an RLS/permission loop
+    // must still trip.
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ code: '42501', message: 'permission denied' }), {
+          status: 400,
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    for (let i = 0; i < 6; i++) {
+      await supabaseFetch('https://x.supabase.co/rest/v1/subscriptions?select=*');
+    }
+    await expect(
+      supabaseFetch('https://x.supabase.co/rest/v1/subscriptions?select=*'),
+    ).rejects.toThrow(/circuit open/i);
+  });
+
+  it('still counts a 4xx on an authoritative read (a stale backend missing the RPC)', async () => {
+    // The other half: the 4xx-is-a-failure rule was argued for the read RPCs,
+    // where a PostgREST 404 means the function itself is missing and a refetch
+    // loop repeats forever. Nothing capability-probes those.
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    for (let i = 0; i < 6; i++) {
+      await supabaseFetch('https://x.supabase.co/rest/v1/rpc/feed_items', {
+        method: 'POST',
+        body: '{}',
+      });
+    }
+    await expect(
+      supabaseFetch('https://x.supabase.co/rest/v1/rpc/feed_items', {
+        method: 'POST',
+        body: '{}',
+      }),
+    ).rejects.toThrow(/circuit open/i);
+  });
+
+  it('caps a failing loop on a cacheable read (subscriptions / user_settings)', async () => {
+    // The Aug 14 outage: PostgREST unreachable, so /subscriptions and
+    // /user_settings 503 on every attempt. Neither is a read RPC nor item_state,
+    // so before this they were guarded by nothing at all — the breaker watched
+    // three paths and these were not among them. A loop here could run unbounded.
+    const fetchMock = vi.fn(async () => new Response('', { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    for (let i = 0; i < 6; i++) {
+      await supabaseFetch('https://x.supabase.co/rest/v1/subscriptions?select=*');
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+
+    // Shed — and shed before the network, which is the point: a shed costs the
+    // backend nothing.
+    await expect(
+      supabaseFetch('https://x.supabase.co/rest/v1/subscriptions?select=*'),
+    ).rejects.toThrow(/circuit open/i);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+
+    // The breaker is one circuit, not one per path: user_settings failures counted
+    // toward the same run and it is shed on the same evidence.
+    await expect(
+      supabaseFetch('https://x.supabase.co/rest/v1/user_settings?select=*'),
+    ).rejects.toThrow(/circuit open/i);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
+
+  it('lets a cacheable read fail the circuit open even when it never succeeds authoritatively', async () => {
+    // A user sitting on a screen that only reads cacheable tables (no feed read,
+    // so no item_state hydration and no read RPC) must still be capped. This is
+    // the case the inconclusive-success rule could have deadlocked: nothing
+    // authoritative ever arrives to close the circuit, so the cooldown has to be
+    // what lets traffic through again.
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
+    });
+    _resetRequestBreakerForTests();
+    const fetchMock = vi.fn(async () => new Response('', { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    for (let i = 0; i < 6; i++) {
+      await supabaseFetch('https://x.supabase.co/rest/v1/folders?select=*');
+    }
+    await expect(
+      supabaseFetch('https://x.supabase.co/rest/v1/folders?select=*'),
+    ).rejects.toThrow(/circuit open/i);
+
+    // One probe per cooldown window, not none: the loop is throttled, not stopped
+    // forever, so recovery needs no authoritative read to happen by luck.
+    await vi.advanceTimersByTimeAsync(10_000);
+    const probe = await supabaseFetch(
+      'https://x.supabase.co/rest/v1/folders?select=*',
+    );
+    expect(probe.status).toBe(503);
+    expect(fetchMock).toHaveBeenCalledTimes(7);
   });
 
   it('bounds a hung half-open probe by the 8s read cap and releases parked peers (no indefinite strand)', async () => {

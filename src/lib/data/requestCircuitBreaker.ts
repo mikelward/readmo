@@ -70,6 +70,12 @@ export class RequestCircuitBreaker {
    *  failing and burning its retry budget while a slow probe is still in flight. */
   private probeSettled: Promise<void> | null = null;
   private resolveProbeSettled: (() => void) | null = null;
+  /** Closed, but recovered only on weak evidence — admission stays SERIALIZED
+   *  (one request at a time) until an authoritative success confirms health.
+   *  See settleInconclusive. */
+  private probation = false;
+  /** A probationary request is in flight, so peers park instead of piling on. */
+  private probationInFlight = false;
 
   constructor(opts: CircuitBreakerOptions = {}) {
     this.failureThreshold = opts.failureThreshold ?? DEFAULTS.failureThreshold;
@@ -94,16 +100,22 @@ export class RequestCircuitBreaker {
       // the wait peers will hold on until the probe settles.
       this.state = 'half-open';
       this.generation += 1;
-      this.probeSettled = new Promise<void>((resolve) => {
-        this.resolveProbeSettled = resolve;
-      });
+      this.armProbeWait();
       return this.generation;
     }
     if (this.state === 'half-open') {
       // One probe at a time; shed the rest until it resolves.
       return null;
     }
-    return this.generation; // closed: healthy, admit everything in this generation
+    // Closed. Normally admit everything; on probation admit ONE at a time, so a
+    // recovery believed on weak evidence can't be the cue for a parked crowd to
+    // hit a still-failing backend all at once.
+    if (this.probation) {
+      if (this.probationInFlight) return null; // peer parks on probeWait()
+      this.probationInFlight = true;
+      this.armProbeWait();
+    }
+    return this.generation;
   }
 
   /** Report the outcome of a request that `shouldAllow()` ticketed. */
@@ -119,11 +131,65 @@ export class RequestCircuitBreaker {
     }
     // closed (the open state admits no current-generation tickets)
     if (ok) {
+      // An AUTHORITATIVE success — the only thing that ends probation, because
+      // it's the only evidence the backend itself is actually serving.
       this.consecutiveFailures = 0;
+      this.probation = false;
+      this.endProbationaryRequest();
       return;
     }
     this.consecutiveFailures += 1;
     if (this.consecutiveFailures >= this.failureThreshold) this.trip();
+    else this.endProbationaryRequest();
+  }
+
+  /**
+   * A ticketed request finished, and its outcome says the backend ANSWERED but
+   * says nothing about whether it is healthy. Two callers (see supabase/client.ts):
+   * a cacheable read that succeeded — a service-worker cache fallback can answer
+   * one with a `200` the backend never saw — and a cacheable read that returned
+   * 4xx, which this app produces deliberately when feature-detecting an older
+   * backend. Neither may clear the failure run.
+   *
+   * What DOES count as failure (through `settle`) is a 5xx or a thrown error on
+   * such a read: the cache can manufacture a success and never those. That
+   * asymmetry is the point — count what a cache cannot fake, ignore what it can.
+   *
+   * As the half-open PROBE it CLOSES the circuit, but on probation: the failure
+   * run is left one short of the threshold, so a single failure re-opens it
+   * immediately instead of needing another full burst.
+   *
+   * Closing on evidence this weak looks wrong, and the alternative is worse. If
+   * an inconclusive probe left the circuit open, a client sitting on a screen
+   * that reads only cacheable tables (Feeds: subscriptions, folders) would never
+   * produce the authoritative success needed to close it — every probe would be
+   * inconclusive, and it would stay throttled to one request per cooldown long
+   * after the backend recovered, with concurrent reads shed. That is a permanent
+   * degradation caused by recovery, which is worse than the thing being guarded
+   * against.
+   *
+   * Probation is what makes it safe. The risk of trusting a cache-served `200`
+   * is that it closes the circuit mid-outage and lets the loop resume; with the
+   * run pre-loaded, resuming costs exactly ONE request before the circuit slams
+   * shut again, not another six. A cached success reopens the door a crack, and
+   * any real failure closes it. An authoritative success clears the run properly.
+   */
+  settleInconclusive(ticket: RequestTicket): void {
+    if (ticket !== this.generation) return; // stale — ignore
+    if (this.state === 'half-open') {
+      this.reset();
+      // Reopen on the next failure alone, not the next burst...
+      this.consecutiveFailures = this.failureThreshold - 1;
+      // ...and admit one request at a time until something authoritative
+      // confirms the recovery, so "one failure re-opens it" is a real bound
+      // rather than one that a crowd of parked peers can outrun.
+      this.probation = true;
+      return;
+    }
+    // closed: free the slot if this was the probationary request, but leave
+    // consecutiveFailures and probation untouched — a weak success is not
+    // evidence, and letting one clear either would paper over a real failure run.
+    this.endProbationaryRequest();
   }
 
   /**
@@ -143,8 +209,11 @@ export class RequestCircuitBreaker {
       this.openedAt = this.now() - this.cooldownMs;
       this.releaseProbeWaiters(); // waiting peers re-decide (they'll re-probe)
     }
-    // closed: a canceled request is neither a failure nor a success — nothing
-    // to do (and the generation is unchanged, so it's not invalidated here).
+    // closed: a canceled request is neither a failure nor a success, so nothing
+    // to record (and the generation is unchanged, so it's not invalidated here)
+    // — but if it held the probationary slot it must still free it, or probation
+    // would wedge with every peer parked behind a request that never reports.
+    this.endProbationaryRequest();
   }
 
   /**
@@ -154,7 +223,23 @@ export class RequestCircuitBreaker {
    * reads errored (their retry budget can be shorter than the probe's latency).
    */
   probeWait(): Promise<void> | null {
-    return this.state === 'half-open' ? this.probeSettled : null;
+    return this.state === 'half-open' || this.probationInFlight
+      ? this.probeSettled
+      : null;
+  }
+
+  /** Arm the gate peers park on while a serialized request is in flight. */
+  private armProbeWait(): void {
+    this.probeSettled = new Promise<void>((resolve) => {
+      this.resolveProbeSettled = resolve;
+    });
+  }
+
+  /** A serialized (probationary) request settled: free the slot and wake peers. */
+  private endProbationaryRequest(): void {
+    if (!this.probationInFlight) return;
+    this.probationInFlight = false;
+    this.releaseProbeWaiters();
   }
 
   /** Wake any peers parked on probeWait() — call AFTER the state transition so
@@ -170,6 +255,8 @@ export class RequestCircuitBreaker {
     this.state = 'open';
     this.openedAt = this.now();
     this.consecutiveFailures = 0;
+    this.probation = false;
+    this.probationInFlight = false;
     this.generation += 1; // invalidate in-flight tickets from the prior generation
     this.releaseProbeWaiters();
   }
@@ -177,6 +264,8 @@ export class RequestCircuitBreaker {
   private reset(): void {
     this.state = 'closed';
     this.consecutiveFailures = 0;
+    this.probation = false;
+    this.probationInFlight = false;
     this.openedAt = 0;
     this.generation += 1; // post-recovery: pre-outage tickets are now stale
     this.releaseProbeWaiters();
