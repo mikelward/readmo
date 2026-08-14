@@ -3813,7 +3813,14 @@ uid the page announces to the worker; the fonts cache alone stays shared.
   itself confirms it**: where the evidence could have come from the offline cache
   rather than the server, reads resume gradually and re-shed at the first further
   failure, because believing a recovery too readily just restarts the flood — but
-  a reader who only ever loads cached screens still recovers. While shed, reads don't
+  a reader who only ever loads cached screens still recovers, and returns to
+  normal reading as soon as the backend answers one of them for real. **An
+  outage the offline cache hides still counts**: a read the cache answered
+  because the request *failed* is failure evidence, not health — while one the
+  cache answered because the backend was merely **slow** is neither, since a
+  slow read may still be on its way. **Being offline
+  never trips it**: with no network there is nothing to protect the backend from,
+  and shedding would cost the reader the offline cache. While shed, reads don't
   fall back to cache; by then the app is already showing its offline state, and
   capping the loop is worth more than one more cached list. **Writes**
   (outbox-owned), **auth** (`/auth/v1/`) and Edge Functions bypass the breaker —

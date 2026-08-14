@@ -99,6 +99,52 @@ export function supabaseItemStatePattern(url: string | undefined): RegExp {
  * proxies). Data reads don't need it — they bucket by their own JWT. */
 export const SW_SET_UID_MESSAGE = 'readmo:active-uid';
 
+/**
+ * Header the service worker stamps on every Supabase REST read it handles,
+ * saying what became of the network attempt. `NetworkFirst` hides that by
+ * design — a cache fallback and a live read both arrive as a plain `200` — and
+ * the client breaker (`src/lib/supabase/client.ts`) needs to tell them apart in
+ * both directions: a fallback for a *failed* request is an outage disguised as
+ * health, and a live read is the authoritative success that ends probation.
+ *
+ * **Absence means "unknown", never "network-served".** A service worker cached
+ * before this build shipped stamps nothing, and an old SW can outlive many
+ * client deploys, so the client keeps its unstamped behavior for those.
+ */
+export const SW_SOURCE_HEADER = 'x-readmo-sw-source';
+
+/**
+ * What became of the network attempt behind a read — see
+ * {@link SW_SOURCE_HEADER}.
+ *
+ *  - `network`      — the backend itself answered. Authoritative.
+ *  - `cache-error`  — the request FAILED and the cache answered instead. This is
+ *                     the shape a connection-refused outage takes, and the only
+ *                     fallback that is evidence about backend health.
+ *  - `cache-timeout`— the cache answered because the request outran
+ *                     `networkTimeoutSeconds`, while it was still in flight. A
+ *                     slow backend is not a failed one, and the request may well
+ *                     succeed a moment later where nothing can see it, so this
+ *                     must stay inconclusive: counting it would let one slow
+ *                     screen-load's worth of concurrent reads open the circuit.
+ */
+export type SwSource = 'network' | 'cache-error' | 'cache-timeout';
+
+/**
+ * Copy `response` with the {@link SW_SOURCE_HEADER} stamp added. Header only:
+ * body, status and every other header are preserved, so nothing downstream
+ * changes shape.
+ *
+ * A copy rather than a mutation because a `Response` from the Cache API has
+ * immutable headers — setting one in place throws, which on the cache-fallback
+ * path is precisely the offline read we must not break.
+ */
+export function stampSwSource(response: Response, source: SwSource): Response {
+  const stamped = new Response(response.body, response);
+  stamped.headers.set(SW_SOURCE_HEADER, source);
+  return stamped;
+}
+
 /** Tell the (current and future) service worker which user's cache buckets
  * the uncredentialed proxy requests belong to. Fire-and-forget from boot:
  * the SW also persists the value itself, so a restarted worker recovers it
