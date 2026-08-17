@@ -909,8 +909,12 @@ build/routing/deploy.
   - Name the PR, and say what to re-read rather than what you read. A SHA or
     a list of which PRs are open goes stale before it fires; one PR number
     does not, and the trigger has to be matchable to it.
-  - Merged or closed, take one last reply-or-resolve pass — a review can
-    land after the merge — then cancel it and unsubscribe. `list_triggers`
+  - Merged or closed, take one last reply-and-resolve pass — a review can
+    land after the merge. Nothing is holding the PR now, so on a merged one
+    anything real goes to a follow-up PR, named on the thread, before you
+    resolve it; leaving it open records the work nowhere. A closed-unmerged
+    PR is a stop — the work was abandoned, so answer, resolve, and open
+    nothing. Then cancel the check and unsubscribe. `list_triggers`
     spans the account, so match this session and this PR before updating
     or deleting one; an update reschedules whatever it matches as surely
     as a delete cancels it.
@@ -971,7 +975,6 @@ up.
 
 - **Address Codex comments automatically — don't wait to be asked.** When a Codex review lands, treat each comment like a real review note: read it, decide whether it's a real issue or a false positive, and if it's real, fix it in the same PR. Fold the fix into the commit it belongs to (rebase / `--fixup`) rather than tacking on an "address review" commit, per the *one commit per logical surviving change* rule. Group several small fixes into one commit when they share a topic.
 - **Reply to (and resolve) every addressed Codex comment** via `mcp__github__add_reply_to_pull_request_comment`, then `mcp__github__resolve_review_thread`. Do this for each addressed comment, not in bulk.
-- **Don't resolve threads you haven't addressed.** If you disagree with a suggestion or are deferring it, leave the thread open and reply explaining why.
 - **Order of operations on a push that addresses review comments:** (1) push the fix commit, (2) reply on each addressed thread referencing the new sha, then resolve it. Doing (2) before (1) means the sha you cite doesn't exist yet.
 - **`resolve_review_thread` works — the old MCP limitation is fixed.** `mcp__github__pull_request_read` / `get_review_comments` now returns each thread's node ID (`PRRT_*`) on the `review_threads[].id` field, alongside `is_resolved` / `is_outdated` / `is_collapsed`. Pass that `PRRT_*` value straight to `mcp__github__resolve_review_thread` as `threadId`. Do NOT pass a comment's node ID (`PRRC_*`) — that fails with `Could not resolve to PullRequestReviewThread node`; the thread ID and the comment ID are different objects. So the full round-trip is available, with no "replied-but-unresolved, please resolve in the UI" caveat in the end-of-turn summary.
 
@@ -1000,7 +1003,7 @@ up.
   — and merge once CI is green and Codex's verdict for the current head is
   in.
 - Open PRs ready for review (not draft) unless asked otherwise.
-- **Never leave a review comment thread silently dismissed.** Either reply on the thread *or* resolve it — every thread ends in one of those two states, not "left open and ignored". When you think a comment is a false positive, say *why* on the thread (one or two sentences): the reasoning is exactly what the user wants surfaced, and "Deno-only path, doesn't apply" is more useful on the PR than buried in chat history. Acknowledgement noise ("good catch, will do") is fine and preferred over silence; the discipline is "say something or resolve", not "say nothing". This applies to human reviewers too, not just Codex.
+- **Never leave a review comment thread silently dismissed.** Answer on the thread — a disagreement is an answer, so say why — then resolve it once the fix is on the head or the point is rebutted; anything still to do stays open — every thread ends in one of those two states, not "left open and ignored". When you think a comment is a false positive, say *why* on the thread (one or two sentences): the reasoning is exactly what the user wants surfaced, and "Deno-only path, doesn't apply" is more useful on the PR than buried in chat history. Acknowledgement noise ("good catch, will do") is fine and preferred over silence; the discipline is "answer, then resolve", not "say nothing". This applies to human reviewers too, not just Codex.
 - **Don't merge ahead of that verdict**, and don't ask whether it's okay to
   merge — the gate is the rule above, in one place: Codex's verdict for the
   head you are merging, green CI, nothing left open.
