@@ -9,6 +9,21 @@ Calls that haven't been settled — guesses autopilot made without asking, and
 decisions deliberately postponed — recorded so they don't silently become
 permanent by default. Each is cheap to change.
 
+- **DEFERRED: US-spelling enforcement (owner call, 2026-08-18).** gedmap
+  enforces its US-English rule with a dictionary-difference test
+  (usSpelling.test.js: an offense is a word valid in en-GB AND invalid in
+  en-US, so names and jargon are unreachable false positives); porting it here
+  was prepared and then set aside — "we can worry about that later." The
+  prepared scan found ~50 British-only spellings — the doubled-l forms of
+  canceled/canceling (in the ShareResult literal, settings-sync, hooks, and
+  /debug copy) and mislabeled/labeled, plus the British forms of license,
+  neighbors, traveled, and acknowledgment in fixtures and prose — all
+  mechanical and suite-green when applied. Reviving it: add
+  nspell + dictionary-en + dictionary-en-gb devDependencies, port the test
+  with ALLOW = prev, oversized (US words dictionary-en lacks), land the
+  renames, and reword guardrail 3 so the rule stops quoting the British forms
+  it forbids.
+
 - **UNDECIDED: whether to hold a remotely-adopted filter list until the list
   rematerializes** (Codex P2 on #623). A filter list adopted from another device
   currently applies to the list already on screen, removing rows under a reader
