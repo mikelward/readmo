@@ -8,7 +8,7 @@
 // so nothing did that automatically and every bump of a mapped package would
 // land the parity test red.
 //
-// The monthly dependency-update workflow runs this after `npm update`. Run it
+// The monthly npm-update workflow runs this after `npm update`. Run it
 // by hand after any manual bump that touches a mapped package:
 //
 //   npm run import-map:sync

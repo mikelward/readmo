@@ -8,7 +8,7 @@ import { syncImportMap } from './sync-import-map.mjs';
 // import_map.test.ts asserts the map and the lockfile agree; this asserts the
 // thing that MAKES them agree. Renovate's custom manager used to do it and is
 // now disabled, so this script is the only automation left on that path — the
-// monthly dependency-update workflow runs it after `npm update`.
+// monthly npm-update workflow runs it after `npm update`.
 //
 // Fixtures are hand-written rather than derived from the real files: a test
 // built from the repo's own current state passes trivially and would keep
