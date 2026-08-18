@@ -53,8 +53,13 @@ describe('the lane policy', () => {
       { verdict: 'code', pattern: 'supabase/**' },
       { verdict: 'docs', pattern: '**/*.md' },
     ]);
-    expect(directives['prefixes']).toEqual(['docs', 'todo']);
-    expect(directives['dispatch-without-pr']).toEqual(['refuse']);
+    // The WHOLE directives object, not per-key reads: a newly added directive
+    // changes classify/gate behavior, so an unexpected key fails here rather
+    // than passing unexamined.
+    expect(directives).toEqual({
+      prefixes: ['docs', 'todo'],
+      'dispatch-without-pr': ['refuse'],
+    });
   });
 
   it('classifies markdown outside the shipped trees as docs', () => {
