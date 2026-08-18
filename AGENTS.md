@@ -20,8 +20,8 @@ has stopped biting.
    `npm run build` when you touch build, routing, or deploy config.
    CI mirrors this on every diff that can change behavior; housekeeping-only
    PRs (markdown outside the shipped trees) ride the docs lane instead, and
-   the required `gate` check independently re-verifies any skip
-   (`scripts/docs-lane.sh`). Fix a red
+   the required `gate` check independently re-verifies any skip (the shared
+   mikelward/lanes action; the policy is `.github/lanes.conf`). Fix a red
    baseline first, on its own commit. 80% coverage floor for `src/lib/` and
    server handlers — enforced in CI by `npm run test:coverage` (aggregate
    lines per area; the Deno-only Edge entry files and `ssrf.ts` are measured
