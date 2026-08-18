@@ -403,3 +403,15 @@ permanent by default. Each is cheap to change.
   all. See `supabase/migrations/0028_allowlist_admin.sql` and SPEC *Feed
   discovery*.
 
+
+## Merge gates
+
+- [ ] **Enable auto-merge and arm it on the weekly dependency PR.** The
+  repository setting is off (Settings → General → Pull Requests → Allow
+  auto-merge), and unlike gedmap the weekly `dependency-update.yml` never
+  runs `gh pr merge --auto --rebase` after opening its PR. The ruleset
+  already does the reviewing — CI, the `codex` status, conversation
+  resolution — so arming can only remove toil: a green weekly batch
+  currently waits for a manual merge that the gates have already earned.
+  Copy gedmap's arming block (deliberately non-fatal, with the
+  workflow-test assertion that goes with it) once the setting is on.
