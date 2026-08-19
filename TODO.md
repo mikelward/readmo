@@ -450,3 +450,10 @@ permanent by default. Each is cheap to change.
   names them) and skip arming when any moved package is pre-1.0, leaving
   that batch for review. Add the workflow-test assertion alongside, and
   keep the arming deliberately non-fatal like gedmap's.
+- Add an AGPL license gate to `ci.yml`: fail if a dependency declares an AGPL
+  license, catching one added by hand in a normal PR, not just ones the
+  weekly bot bumps. Likely `license-checker-rseidelsohn`. GPL/LGPL undecided,
+  matching typelauncher#632. Independent of `npm-update`. Covers the Node
+  app only — `edge`'s Deno functions have no `package.json`/lockfile for an
+  npm tool to read, needs its own answer, not investigated. Work out
+  placement and gate/lanes wiring when actually building this.
