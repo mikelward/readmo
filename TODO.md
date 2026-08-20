@@ -464,9 +464,21 @@ permanent by default. Each is cheap to change.
   and zizmor catches them natively — but `.github/workflows/zizmor.yml`
   is still advisory/non-blocking today, so until it's a required status
   check, a future regression of that shape would only turn the
-  (non-blocking) zizmor job red, not `npm test` or any required gate. Fix:
-  `repo-rules mikelward/readmo` (now defaults to `lanes codex zizmor`) once
-  zizmor has reported on a `pull_request` run here — outside what a session
-  without ruleset API access can do. Same gap flagged by Codex on the
-  identical change in newshacker#532; recorded here too rather than waiting
-  for the same finding to repeat.
+  (non-blocking) zizmor job red, not `npm test` or any required gate. Same
+  gap flagged by Codex on the identical change in newshacker#532; recorded
+  here too rather than waiting for the same finding to repeat.
+  - [ ] **First, widen the trigger.** Both of `zizmor.yml`'s triggers are
+        scoped to `paths: ['.github/**']`, which was fine while the job was
+        purely advisory but blocks making it required — GitHub leaves a
+        required check pending (not passing) when its workflow is skipped
+        by a path filter, so any PR touching `src/`, `supabase/`, or
+        anything outside `.github/` would become permanently unmergeable.
+        `repo-rules`' own never-reported guard would not catch this, since
+        the job HAS reported somewhere (on `.github/**` PRs) — the gap is
+        "does it run on every PR", not "has it ever run at all". Drop the
+        `paths:` filter on both triggers; still $0/month per the
+        workflow's own cost note even at full volume. Same fix needed in
+        newshacker, homepage, gedmap, and web's identical copies.
+  - [ ] Then: `repo-rules mikelward/readmo` (now defaults to `lanes codex
+        zizmor`) once zizmor has reported on a `pull_request` run here —
+        outside what a session without ruleset API access can do.
