@@ -457,3 +457,16 @@ permanent by default. Each is cheap to change.
   app only — `edge`'s Deno functions have no `package.json`/lockfile for an
   npm tool to read, needs its own answer, not investigated. Work out
   placement and gate/lanes wiring when actually building this.
+- [ ] **Make `zizmor` a required check, not just advisory.** #651 retired
+  the hand-rolled "no expression is spliced into a run: script" test in
+  `npm-update.test.ts` in favor of zizmor's `template-injection` audit —
+  correctly, since the regex missed real cases across six separate rounds
+  and zizmor catches them natively — but `.github/workflows/zizmor.yml`
+  is still advisory/non-blocking today, so until it's a required status
+  check, a future regression of that shape would only turn the
+  (non-blocking) zizmor job red, not `npm test` or any required gate. Fix:
+  `repo-rules mikelward/readmo` (now defaults to `lanes codex zizmor`) once
+  zizmor has reported on a `pull_request` run here — outside what a session
+  without ruleset API access can do. Same gap flagged by Codex on the
+  identical change in newshacker#532; recorded here too rather than waiting
+  for the same finding to repeat.
