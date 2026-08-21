@@ -70,6 +70,21 @@ describe('ItemRows', () => {
     expect(screen.getAllByTestId('item-row')).toHaveLength(3);
   });
 
+  it('shows the feed name in the row meta line, even in group-by-feed view', async () => {
+    // ItemRow supports omitting it via `showSource` (the section header
+    // already names the feed once), but ItemRows deliberately doesn't wire
+    // that up yet — see the showRowFavicon comment in ItemRows.tsx and
+    // TODO.md *UI / layout* for the deferred follow-up.
+    const items = await sampleItems(1);
+    const headers = new Map([
+      [items[0].item.id, { feedId: items[0].item.feedId, title: items[0].feed.title }],
+    ]);
+    renderWithProviders(
+      <ItemRows items={items} emptyLabel="Nothing here." groupHeaders={headers} />,
+    );
+    expect(screen.getByTestId('item-meta')).toHaveTextContent(items[0].feed.title);
+  });
+
   it('wires a per-item right action', async () => {
     const user = userEvent.setup();
     const items = await sampleItems(1);

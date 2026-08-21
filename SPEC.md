@@ -2377,15 +2377,22 @@ external call.
 
 Display-only meta (plain text inside the row link): **source** (feed/site
 name, trimmed to the registrable domain the way newshacker trims
-domains — `old.reddit.com` → `reddit.com`); **article domain** when it differs
-from the feed's own site, shown right after the source name (so aggregator
-feeds like Hacker News or Reddit surface where a row actually links —
-`Hacker News · thedrive.com`; a normal blog feed that links to itself doesn't
-repeat its own domain); **age**; the article's **primary category** when the
-feed supplies one — the first of the publisher's own categories/tags (RSS/RDF
-`<category>`, Atom `<category>`, JSON Feed `tags`), shown in place of the
-author, which the meta line doesn't otherwise surface. The feed's **site
-favicon** sits at the start of the meta line — but where it appears depends on
+domains — `old.reddit.com` → `reddit.com`) — shown on every row, including in
+**group-by-feed** view, even though the section header already names the feed
+once there too (TODO.md *UI / layout* tracks trying the row without it, the
+way the favicon already is); **article domain OR primary
+category OR author**, one shared slot rather than all three: the **article
+domain** when it differs from the feed's own site (aggregator feeds like
+Hacker News or Reddit, where knowing the actual destination site —
+`Hacker News · thedrive.com` — matters more than a topic tag), else the
+article's **primary category** when the feed supplies one — the first of the
+publisher's own categories/tags (RSS/RDF `<category>`, Atom `<category>`,
+JSON Feed `tags`) — else the **author** when present, so a row with neither a
+domain nor a category still shows more than a bare age; then **age**. The
+author is otherwise a last resort here (still shown unconditionally in the
+reader header; an eventual author-based filter, matching title filters, stays
+tracked in TODO.md). The feed's **site favicon** sits at the start of the meta
+line — but where it appears depends on
 grouping. In **group-by-feed** view it's on the **section header** only (beside
 the feed name), identifying a feed's run of rows once rather than repeating on
 every article — gated on the **Show icons on groups** setting (Settings →

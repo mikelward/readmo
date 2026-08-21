@@ -67,23 +67,30 @@ export function isSafeHttpUrl(url: string | null | undefined): url is string {
   }
 }
 
-/** Build the row's display-only meta string: "source · domain · age · category".
- * `domain` (the article's publisher domain) is shown next to the source feed
- * name only when supplied; see `articleSourceDomain`. `category` is the
- * item's first publisher-supplied category/tag (Item.categories[0]) — shown
- * in place of the author, which the meta line doesn't surface (TODO.md *UI /
- * layout*: an eventual author-based filter, matching title filters). */
+/** Build the row's display-only meta string: "source · domain-or-category-or-author · age".
+ * `source` (the feed name) is omitted by the caller in group-by-feed view,
+ * where the section header already carries it — pass '' there. `domain` (the
+ * article's publisher domain, see `articleSourceDomain`), `category` (the
+ * item's first publisher-supplied category/tag, `Item.categories[0]`), and
+ * `author` share one slot rather than all showing: `domain` only exists for
+ * an aggregator feed (Hacker News, Reddit, …), where knowing the actual
+ * destination site matters more than a topic tag, so it wins when present;
+ * `category` is next; `author` is the last resort, so a row with neither a
+ * domain nor a category still shows something more than a bare age (TODO.md
+ * *UI / layout*: an eventual author-based filter, matching title filters —
+ * still deferred; this is display-only). */
 export function formatItemMetaTail(parts: {
   source: string;
   domain?: string;
-  publishedAt: number;
   category?: string;
+  author?: string;
+  publishedAt: number;
   now?: number;
 }): string {
   const segs: string[] = [];
   if (parts.source) segs.push(parts.source);
-  if (parts.domain) segs.push(parts.domain);
+  const fallbackSlot = parts.domain || parts.category || parts.author;
+  if (fallbackSlot) segs.push(fallbackSlot);
   segs.push(formatAge(parts.publishedAt, parts.now));
-  if (parts.category) segs.push(parts.category);
   return segs.join(' · ');
 }

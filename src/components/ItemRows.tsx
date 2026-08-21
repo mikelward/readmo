@@ -225,6 +225,12 @@ export function ItemRows({
   // feed's favicon to attribute the interleaved sources — gated on the
   // off-by-default `show-row-favicon` setting.
   const showRowFavicon = showRowFaviconPref && !groupHeaders;
+  // The same reasoning arguably applies to the feed-name TEXT in the meta
+  // line (the section header already names the feed once) — ItemRow's
+  // `showSource` prop supports omitting it, but for now every row keeps
+  // showing its feed name even in grouped view (the default). TODO.md *UI /
+  // layout*: try wiring `showSource={!groupHeaders}` here, mirroring
+  // `showRowFavicon` above, and see how the grouped view reads without it.
 
   const renderRow = (fi: FeedItem) => {
     // A grayed row is a cross-device dismiss caught in place: dim + strikethrough

@@ -78,6 +78,12 @@ interface Props {
    * group-by-feed view, where the section header carries the icon once instead
    * of repeating it on every row. */
   showFavicon?: boolean;
+  /** Show the feed name at the start of the meta line. On in non-grouped views,
+   * where rows from different feeds interleave with no section header to
+   * attribute them; off in group-by-feed view, where the section header
+   * already names the feed once instead of repeating it on every row.
+   * Default true (every non-grouped call site). */
+  showSource?: boolean;
   /** Per-feed card-style override (the feed's `Subscription.listLayout`). When
    * set it wins over the app-wide Article layout setting for this row; when
    * omitted the row uses the app-wide setting. See ItemRows / useListLayoutFeeds. */
@@ -98,6 +104,7 @@ export function ItemRow({
   openNewshacker = false,
   markDoneOnOpen = false,
   showFavicon = false,
+  showSource = true,
   listLayout: listLayoutOverride,
   onShare,
   onOpenReader,
@@ -627,7 +634,10 @@ export function ItemRow({
           />
         ) : null}
         {formatItemMetaTail({
-          source,
+          // The section header already names the feed in group-by-feed view
+          // (showSource false there) — omitting it here is what the empty
+          // string already means to formatItemMetaTail.
+          source: showSource ? source : '',
           domain,
           publishedAt: item.publishedAt,
           // Optional chaining: a persisted query-cache entry written by a build
@@ -636,6 +646,9 @@ export function ItemRow({
           // CACHE_BUSTER), so `Item.categories` being typed non-optional doesn't
           // guarantee it exists at runtime here.
           category: item.categories?.[0],
+          // Last-resort fallback when the row has neither a domain nor a
+          // category — still just display, not the eventual author filter.
+          author: item.author ?? undefined,
         })}
       </span>
     </>
