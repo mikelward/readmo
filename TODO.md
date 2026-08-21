@@ -311,6 +311,13 @@ permanent by default. Each is cheap to change.
 ## UI / layout
 
 
+- **Reader tags (PR #657) should filter out generic categories like "News"/
+  "news".** A publisher category that's just the section name of the whole
+  feed ("News") carries no real information and clutters the first-few-tags
+  row under the byline. Needs a small stoplist (case-insensitive) applied in
+  `ItemPage.tsx` before slicing to `MAX_READER_TAGS` — deliberately not done
+  in #657, which only added the display.
+
 - **Filter candidates: a single Han character (CJK) is never offered, even
   though it's routinely a complete word.** Found while scoping PR #656's
   single-ASCII-character suppression (`isSingleAsciiChar` in

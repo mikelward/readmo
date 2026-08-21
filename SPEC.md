@@ -1083,14 +1083,15 @@ negligible and off every critical path. See the External services table in
   Supabase's HTTP-only refresh-token cookies; the access token is attached to
   API/DB calls.
 - First launch (no session) routes to the sign-in page. The page shows a
-  static feed preview (hero mockup of article rows) above the sign-in
+  static feed preview (hero mockup of article rows, matching the live feed
+  row's own meta-line format — display-only, not tappable) above the sign-in
   card (tagline + OAuth buttons + an email field when email sign-in is enabled +
   short privacy disclosure) so visitors understand the product before signing
   in. The hero always stacks
   above the card in a single column. The mock rows have a small top inset and a
-  bottom fade gradient (implying more content); the sample row that shows a
-  Reddit source / read state is kept out of the bottom row so the fade never
-  washes out its source line. Deep links round-trip through sign-in then land
+  bottom fade gradient (implying more content); the sample row with a Reddit
+  source is kept out of the bottom row so the fade never washes out its source
+  line. Deep links round-trip through sign-in then land
   on the target — the magic link returns to that same target once clicked.
   After submitting an email, the card confirms the link is on its way and
   offers a way back to try a different address.
