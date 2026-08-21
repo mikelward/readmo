@@ -2,6 +2,15 @@ import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
 
+// jsdom doesn't implement scrollIntoView, and several components call it from
+// keyboard-navigation effects (list row focus, suggestion-dropdown active
+// item). Stub it as a no-op so those effects don't throw; a test that needs
+// to assert a call overrides this locally with a spy and restores it after
+// (see ReorderableSubscriptions.test.tsx).
+if (typeof Element !== 'undefined' && typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = function scrollIntoView() {};
+}
+
 // jsdom's window.close() tears the whole document down, cascading "document is
 // not defined" into every later test. The reader's Done/back ladder
 // (closeArticleView) closes the tab when there's no back entry — in a real
