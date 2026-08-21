@@ -2519,7 +2519,10 @@ page's discipline is unchanged.
   row — so an aggregator feed surfaces where the article lives) and the *via
   fallback* provenance tag when applicable. The **feed name is not repeated in
   the header** — it lives on the reader bars next to the leading button (see
-  *Reader action bar*), so the header is just title + meta.
+  *Reader action bar*), so the header is just title + meta. Below the meta
+  line, the article's own **categories/tags** (publisher order, first few
+  only) show as plain display-only labels — not tappable; adding one as a
+  filter is still done from the row menu (below).
 - **Loading state:** the blank centered **"Loading…"** (with the tip
   **"Tip: 📌 pin an article to make it load faster"** — using the same
   inline `PushPinOutline` glyph as the row pin button (decorative,

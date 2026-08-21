@@ -432,6 +432,57 @@ describe('ItemPage (reader)', () => {
     expect(screen.queryByTestId('reader-domain')).not.toBeInTheDocument();
   });
 
+  it("shows the article's categories under the byline", async () => {
+    // item-3 carries two publisher categories (feed-css: 'CSS', 'Browsers').
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReader(source, 'item-3');
+    const tags = await screen.findByTestId('reader-tags');
+    expect(tags.querySelectorAll('.reader__tag')).toHaveLength(2);
+    expect(tags).toHaveTextContent('CSS');
+    expect(tags).toHaveTextContent('Browsers');
+  });
+
+  it('caps the tags shown to the first few, publisher order', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const detail = (await source.getItem('item-1'))!;
+    vi.spyOn(source, 'getItem').mockResolvedValue({
+      ...detail,
+      item: { ...detail.item, categories: ['One', 'Two', 'Three', 'Four'] },
+    });
+    renderReader(source, 'item-1');
+    const tags = await screen.findByTestId('reader-tags');
+    expect(Array.from(tags.querySelectorAll('.reader__tag')).map((el) => el.textContent)).toEqual([
+      'One',
+      'Two',
+      'Three',
+    ]);
+  });
+
+  it('renders no tags list for an article with no categories', async () => {
+    // item-2 (feed-nasa) has no `categories` spec, so it defaults to [].
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderReader(source, 'item-2');
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.queryByTestId('reader-tags')).not.toBeInTheDocument();
+  });
+
+  it('does not crash on a persisted item from before this field existed (Codex P1 on #657)', async () => {
+    // Same rationale as ItemRow.tsx's equivalent test: the offline query cache
+    // is persisted indefinitely and can rehydrate a FeedItem written by an
+    // older build, where `categories` is absent entirely rather than `[]`.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const detail = (await source.getItem('item-1'))!;
+    const legacyItem = { ...detail.item } as { categories?: string[] };
+    delete legacyItem.categories;
+    vi.spyOn(source, 'getItem').mockResolvedValue({
+      ...detail,
+      item: legacyItem as typeof detail.item,
+    });
+    renderReader(source, 'item-1');
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.queryByTestId('reader-tags')).not.toBeInTheDocument();
+  });
+
   it('does not repeat the feed name in the header (it lives on the reader bars now)', async () => {
     // item-1's feed is "The Verge"; that name should appear only on the bars
     // (reader-feedname), not in the header, which now shows just title + meta.

@@ -318,6 +318,12 @@ function ReaderToolbar({
   );
 }
 
+/** Categories shown under the byline — publisher order, first few only, so a
+ * heavily-tagged feed (some carry a dozen) doesn't push the article body
+ * below the fold. Matches MAX_PHRASE_WORDS-style "few" caps used elsewhere
+ * (titleFilter.ts) rather than introducing a new number. */
+const MAX_READER_TAGS = 3;
+
 export function ItemPage() {
   const { id = '' } = useParams();
   const ds = useDataSource();
@@ -992,6 +998,18 @@ export function ItemPage() {
             </span>
           ) : null}
         </div>
+        {/* Optional chaining: a persisted query-cache entry written by a build
+            predating this field has no `categories` at all (same rationale
+            as ItemRow.tsx's meta-tail category, which hits the same cache). */}
+        {item.categories?.length > 0 ? (
+          <ul className="reader__tags" data-testid="reader-tags">
+            {item.categories.slice(0, MAX_READER_TAGS).map((category) => (
+              <li key={category} className="reader__tag">
+                {category}
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </header>
 
       {/* AI summary — directly after the title/byline, above the article. For an
