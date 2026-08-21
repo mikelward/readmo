@@ -136,7 +136,10 @@ const USER_SETTINGS_COLS_BASE =
  * column N is missing everything after it too, so stepping down one rung at a
  * time converges on the right projection without needing to know which column
  * the error named. Add a new staged column to the FRONT of this list. */
-const USER_SETTINGS_STAGED_COLS = ['title_filters', 'hide_on_scroll_remove'] as const;
+const USER_SETTINGS_STAGED_COLS = [
+  'title_filters',
+  'hide_on_scroll_remove',
+] as const;
 
 /** Projections newest-first: rung 0 names every column this client knows, each
  * later rung drops one more staged column, and the last is 0064's own set. */

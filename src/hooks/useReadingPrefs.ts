@@ -498,10 +498,13 @@ export function useDebugScrollJumps(): {
   return { debugScrollJumps, setDebugScrollJumps };
 }
 
-/** The reader's filtered words: titles matching any entry vanish from the feed
- * views (SPEC.md *Filtered words*). Entries are stored normalized, so callers
- * can match against them directly. Add/remove rather than a whole-list setter —
- * every caller edits one word at a time, and normalizing here is what keeps the
+/** The reader's filtered words AND categories — one commingled, normalized
+ * list (SPEC.md *Filtered words*): an article whose title matches an entry,
+ * or whose own `categories[]` contains one (case-insensitively — see
+ * `lib/titleFilter.ts`'s `titleIsFiltered`/`categoriesAreFiltered`), vanishes
+ * from the feed views. Entries are stored normalized, so callers can match
+ * against them directly. Add/remove rather than a whole-list setter — every
+ * caller edits one entry at a time, and normalizing here is what keeps the
  * stored list in the form the matcher expects. Per-account, synced. */
 export function useTitleFilters(): {
   titleFilters: string[];

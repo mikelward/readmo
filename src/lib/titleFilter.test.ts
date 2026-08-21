@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import {
+  categoriesAreFiltered,
   compileFilters,
   filterCandidates,
   normalizeFilter,
@@ -85,6 +86,39 @@ describe('titleIsFiltered', () => {
   it('is false for an empty list or a title with no words', () => {
     expect(matches('Trump announces tariffs', [])).toBe(false);
     expect(matches('!!! ???', ['trump'])).toBe(false);
+  });
+});
+
+describe('categoriesAreFiltered', () => {
+  const filters = compileFilters(['sport', 'tax and spending']);
+
+  it('matches a category folded the same way a typed filter entry is', () => {
+    expect(categoriesAreFiltered(['Sport'], filters)).toBe(true);
+    expect(categoriesAreFiltered(['SPORT'], filters)).toBe(true);
+    expect(categoriesAreFiltered(['Tax and Spending'], filters)).toBe(true);
+  });
+
+  it('does not match an unrelated category', () => {
+    expect(categoriesAreFiltered(['Business'], filters)).toBe(false);
+  });
+
+  it('is false for an empty filter list, empty categories, or missing categories', () => {
+    expect(categoriesAreFiltered(['Sport'], [])).toBe(false);
+    expect(categoriesAreFiltered([], filters)).toBe(false);
+    expect(categoriesAreFiltered(undefined, filters)).toBe(false);
+  });
+
+  // A persisted query-cache row written before categories existed can still
+  // hand back one without the field at runtime, despite Item.categories being
+  // typed non-optional — the same legacy shape ItemRow already guards against.
+  it('does not throw when categories is missing (legacy cached item)', () => {
+    expect(() => categoriesAreFiltered(undefined, filters)).not.toThrow();
+  });
+
+  it('is a whole-phrase match, not a substring or word-boundary search', () => {
+    // "Sports" the category must not match a "sport" filter — this is exact
+    // membership once folded, unlike titleIsFiltered's word-boundary rule.
+    expect(categoriesAreFiltered(['Sports'], filters)).toBe(false);
   });
 });
 

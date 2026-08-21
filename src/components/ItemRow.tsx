@@ -19,7 +19,7 @@ import {
   useListLayout,
   useTitleFilters,
 } from '../hooks/useReadingPrefs';
-import { filterCandidates } from '../lib/titleFilter';
+import { filterCandidates, normalizeFilter } from '../lib/titleFilter';
 import { leadImageUrl, itemPreviewText } from '../lib/itemPreview';
 import { useCapabilities, canUseFullText } from '../hooks/useCapabilities';
 import { displayTitle } from '../lib/spoilerHeadline';
@@ -222,12 +222,15 @@ export function ItemRow({
   const handleMarkUnread = useCallback(() => set('opened', false), [set]);
   const handleShare = useCallback(() => onShare?.(feedItem), [onShare, feedItem]);
   const { titleFilters, addTitleFilter } = useTitleFilters();
-  // The filter submenu: capitalized terms from this title up front, the rest of
-  // its content words behind More…, free text last. Built lazily by the menu
-  // (it only runs when the reader steps into the level) and read from the
-  // ORIGINAL title, which is what the matcher sees.
+  // The filter submenu: this item's own categories up front, then
+  // capitalized terms from the title, the rest of its content words behind
+  // More…, free text last. Tapping a category adds the same kind of entry as
+  // typing a word does — one commingled list (lib/titleFilter.ts) — so its
+  // folded form is what actually gets excluded from every other tier, not the
+  // category string itself. Built lazily by the menu (it only runs when the
+  // reader steps into the level) and read from the ORIGINAL title, which is
+  // what the matcher sees.
   const buildFilterMenu = useCallback((): ItemRowMenuItem[] => {
-    const { primary, more } = filterCandidates(item.title, titleFilters);
     const term = (value: string, prefix: string): ItemRowMenuItem => ({
       key: `${prefix}-${value}`,
       label: value,
@@ -242,7 +245,27 @@ export function ItemRow({
         onSubmit: (value) => addTitleFilter(value),
       },
     };
-    const entries = primary.map((value) => term(value, 'filter'));
+    // Always remember a category's folded form — even one already active —
+    // so it's excluded below from the title-word tiers too; only whether it's
+    // OFFERED as its own menu entry depends on being active yet.
+    const seenCategoryFolds = new Set<string>();
+    const categoryEntries: ItemRowMenuItem[] = [];
+    for (const category of item.categories ?? []) {
+      const folded = normalizeFilter(category);
+      if (!folded || seenCategoryFolds.has(folded)) continue;
+      seenCategoryFolds.add(folded);
+      if (titleFilters.includes(folded)) continue;
+      categoryEntries.push({
+        key: `filter-category-${category}`,
+        label: category,
+        onSelect: () => addTitleFilter(category),
+      });
+    }
+    const { primary, more } = filterCandidates(item.title, [
+      ...titleFilters,
+      ...seenCategoryFolds,
+    ]);
+    const entries = [...categoryEntries, ...primary.map((value) => term(value, 'filter'))];
     if (more.length > 0) {
       entries.push({
         key: 'filter-more',
@@ -252,7 +275,7 @@ export function ItemRow({
     }
     entries.push(other);
     return entries;
-  }, [item.title, titleFilters, addTitleFilter]);
+  }, [item.title, item.categories, titleFilters, addTitleFilter]);
   const markOpened = useCallback(() => set('opened', true), [set]);
   // Opening this row's EXTERNAL target — the original source (open-original mode
   // or the `o` shortcut) or the newshacker discussion (newshacker mode) — marks

@@ -67,6 +67,29 @@ export function titleIsFiltered(title: string, filters: readonly string[]): bool
   return filters.some((entry) => titleMatchesFilter(titleTokens, entry));
 }
 
+/** Whether an item's own categories match ANY of the reader's filter entries —
+ * one commingled, case-insensitive keyword list: a filter added by tapping a
+ * category (row menu) and one typed by hand are the same kind of entry, and
+ * `Sport` the category folds to exactly the same stored form as `sport` typed
+ * as a word. A category is compared as a WHOLE folded phrase (not tokenized
+ * word-by-word the way a title is), so this is membership, not a substring or
+ * word-boundary search. Trade-off, not yet revisited: folding strips
+ * punctuation, so a filter for a category like `.NET` or `C++` also becomes an
+ * ordinary word filter for "net"/"c" — punctuation-preserving matching for
+ * both category- and title-sourced entries is a follow-up (TODO.md).
+ * `categories` defaults missing (a persisted cache written before this field
+ * existed can still hand back a row without it at runtime). */
+export function categoriesAreFiltered(
+  categories: readonly string[] | undefined,
+  filters: readonly string[],
+): boolean {
+  if (filters.length === 0 || !categories || categories.length === 0) return false;
+  return categories.some((category) => {
+    const folded = normalizeFilter(category);
+    return folded !== null && filters.includes(folded);
+  });
+}
+
 /** Function words that are never worth offering as a filter candidate. Applied
  * to BOTH tiers: they're the bulk of tier 2's noise, and in a title-cased
  * headline ("Trump Says Tariffs Will Rise") they're capitalized too, where they

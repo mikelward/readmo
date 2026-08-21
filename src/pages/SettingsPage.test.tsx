@@ -546,4 +546,5 @@ describe('SettingsPage — Filtered words', () => {
     expect(JSON.parse(window.localStorage.getItem(TITLE_FILTERS_KEY)!)).toEqual(['musk']);
     expect(screen.queryByText('trump')).toBeNull();
   });
+
 });

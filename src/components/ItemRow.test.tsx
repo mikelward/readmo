@@ -835,6 +835,59 @@ describe('ItemRow', () => {
       const menu = await openFilterMenu(user);
       expect(within(menu).queryByTestId('item-row-menu-filter-Trump')).toBeNull();
     });
+
+    const WITH_CATEGORY: typeof FEED_ITEM = {
+      ...FILTERABLE,
+      item: { ...FILTERABLE.item, categories: ['Tax and spending'] },
+    };
+
+    it('offers the item\'s own categories first, ahead of title terms', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ItemRow feedItem={WITH_CATEGORY} />);
+      const menu = await openFilterMenu(user);
+      const items = within(menu).getAllByRole('menuitem');
+      const labels = items.map((el) => el.textContent);
+      expect(labels.indexOf('Tax and spending')).toBeLessThan(labels.indexOf('Trump'));
+    });
+
+    it('stores a category tap as the same folded entry a typed word would be', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ItemRow feedItem={WITH_CATEGORY} />);
+      const menu = await openFilterMenu(user);
+      await user.click(
+        within(menu).getByTestId('item-row-menu-filter-category-Tax and spending'),
+      );
+      expect(JSON.parse(window.localStorage.getItem(TITLE_FILTERS_KEY)!)).toEqual([
+        'tax and spending',
+      ]);
+    });
+
+    it('does not offer a category already filtered', async () => {
+      window.localStorage.setItem(TITLE_FILTERS_KEY, JSON.stringify(['tax and spending']));
+      resetReadingPrefsCacheForTest();
+      const user = userEvent.setup();
+      renderWithProviders(<ItemRow feedItem={WITH_CATEGORY} />);
+      const menu = await openFilterMenu(user);
+      expect(
+        within(menu).queryByTestId('item-row-menu-filter-category-Tax and spending'),
+      ).toBeNull();
+    });
+
+    it('does not also offer a title-word candidate that reads the same as a category', async () => {
+      // The title's capitalized "Trump" would normally be a primary title-word
+      // candidate — indistinguishable from a category entry of the same text,
+      // and the two add different kinds of filter.
+      const withOverlap: typeof FEED_ITEM = {
+        ...FILTERABLE,
+        item: { ...FILTERABLE.item, categories: ['Trump'] },
+      };
+      const user = userEvent.setup();
+      renderWithProviders(<ItemRow feedItem={withOverlap} />);
+      const menu = await openFilterMenu(user);
+      expect(within(menu).getAllByText('Trump')).toHaveLength(1);
+      expect(within(menu).getByTestId('item-row-menu-filter-category-Trump')).toBeInTheDocument();
+      expect(within(menu).queryByTestId('item-row-menu-filter-Trump')).toBeNull();
+    });
   });
 
   it('does not render the wide-viewport Done button on narrow screens', () => {

@@ -24,7 +24,7 @@ import {
   useEffectiveHideSpoilers,
   useTitleFilters,
 } from '../hooks/useReadingPrefs';
-import { compileFilters, titleIsFiltered } from '../lib/titleFilter';
+import { compileFilters, titleIsFiltered, categoriesAreFiltered } from '../lib/titleFilter';
 import { useCapabilities, canUseFullText } from '../hooks/useCapabilities';
 import { useCollapsedFeeds } from '../hooks/useCollapsedFeeds';
 import { useTopChromeHeight } from '../hooks/useTopChromeHeight';
@@ -493,8 +493,10 @@ export function ItemList({
   const { registerSweep } = useFeedBar();
   const { hideOnScroll } = useHideOnScroll();
   const { hideOnScrollRemove } = useHideOnScrollRemove();
-  // The reader's filtered words, normalized once per change rather than per row
-  // (visibleItems matches every loaded row against these).
+  // The reader's filtered words AND categories — one commingled list,
+  // normalized once per change rather than per row (visibleItems matches
+  // every loaded row's title/categories against these; see
+  // lib/titleFilter.ts's titleIsFiltered/categoriesAreFiltered).
   const { titleFilters } = useTitleFilters();
   const activeFilters = useMemo(() => compileFilters(titleFilters), [titleFilters]);
 
@@ -1748,14 +1750,22 @@ export function ItemList({
         visible.push(fi);
         continue;
       }
-      // Keyword filter (SPEC.md *Filtered words*): a row whose title matches one
-      // of the reader's filtered words is simply not here — no gray, no strike,
-      // no Undo affordance, since removing the word in Settings restores every
-      // one of them at once. Checked AFTER the pin branch so a pin still wins
-      // (as it does over every other reason a row would leave), and against the
-      // ORIGINAL title: a spoiler-free rewrite is derived from it, so the
-      // original is the superset of what a reader could have meant.
-      if (activeFilters.length > 0 && titleIsFiltered(fi.item.title, activeFilters)) {
+      // Keyword filter (SPEC.md *Filtered words*): a row whose title, or own
+      // categories[], matches one of the reader's filtered entries is simply
+      // not here — no gray, no strike, no Undo affordance, since removing the
+      // entry in Settings restores every one of them at once. Checked AFTER
+      // the pin branch so a pin still wins (as it does over every other reason
+      // a row would leave), and against the ORIGINAL title: a spoiler-free
+      // rewrite is derived from it, so the original is the superset of what a
+      // reader could have meant. The category half is client-side ONLY for
+      // v1 — unlike an entry that matches the title, there's no server-side
+      // twin for category matching yet, so a category-only match still counts
+      // toward the unread badge and can still occupy a per-feed floor slot.
+      if (
+        activeFilters.length > 0 &&
+        (titleIsFiltered(fi.item.title, activeFilters) ||
+          categoriesAreFiltered(fi.item.categories, activeFilters))
+      ) {
         continue;
       }
       if (!st.done && !st.hidden) {
