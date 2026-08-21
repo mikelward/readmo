@@ -64,6 +64,7 @@ const FEED_ITEM: FeedItem = {
     fullContentHtml: null,
     aiSummary: null,
     enclosures: [],
+    categories: [],
   },
   feed: {
     id: 'feed-1',
@@ -89,13 +90,44 @@ describe('ItemRow', () => {
     _resetReverseSyncPendingForTests();
   });
 
-  it('renders the title and display-only meta (source · age · author)', () => {
+  it('renders the title and display-only meta (source · age), with no author', () => {
     renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
     expect(screen.getByTestId('item-title')).toHaveTextContent('A test headline');
     const meta = screen.getByTestId('item-meta');
     expect(meta).toHaveTextContent('Example Blog');
-    expect(meta).toHaveTextContent('Jane Doe');
     expect(meta).toHaveTextContent('2h');
+    // The meta row shows the item's category in place of the author.
+    expect(meta).not.toHaveTextContent('Jane Doe');
+  });
+
+  it('shows the item\'s first category in the meta row when present', () => {
+    const categorized: FeedItem = {
+      item: { ...FEED_ITEM.item, categories: ['Podcasts', 'Economics'] },
+      feed: FEED_ITEM.feed,
+    };
+    renderWithProviders(<ItemRow feedItem={categorized} />);
+    const meta = screen.getByTestId('item-meta');
+    expect(meta).toHaveTextContent('Podcasts');
+    expect(meta).not.toHaveTextContent('Economics');
+  });
+
+  it('omits the category segment when the item has none', () => {
+    renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
+    const meta = screen.getByTestId('item-meta');
+    expect(meta.textContent).toBe('Example Blog · 2h');
+  });
+
+  it('does not crash on a persisted item from before this field existed', () => {
+    // The offline query cache is persisted indefinitely (see main.tsx
+    // CACHE_BUSTER) and can rehydrate a FeedItem written by an older build,
+    // where `categories` is absent entirely rather than `[]` — `Item.categories`
+    // being typed non-optional doesn't guarantee it exists at runtime here
+    // (Codex P1 on #653).
+    const legacyItem = { ...FEED_ITEM.item } as { categories?: string[] };
+    delete legacyItem.categories;
+    const stale = { item: legacyItem as typeof FEED_ITEM.item, feed: FEED_ITEM.feed };
+    expect(() => renderWithProviders(<ItemRow feedItem={stale} />)).not.toThrow();
+    expect(screen.getByTestId('item-meta').textContent).toBe('Example Blog · 2h');
   });
 
   it('does not render a row favicon by default (group-by-feed: header carries it)', () => {

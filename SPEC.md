@@ -492,8 +492,9 @@ feeds         (id, url UNIQUE, secret_url, site_url, title, favicon_url, etag,
 items         (id, feed_id FK, guid, url, comments_url, title, author,
                published_at, content_html, summary, full_content_html,
                full_content_fetched_at, full_content_via_fallback,
-               enclosures, content_hash, created_at,
+               enclosures, categories, content_hash, created_at,
                sort_at = coalesce(published_at, created_at))          -- shared; UNIQUE(feed_id, guid), UNIQUE(feed_id, url) WHERE url IS NOT NULL
+               -- categories: publisher-supplied categories/tags, feed's own order
 subscriptions (user_id FK, feed_id FK, folder, title_override,
                muted bool, open_original bool, open_newshacker bool,
                mark_done_on_open bool, list_layout, sort, created_at)  -- user ↔ feed
@@ -650,7 +651,10 @@ straightaway, exactly as if they'd opened it themselves.
   `last_fetched_at`, done).
 - Parse RSS 2.0, Atom, RSS 1.0/RDF, JSON Feed into a normalized item shape
   `{ guid, url, commentsUrl, title, author, publishedAt, contentHtml, summary,
-  enclosures }` (maintained parser, e.g. `fast-xml-parser` + a normalizer).
+  enclosures, categories }` (maintained parser, e.g. `fast-xml-parser` + a
+  normalizer). `categories` is the publisher's own categories/tags (RSS/RDF
+  `<category>`, Atom `<category label|term>`, JSON Feed `tags`), trimmed and
+  capped; empty when the feed/item carries none.
   `commentsUrl` is the item's discussion page — RSS 2.0 `<comments>` or Atom
   `<link rel="replies">` (RFC 4685), absolutized, strict (never the article
   link); null when absent. Stored on `items.comments_url`; distinct from `url`
@@ -2377,7 +2381,10 @@ domains — `old.reddit.com` → `reddit.com`); **article domain** when it diffe
 from the feed's own site, shown right after the source name (so aggregator
 feeds like Hacker News or Reddit surface where a row actually links —
 `Hacker News · thedrive.com`; a normal blog feed that links to itself doesn't
-repeat its own domain); **age**; **author** when present. The feed's **site
+repeat its own domain); **age**; the article's **primary category** when the
+feed supplies one — the first of the publisher's own categories/tags (RSS/RDF
+`<category>`, Atom `<category>`, JSON Feed `tags`), shown in place of the
+author, which the meta line doesn't otherwise surface. The feed's **site
 favicon** sits at the start of the meta line — but where it appears depends on
 grouping. In **group-by-feed** view it's on the **section header** only (beside
 the feed name), identifying a feed's run of rows once rather than repeating on

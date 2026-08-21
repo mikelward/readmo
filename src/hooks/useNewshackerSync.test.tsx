@@ -38,6 +38,7 @@ function hnItem(id: string, hnId: string): FeedItem {
       fullContentHtml: null,
       aiSummary: null,
       enclosures: [],
+      categories: [],
     } as Item,
     feed: {
       url: 'https://news.ycombinator.com/rss',

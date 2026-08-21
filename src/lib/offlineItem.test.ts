@@ -30,6 +30,7 @@ function feedItem(id: string, contentHtml = `<p>body of ${id}</p>`): FeedItem {
     fullContentHtml: null,
     aiSummary: null,
     enclosures: [],
+    categories: [],
   };
   return { item, feed };
 }

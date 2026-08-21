@@ -31,6 +31,7 @@ export interface ItemRow {
   content_html: string | null;
   summary: string | null;
   enclosures: unknown;
+  categories: string[];
   content_hash: string;
 }
 
@@ -57,6 +58,7 @@ export function toItemRow(it: ParsedItem, siteUrl: string | null): ItemRow {
     // survives; sanitizeContent would collapse it to ''.
     summary: it.summary == null ? null : sanitizeContent(it.summary, base),
     enclosures: it.enclosures,
+    categories: it.categories,
     // content_hash detects edits → update in place rather than duplicate.
     content_hash: it.guid,
   };

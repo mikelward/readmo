@@ -82,6 +82,9 @@ interface SeedSpec {
    * would cache on the shared item), for sports-result fixtures. Omitted = the
    * headline isn't a sports-result spoiler, so `spoilerFreeTitle` stays null. */
   spoilerFreeTitle?: string;
+  /** Publisher-supplied categories/tags, publisher order. Omitted = the feed
+   * carried none, so `categories` stays `[]` (no meta-row category shown). */
+  categories?: string[];
 }
 
 const SPECS: SeedSpec[] = [
@@ -91,6 +94,7 @@ const SPECS: SeedSpec[] = [
     author: 'Jane Doe',
     agoHours: 2,
     body: '<p>After years of visible creases, the latest hinge design promises a display that lies genuinely flat. We went hands-on.</p><p>The improvement is immediately obvious in direct light, where previous models showed a distracting valley down the middle.</p>',
+    categories: ['Gadgets'],
   },
   {
     feedId: 'feed-nasa',
@@ -105,6 +109,8 @@ const SPECS: SeedSpec[] = [
     author: 'Chris Coyier',
     agoHours: 9,
     body: '<p>With the last holdout browser shipping support, you can now lean on <code>@container</code> in production without a polyfill.</p><pre><code>.card { container-type: inline-size; }</code></pre>',
+    // Multiple categories, to exercise "first is shown" in the meta row.
+    categories: ['CSS', 'Browsers'],
   },
   {
     feedId: 'feed-reddit-prog',
@@ -171,6 +177,7 @@ const SPECS: SeedSpec[] = [
     agoHours: 0,
     body: '<p>Spain lifted the World Cup for the first time, edging Argentina in a final that went to a penalty shootout after a 1-1 draw.</p><p>The result caps a remarkable tournament run and denies Argentina back-to-back titles.</p>',
     spoilerFreeTitle: 'World Cup ESP v ARG spoiler',
+    categories: ['Sport'],
   },
   {
     feedId: 'feed-bbc',
@@ -201,6 +208,7 @@ export const SEED_ITEMS: Item[] = SPECS.map((spec, i) => ({
   fullContentHtml: null,
   aiSummary: null,
   enclosures: [],
+  categories: spec.categories ?? [],
 }));
 
 export const SEED_SUBSCRIPTIONS: Subscription[] = [

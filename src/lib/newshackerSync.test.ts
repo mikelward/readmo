@@ -36,6 +36,7 @@ function feedItem(
       fullContentHtml: null,
       aiSummary: null,
       enclosures: [],
+      categories: [],
       ...item,
     },
     feed,

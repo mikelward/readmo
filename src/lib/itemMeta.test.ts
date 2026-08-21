@@ -135,15 +135,15 @@ describe('articleSourceDomain', () => {
 describe('formatItemMetaTail', () => {
   const now = 1_700_000_000_000;
 
-  it('joins source, age, and author with bullets', () => {
+  it('joins source, age, and category with bullets', () => {
     expect(
       formatItemMetaTail({
         source: 'The Verge',
         publishedAt: now - 3 * 60 * 60_000,
-        author: 'Jane Doe',
+        category: 'Podcasts',
         now,
       }),
-    ).toBe('The Verge · 3h · Jane Doe');
+    ).toBe('The Verge · 3h · Podcasts');
   });
 
   it('inserts the domain between source and age when provided', () => {
@@ -152,19 +152,17 @@ describe('formatItemMetaTail', () => {
         source: 'Hacker News',
         domain: 'thedrive.com',
         publishedAt: now - 60 * 60_000,
-        author: null,
         now,
       }),
     ).toBe('Hacker News · thedrive.com · 1h');
   });
 
-  it('omits empty source, domain, and author segments', () => {
+  it('omits empty source, domain, and category segments', () => {
     expect(
       formatItemMetaTail({
         source: '',
         domain: '',
         publishedAt: now,
-        author: null,
         now,
       }),
     ).toBe('just now');

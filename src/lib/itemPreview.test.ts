@@ -19,6 +19,7 @@ function makeItem(overrides: Partial<Item> = {}): Item {
     fullContentHtml: null,
     aiSummary: null,
     enclosures: [],
+    categories: [],
     ...overrides,
   };
 }

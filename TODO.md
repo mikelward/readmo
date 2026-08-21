@@ -311,6 +311,34 @@ permanent by default. Each is cheap to change.
 ## UI / layout
 
 
+- **Filter/hide by category, long-press.** The list-view meta row now shows an
+  item's first publisher-supplied category (`items.categories`, migration
+  0075) in place of the author. The eventual feature this enables: long-press a
+  category chip to hide that category, either for the current feed only or
+  across all feeds — mirroring the existing title-filter UX (`useTitleFilters`,
+  SPEC.md "Title filters"). Since an item can carry several categories (RSS/
+  Atom allow repeated `<category>`, JSON Feed `tags` is an array by design),
+  "hide by category" needs to match on *any* of an item's stored categories,
+  not just the displayed first one — the hide list and the display slot are
+  different reads of the same array. Not designed yet: where the hidden-
+  categories list lives (per-feed `subscriptions` column vs. a synced
+  `user_settings` array), and whether it composes with or replaces title
+  filters in the RPC's filter predicate.
+
+- **Filter by author, too.** The meta row used to show `item.author`; it now
+  shows the category instead (`formatItemMetaTail`'s `category` param replaced
+  `author` — see `lib/itemMeta.ts`). The author is still stored on `Item.author`
+  and shown in the reader header, just not in list rows. An eventual
+  author-based filter (parallel to the existing title filters) was raised
+  alongside the category work but not designed or scoped.
+
+- **Show more than the first category on the reader (article) view.** The list
+  row shows only `item.categories[0]` (row space is tight — guardrail #2), but
+  the reader header has room for more; the request was to show the first 5-6,
+  possibly as its own meta row rather than folded into the existing author ·
+  date · domain line. Deliberately deferred to a separate PR from the initial
+  category-storage/list-row work (migration 0075).
+
 - **A library view still claims to be empty before the first item-state
   hydrate.** The remaining finding from the loading-placeholder audit that shut
   down the persisted-cache restore flash. `useStateBucket` reads the item-state

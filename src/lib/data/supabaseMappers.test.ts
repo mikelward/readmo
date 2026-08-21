@@ -170,6 +170,18 @@ describe('mapItem', () => {
     expect(mapItem(row).aiSummary).toBeNull();
     expect(mapItem({ ...row, ai_summary: null }).aiSummary).toBeNull();
   });
+
+  it('maps categories, defaulting to [] when absent/malformed/against an old backend', () => {
+    expect(mapItem({ ...row, categories: ['Podcasts', 'Economics'] }).categories).toEqual([
+      'Podcasts',
+      'Economics',
+    ]);
+    // A malformed row omitting the column (older backend predating it) defaults
+    // to []; a non-array or non-string entries are dropped rather than thrown.
+    expect(mapItem(row).categories).toEqual([]);
+    expect(mapItem({ ...row, categories: null }).categories).toEqual([]);
+    expect(mapItem({ ...row, categories: ['ok', 42, null] }).categories).toEqual(['ok']);
+  });
 });
 
 describe('mapSharedItem', () => {

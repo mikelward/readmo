@@ -81,6 +81,16 @@ import {
 const FEED_COLS =
   'id, site_url, title, favicon_url, last_fetched_at, next_fetch_at, fetch_interval_s, error_count, last_error, created_at';
 const ITEM_COLS =
+  'id, feed_id, guid, url, comments_url, title, spoiler_free_title, author, published_at, content_html, summary, enclosures, categories, content_hash, created_at';
+/** {@link ITEM_COLS} without `categories` (migration 0075) — the projection a
+ * pre-0075 backend can still serve. Unlike `spoiler_free_title`/`comments_url`
+ * before it, naming `categories` risks the WHOLE direct-item read (not just the
+ * one field): PostgREST rejects an explicit column list outright (42703 /
+ * PGRST204) when any named column is missing, so getItem/library batch lookups/
+ * search would hard-fail for every caller in the gap between the frontend
+ * auto-deploy and the operator's manual `make migrate` (guardrail #11). See
+ * {@link selectItemRows}. */
+const ITEM_COLS_LEGACY =
   'id, feed_id, guid, url, comments_url, title, spoiler_free_title, author, published_at, content_html, summary, enclosures, content_hash, created_at';
 // No client read selects the cached full-article body (`full_content_html`) or
 // its `full_content_via_fallback` provenance flag. Both are gated on the
@@ -484,6 +494,10 @@ export class SupabaseDataSource implements DataSource {
   /** Set when the backend rejects `updated_at` (pre-0070, 42703): this client
    * stops asking for the column and stays on full reads for the session. */
   private updatedAtUnsupported = false;
+  /** Set when the backend rejects `categories` (pre-0075, 42703/PGRST204): this
+   * client drops to {@link ITEM_COLS_LEGACY} for the rest of the session. See
+   * {@link selectItemRows}. */
+  private categoriesUnsupported = false;
   /** Bumped by each write correction that reconciles BY ABSENCE, and so needs
    * the drop pass only a full read performs.
    *
@@ -732,13 +746,25 @@ export class SupabaseDataSource implements DataSource {
   /** Run an `items` read with the full ITEM_COLS. `build(cols)` returns the
    * PostgREST query for the column projection; a runtime column string makes
    * PostgREST infer GenericStringError for the row, so unwrap<T> casts back to
-   * the mapped ItemRow shape. */
+   * the mapped ItemRow shape.
+   *
+   * Feature-detects `categories` (migration 0075, guardrail #11): a pre-0075
+   * backend rejects the WHOLE select naming it, so this retries once on
+   * {@link ITEM_COLS_LEGACY} and latches {@link categoriesUnsupported} so every
+   * later call this session skips straight to the legacy projection instead of
+   * paying a failing round trip each time. Mirrors `updatedAtUnsupported`. */
   private async selectItemRows<T>(
     build: (cols: string) => PromiseLike<{ data: unknown; error: unknown; status?: number }>,
   ): Promise<T> {
-    return this.unwrap<T>(
-      (await build(ITEM_COLS)) as { data: T | null; error: unknown; status?: number },
-    );
+    const cols = this.categoriesUnsupported ? ITEM_COLS_LEGACY : ITEM_COLS;
+    const res = (await build(cols)) as { data: T | null; error: unknown; status?: number };
+    if (!this.categoriesUnsupported && res.error && isMissingColumnError(res.error)) {
+      this.categoriesUnsupported = true;
+      return this.unwrap<T>(
+        (await build(ITEM_COLS_LEGACY)) as { data: T | null; error: unknown; status?: number },
+      );
+    }
+    return this.unwrap<T>(res);
   }
 
   /** Run a `feeds_public` read with the full FEED_COLS. Mirrors

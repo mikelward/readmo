@@ -38,6 +38,7 @@ function item(over: Partial<Item> = {}): Item {
     fullContentHtml: null,
     aiSummary: null,
     enclosures: [],
+    categories: [],
     ...over,
   };
 }

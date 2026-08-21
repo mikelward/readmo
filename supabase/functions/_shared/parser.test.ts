@@ -267,6 +267,201 @@ describe('parseFeed — JSON Feed', () => {
   });
 });
 
+describe('parseFeed — categories/tags', () => {
+  it('captures multiple RSS 2.0 <category> elements, CDATA included', () => {
+    const xml = `<?xml version="1.0"?><rss version="2.0"><channel>
+      <title>Econ</title><link>https://example.com/</link>
+      <item>
+        <title>Who's to blame for rising food prices?</title>
+        <link>https://example.com/podcasts/1</link>
+        <category><![CDATA[Podcasts]]></category>
+        <category domain="https://example.com/taxonomy">Economics</category>
+      </item>
+    </channel></rss>`;
+    expect(parseFeed(xml, 'https://example.com/feed').items[0].categories).toEqual([
+      'Podcasts',
+      'Economics',
+    ]);
+  });
+
+  it('reads a single RSS 2.0 <category> (not forced into an array)', () => {
+    const xml = `<?xml version="1.0"?><rss version="2.0"><channel>
+      <title>Blog</title><link>https://blog.example.com/</link>
+      <item><title>Post</title><link>https://blog.example.com/p/1</link>
+        <category>News</category></item>
+    </channel></rss>`;
+    expect(parseFeed(xml, 'https://blog.example.com/feed').items[0].categories).toEqual([
+      'News',
+    ]);
+  });
+
+  it('is an empty array when an RSS item has no <category>', () => {
+    const xml = `<?xml version="1.0"?><rss version="2.0"><channel>
+      <title>Blog</title><link>https://blog.example.com/</link>
+      <item><title>Post</title><link>https://blog.example.com/p/2</link></item>
+    </channel></rss>`;
+    expect(parseFeed(xml, 'https://blog.example.com/feed').items[0].categories).toEqual([]);
+  });
+
+  it('reads RDF <category>', () => {
+    const xml = `<?xml version="1.0"?>
+      <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+        <channel><title>RDF</title><link>https://rdf.example.com/</link></channel>
+        <item rdf:about="https://rdf.example.com/item/1">
+          <title>Item</title><link>https://rdf.example.com/item/1</link>
+          <category>Science</category>
+        </item>
+      </rdf:RDF>`;
+    expect(parseFeed(xml, 'https://rdf.example.com/feed').items[0].categories).toEqual([
+      'Science',
+    ]);
+  });
+
+  it('reads RDF <dc:subject> — the standards-compliant form (RSS 1.0 has no native <category>)', () => {
+    const xml = `<?xml version="1.0"?>
+      <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+               xmlns:dc="http://purl.org/dc/elements/1.1/">
+        <channel><title>RDF</title><link>https://rdf.example.com/</link></channel>
+        <item rdf:about="https://rdf.example.com/item/1">
+          <title>Item</title><link>https://rdf.example.com/item/1</link>
+          <dc:subject>Science</dc:subject>
+          <dc:subject>Space</dc:subject>
+        </item>
+      </rdf:RDF>`;
+    expect(parseFeed(xml, 'https://rdf.example.com/feed').items[0].categories).toEqual([
+      'Science',
+      'Space',
+    ]);
+  });
+
+  it('merges RDF <category> and <dc:subject>, deduping an overlapping value', () => {
+    const xml = `<?xml version="1.0"?>
+      <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+               xmlns:dc="http://purl.org/dc/elements/1.1/">
+        <channel><title>RDF</title><link>https://rdf.example.com/</link></channel>
+        <item rdf:about="https://rdf.example.com/item/1">
+          <title>Item</title><link>https://rdf.example.com/item/1</link>
+          <category>Science</category>
+          <dc:subject>Science</dc:subject>
+          <dc:subject>Space</dc:subject>
+        </item>
+      </rdf:RDF>`;
+    expect(parseFeed(xml, 'https://rdf.example.com/feed').items[0].categories).toEqual([
+      'Science',
+      'Space',
+    ]);
+  });
+
+  it('prefers the Atom <category label> over term, falling back to term alone', () => {
+    const xml = `<?xml version="1.0"?>
+      <feed xmlns="http://www.w3.org/2005/Atom">
+      <title>Atom</title><link href="https://atom.example.com/"/>
+      <entry>
+        <title>Labeled</title><id>urn:1</id>
+        <link rel="alternate" href="https://atom.example.com/1"/>
+        <category term="tech" label="Technology"/>
+        <category term="ai"/>
+      </entry></feed>`;
+    expect(parseFeed(xml, 'https://atom.example.com/feed').items[0].categories).toEqual([
+      'Technology',
+      'ai',
+    ]);
+  });
+
+  it('reads JSON Feed tags', () => {
+    const json = JSON.stringify({
+      version: 'https://jsonfeed.org/version/1.1',
+      title: 'JSON',
+      items: [
+        { id: '1', title: 'Post', tags: ['Tech', 'Reviews'] },
+        { id: '2', title: 'No tags' },
+      ],
+    });
+    const parsed = parseFeed(json, 'https://json.example.com/feed.json');
+    expect(parsed.items[0].categories).toEqual(['Tech', 'Reviews']);
+    expect(parsed.items[1].categories).toEqual([]);
+  });
+
+  it('trims whitespace and length-caps an individual category', () => {
+    const json = JSON.stringify({
+      version: 'https://jsonfeed.org/version/1.1',
+      title: 'JSON',
+      items: [{ id: '1', title: 'Post', tags: [' Padded ', 'x'.repeat(500)] }],
+    });
+    const categories = parseFeed(json, 'https://json.example.com/feed.json').items[0].categories;
+    expect(categories[0]).toBe('Padded');
+    expect(categories[1]).toHaveLength(100);
+  });
+
+  it('strips an embedded NUL character (Postgres text/jsonb cannot store it)', () => {
+    // A JSON string may legally contain \u0000 (JSON has no such restriction,
+    // unlike XML), but Postgres text/jsonb rejects it outright — an unstripped
+    // NUL here would fail the whole upsert_feed_items batch for an otherwise-
+    // valid feed, over display metadata (Codex P2 on #653).
+    const json = JSON.stringify({
+      version: 'https://jsonfeed.org/version/1.1',
+      title: 'JSON',
+      items: [{ id: '1', title: 'Post', tags: ['Te\u0000ch', '\u0000\u0000\u0000'] }],
+    });
+    const categories = parseFeed(json, 'https://json.example.com/feed.json').items[0].categories;
+    // The all-NUL entry strips to empty and is dropped entirely.
+    expect(categories).toEqual(['Tech']);
+  });
+
+  it('caps by Unicode code point, never splitting a surrogate pair', () => {
+    // 99 ASCII chars + one astral emoji (a surrogate pair, 2 UTF-16 code
+    // units) straddles the MAX_CATEGORY_LEN=100 boundary under a naive
+    // `.slice(0, 100)` on UTF-16 units, which would leave a lone high
+    // surrogate — Postgres's jsonb parser rejects that outright, failing the
+    // whole upsert_feed_items batch (Codex P2 on #653).
+    const value = 'a'.repeat(99) + '\u{1F600}';
+    const json = JSON.stringify({
+      version: 'https://jsonfeed.org/version/1.1',
+      title: 'JSON',
+      items: [{ id: '1', title: 'Post', tags: [value] }],
+    });
+    const categories = parseFeed(json, 'https://json.example.com/feed.json').items[0].categories;
+    // The emoji survives whole rather than being split at the code-unit cap.
+    expect(categories[0]).toBe(value);
+    // A lone surrogate throws from encodeURIComponent; this proves there isn't one.
+    expect(() => encodeURIComponent(categories[0])).not.toThrow();
+  });
+
+  it('repairs a JSON string that itself contains an unpaired surrogate', () => {
+    // JSON.parse doesn't validate surrogate pairing, so a publisher-controlled
+    // tag can carry a lone surrogate with no truncation involved at all —
+    // distinct from (and not fixed by) the boundary-split case above (Codex
+    // P2 on #653, follow-up round).
+    const json = JSON.stringify({
+      version: 'https://jsonfeed.org/version/1.1',
+      title: 'JSON',
+      items: [{ id: '1', title: 'Post', tags: ['Te\uD800ch'] }],
+    });
+    const categories = parseFeed(json, 'https://json.example.com/feed.json').items[0].categories;
+    // toWellFormed() replaces the lone surrogate with U+FFFD rather than
+    // silently dropping it or leaving it to fail the Postgres jsonb insert.
+    expect(categories[0]).toBe('Te�ch');
+    expect(() => encodeURIComponent(categories[0])).not.toThrow();
+  });
+
+  it('dedupes exact matches and caps the total count', () => {
+    const tags = [
+      'Tag 0',
+      'Tag 0', // exact duplicate — dropped rather than counted twice.
+      ...Array.from({ length: 25 }, (_, i) => `Tag ${i + 1}`), // pushes well past the cap.
+    ];
+    const json = JSON.stringify({
+      version: 'https://jsonfeed.org/version/1.1',
+      title: 'JSON',
+      items: [{ id: '1', title: 'Post', tags }],
+    });
+    const categories = parseFeed(json, 'https://json.example.com/feed.json').items[0].categories;
+    expect(categories).toHaveLength(20);
+    expect(categories.filter((c) => c === 'Tag 0')).toHaveLength(1);
+    expect(categories).not.toContain('Tag 25'); // beyond the 20-entry cap.
+  });
+});
+
 describe('parseFeed — malformed input', () => {
   it('throws on an unrecognized XML root', () => {
     expect(() => parseFeed('<html><body>not a feed</body></html>', 'https://x/'))

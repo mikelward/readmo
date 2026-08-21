@@ -21,6 +21,7 @@ function fi(id: string, publishedAt: number, feedId = 'feed-a'): FeedItem {
       fullContentHtml: null,
       aiSummary: null,
       enclosures: [],
+      categories: [],
     },
     feed: {
       id: feedId,

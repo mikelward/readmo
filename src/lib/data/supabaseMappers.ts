@@ -158,6 +158,10 @@ export interface ItemRow {
    * reader falls back to the `summary` Edge call whenever it's null. */
   ai_summary?: string | null;
   enclosures: unknown;
+  /** The item's categories/tags (see types.ts Item.categories). Optional so a
+   * malformed row or a backend predating the column still maps (defaults to
+   * `[]` in {@link mapItem}). */
+  categories?: unknown;
   content_hash: string | null;
   created_at: string | null;
 }
@@ -229,6 +233,11 @@ export function mapFeed(row: FeedPublicRow): Feed {
   };
 }
 
+function mapCategories(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((c): c is string => typeof c === 'string');
+}
+
 function mapEnclosures(raw: unknown): Enclosure[] {
   if (!Array.isArray(raw)) return [];
   const out: Enclosure[] = [];
@@ -263,6 +272,7 @@ export function mapItem(row: ItemRow): Item {
     fullContentHtml: row.full_content_html ?? null,
     aiSummary: row.ai_summary ?? null,
     enclosures: mapEnclosures(row.enclosures),
+    categories: mapCategories(row.categories),
   };
 }
 

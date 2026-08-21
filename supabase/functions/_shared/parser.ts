@@ -42,6 +42,13 @@ export interface NormalizedItem {
   summary: string | null;
   /** Media attachments (podcast audio, images, etc.). */
   enclosures: Enclosure[];
+  /** The item's categories/tags/sections as the publisher labeled them — RSS/RDF
+   * `<category>`, Atom `<category label|term>`, or JSON Feed `tags`. Order is the
+   * feed's own (first is treated as primary for display). Trimmed, deduped, and
+   * capped (see MAX_CATEGORIES/MAX_CATEGORY_LEN) so a pathological feed can't grow
+   * the stored array without bound. Empty array, never null, when the feed
+   * carries none. */
+  categories: string[];
 }
 
 export interface Enclosure {
@@ -231,6 +238,81 @@ export function canonicalizeItemUrl(url: string | null): string | null {
  * huge data: URI (or other junk) into the feeds row. */
 const MAX_FAVICON_URL_LEN = 2048;
 
+/** Caps on stored item categories/tags — keeps a pathological feed (or a
+ * blog-style JSON Feed with a large free-form tag vocabulary) from writing an
+ * unbounded array/strings into an item row. */
+const MAX_CATEGORIES = 20;
+const MAX_CATEGORY_LEN = 100;
+
+/** Trim, length-cap, dedupe (exact match, order-preserving), and count-cap a
+ * list of raw category/tag candidates. Shared by the three format-specific
+ * extractors below so RSS `<category>`, Atom `<category label|term>`, and
+ * JSON Feed `tags` all land in the same normalized shape. */
+function normalizeCategories(raw: (string | null)[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const r of raw) {
+    if (!r) continue;
+    // Postgres text/jsonb cannot store U+0000 at all (insert fails outright,
+    // not just for this field). XML disallows a raw or numeric-char-ref NUL
+    // outright, so this only reaches here via JSON Feed's `tags` (JSON strings
+    // permit \u0000); strip it before it can fail the whole upsert_feed_items
+    // batch for an otherwise-valid feed over display metadata.
+    const trimmed = r.split('\u0000').join('').trim();
+    // A JSON string may legally contain an UNPAIRED UTF-16 surrogate on its
+    // own -- JSON.parse doesn't validate pairing -- with no truncation
+    // involved at all. toWellFormed() replaces any such lone surrogate with
+    // U+FFFD, so everything below operates on valid Unicode text.
+    const wellFormed = trimmed.toWellFormed();
+    // Array.from iterates by Unicode code point, not UTF-16 code unit, so
+    // capping this way can never CREATE a lone surrogate by splitting a
+    // surrogate pair (an astral character -- an emoji, say -- straddling the
+    // MAX_CATEGORY_LEN boundary), the way a plain `.slice(0, MAX_CATEGORY_LEN)`
+    // would. Postgres's jsonb parser rejects an unpaired surrogate outright
+    // (either kind, from either cause above), failing the whole
+    // upsert_feed_items batch the same way an unstripped NUL does.
+    const v = Array.from(wellFormed).slice(0, MAX_CATEGORY_LEN).join('');
+    if (!v || seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+    if (out.length >= MAX_CATEGORIES) break;
+  }
+  return out;
+}
+
+/** RSS 2.0 `<category>` / RSS 1.0 (RDF) `<category>` or `<dc:subject>`: zero,
+ * one, or many elements per source, each a bare string or `{#text, @_domain}`.
+ * Multiple sources (RDF's `<category>` extension alongside its standard
+ * Dublin Core `<dc:subject>`) merge into one deduped list — normalizeCategories
+ * already dedupes by exact text, so an item using both for the same value
+ * doesn't double up. */
+function xmlCategories(...nodes: unknown[]): string[] {
+  const arr = nodes.flatMap((node) =>
+    node == null ? [] : Array.isArray(node) ? node : [node],
+  );
+  return normalizeCategories(arr.map((c) => decodeText(text(c))));
+}
+
+/** Atom `<category term="…" label="…">` — the value lives in attributes, not
+ * element text. Prefer the human-readable `label` over the machine `term`. */
+function atomCategories(node: unknown): string[] {
+  if (node == null) return [];
+  const arr = Array.isArray(node) ? node : [node];
+  return normalizeCategories(
+    arr.map((c) => {
+      if (typeof c === 'string') return decodeText(c);
+      const obj = c as Record<string, unknown>;
+      return decodeText(firstOf(text(obj['@_label']), text(obj['@_term'])));
+    }),
+  );
+}
+
+/** JSON Feed `tags`: an array of plain strings. */
+function jsonTags(node: unknown): string[] {
+  if (!Array.isArray(node)) return [];
+  return normalizeCategories(node.map((t) => (typeof t === 'string' ? t : null)));
+}
+
 /** Normalize a favicon candidate to an absolute, reasonably-sized http(s) URL,
  * or null. Rejects non-http(s) schemes (data:, javascript:, …) AND anything
  * that looks tokenized — embedded credentials, a high-entropy/matrix path
@@ -303,7 +385,7 @@ export function toIso(value: string | null | undefined): string | null {
  * Pure and dependency-free so it runs identically in node and Deno. */
 export function contentHash(...parts: (string | null | undefined)[]): string {
   let h = 0x811c9dc5;
-  const s = parts.filter((p) => p != null).join(' ');
+  const s = parts.filter((p) => p != null).join('\u0000');
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
     // h *= 16777619, kept in 32-bit space.
@@ -405,6 +487,7 @@ function parseRss2(rss: Record<string, unknown>, feedUrl: string): ParsedFeed {
       contentHtml,
       summary: summary === contentHtml ? null : summary,
       enclosures: collectEnclosures(it.enclosure, feedUrl),
+      categories: xmlCategories(it.category),
       feedUrl,
     });
   });
@@ -450,6 +533,10 @@ function parseRdf(rdf: Record<string, unknown>, feedUrl: string): ParsedFeed {
       contentHtml,
       summary: summary === contentHtml ? null : summary,
       enclosures: [],
+      // RSS 1.0/RDF has no native <category> — the standards-compliant form is
+      // the Dublin Core <dc:subject> module, which most real RDF feeds use;
+      // some also carry a nonstandard <category> extension. Collect both.
+      categories: xmlCategories(it.category, it['dc:subject']),
       feedUrl,
     });
   });
@@ -494,6 +581,7 @@ function parseAtom(feed: Record<string, unknown>, feedUrl: string): ParsedFeed {
       contentHtml: bodyHtml,
       summary: summary === bodyHtml ? null : summary,
       enclosures: collectAtomEnclosures(e.link, feedUrl),
+      categories: atomCategories(e.category),
       feedUrl,
     });
   });
@@ -674,6 +762,7 @@ function parseJsonFeed(json: unknown, feedUrl: string): ParsedFeed {
       contentHtml,
       summary: asStr(it.summary),
       enclosures: collectJsonAttachments(it.attachments, feedUrl),
+      categories: jsonTags(it.tags),
       feedUrl,
     });
   });
@@ -727,6 +816,7 @@ interface FinalizeInput {
   contentHtml: string | null;
   summary: string | null;
   enclosures: Enclosure[];
+  categories: string[];
   feedUrl: string;
 }
 
@@ -756,6 +846,7 @@ function finalizeItem(input: FinalizeInput): NormalizedItem {
     contentHtml: input.contentHtml,
     summary: input.summary,
     enclosures: input.enclosures,
+    categories: input.categories,
   };
 }
 
