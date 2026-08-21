@@ -90,17 +90,17 @@ describe('ItemRow', () => {
     _resetReverseSyncPendingForTests();
   });
 
-  it('renders the title and display-only meta (source · age), with no author', () => {
+  it('renders the title and display-only meta (source · author fallback · age)', () => {
     renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
     expect(screen.getByTestId('item-title')).toHaveTextContent('A test headline');
     const meta = screen.getByTestId('item-meta');
     expect(meta).toHaveTextContent('Example Blog');
     expect(meta).toHaveTextContent('2h');
-    // The meta row shows the item's category in place of the author.
-    expect(meta).not.toHaveTextContent('Jane Doe');
+    // No domain or category on this item, so the author fills the fallback slot.
+    expect(meta.textContent).toBe('Example Blog · Jane Doe · 2h');
   });
 
-  it('shows the item\'s first category in the meta row when present', () => {
+  it('shows the item\'s first category instead of the author when present', () => {
     const categorized: FeedItem = {
       item: { ...FEED_ITEM.item, categories: ['Podcasts', 'Economics'] },
       feed: FEED_ITEM.feed,
@@ -109,12 +109,44 @@ describe('ItemRow', () => {
     const meta = screen.getByTestId('item-meta');
     expect(meta).toHaveTextContent('Podcasts');
     expect(meta).not.toHaveTextContent('Economics');
+    expect(meta).not.toHaveTextContent('Jane Doe');
   });
 
-  it('omits the category segment when the item has none', () => {
-    renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
+  it('omits the fallback slot entirely when the item has no domain, category, or author', () => {
+    const bareItem: FeedItem = {
+      item: { ...FEED_ITEM.item, author: null },
+      feed: FEED_ITEM.feed,
+    };
+    renderWithProviders(<ItemRow feedItem={bareItem} />);
     const meta = screen.getByTestId('item-meta');
     expect(meta.textContent).toBe('Example Blog · 2h');
+  });
+
+  it('omits the feed name when showSource is false (group-by-feed view)', () => {
+    renderWithProviders(<ItemRow feedItem={FEED_ITEM} showSource={false} />);
+    const meta = screen.getByTestId('item-meta');
+    expect(meta.textContent).toBe('Jane Doe · 2h');
+  });
+
+  it('shows the domain instead of the category or author when present (aggregator feeds)', () => {
+    const aggregatorItem: FeedItem = {
+      item: {
+        ...FEED_ITEM.item,
+        url: 'https://www.thedrive.com/news/story',
+        categories: ['Cars'],
+      },
+      feed: {
+        ...FEED_ITEM.feed,
+        title: 'Hacker News',
+        url: 'https://news.ycombinator.com/rss',
+        siteUrl: 'https://news.ycombinator.com',
+      },
+    };
+    renderWithProviders(<ItemRow feedItem={aggregatorItem} />);
+    const meta = screen.getByTestId('item-meta');
+    expect(meta).toHaveTextContent('thedrive.com');
+    expect(meta).not.toHaveTextContent('Cars');
+    expect(meta).not.toHaveTextContent('Jane Doe');
   });
 
   it('does not crash on a persisted item from before this field existed', () => {
@@ -127,7 +159,8 @@ describe('ItemRow', () => {
     delete legacyItem.categories;
     const stale = { item: legacyItem as typeof FEED_ITEM.item, feed: FEED_ITEM.feed };
     expect(() => renderWithProviders(<ItemRow feedItem={stale} />)).not.toThrow();
-    expect(screen.getByTestId('item-meta').textContent).toBe('Example Blog · 2h');
+    // Falls back to the author, same as an item with an explicit empty array.
+    expect(screen.getByTestId('item-meta').textContent).toBe('Example Blog · Jane Doe · 2h');
   });
 
   it('does not render a row favicon by default (group-by-feed: header carries it)', () => {

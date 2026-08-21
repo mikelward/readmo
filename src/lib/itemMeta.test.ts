@@ -143,7 +143,7 @@ describe('formatItemMetaTail', () => {
         category: 'Podcasts',
         now,
       }),
-    ).toBe('The Verge · 3h · Podcasts');
+    ).toBe('The Verge · Podcasts · 3h');
   });
 
   it('inserts the domain between source and age when provided', () => {
@@ -157,7 +157,54 @@ describe('formatItemMetaTail', () => {
     ).toBe('Hacker News · thedrive.com · 1h');
   });
 
-  it('omits empty source, domain, and category segments', () => {
+  it('prefers domain over category and author when all are present (aggregator feeds)', () => {
+    expect(
+      formatItemMetaTail({
+        source: 'Hacker News',
+        domain: 'thedrive.com',
+        category: 'Cars',
+        author: 'Jane Doe',
+        publishedAt: now,
+        now,
+      }),
+    ).toBe('Hacker News · thedrive.com · just now');
+  });
+
+  it('prefers category over author when there is no domain', () => {
+    expect(
+      formatItemMetaTail({
+        source: 'The Verge',
+        category: 'Podcasts',
+        author: 'Jane Doe',
+        publishedAt: now,
+        now,
+      }),
+    ).toBe('The Verge · Podcasts · just now');
+  });
+
+  it('falls back to the author when there is no domain or category', () => {
+    expect(
+      formatItemMetaTail({
+        source: 'The Verge',
+        author: 'Jane Doe',
+        publishedAt: now,
+        now,
+      }),
+    ).toBe('The Verge · Jane Doe · just now');
+  });
+
+  it('omits the source segment (group-by-feed view: the header already names the feed)', () => {
+    expect(
+      formatItemMetaTail({
+        source: '',
+        category: 'Podcasts',
+        publishedAt: now,
+        now,
+      }),
+    ).toBe('Podcasts · just now');
+  });
+
+  it('omits empty source, domain, category, and author segments', () => {
     expect(
       formatItemMetaTail({
         source: '',

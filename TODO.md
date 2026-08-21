@@ -325,12 +325,21 @@ permanent by default. Each is cheap to change.
   `user_settings` array), and whether it composes with or replaces title
   filters in the RPC's filter predicate.
 
-- **Filter by author, too.** The meta row used to show `item.author`; it now
-  shows the category instead (`formatItemMetaTail`'s `category` param replaced
-  `author` — see `lib/itemMeta.ts`). The author is still stored on `Item.author`
-  and shown in the reader header, just not in list rows. An eventual
-  author-based filter (parallel to the existing title filters) was raised
-  alongside the category work but not designed or scoped.
+- **Filter by author, too.** The meta row's fallback slot is domain, else
+  category, else author (`formatItemMetaTail` — see `lib/itemMeta.ts`), so the
+  author still surfaces on a row with neither. An eventual author-based filter
+  (parallel to the existing title filters) was raised alongside the category
+  work but not designed or scoped.
+
+- **Try omitting the feed name from list rows in group-by-feed view.** The
+  section header already names the feed once per group, so the row's own
+  `source` segment (`ItemRow`'s `showSource` prop, already built and tested)
+  is arguably redundant there — the same reasoning `showRowFavicon` already
+  acts on (off in grouped view, on in non-grouped). Tried and reverted once
+  (kept for now, per feedback) because it wasn't clear the row read well with
+  nothing before the domain/category/author fallback slot in a bare case
+  (`4h` alone). `ItemRows.tsx` has the wiring commented at the `showRowFavicon`
+  computation — flip it back to `showSource={!groupHeaders}` to retry.
 
 - **Show more than the first category on the reader (article) view.** The list
   row shows only `item.categories[0]` (row space is tight — guardrail #2), but
