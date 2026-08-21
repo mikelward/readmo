@@ -34,7 +34,7 @@
  * so bumping this constant is the whole rollout.
  *
  * A pure refactor doesn't need a bump; a changed output for any input does. */
-export const TITLE_NORMALIZED_VERSION = 1;
+export const TITLE_NORMALIZED_VERSION = 2;
 
 /** Case- and diacritic-folded form used for every comparison, so `Peña`,
  * `peña` and `Pena` are one word. */
@@ -47,9 +47,42 @@ export function fold(value: string): string {
 
 /** Split text into comparable word tokens. Splitting on every non-alphanumeric
  * is what makes possessives work for free: `Trump's` tokenizes to `trump` +
- * `s`, so a `trump` filter matches it without a possessive rule. */
+ * `s`, so a `trump` filter matches it without a possessive rule — apostrophe
+ * stays a hard separator, unlike the punctuation below.
+ *
+ * `.`, `+` and `#` are WORD characters, not separators, so a term like `.NET`,
+ * `C++` or `C#` survives as one token instead of collapsing to `net`/`c`/`c`
+ * and over-matching any title that merely contains that bare word. `+`/`#`
+ * are unconditional (they're not ordinary sentence punctuation); `.` first
+ * matches greedily with letters/digits/`+`/`#` into one run (so `.NET`,
+ * `U.S`, `Node.js` and even a mid-sentence ellipsis all merge into a single
+ * chunk), and is then split back apart in two passes rather than with a regex
+ * lookbehind — `(?<!…)` is a parse-time SyntaxError on Safari < 16.4, and this
+ * is a mobile-facing app with no transpile step that would rewrite it (see
+ * MarkdownText.tsx for the same constraint hit before):
+ *   - any run of 2+ consecutive dots (an ellipsis, `Wait...really`) is a hard
+ *     separator and is dropped, splitting the chunk in two — a genuine
+ *     `.NET`-style single leading dot is never adjacent to another dot, so it
+ *     survives this split untouched;
+ *   - a single dot left at the very END of what remains (`rise.` from "Rates
+ *     rise.") is dropped too — it can only be there because whatever followed
+ *     it in the original text wasn't a token character (whitespace or the
+ *     string's end), the same "trailing period drops" rule as before.
+ *
+ * A run made ENTIRELY of `+`/`#` (no letter or digit at all — a title like
+ * `A + B`, or someone typing bare `+` as a filter) is dropped rather than
+ * kept as its own token: `normalizeFilter`'s "no word characters at all"
+ * rejection depends on tokenize() never returning a punctuation-only token. */
 export function tokenize(value: string): string[] {
-  return fold(value).match(/[\p{L}\p{N}]+/gu) ?? [];
+  const chunks = fold(value).match(/[\p{L}\p{N}+#.]+/gu) ?? [];
+  const tokens: string[] = [];
+  for (const chunk of chunks) {
+    for (const piece of chunk.split(/\.{2,}/u)) {
+      const trimmed = piece.replace(/\.$/u, '');
+      if (trimmed && /[\p{L}\p{N}]/u.test(trimmed)) tokens.push(trimmed);
+    }
+  }
+  return tokens;
 }
 
 /** Canonical stored form of a filter entry: folded, with runs of punctuation

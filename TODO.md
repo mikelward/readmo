@@ -311,6 +311,21 @@ permanent by default. Each is cheap to change.
 ## UI / layout
 
 
+- **Filter candidates: a single Han character (CJK) is never offered, even
+  though it's routinely a complete word.** Found while scoping PR #656's
+  single-ASCII-character suppression (`isSingleAsciiChar` in
+  `lib/titleFilter.ts`) — that fix is deliberately ASCII-only and doesn't
+  touch this. The actual blocker is different and pre-existing: a Han
+  character (e.g. "水" = water) never matches `\p{Lu}` (no case distinction in
+  that script), so it never reaches the capitalized-run tier 1 at all, and
+  falls to tier 2 where `MIN_CANDIDATE_LENGTH = 3` drops it for being too
+  short — a floor sized for Latin-script abbreviations, not CJK, where most
+  words are 1-2 characters. Net effect: the row-menu Filter… candidate list is
+  close to useless for a CJK-language headline today. Needs a real fix
+  (script-aware minimum length, or a different candidate-extraction strategy
+  entirely for scripts without word-breaking spaces) rather than another
+  special case bolted onto the Latin-oriented heuristics here.
+
 - **Category filters are unified with title filters — one list, not two.**
   Shipped: an article's own `categories[]` feed the SAME filter list as typed
   title words (`lib/titleFilter.ts`'s `titleIsFiltered` + the new
@@ -324,15 +339,19 @@ permanent by default. Each is cheap to change.
   category matching, but it was replaced with this unified design before that
   migration was ever deployed (see PR #655's history if the "why not both"
   question comes up again).
-  - **Known, accepted trade-off: punctuation.** Folding strips punctuation
-    (case-insensitive, same as every title filter), so tapping a category like
-    `.NET` or `C++` adds an ordinary word filter for "net"/"c" — it will then
-    also hide unrelated articles whose title merely contains that bare word.
-    Punctuation-preserving matching (for category-sourced AND hand-typed
-    entries alike, since the same tokenizer folds both) is a real follow-up,
-    not attempted here — flagged directly in review (Codex P2 on #655) and
-    intentionally deferred rather than fixed with a special case for
-    punctuated categories only.
+  - **Punctuation-preserving matching: done.** `titleFilterCore.ts`'s
+    `tokenize()` keeps `.`, `+` and `#` as word characters instead of
+    stripping them (`.NET`, `C++`, `C#` now match as themselves, not the
+    over-broad "net"/"c"/"c"); `.` still ends a word normally when nothing but
+    whitespace or the string's end follows it, so an ordinary sentence-ending
+    period is unaffected. Bumped `TITLE_NORMALIZED_VERSION` to 2 — the
+    poller's backfill re-normalizes existing rows over a few polls, no
+    migration needed. `filterCandidates` (`lib/titleFilter.ts`) offers a
+    punctuated title term as its own candidate the same way, and a bare
+    single-character candidate ("C" alone) is no longer offered — never a
+    useful filter on its own. Apostrophe handling is untouched: `Trump's` →
+    `Trump` still works exactly as before, via the unrelated existing
+    display-stripping in `titleWords()`.
   - **Still missing: server-side enforcement for a category-only match.** A
     title-word match is already enforced server-side (the RPC reads
     `title_filters` against `items.title_normalized`); an article that matches

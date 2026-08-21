@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeTitle, tokenize, UNTITLED } from './titleFilterCore';
+import { normalizeFilter, normalizeTitle, tokenize, UNTITLED } from './titleFilterCore';
 import { compileFilters, titleIsFiltered } from './titleFilter';
 
 /** What migration 0074's SQL matcher does, in the one line it takes: the needle
@@ -87,6 +87,18 @@ describe('client and server agree', () => {
     // A Malayalam LETTER must survive folding, so the tokens either side are
     // not joined into a word a filter would match.
     ['aൎb is unrelated', ['ab'], false, 'U+0D4E is a letter, not a mark'],
+    // `.`/`+`/`#` are word characters, not separators (SPEC.md *Filtered
+    // words*): a term like `.NET`/`C++`/`C#` survives as its own token
+    // instead of collapsing to the bare, over-broad `net`/`c`/`c`.
+    ['Announcing .NET 9', ['.net'], true, 'leading dot survives as part of the word'],
+    ['Fishing net recovered from harbor', ['.net'], false, 'does not over-match the bare word'],
+    ['Coding in C++ today', ['c++'], true, 'trailing plus signs survive'],
+    ['The letter C explained', ['c++'], false, 'does not over-match the bare letter'],
+    ['Learning C# basics', ['c#'], true, 'trailing hash survives'],
+    // A sentence-ending period is still dropped — only a dot with a word
+    // character immediately after it (leading or internal) survives.
+    ['Rates rise.', ['rise'], true, 'trailing sentence period still drops'],
+    ['U.S. troops arrive', ['u.s'], true, 'internal dot survives, trailing one still drops'],
   ];
 
   // Entries reach both matchers already canonical: addTitleFilter normalizes on
@@ -101,5 +113,47 @@ describe('client and server agree', () => {
   it('tokenize is what both sides agree on', () => {
     expect(tokenize("Trump's tariffs")).toEqual(['trump', 's', 'tariffs']);
     expect(tokenize('!!! ???')).toEqual([]);
+  });
+
+  describe('tokenize keeps ., + and # as word characters', () => {
+    it('keeps a leading dot (.NET) and trailing +/# (C++, C#)', () => {
+      expect(tokenize('.NET')).toEqual(['.net']);
+      expect(tokenize('C++')).toEqual(['c++']);
+      expect(tokenize('C#')).toEqual(['c#']);
+    });
+
+    it('keeps an internal dot (Node.js, U.S) but drops a sentence-ending one', () => {
+      expect(tokenize('Node.js announces v20')).toEqual(['node.js', 'announces', 'v20']);
+      expect(tokenize('U.S. troops arrive')).toEqual(['u.s', 'troops', 'arrive']);
+      expect(tokenize('Rates rise.')).toEqual(['rates', 'rise']);
+    });
+
+    it("still splits apostrophes as a hard separator — Trump's is unaffected", () => {
+      expect(tokenize("Trump's")).toEqual(['trump', 's']);
+    });
+
+    it('does not let an ellipsis glue onto the next word', () => {
+      expect(tokenize('Wait... really')).toEqual(['wait', 'really']);
+    });
+
+    it('does not let a compact (no-space) ellipsis glue onto the next word either (Codex P2)', () => {
+      // The last "." of "Wait...really" is the tail of a dot run, not a
+      // ".NET"-style leading dot — it must not attach to "really", or an
+      // existing "really" filter silently stops matching this title.
+      expect(tokenize('Wait...really')).toEqual(['wait', 'really']);
+      expect(tokenize('Node...js')).toEqual(['node', 'js']);
+      expect(tokenize('To be continued...')).toEqual(['to', 'be', 'continued']);
+    });
+
+    it('drops a run made entirely of +/# — no letter or digit to anchor it (Codex P2)', () => {
+      // normalizeFilter's "no word characters at all" rejection depends on
+      // tokenize() never returning a punctuation-only token.
+      expect(tokenize('+')).toEqual([]);
+      expect(tokenize('#')).toEqual([]);
+      expect(tokenize('++')).toEqual([]);
+      expect(normalizeFilter('+')).toBeNull();
+      // A real letter/digit elsewhere in the text is unaffected.
+      expect(tokenize('A + B')).toEqual(['a', 'b']);
+    });
   });
 });
