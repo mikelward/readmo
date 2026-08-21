@@ -1337,10 +1337,11 @@ negligible and off every critical path. See the External services table in
    - **Mute feed** — stays subscribed but excluded from the aggregate feed;
      still reachable on its own page. (This is per-feed; per-item dismissal is
      **Done** (dismiss), unchanged from newshacker.)
-   - **Filtered words** — a per-account list of words and phrases; an article
-     whose **title** matches one is **not served** in the feed views. Distinct
-     from *Mute feed*, which is per-feed and leaves the articles reachable —
-     a filtered article simply isn't in the list.
+   - **Filtered words** — a per-account list of keyword entries; an article
+     whose **title** matches one, or whose own **category** matches one, is
+     **not served** in the feed views. Distinct from *Mute feed*, which is
+     per-feed and leaves the articles reachable — a filtered article simply
+     isn't in the list.
      - **Deliberately small, and not yet proven worth its keep.** Nobody has
        used this in anger, so it is scoped to the simplest thing that works and
        should stay there until real use argues otherwise. It had a plural
@@ -1354,41 +1355,58 @@ negligible and off every critical path. See the External services table in
      - **Account-wide, across every feed.** You don't want to re-teach each
        device — or each feed — what you never want to read.
      - **Matched articles vanish**: no placeholder, no count, no Undo
-       affordance. Removing the word in Settings restores every article it was
+       affordance. Removing the entry in Settings restores every article it was
        hiding, so nothing is consumed and the filter needs no confirmation step
        before it applies.
-     - **Whole words, not substrings** — a `trump` filter must not hide an
-       article about a trumpet. Accents and case don't matter: *Peña*, *peña*
-       and *Pena* are one word, in any script — a headline written with its own
-       vowel marks matches the same word written without them, and the feed and
-       the badge agree about it. "Whole word" needs word boundaries, so in a
-       script written without spaces (Japanese, Chinese) a filter only matches a
-       headline it spans entirely — the same rule, with nothing to anchor it.
-       A filter matches **exactly the word you typed** — not its plural, not a
-       stem of it. Add both forms if you want both; the row menu offers
-       whichever ones the headline actually contains.
+     - **One list, one kind of entry — case-insensitive, whichever way it was
+       added.** A word typed in Settings and a category tapped from an
+       article's row menu become the exact same kind of filter entry; there is
+       no way to tell them apart once added, and removing one removes it for
+       both what it was matching. Against a **title**: whole words, not
+       substrings — a `trump` filter must not hide an article about a trumpet.
+       Accents and case don't matter: *Peña*, *peña* and *Pena* are one word,
+       in any script — a headline written with its own vowel marks matches the
+       same word written without them, and the feed and the badge agree about
+       it. "Whole word" needs word boundaries, so in a script written without
+       spaces (Japanese, Chinese) a filter only matches a headline it spans
+       entirely — the same rule, with nothing to anchor it. A filter matches
+       **exactly the word you typed** — not its plural, not a stem of it. Add
+       both forms if you want both; the row menu offers whichever ones the
+       headline actually contains. Against an article's own **category**: a
+       whole-phrase match, case-insensitive, once folded the same way a typed
+       entry is — so a `sport` filter also hides any article categorized
+       "Sport". Folding strips punctuation, so a category like `.NET` or `C++`
+       becomes an ordinary word filter for "net"/"c" once added — a known,
+       accepted trade for now (punctuation-preserving matching is a follow-up,
+       see TODO.md).
      - **Pinned articles are exempt**, as they are from every other reason a
        row would leave a list.
-     - **A filtered article doesn't hold a place in the feed.** It doesn't
-       count toward a feed's unread badge, and it doesn't occupy one of the
-       slots in the newest-articles floor a feed is always allowed — so a feed
-       whose latest articles all match still shows you the ones behind them,
-       rather than looking empty. Looking behind them is bounded: if a feed's
-       whole recent run matches, it serves nothing rather than digging
-       arbitrarily far back through its archive — at that point you've filtered
-       essentially the entire feed, and the cost of the search would be paid on
-       every load by everyone. This is what separates filtering from
-       dismissing: dismissing acts on an article you were shown and shrinks the
-       feed, while a filter is a standing rule about articles you never wanted
-       shown, and enforcing it should never cost you a feed you still read.
+     - **A filtered article doesn't hold a place in the feed** — for a title
+       match. It doesn't count toward a feed's unread badge, and it doesn't
+       occupy one of the slots in the newest-articles floor a feed is always
+       allowed — so a feed whose latest articles all match still shows you the
+       ones behind them, rather than looking empty. Looking behind them is
+       bounded: if a feed's whole recent run matches, it serves nothing rather
+       than digging arbitrarily far back through its archive — at that point
+       you've filtered essentially the entire feed, and the cost of the search
+       would be paid on every load by everyone. This is what separates
+       filtering from dismissing: dismissing acts on an article you were shown
+       and shrinks the feed, while a filter is a standing rule about articles
+       you never wanted shown, and enforcing it should never cost you a feed
+       you still read. **A category-only match (the article's title doesn't
+       itself contain the term) is enforced client-side only for now** — it
+       still counts toward the badge and can still occupy a floor slot, since
+       the server-side matcher only knows about titles (server-side parity for
+       category matching is a follow-up — see TODO.md).
      - **Feed views only.** `/search` and the library lists (`/pinned`,
        `/done`, …) are unfiltered — the same way Done items still show on
        `/done`. Search is deliberately the way back to a filtered article, and
        is what makes vanishing safe.
-     - Managed in **Settings → Filtered words** (add a word; remove one to
-       undo), and added straight from an article's **row menu → Filter…**,
-       which offers terms taken from that title — capitalized names first, the
-       rest of its words behind **More…**, and **Other…** to type your own.
+     - Managed in **Settings → Filtered words** (add a word; remove any entry
+       to undo), and added straight from an article's **row menu → Filter…**,
+       which offers that article's own categories first, then terms taken from
+       its title — capitalized names first, the rest of its words behind
+       **More…**, and **Other…** to type your own.
    - **Open original / Open on newshacker** — the per-feed **open mode**: a
      single mutually-exclusive choice of where that feed's article rows open on
      tap.
@@ -2033,9 +2051,9 @@ negligible and off every critical path. See the External services table in
     - **Settings scope.** Reading-*behavior* settings are **per-account and
       sync across devices**: Sort order, Group by feed, Mark Done as you
       scroll, both Feed icons toggles, Hide sports spoilers, Auto generate
-      summaries, and the **Filtered words** list (stored in `user_settings`,
-      one nullable column per setting — unset means the default; RLS-gated like
-      every per-user table). A change
+      summaries, and the **Filtered words** list
+      (stored in `user_settings`, one nullable column per setting — unset
+      means the default; RLS-gated like every per-user table). A change
       lands on other devices on their next launch/focus/reconnect; when two
       devices disagree, the **latest change to each individual setting wins**.
       Settings that are really *device ergonomics* stay **per-device**:

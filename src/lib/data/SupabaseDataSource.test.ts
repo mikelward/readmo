@@ -3380,6 +3380,7 @@ describe('synced settings (user_settings, 0064)', () => {
     // The next reconcile (focus/online) reads normally.
     await expect(env.ds.getSyncedSettings()).resolves.toEqual({ groupByFeed: true });
   });
+
 });
 
 describe('newshacker link probe (getNewshackerLink)', () => {

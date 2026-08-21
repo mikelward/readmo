@@ -204,8 +204,11 @@ export function SettingsPage() {
 
       {/* Filtered words — the keyword filter's management surface (SPEC.md
           *Filtered words*). Sits with Reading rather than Appearance: it decides
-          what you're served, not how it looks. Removing a word here is also the
-          feature's undo, which is why filtering from a row needs no confirm. */}
+          what you're served, not how it looks. Removing an entry here is also
+          the feature's undo, which is why filtering from a row needs no
+          confirm. One combined list: an entry added by tapping an item's own
+          category (row menu → Filter…) is stored and removed exactly like one
+          typed here — there is no distinction once it's in the list. */}
       <section className="settings__section">
         <h2 className="settings__heading">Filtered words</h2>
         <form

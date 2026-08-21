@@ -311,19 +311,39 @@ permanent by default. Each is cheap to change.
 ## UI / layout
 
 
-- **Filter/hide by category, long-press.** The list-view meta row now shows an
-  item's first publisher-supplied category (`items.categories`, migration
-  0075) in place of the author. The eventual feature this enables: long-press a
-  category chip to hide that category, either for the current feed only or
-  across all feeds — mirroring the existing title-filter UX (`useTitleFilters`,
-  SPEC.md "Title filters"). Since an item can carry several categories (RSS/
-  Atom allow repeated `<category>`, JSON Feed `tags` is an array by design),
-  "hide by category" needs to match on *any* of an item's stored categories,
-  not just the displayed first one — the hide list and the display slot are
-  different reads of the same array. Not designed yet: where the hidden-
-  categories list lives (per-feed `subscriptions` column vs. a synced
-  `user_settings` array), and whether it composes with or replaces title
-  filters in the RPC's filter predicate.
+- **Category filters are unified with title filters — one list, not two.**
+  Shipped: an article's own `categories[]` feed the SAME filter list as typed
+  title words (`lib/titleFilter.ts`'s `titleIsFiltered` + the new
+  `categoriesAreFiltered`, `useTitleFilters().addTitleFilter`) — tapping a
+  category in a row's Filter… menu (offered first, ahead of title-word
+  candidates) folds it exactly the way a typed word is folded and adds it to
+  `title_filters`. There is deliberately no second stored list, no second
+  Settings chip kind, and no way to tell a category-added entry apart from a
+  typed one once it's in the list — an earlier version of this feature did
+  ship a separate `category_filters` column (migration 0076) with exact-string
+  category matching, but it was replaced with this unified design before that
+  migration was ever deployed (see PR #655's history if the "why not both"
+  question comes up again).
+  - **Known, accepted trade-off: punctuation.** Folding strips punctuation
+    (case-insensitive, same as every title filter), so tapping a category like
+    `.NET` or `C++` adds an ordinary word filter for "net"/"c" — it will then
+    also hide unrelated articles whose title merely contains that bare word.
+    Punctuation-preserving matching (for category-sourced AND hand-typed
+    entries alike, since the same tokenizer folds both) is a real follow-up,
+    not attempted here — flagged directly in review (Codex P2 on #655) and
+    intentionally deferred rather than fixed with a special case for
+    punctuated categories only.
+  - **Still missing: server-side enforcement for a category-only match.** A
+    title-word match is already enforced server-side (the RPC reads
+    `title_filters` against `items.title_normalized`); an article that matches
+    only via its category (not literally in the title) is filtered client-side
+    only — it still counts toward a feed's unread badge and can still occupy a
+    per-feed floor slot. Needs the server-side matcher extended to also check
+    `items.categories` against `title_filters`, not just the title.
+  - **Per-feed scope — open question, may not be needed.** Filters (both
+    title- and category-sourced) are account-wide across every feed. Raised
+    as a possible follow-up but not clearly worth the complexity — revisit
+    only if global scope turns out to be too broad in practice.
 
 - **Filter by author, too.** The meta row's fallback slot is domain, else
   category, else author (`formatItemMetaTail` — see `lib/itemMeta.ts`), so the

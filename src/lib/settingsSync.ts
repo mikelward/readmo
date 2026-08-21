@@ -52,10 +52,14 @@ export interface SyncedSettings {
   showGroupFavicon: boolean;
   hideSportsSpoilers: boolean;
   autoSummarizePinned: boolean;
-  /** Normalized filtered words (src/lib/titleFilter.ts). The only non-scalar
-   * synced setting: it resolves last-write-wins over the WHOLE list rather
-   * than per word, which is the accepted trade for a list edited a few times
-   * a year (see 0071's header). */
+  /** Normalized filtered words AND categories, one commingled list
+   * (src/lib/titleFilter.ts: `titleIsFiltered` + `categoriesAreFiltered`).
+   * Every entry is folded/tokenized the same way regardless of whether it
+   * came from typing a word or tapping an item's own category in the row
+   * menu — there is no stored distinction between the two. The only
+   * non-scalar synced setting: it resolves last-write-wins over the WHOLE
+   * list rather than per entry, which is the accepted trade for a list
+   * edited a few times a year (see 0071's header). */
   titleFilters: string[];
 }
 
@@ -98,6 +102,25 @@ const boolSpec = (storageKey: string): SettingSpec<boolean> => ({
   serialize: (value) => (value ? '1' : '0'),
 });
 
+/** `titleFilters` is a plain string list, JSON-encoded (a delimiter could
+ * appear inside an arbitrary entry), needing the structural `equals` every
+ * non-scalar setting requires. */
+const stringListSpec = (storageKey: string): SettingSpec<string[]> => ({
+  storageKey,
+  parse: (raw) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return undefined;
+    }
+    if (!Array.isArray(parsed)) return undefined;
+    return parsed.every((e) => typeof e === 'string') ? (parsed as string[]) : undefined;
+  },
+  serialize: (value) => JSON.stringify(value),
+  equals: (a, b) => a.length === b.length && a.every((entry, i) => entry === b[i]),
+});
+
 /** Per-key storage bindings, shared with the useReadingPrefs stores so the
  * engine and the hooks can never disagree on a key's encoding. */
 export const SYNCED_SETTINGS: {
@@ -115,23 +138,7 @@ export const SYNCED_SETTINGS: {
   showGroupFavicon: boolSpec(SHOW_GROUP_FAVICON_KEY),
   hideSportsSpoilers: boolSpec(HIDE_SPORTS_SPOILERS_KEY),
   autoSummarizePinned: boolSpec(AUTO_SUMMARIZE_PINNED_KEY),
-  titleFilters: {
-    storageKey: TITLE_FILTERS_KEY,
-    // JSON rather than a delimiter: an entry is arbitrary reader-typed text,
-    // and any separator character could appear inside one.
-    parse: (raw) => {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        return undefined;
-      }
-      if (!Array.isArray(parsed)) return undefined;
-      return parsed.every((e) => typeof e === 'string') ? (parsed as string[]) : undefined;
-    },
-    serialize: (value) => JSON.stringify(value),
-    equals: (a, b) => a.length === b.length && a.every((entry, i) => entry === b[i]),
-  },
+  titleFilters: stringListSpec(TITLE_FILTERS_KEY),
 };
 
 const SYNCED_KEYS = Object.keys(SYNCED_SETTINGS) as SyncedSettingKey[];
