@@ -311,6 +311,24 @@ permanent by default. Each is cheap to change.
 ## UI / layout
 
 
+- **`ItemRowMenu`'s popover items are 36px tall, below the 44px touch floor
+  guardrail 2 requires — app-wide, not just one call site.** Found via Codex
+  on PR #660 (reader Filter…), but verified pre-existing: `popover = open &&
+  !!anchorEl` is the component's only sheet/popover switch
+  (`ItemRowMenu.tsx`), and every current caller — `ItemRow.tsx`'s own
+  long-press/context-menu `openMenu` (`setMenuAnchor(articleRef.current)`,
+  twice), the reader's More button, both admin pages — always passes a
+  non-null anchor, so `.item-menu__sheet--popover .item-menu__item`
+  (`min-height: 36px`, `ItemRowMenu.css:88-91`) is what every row/reader menu
+  item actually renders at today, list rows included. The component's own
+  header comment ("popover on pointer devices, bottom-sheet fallback on
+  touch") describes intent nothing currently wires up — `usePointerDevice()`
+  exists and is imported in `ItemRow.tsx`, but nothing feeds it into
+  `anchorEl` selection anywhere. Fix: at each call site, pass `null` on touch
+  (→ sheet, 44px) and the real anchor on a pointer device (→ compact
+  popover), rather than patching one call site and leaving the rest
+  inconsistent.
+
 - **Reader tags (PR #657) should filter out generic categories like "News"/
   "news".** A publisher category that's just the section name of the whole
   feed ("News") carries no real information and clutters the first-few-tags
