@@ -208,6 +208,56 @@ describe('FeedsPage — popular feed autocomplete', () => {
     expect((await source.getSubscriptions()).length).toBe(before + 1);
   });
 
+  it('scrolls the active suggestion into view on arrow-key navigation', async () => {
+    // jsdom doesn't implement scrollIntoView; stub it on the prototype.
+    const scrollSpy = vi.fn();
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrollSpy;
+    try {
+      const user = userEvent.setup();
+      renderWithProviders(<FeedsPage />);
+      const input = screen.getByLabelText('Feed name or URL');
+      await user.click(input);
+      await screen.findByRole('listbox');
+      scrollSpy.mockClear();
+      await user.keyboard('{ArrowDown}');
+      expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest' });
+    } finally {
+      Element.prototype.scrollIntoView = orig;
+    }
+  });
+
+  it('re-scrolls the persisted active index into view when the dropdown remounts', async () => {
+    // jsdom doesn't implement scrollIntoView; stub it on the prototype.
+    const scrollSpy = vi.fn();
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrollSpy;
+    try {
+      const user = userEvent.setup();
+      renderWithProviders(<FeedsPage />);
+      const input = screen.getByLabelText('Feed name or URL');
+      await user.click(input);
+      await screen.findByRole('listbox');
+      await user.keyboard('{ArrowDown}{ArrowDown}');
+      // Blur closes (unmounts) the dropdown after its debounce, without
+      // resetting activeIdx. fireEvent.blur() only dispatches the event
+      // without moving focus, which would make the next user.click() on the
+      // still-focused input a no-op focus-wise — call the real DOM method so
+      // document.activeElement actually moves, same as a real blur.
+      act(() => input.blur());
+      await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+      scrollSpy.mockClear();
+      // Refocusing remounts the dropdown at the persisted activeIdx; the
+      // newly-mounted list must be scrolled to that row too, not just left at
+      // the top.
+      await user.click(input);
+      await screen.findByRole('listbox');
+      expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest' });
+    } finally {
+      Element.prototype.scrollIntoView = orig;
+    }
+  });
+
   it('uses the "Feed name or URL" placeholder on the Add-a-feed input', () => {
     renderWithProviders(<FeedsPage />);
     expect(screen.getByPlaceholderText('Feed name or URL')).toBeTruthy();

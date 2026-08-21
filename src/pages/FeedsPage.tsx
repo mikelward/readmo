@@ -75,6 +75,20 @@ export function FeedsPage() {
   const [feedUrl, setFeedUrl] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [activeIdx, setActiveIdx] = useState(-1);
+  // The suggestions dropdown scrolls internally (max-height, see
+  // SettingsPage.css) once the list is taller than it — up to 8 typed-search
+  // matches. Arrow-key navigation moves `activeIdx` but doesn't scroll on its
+  // own, so keep the active row in view by hand. Also re-run on
+  // `showSuggestions`: a blur closes (unmounts) the dropdown without
+  // resetting `activeIdx`, so refocusing remounts it at the persisted index —
+  // without this dependency, the effect wouldn't fire again to scroll that
+  // (now newly-mounted) row into view.
+  const suggestionsListRef = useRef<HTMLUListElement | null>(null);
+  useEffect(() => {
+    if (!showSuggestions || activeIdx < 0) return;
+    const active = suggestionsListRef.current?.children[activeIdx];
+    active?.scrollIntoView({ block: 'nearest' });
+  }, [activeIdx, showSuggestions]);
   // When discovery finds more than one feed (e.g. a site advertising per-section
   // feeds — Sport, World news — alongside its main feed), we surface a picker
   // instead of silently subscribing to the first candidate. `picker` holds the
@@ -539,6 +553,7 @@ export function FeedsPage() {
             />
             {showSuggestions && suggestions.length > 0 && (
               <ul
+                ref={suggestionsListRef}
                 id={suggestionsId}
                 role="listbox"
                 aria-label="Feed suggestions"
