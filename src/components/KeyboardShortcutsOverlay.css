@@ -102,7 +102,7 @@
   }
 }
 
-.kb-help__close:active {
+html:not(.rm-suppress-press) .kb-help__close:active {
   background: var(--rm-border);
 }
 

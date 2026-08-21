@@ -329,7 +329,7 @@
   touch-action: none;
 }
 
-.settings__sub-drag:active {
+html:not(.rm-suppress-press) .settings__sub-drag:active {
   cursor: grabbing;
 }
 
@@ -551,7 +551,7 @@
   cursor: pointer;
 }
 
-.settings__filter-submit:active {
+html:not(.rm-suppress-press) .settings__filter-submit:active {
   background: var(--rm-accent-strong);
 }
 
@@ -608,6 +608,6 @@
   cursor: pointer;
 }
 
-.settings__filter-remove:active {
+html:not(.rm-suppress-press) .settings__filter-remove:active {
   color: var(--rm-text);
 }

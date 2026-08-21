@@ -44,7 +44,7 @@
   }
 }
 
-.promo-bar__dismiss:active {
+html:not(.rm-suppress-press) .promo-bar__dismiss:active {
   background: var(--rm-bg);
   color: var(--rm-text);
 }

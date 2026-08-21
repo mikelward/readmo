@@ -100,7 +100,7 @@
    hover media query so the accent-tint confirmation fires on touch before the
    route changes; the neutral `:hover` sits inside it to avoid the sticky-hover
    smear on touch devices (same shape as `.reader__action`). */
-.reader__feedname:active {
+html:not(.rm-suppress-press) .reader__feedname:active {
   background: color-mix(in srgb, var(--rm-accent) 14%, transparent);
 }
 

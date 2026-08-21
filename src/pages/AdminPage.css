@@ -138,7 +138,7 @@
   }
 }
 
-.admin__manage:active:not(:disabled) {
+html:not(.rm-suppress-press) .admin__manage:active:not(:disabled) {
   background: var(--rm-bg);
 }
 
@@ -166,7 +166,7 @@
   }
 }
 
-.admin__family-toggle:active:not(:disabled) {
+html:not(.rm-suppress-press) .admin__family-toggle:active:not(:disabled) {
   background: var(--rm-bg);
 }
 
@@ -196,7 +196,7 @@
   }
 }
 
-.admin__remove:active:not(:disabled) {
+html:not(.rm-suppress-press) .admin__remove:active:not(:disabled) {
   background: var(--rm-bg);
 }
 
@@ -217,7 +217,7 @@
   }
 }
 
-.admin__retry:active {
+html:not(.rm-suppress-press) .admin__retry:active {
   background: var(--rm-bg);
 }
 

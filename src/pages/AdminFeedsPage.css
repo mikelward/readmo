@@ -43,11 +43,11 @@
   }
 }
 
-.admin-feeds__filter-btn:active {
+html:not(.rm-suppress-press) .admin-feeds__filter-btn:active {
   background: var(--rm-bg);
 }
 
-.admin-feeds__filter-btn--on:active {
+html:not(.rm-suppress-press) .admin-feeds__filter-btn--on:active {
   background: var(--rm-accent);
 }
 

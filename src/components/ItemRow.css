@@ -61,7 +61,7 @@
 
 /* Pressed state on the body zone (guardrail #2: pressed-state on every zone).
  * Outside the hover media query so it fires on touch too. */
-.item-row__body:active {
+html:not(.rm-suppress-press) .item-row__body:active {
   background: var(--rm-border);
 }
 
@@ -349,7 +349,7 @@
   }
 }
 
-.pin-btn:active {
+html:not(.rm-suppress-press) .pin-btn:active {
   background: var(--rm-border);
 }
 

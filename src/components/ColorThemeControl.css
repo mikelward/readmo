@@ -53,7 +53,7 @@
   outline-offset: 1px;
 }
 
-.color-theme__btn:active {
+html:not(.rm-suppress-press) .color-theme__btn:active {
   background: color-mix(in srgb, var(--rm-accent) 12%, transparent);
 }
 

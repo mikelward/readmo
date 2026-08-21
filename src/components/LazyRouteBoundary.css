@@ -26,7 +26,7 @@
   cursor: pointer;
 }
 
-.lazy-route-error__retry:active {
+html:not(.rm-suppress-press) .lazy-route-error__retry:active {
   background: var(--rm-accent-strong);
 }
 

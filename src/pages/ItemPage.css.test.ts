@@ -108,7 +108,12 @@ describe('reader toolbar feed-name link', () => {
   // stay outside the hover media query so the confirmation fires on touch (a
   // touch has no hover) before the link routes away.
   it('gives the link a pressed (:active) state that fires on touch', () => {
-    expect(declarationsFor('.reader__feedname:active').background).toBeTruthy();
+    // Gated behind the `html:not(.rm-suppress-press)` ancestor guard —
+    // usePopoverDismiss's press-suppression contract, see global.css.test.ts.
+    expect(
+      declarationsFor('html:not(.rm-suppress-press) .reader__feedname:active')
+        .background,
+    ).toBeTruthy();
   });
 });
 

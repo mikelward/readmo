@@ -1103,7 +1103,8 @@ negligible and off every critical path. See the External services table in
   contract (`usePopoverDismiss`, also used by the overflow menu and the feed
   row menu): closes on Escape or an outside press, and **the first press
   outside only dismisses** — its trailing click is swallowed, so it never also
-  activates whatever was tapped.
+  activates whatever was tapped, and that target doesn't flash its
+  pressed-state paint either.
 - **Implementation status.** Real Supabase sign-in (Google / Discord OAuth and
   email magic link) is wired behind the existing `useAuth` / `getActiveUid`
   shape: when `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` are present the
@@ -2126,7 +2127,7 @@ negligible and off every critical path. See the External services table in
       the shared dropdown contract (`usePopoverDismiss`): Escape or an outside
       press closes it, and **the first press outside only dismisses** — its
       trailing click is swallowed, so dismissing the menu doesn't also activate
-      a neighboring row or control.
+      a neighboring row or control, or flash its pressed-state paint.
 
 12. **Admin** — `/admin`: operator console **hub**, reached from the **account
     menu**'s Admin link (shown only to admins). It holds no controls of its own —
@@ -3230,7 +3231,8 @@ immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
   dense pointer. Dismisses on click-outside or Escape; **the first tap outside an
   open menu only dismisses it** — that gesture's trailing click is swallowed, so
   it never also activates whatever sits underneath (an item row's stretched link,
-  a neighboring row, a toolbar button); a second tap is needed to act.
+  a neighboring row, a toolbar button) or flashes its pressed-state paint; a
+  second tap is needed to act.
 - **Share** shares the **hosted Readmo reader link** (`/item/:id`) so the
   recipient opens the article **inside Readmo**, not the publisher's page — see
   *Sharing an article*. **Share original** (⋮ overflow) is the escape hatch that
