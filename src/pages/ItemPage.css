@@ -202,6 +202,32 @@
   color: var(--rm-meta);
 }
 
+/* Publisher categories/tags, first few only (ItemPage.tsx's MAX_READER_TAGS).
+   Display-only labels, not controls — no tap target needed, unlike the
+   removable filter chips in Settings. */
+.reader__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reader__tag {
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  color: var(--rm-meta);
+  background: var(--rm-bg-card);
+  border: 1px solid var(--rm-border);
+  border-radius: var(--rm-radius);
+  /* A publisher category can be one long unbroken token (up to the parser's
+     100-char cap) — without this a flex item's default min-content width
+     lets it overflow the header and force horizontal page scroll. */
+  max-width: 100%;
+  overflow-wrap: break-word;
+}
+
 /* Reading-mode bar: sits between the header and the body, carrying the
    reading-view/feed-version toggle, the loading hint, or a fallback note. */
 .reader__modebar {
