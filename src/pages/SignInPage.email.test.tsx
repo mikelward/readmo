@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, renderHook, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SignInPage } from './SignInPage';
 import { useAuth } from '../hooks/useAuth';
+import { DataSourceProvider } from '../lib/data/context';
+import { MockDataSource } from '../lib/data/MockDataSource';
 
 // Exercise the *configured* (real Supabase) email magic-link path: mock the
 // client module so `isSupabaseConfigured()` is true and `getSupabase()` returns
@@ -29,13 +32,23 @@ vi.mock('../lib/supabase/client', () => ({
 }));
 
 function renderAt(entry: { pathname: string; state?: unknown }) {
+  // The hero renders real ItemRow components against mock FeedItems
+  // (SignInPage.tsx), which need a DataSource + QueryClient in context.
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  const source = new MockDataSource(`test-${Math.random()}`);
   return render(
-    <MemoryRouter initialEntries={[entry]}>
-      <Routes>
-        <Route path="/signin" element={<SignInPage />} />
-        <Route path="*" element={<div data-testid="landed" />} />
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <DataSourceProvider source={source}>
+        <MemoryRouter initialEntries={[entry]}>
+          <Routes>
+            <Route path="/signin" element={<SignInPage />} />
+            <Route path="*" element={<div data-testid="landed" />} />
+          </Routes>
+        </MemoryRouter>
+      </DataSourceProvider>
+    </QueryClientProvider>,
   );
 }
 

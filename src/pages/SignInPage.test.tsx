@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '../components/Toast';
+import { DataSourceProvider } from '../lib/data/context';
+import { MockDataSource } from '../lib/data/MockDataSource';
 import { SignInPage } from './SignInPage';
 
 // The mock auth path is signed-out by default; the "already signed-in" test
@@ -16,15 +19,26 @@ function LocationProbe() {
 }
 
 function renderAt(entry: { pathname: string; state?: unknown }) {
+  // The hero now renders real ItemRow components against mock FeedItems
+  // (SignInPage.tsx), which need a DataSource + QueryClient in context even
+  // though the page itself never reads real data.
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  const source = new MockDataSource(`test-${Math.random()}`);
   return render(
-    <ToastProvider>
-      <MemoryRouter initialEntries={[entry]}>
-        <Routes>
-          <Route path="/signin" element={<SignInPage />} />
-          <Route path="*" element={<LocationProbe />} />
-        </Routes>
-      </MemoryRouter>
-    </ToastProvider>,
+    <QueryClientProvider client={queryClient}>
+      <DataSourceProvider source={source}>
+        <ToastProvider>
+          <MemoryRouter initialEntries={[entry]}>
+            <Routes>
+              <Route path="/signin" element={<SignInPage />} />
+              <Route path="*" element={<LocationProbe />} />
+            </Routes>
+          </MemoryRouter>
+        </ToastProvider>
+      </DataSourceProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -77,6 +91,32 @@ describe('SignInPage', () => {
     expect(document.querySelector('.signin__hero')).not.toBeNull();
     const rows = document.querySelectorAll('.item-row');
     expect(rows.length).toBeGreaterThan(0);
+  });
+
+  it('renders the hero rows through the real ItemRow, meta line in the same order/format', () => {
+    // Regression: the hero used to hand-roll "source · age · domain" as a
+    // template string, which could (and did) drift from the real row's
+    // format. Now it renders real ItemRow against mock FeedItems, so the meta
+    // line comes from the same lib/itemMeta.ts helper every other row uses.
+    // No domain badge (each demo article links to its own feed's site, same
+    // rule as a real non-aggregator row); the AP News row's own category
+    // ("Health") fills that fallback slot instead, same as a real row.
+    renderAt({ pathname: '/signin' });
+    const metas = screen.getAllByTestId('item-meta');
+    expect(metas[0]).toHaveTextContent('AP News · Health · 1h');
+    expect(metas[0]).not.toHaveTextContent('apnews.com');
+    // r/popular is an aggregate feed; its category is the ORIGIN subreddit
+    // (Reddit's own RSS shape), not a topic tag.
+    expect(metas[1]).toHaveTextContent('r/popular · MadeMeSmile · 4h');
+  });
+
+  it('makes the hero fully inert — not a real navigable/tappable list', () => {
+    // The rows are real ItemRow components (a real Link to /item/:id, a real
+    // pin button that writes item state) but this is a decorative preview,
+    // not a live list — `inert` must block all interaction, not just
+    // aria-hidden (which only affects assistive tech, not focus/clicks).
+    renderAt({ pathname: '/signin' });
+    expect(document.querySelector('.signin__hero')).toHaveAttribute('inert');
   });
 
   it('redirects an already-signed-in user off /signin to the saved target', () => {
