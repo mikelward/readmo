@@ -16,6 +16,7 @@ import {
   BACKFILL_ITEMS_PER_RUN,
   type BackfillClient,
 } from '../../supabase/functions/_shared/titleNormalizeBackfill.ts';
+import { TITLE_NORMALIZED_VERSION } from './titleFilterCore';
 
 interface Call {
   fn: string;
@@ -84,7 +85,7 @@ describe('runTitleNormalizeBackfill', () => {
     expect(calls[0].rows[0]).toMatchObject({
       id: 'a',
       title_normalized: ' trump s tariffs ',
-      title_normalized_version: 1,
+      title_normalized_version: TITLE_NORMALIZED_VERSION,
     });
   });
 

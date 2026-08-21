@@ -122,6 +122,14 @@ const MAX_MORE = 10;
  * abbreviation the reader almost certainly didn't mean to filter on. */
 const MIN_CANDIDATE_LENGTH = 3;
 
+/** A single ASCII letter/digit ("C", "5") is never a useful candidate on its
+ * own. Scoped to ASCII on purpose, not "any single character": a single
+ * character is routinely a complete, meaningful word in a Han-script headline
+ * (Chinese/Japanese kanji, e.g. "水" = water), unlike a bare Latin letter —
+ * TODO: broaden this to a real script-aware rule instead of an ASCII-only
+ * stopgap once that distinction is worth the complexity. */
+const isSingleAsciiChar = (s: string): boolean => /^[a-z0-9]$/.test(s);
+
 /** A word as it appears in the title, with the display form kept for the menu
  * label and the folded form for comparison. */
 interface Word {
@@ -132,9 +140,24 @@ interface Word {
 
 /** Split a title into words for candidate extraction, keeping display case.
  * Trailing possessives are dropped (`Trump's` → `Trump`) so the candidate is
- * the name rather than the inflected form. */
+ * the name rather than the inflected form — apostrophe handling is unchanged
+ * from before punctuation-preserving matching landed, except that a genuinely
+ * LEADING apostrophe ("'Twas...") is stripped the same way a leading dot
+ * isn't kept, since a word can't start with one. `.`, `+` and `#` are kept as
+ * word characters (mirroring tokenize() in titleFilterCore.ts), so a headline
+ * containing `.NET`/`C++`/`C#`/`#Trump` offers that exact term as a candidate
+ * rather than a bare, over-broad `net`/`c`/`c`/`trump`. Chunk-then-split, not
+ * a regex lookbehind — see tokenize()'s doc comment for why (Safari < 16.4). */
 function titleWords(title: string): Word[] {
-  const raw = title.match(/[\p{L}\p{N}][\p{L}\p{N}'’]*/gu) ?? [];
+  const chunks = title.match(/[\p{L}\p{N}+#.'’]+/gu) ?? [];
+  const raw: string[] = [];
+  for (const chunk of chunks) {
+    const withoutLeadingQuote = chunk.replace(/^['’]+/u, '');
+    for (const piece of withoutLeadingQuote.split(/\.{2,}/u)) {
+      const trimmed = piece.replace(/\.$/u, '');
+      if (trimmed) raw.push(trimmed);
+    }
+  }
   const out: Word[] = [];
   for (const token of raw) {
     const display = token.replace(/['’]s$/iu, '').replace(/['’]+$/u, '');
@@ -142,7 +165,10 @@ function titleWords(title: string): Word[] {
     out.push({
       display,
       folded: fold(display),
-      capitalized: /^\p{Lu}/u.test(display),
+      // Leading `.`/`+`/`#` (`.NET`, `#Trump`) sit before the actual first
+      // letter, so the capitalization check looks past them rather than
+      // testing the punctuation itself.
+      capitalized: /^[.+#]*\p{Lu}/u.test(display),
     });
   }
   return out;
@@ -197,8 +223,11 @@ export function filterCandidates(
       offer(primary, run.slice(0, MAX_PHRASE_WORDS).map((w) => w.display).join(' '));
     }
     for (const w of run) {
-      offer(primary, w.display);
       usedInPrimary.add(w.folded);
+      // A bare single ASCII letter ("Vitamin C") is never a useful filter on
+      // its own — still marked used above so tier 2 doesn't re-offer it.
+      if (isSingleAsciiChar(w.folded)) continue;
+      offer(primary, w.display);
     }
     i = end;
   }
@@ -208,8 +237,16 @@ export function filterCandidates(
   for (const w of words) {
     if (usedInPrimary.has(w.folded)) continue;
     if (STOPWORDS.has(w.folded)) continue;
-    if (w.folded.length < MIN_CANDIDATE_LENGTH) continue;
-    if (/^\p{N}+$/u.test(w.folded)) continue;
+    // The length floor exists to drop a stub/abbreviation, not a punctuated
+    // term whose punctuation already carries the meaning — a lowercase "c#"
+    // (2 chars) is as real a term as "c++" (3 chars); only a bare "c" (no
+    // `.`/`+`/`#`) should still be dropped as too short.
+    if (w.folded.length < MIN_CANDIDATE_LENGTH && !/[.+#]/.test(w.folded)) continue;
+    // No letter anywhere — a bare number ("25"), and now also a decimal
+    // ("3.5") or number-only punctuation ("+1") now that "." merges into the
+    // same token as its digits instead of splitting into two bare numbers
+    // that were already rejected individually.
+    if (!/\p{L}/u.test(w.folded)) continue;
     offer(more, w.display);
   }
 

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   categoriesAreFiltered,
@@ -120,6 +121,15 @@ describe('categoriesAreFiltered', () => {
     // membership once folded, unlike titleIsFiltered's word-boundary rule.
     expect(categoriesAreFiltered(['Sports'], filters)).toBe(false);
   });
+
+  it('distinguishes a punctuated category (.NET) from the bare word it used to collapse to', () => {
+    // Before tokenize() kept `.`/`+`/`#` as word characters, `.NET` folded to
+    // the same "net" a "Networking" category (or a `net` word filter) would.
+    const netFilters = compileFilters(['.NET']);
+    expect(categoriesAreFiltered(['.NET'], netFilters)).toBe(true);
+    expect(categoriesAreFiltered(['Networking'], netFilters)).toBe(false);
+    expect(categoriesAreFiltered(['Net'], netFilters)).toBe(false);
+  });
 });
 
 describe('filterCandidates', () => {
@@ -207,5 +217,77 @@ describe('filterCandidates', () => {
     );
     expect(primary.length).toBeLessThanOrEqual(6);
     expect(more.length).toBeLessThanOrEqual(10);
+  });
+
+  it('offers a punctuated term (.NET, C++, C#) as its own candidate, not a bare letter', () => {
+    expect(filterCandidates('Announcing .NET 9 for developers').primary).toContain('.NET');
+    expect(filterCandidates('Coding in C++ today').primary).toContain('C++');
+    expect(filterCandidates('Learning C# basics').primary).toContain('C#');
+  });
+
+  it('offers a hashtag in the primary (capitalized) tier, not demoted to More… (Codex P2)', () => {
+    // "#Trump" now keeps its leading "#", so the capitalized check has to
+    // look past it (as it already does for a leading ".") to still classify
+    // the name as capitalized.
+    expect(filterCandidates('News about #Trump').primary).toContain('#Trump');
+  });
+
+  it('offers a lowercase punctuated term in tier 2 despite being under the length floor (Codex P2)', () => {
+    // "c#" is 2 characters, below MIN_CANDIDATE_LENGTH, but the "#" already
+    // carries meaning — it's not a stub the way a bare "c" is.
+    expect(filterCandidates('learning c# basics').more).toContain('c#');
+    // A bare short word with no punctuation is still dropped as a stub.
+    expect(filterCandidates('vitamin c is good').more).not.toContain('c');
+  });
+
+  it('does not let a compact ellipsis glue onto the next candidate', () => {
+    expect(filterCandidates('Wait...really interesting news').more).toContain('really');
+  });
+
+  it('does not offer a bare single-character candidate', () => {
+    const { primary, more } = filterCandidates('Vitamin C boosts immunity');
+    expect(primary).not.toContain('C');
+    expect(more).not.toContain('C');
+    // The rest of the headline is still offered normally.
+    expect(primary).toContain('Vitamin');
+  });
+
+  it('only suppresses a single ASCII letter/digit, not a non-ASCII single character', () => {
+    // "Я" (Cyrillic, means "I") is a real, complete single-letter word —
+    // unlike a bare Latin letter, it must not be dropped as a stub. Scoping
+    // the rule to ASCII also means a supplementary-plane character (a UTF-16
+    // surrogate pair, e.g. Deseret "𐐀") never needs special-casing either.
+    expect(filterCandidates('Кто Я сегодня').primary).toContain('Я');
+  });
+
+  // A single Han character ("水" = water) is routinely a complete word in
+  // Chinese/Japanese, same concern as above — but it's blocked by a
+  // DIFFERENT, pre-existing mechanism (MIN_CANDIDATE_LENGTH in tier 2; CJK
+  // never reaches tier 1 at all, since \p{Lu} never matches a Han character).
+  // TODO: that's a real, separate bug, not fixed by the ASCII-only rule here.
+  it('does not currently offer a single Han character — separate, pre-existing bug', () => {
+    expect(filterCandidates('Announcing 水 today').primary).not.toContain('水');
+    expect(filterCandidates('Announcing 水 today').more).not.toContain('水');
+  });
+
+  it('does not exclude a decimal or number-only punctuation as a candidate (Codex P2)', () => {
+    // "3.5" merges into one token now that "." is a word character, so the
+    // pre-existing bare-number guard (which only matched an all-digit string)
+    // has to also catch a decimal/`+1`-style token that has no letter at all.
+    const { more } = filterCandidates('Inflation reaches 3.5 percent');
+    expect(more).not.toContain('3.5');
+    expect(more).toContain('percent');
+  });
+
+  it('has no regex lookbehind — a parse-time SyntaxError on Safari < 16.4 (Codex P1)', () => {
+    // This module is in the startup bundle, so a bad lookbehind doesn't fail
+    // one match — it stops the module, and the app, from loading at all on an
+    // affected iOS Safari. MarkdownText.tsx hit the same constraint first; see
+    // its header. Strip comments first — the doc comments here quote the
+    // syntax by name to explain why it's avoided.
+    const source = readFileSync(new URL('./titleFilter.ts', import.meta.url), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '');
+    expect(source).not.toMatch(/\(\?<[=!]/);
   });
 });

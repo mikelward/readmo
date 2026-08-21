@@ -1375,10 +1375,13 @@ negligible and off every critical path. See the External services table in
        headline actually contains. Against an article's own **category**: a
        whole-phrase match, case-insensitive, once folded the same way a typed
        entry is — so a `sport` filter also hides any article categorized
-       "Sport". Folding strips punctuation, so a category like `.NET` or `C++`
-       becomes an ordinary word filter for "net"/"c" once added — a known,
-       accepted trade for now (punctuation-preserving matching is a follow-up,
-       see TODO.md).
+       "Sport". `.`, `+` and `#` count as part of a word rather than
+       punctuation to strip, so a term like `.NET`, `C++` or `C#` stays its own
+       filter instead of collapsing into an ordinary, over-broad "net"/"c"/"c"
+       word filter; a `.` still ends a word normally when it ends a sentence
+       (nothing but whitespace or the title's end follows it). A bare
+       single-character candidate (a lone "C" in "Vitamin C") is never offered
+       in the row menu — it's never a useful filter on its own.
      - **Pinned articles are exempt**, as they are from every other reason a
        row would leave a list.
      - **A filtered article doesn't hold a place in the feed** — for a title

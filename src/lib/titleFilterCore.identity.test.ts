@@ -40,4 +40,16 @@ describe('titleFilterCore copies', () => {
     const source = readFileSync(CLIENT, 'utf8');
     expect(source).not.toMatch(/^\s*import\s/m);
   });
+
+  it('has no regex lookbehind — a parse-time SyntaxError on Safari < 16.4 (Codex P1)', () => {
+    // This module is in the startup bundle, so a bad lookbehind doesn't fail
+    // one match — it stops the module, and the app, from loading at all on an
+    // affected iOS Safari. MarkdownText.tsx hit the same constraint first; see
+    // its header. Strip comments first — the doc comments here quote the
+    // syntax by name to explain why it's avoided.
+    const source = readFileSync(CLIENT, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '');
+    expect(source).not.toMatch(/\(\?<[=!]/);
+  });
 });
