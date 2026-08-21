@@ -76,7 +76,7 @@
   }
 }
 
-.article-summary__generate:active {
+html:not(.rm-suppress-press) .article-summary__generate:active {
   background: var(--rm-bg);
 }
 

@@ -104,7 +104,7 @@
   }
 }
 
-.list-toolbar__button:not([aria-disabled='true']):active {
+html:not(.rm-suppress-press) .list-toolbar__button:not([aria-disabled='true']):active {
   background: var(--rm-border);
 }
 
@@ -137,7 +137,7 @@
   }
 }
 
-.list-toolbar__more:not(:disabled):active {
+html:not(.rm-suppress-press) .list-toolbar__more:not(:disabled):active {
   background: var(--rm-border);
 }
 

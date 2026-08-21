@@ -69,7 +69,7 @@
   }
 }
 
-.app-drawer__heading-action:active {
+html:not(.rm-suppress-press) .app-drawer__heading-action:active {
   background: var(--rm-bg);
 }
 

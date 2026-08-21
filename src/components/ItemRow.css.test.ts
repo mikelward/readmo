@@ -87,10 +87,15 @@ function hoverMediaBodies(): string[] {
 describe('row interaction states (guardrail #2 / newshacker parity)', () => {
   it('gives the body zone a pressed state, outside the hover media query', () => {
     // The :active rule must fire on touch, so it cannot live inside
-    // @media (hover: hover) — see the CSS-gotchas section in SPEC/CLAUDE.
-    expect(declarationsFor('.item-row__body:active').background).toBe(
-      'var(--rm-border)',
-    );
+    // @media (hover: hover) — see the CSS-gotchas section in SPEC/CLAUDE. The
+    // `html:not(.rm-suppress-press)` ancestor guard is usePopoverDismiss's
+    // press-suppression contract (see global.css.test.ts) — it doesn't change
+    // when the pressed state fires, just gates it off for the span of a press
+    // that's dismissing an unrelated popover elsewhere on the page.
+    expect(
+      declarationsFor('html:not(.rm-suppress-press) .item-row__body:active')
+        .background,
+    ).toBe('var(--rm-border)');
     for (const body of hoverMediaBodies()) {
       expect(body).not.toContain('.item-row__body:active');
     }

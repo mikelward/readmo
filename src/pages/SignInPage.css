@@ -91,7 +91,7 @@
 /* Pressed feedback for touch — hover/disabled aren't enough on a tap
    (guardrail: pressed-state on every zone). Covers the OAuth, email-submit, and
    "Use a different email" buttons alike. */
-.signin__btn:active {
+html:not(.rm-suppress-press) .signin__btn:active {
   background: color-mix(in srgb, var(--rm-text) 8%, var(--rm-bg-card));
 }
 
@@ -109,7 +109,7 @@
   }
 }
 
-.signin__btn--primary:active {
+html:not(.rm-suppress-press) .signin__btn--primary:active {
   background: var(--rm-accent-strong);
   border-color: var(--rm-accent-strong);
 }

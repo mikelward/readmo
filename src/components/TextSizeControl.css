@@ -46,7 +46,7 @@
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
-.text-size__btn:active {
+html:not(.rm-suppress-press) .text-size__btn:active {
   background: color-mix(in srgb, var(--rm-accent) 12%, transparent);
 }
 

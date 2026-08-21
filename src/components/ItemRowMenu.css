@@ -97,7 +97,7 @@
   }
 }
 
-.item-menu__item:active {
+html:not(.rm-suppress-press) .item-menu__item:active {
   background: var(--rm-border);
 }
 
@@ -158,7 +158,7 @@
   cursor: pointer;
 }
 
-.item-menu__prompt-submit:active {
+html:not(.rm-suppress-press) .item-menu__prompt-submit:active {
   background: var(--rm-accent-strong);
 }
 

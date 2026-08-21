@@ -47,6 +47,6 @@
   }
 }
 
-.home-coach__cta:active {
+html:not(.rm-suppress-press) .home-coach__cta:active {
   background: var(--rm-accent-strong);
 }

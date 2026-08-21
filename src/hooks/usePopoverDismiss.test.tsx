@@ -43,6 +43,11 @@ function makeOutside() {
 }
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
+  // A test that dispatches an outside pointerdown without a matching
+  // pointerup/pointercancel (most of them — they only care about the
+  // dismiss/swallow behavior) leaves the press-suppression class armed;
+  // clear it so it can't leak into a later test's initial assertions.
+  document.documentElement.classList.remove('rm-suppress-press');
 });
 
 const pointerDown = () => new MouseEvent('pointerdown', { bubbles: true });
@@ -81,6 +86,64 @@ describe('usePopoverDismiss', () => {
     // The press dismissed the popover but must NOT have reached the control —
     // otherwise it would both dismiss and act on the same press.
     expect(onOutsidePointerDown).not.toHaveBeenCalled();
+  });
+
+  it('suppresses the pressed-state paint on the outside target for the span of that press', () => {
+    const dismiss = vi.fn();
+    const { el } = makeOutside();
+    render(<Harness dismiss={dismiss} />);
+    expect(document.documentElement).not.toHaveClass('rm-suppress-press');
+    act(() => {
+      el.dispatchEvent(pointerDown());
+    });
+    expect(document.documentElement).toHaveClass('rm-suppress-press');
+    act(() => {
+      el.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }));
+    });
+    expect(document.documentElement).not.toHaveClass('rm-suppress-press');
+  });
+
+  it('clears the pressed-state suppression on pointercancel too', () => {
+    const dismiss = vi.fn();
+    const { el } = makeOutside();
+    render(<Harness dismiss={dismiss} />);
+    act(() => {
+      el.dispatchEvent(pointerDown());
+    });
+    expect(document.documentElement).toHaveClass('rm-suppress-press');
+    act(() => {
+      el.dispatchEvent(new MouseEvent('pointercancel', { bubbles: true }));
+    });
+    expect(document.documentElement).not.toHaveClass('rm-suppress-press');
+  });
+
+  it('clears a stale suppression on the next pointerdown when pointerup/pointercancel never fired', () => {
+    // A mouse/pen press dragged outside the viewport and released there
+    // delivers neither pointerup nor pointercancel to the document (the same
+    // gap useSwipeToDismiss's onPointerMove works around). Without a
+    // fallback, the class would stick and wrongly suppress the next
+    // completely unrelated press's feedback.
+    const dismiss = vi.fn();
+    const { el } = makeOutside();
+    render(<Harness dismiss={dismiss} />);
+    act(() => {
+      el.dispatchEvent(pointerDown());
+    });
+    expect(document.documentElement).toHaveClass('rm-suppress-press');
+    act(() => {
+      // A brand-new press starting elsewhere, not this gesture ending.
+      document.body.dispatchEvent(pointerDown());
+    });
+    expect(document.documentElement).not.toHaveClass('rm-suppress-press');
+  });
+
+  it('does not suppress pressed-state paint for a press inside the popover region', () => {
+    const dismiss = vi.fn();
+    render(<Harness dismiss={dismiss} />);
+    act(() => {
+      screen.getByTestId('inside-btn').dispatchEvent(pointerDown());
+    });
+    expect(document.documentElement).not.toHaveClass('rm-suppress-press');
   });
 
   it('does not dismiss on a press inside the popover region', () => {

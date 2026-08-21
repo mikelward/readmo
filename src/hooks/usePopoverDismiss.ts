@@ -41,6 +41,11 @@ interface PopoverDismissOptions {
  * gesture ends without a click (a drag or text selection released elsewhere),
  * the next `pointerdown` tears the swallower down so it can't eat an unrelated
  * later click.
+ *
+ * The dismissing press also can't stop the browser's own :active paint on
+ * whatever it landed on (that's native hit-testing, not something JS event
+ * handling reaches) — see the `.rm-suppress-press` class this adds and
+ * global.css's override.
  */
 export function usePopoverDismiss({
   open,
@@ -86,6 +91,51 @@ export function usePopoverDismiss({
         // only meant to dismiss. We don't preventDefault — native scroll,
         // focus, and text selection should still work.
         e.stopPropagation();
+        // The browser still paints the pressed (:active) state on whatever
+        // element sits under the finger — that's native hit-testing, not
+        // something stopPropagation()/preventDefault() reaches. Without this,
+        // a dismissing tap that happens to land on another row/button
+        // visibly flashes its pressed background even though its click never
+        // fires. `.rm-suppress-press` is the ancestor guard every `:active`
+        // rule in the app is written behind (`html:not(.rm-suppress-press)
+        // .foo:active { ... }`, see pressSuppression.test.ts) — adding it
+        // here simply stops those rules from matching for as long as this
+        // same press stays down, leaving whatever else the cascade supplies
+        // (the resting/hover style) alone rather than guessing a reset value.
+        // The next pointerup/pointercancel — this gesture ending, not a new
+        // one — clears it so a genuine press right after still gets its
+        // feedback; see the pointerdown fallback below for the mouse/pen
+        // case where neither ever fires.
+        document.documentElement.classList.add('rm-suppress-press');
+        const clearPressSuppression = () => {
+          document.documentElement.classList.remove('rm-suppress-press');
+          document.removeEventListener('pointerup', clearPressSuppression, true);
+          document.removeEventListener(
+            'pointercancel',
+            clearPressSuppression,
+            true,
+          );
+          document.removeEventListener(
+            'pointerdown',
+            clearPressSuppression,
+            true,
+          );
+        };
+        document.addEventListener('pointerup', clearPressSuppression, true);
+        document.addEventListener(
+          'pointercancel',
+          clearPressSuppression,
+          true,
+        );
+        // A mouse/pen press dragged outside the viewport and released there
+        // delivers neither — useSwipeToDismiss's onPointerMove documents the
+        // same gap (a hover-capable pointer's buttons go 0 with no pointerup
+        // ever seen). Without a fallback, the class would stick until
+        // whatever LATER pointerup happens to fire anywhere, wrongly
+        // suppressing every genuine press in between. The next pointerdown —
+        // a new gesture starting, same signal the click-swallow teardown
+        // below uses — is the backstop.
+        document.addEventListener('pointerdown', clearPressSuppression, true);
         // Only a primary-button press is followed by the `click` we need to
         // swallow; skip right/middle (they fire contextmenu/auxclick).
         if (e.button !== 0) return;
