@@ -1407,10 +1407,11 @@ negligible and off every critical path. See the External services table in
        `/done`. Search is deliberately the way back to a filtered article, and
        is what makes vanishing safe.
      - Managed in **Settings → Filtered words** (add a word; remove any entry
-       to undo), and added straight from an article's **row menu → Filter…**,
-       which offers that article's own categories first, then terms taken from
-       its title — capitalized names first, the rest of its words behind
-       **More…**, and **Other…** to type your own.
+       to undo), and added straight from an article's **row menu → Filter…**
+       (same on the reader's own overflow menu), which offers that article's
+       own categories first, then terms taken from its title — capitalized
+       names first, the rest of its words behind **More…**, and **Other…** to
+       type your own.
    - **Open original / Open on newshacker** — the per-feed **open mode**: a
      single mutually-exclusive choice of where that feed's article rows open on
      tap.
@@ -3218,7 +3219,10 @@ immediately left of the overflow ⋮. (No Upvote — RSS has no votes.)
 - **More ⋮** overflow: Favorite/Share (when not inline), **Share original**
   (the publisher URL — always here, since the bar's Share hands out the hosted
   reader link), **Save to _<your service>_** (only when a save service is chosen
-  — see below), **Open feed**, **Copy link**, **Mute feed**. This is the
+  — see below), **Open feed**, **Filter…** (same candidates as the row menu's
+  — see *Filtered words* above; offered even on a read-only shared open, since
+  it writes the reader's own setting rather than this item's state), **Copy
+  link**, **Mute feed**. This is the
   **shared `ItemRowMenu`** component (the same
   one the feed list rows use, and the mirror of newshacker's thread ⋮) — lifted
   to the reader page so the top and bottom bars drive one instance. Anchored
