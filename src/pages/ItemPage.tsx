@@ -14,10 +14,12 @@ import {
   useAutoSummarizePinned,
   useAutoSaveOnFavorite,
   useSaveService,
+  useTitleFilters,
 } from '../hooks/useReadingPrefs';
 import { useMarkDoneOnOpenFeeds } from '../hooks/useSubscriptionFeeds';
 import { readLaterTarget } from '../lib/readLater';
 import { readmoItemUrl } from '../lib/shareLinks';
+import { filterCandidates, normalizeFilter } from '../lib/titleFilter';
 import {
   articleSourceDomain,
   formatAge,
@@ -704,6 +706,59 @@ export function ItemPage() {
   // version" appears only when the reader is sitting in the extracted
   // reading view AND a feed body exists to swap back to.
   const pinInMenu = !wide && !!commentsHref;
+  const { titleFilters, addTitleFilter } = useTitleFilters();
+  // Mirrors ItemRow.tsx's buildFilterMenu (the list row's "Filter…" submenu):
+  // this item's own categories up front, then capitalized title terms, the
+  // rest behind More…, free text last — read from the ORIGINAL title/
+  // categories, which is what the matcher sees. `title_filters` is a
+  // user_settings write, not an item_state one, so it's offered even for a
+  // read-only shared open (unlike Pin/Favorite above) — the same rule
+  // ItemRow's version already follows.
+  const buildFilterMenu = useCallback((): ItemRowMenuItem[] => {
+    if (!resolved) return [];
+    const it = resolved.item;
+    const term = (value: string, prefix: string): ItemRowMenuItem => ({
+      key: `${prefix}-${value}`,
+      label: value,
+      onSelect: () => addTitleFilter(value),
+    });
+    const other: ItemRowMenuItem = {
+      key: 'filter-other',
+      label: 'Other…',
+      prompt: {
+        placeholder: 'Word or phrase',
+        submitLabel: 'Filter',
+        onSubmit: (value) => addTitleFilter(value),
+      },
+    };
+    const seenCategoryFolds = new Set<string>();
+    const categoryEntries: ItemRowMenuItem[] = [];
+    for (const category of it.categories ?? []) {
+      const folded = normalizeFilter(category);
+      if (!folded || seenCategoryFolds.has(folded)) continue;
+      seenCategoryFolds.add(folded);
+      if (titleFilters.includes(folded)) continue;
+      categoryEntries.push({
+        key: `filter-category-${category}`,
+        label: category,
+        onSelect: () => addTitleFilter(category),
+      });
+    }
+    const { primary, more } = filterCandidates(it.title, [
+      ...titleFilters,
+      ...seenCategoryFolds,
+    ]);
+    const entries = [...categoryEntries, ...primary.map((value) => term(value, 'filter'))];
+    if (more.length > 0) {
+      entries.push({
+        key: 'filter-more',
+        label: 'More…',
+        submenu: () => [...more.map((value) => term(value, 'filter-more')), other],
+      });
+    }
+    entries.push(other);
+    return entries;
+  }, [resolved, titleFilters, addTitleFilter]);
   const menuItems = useMemo<ItemRowMenuItem[]>(() => {
     if (!resolved) return [];
     const it = resolved.item;
@@ -781,6 +836,10 @@ export function ItemPage() {
         onSelect: () => navigate(`/feed/${resolved.feed.id}`),
       });
     }
+    // Filtering is about the article's SUBJECT rather than this open of it, so
+    // it's offered regardless of read-only/pinned/etc state — same rule as
+    // ItemRow.tsx's row menu.
+    items.push({ key: 'filter', label: 'Filter…', submenu: buildFilterMenu });
     return items;
   }, [
     resolved,
@@ -788,6 +847,7 @@ export function ItemPage() {
     pinInMenu,
     readOnly,
     sharedItemsSupported,
+    buildFilterMenu,
     state.favorite,
     state.pinned,
     toggle,

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useEffect, useState, type ReactNode } from 'react';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { IsRestoringProvider, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactElement } from 'react';
@@ -16,6 +16,7 @@ import {
   AUTO_SUMMARIZE_PINNED_KEY,
   SAVE_SERVICE_KEY,
   AUTO_SAVE_ON_FAVORITE_KEY,
+  TITLE_FILTERS_KEY,
   resetReadingPrefsCacheForTest,
 } from '../hooks/useReadingPrefs';
 import { readLaterTarget } from '../lib/readLater';
@@ -492,6 +493,98 @@ describe('ItemPage (reader)', () => {
     const header = heading.closest('.reader__header');
     expect(header).not.toBeNull();
     expect(header).not.toHaveTextContent('The Verge');
+  });
+
+  describe('Filter… menu', () => {
+    // Mirrors ItemRow.test.tsx's "Filter… menu" describe — same buildFilterMenu
+    // logic, ported to the reader's own overflow menu.
+    beforeEach(() => {
+      window.localStorage.removeItem(TITLE_FILTERS_KEY);
+      resetReadingPrefsCacheForTest();
+    });
+
+    function filterableSource(categories: string[] = []): MockDataSource {
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const orig = source.getItem.bind(source);
+      vi.spyOn(source, 'getItem').mockImplementation(async (id) => {
+        const fi = await orig(id);
+        if (!fi || id !== 'item-1') return fi;
+        return {
+          ...fi,
+          item: { ...fi.item, title: "Trump's tariffs hit soybean farmers", categories },
+        };
+      });
+      return source;
+    }
+
+    const openFilterMenu = async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(await screen.findByTestId('reader-more'));
+      const menu = await screen.findByTestId('item-row-menu');
+      await user.click(within(menu).getByTestId('item-row-menu-filter'));
+      return menu;
+    };
+
+    it('offers capitalized terms up front and steps into More… for the rest', async () => {
+      const user = userEvent.setup();
+      renderReader(filterableSource(), 'item-1');
+      const menu = await openFilterMenu(user);
+
+      expect(within(menu).getByTestId('item-row-menu-filter-Trump')).toBeInTheDocument();
+      expect(within(menu).queryByTestId('item-row-menu-filter-tariffs')).toBeNull();
+
+      await user.click(within(menu).getByTestId('item-row-menu-filter-more'));
+      expect(
+        within(menu).getByTestId('item-row-menu-filter-more-tariffs'),
+      ).toBeInTheDocument();
+    });
+
+    it('stores a normalized entry when a term is chosen', async () => {
+      const user = userEvent.setup();
+      renderReader(filterableSource(), 'item-1');
+      const menu = await openFilterMenu(user);
+      await user.click(within(menu).getByTestId('item-row-menu-filter-Trump'));
+
+      expect(JSON.parse(window.localStorage.getItem(TITLE_FILTERS_KEY)!)).toEqual(['trump']);
+    });
+
+    it("offers the item's own category first, ahead of title terms", async () => {
+      const user = userEvent.setup();
+      renderReader(filterableSource(['Tax and spending']), 'item-1');
+      const menu = await openFilterMenu(user);
+      const items = within(menu).getAllByRole('menuitem');
+      const labels = items.map((el) => el.textContent);
+      expect(labels.indexOf('Tax and spending')).toBeLessThan(labels.indexOf('Trump'));
+    });
+
+    it('stores a category tap as the same folded entry a typed word would be', async () => {
+      const user = userEvent.setup();
+      renderReader(filterableSource(['Tax and spending']), 'item-1');
+      const menu = await openFilterMenu(user);
+      await user.click(
+        within(menu).getByTestId('item-row-menu-filter-category-Tax and spending'),
+      );
+      expect(JSON.parse(window.localStorage.getItem(TITLE_FILTERS_KEY)!)).toEqual([
+        'tax and spending',
+      ]);
+    });
+
+    it('is offered even for a read-only shared open (title_filters is a user setting, not item state)', async () => {
+      const source = filterableSource();
+      const spied = vi.spyOn(source, 'getItem');
+      const orig = spied.getMockImplementation()!;
+      spied.mockImplementation(async (id) => {
+        const fi = await orig(id);
+        return fi ? { ...fi, shared: true } : fi;
+      });
+      const user = userEvent.setup();
+      renderReader(source, 'item-1');
+      await user.click(await screen.findByTestId('reader-more'));
+      const menu = await screen.findByTestId('item-row-menu');
+      // Pin/Favorite/Open feed are item-state/subscription-scoped and hidden
+      // for a read-only shared open — Filter… is neither, so it stays.
+      expect(within(menu).queryByTestId('item-row-menu-pin')).toBeNull();
+      expect(within(menu).getByTestId('item-row-menu-filter')).toBeInTheDocument();
+    });
   });
 
   it('shows the pin-to-load-faster tip while the article is loading', async () => {
