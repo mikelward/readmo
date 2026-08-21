@@ -306,6 +306,41 @@ describe('SupabaseDataSource reads', () => {
     expect(fi?.item.commentsUrl).toBe('https://news.ycombinator.com/item?id=42662903');
   });
 
+  it('reads categories and maps them onto the item', async () => {
+    const tables = seed();
+    tables.items.push({
+      ...mkItem('i-cat', 'feed-a', 7, 'Categorized'),
+      categories: ['Podcasts', 'Economics'],
+    });
+    const { ds, fake } = setup(tables);
+    const fi = await ds.getItem('i-cat');
+    expect(fake.lastSelectCols('items')).toContain('categories');
+    expect(fi?.item.categories).toEqual(['Podcasts', 'Economics']);
+  });
+
+  it('falls back to the legacy item projection when categories is missing (pre-0075 backend)', async () => {
+    // A backend that permanently lacks the column, not a one-shot error — naming
+    // `categories` in an explicit projection fails the WHOLE select (42703), so
+    // direct item reads (getItem/getItemsByIds/search) would hard-fail in the gap
+    // between the frontend auto-deploy and the operator's manual `make migrate`
+    // without this fallback (guardrail #11; Codex P1 on #653).
+    const env = setup();
+    env.fake.missingColumns('items', ['categories']);
+
+    const one = await env.ds.getItem('i3');
+    expect(one?.item.title).toBe('Beta three');
+    expect(one?.item.categories).toEqual([]);
+    expect(env.fake.lastSelectCols('items')).not.toContain('categories');
+    // The failed attempt (full ITEM_COLS) plus the successful legacy retry.
+    expect(env.fake.selectCount('items')).toBe(2);
+
+    // The client latches the detection: a later read skips straight to the
+    // legacy projection instead of paying a failing round trip each time.
+    const two = await env.ds.getItem('i6');
+    expect(two?.item.title).toBe('Alpha six');
+    expect(env.fake.selectCount('items')).toBe(3);
+  });
+
   it('getItemsByIds chunks a large id list (no unbounded IN)', async () => {
     const tables = seed();
     const big = Array.from({ length: 450 }, (_, i) => {

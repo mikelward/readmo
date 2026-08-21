@@ -179,6 +179,7 @@ describe('ItemPage (reader)', () => {
             fullContentHtml: null,
             aiSummary: null,
             enclosures: [],
+            categories: [],
           } as Item,
           feed: {
             id: 'hn',

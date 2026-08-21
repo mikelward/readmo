@@ -71,6 +71,12 @@ export interface Item {
    * call in all those cases, so this is a fast path, not the only path. */
   aiSummary: string | null;
   enclosures: Enclosure[];
+  /** The item's categories/tags/sections as the publisher labeled them (RSS/RDF
+   * `<category>`, Atom `<category>`, or JSON Feed `tags`), publisher order.
+   * `categories[0]` is shown in list-view meta rows in place of the author (see
+   * `lib/itemMeta.ts`). Empty array, never null/undefined, when the feed
+   * carries none or against a backend predating the column. */
+  categories: string[];
 }
 
 /** An item joined with its source feed — the shape feed/library lists render. */

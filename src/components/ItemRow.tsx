@@ -630,7 +630,12 @@ export function ItemRow({
           source,
           domain,
           publishedAt: item.publishedAt,
-          author: item.author,
+          // Optional chaining: a persisted query-cache entry written by a build
+          // predating this field has no `categories` at all (PersistQueryClient
+          // can paint it before the refetch replaces it — see main.tsx
+          // CACHE_BUSTER), so `Item.categories` being typed non-optional doesn't
+          // guarantee it exists at runtime here.
+          category: item.categories?.[0],
         })}
       </span>
     </>

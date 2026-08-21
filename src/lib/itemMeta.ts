@@ -67,20 +67,23 @@ export function isSafeHttpUrl(url: string | null | undefined): url is string {
   }
 }
 
-/** Build the row's display-only meta string: "source · domain · age · author".
+/** Build the row's display-only meta string: "source · domain · age · category".
  * `domain` (the article's publisher domain) is shown next to the source feed
- * name only when supplied; see `articleSourceDomain`. */
+ * name only when supplied; see `articleSourceDomain`. `category` is the
+ * item's first publisher-supplied category/tag (Item.categories[0]) — shown
+ * in place of the author, which the meta line doesn't surface (TODO.md *UI /
+ * layout*: an eventual author-based filter, matching title filters). */
 export function formatItemMetaTail(parts: {
   source: string;
   domain?: string;
   publishedAt: number;
-  author: string | null;
+  category?: string;
   now?: number;
 }): string {
   const segs: string[] = [];
   if (parts.source) segs.push(parts.source);
   if (parts.domain) segs.push(parts.domain);
   segs.push(formatAge(parts.publishedAt, parts.now));
-  if (parts.author) segs.push(parts.author);
+  if (parts.category) segs.push(parts.category);
   return segs.join(' · ');
 }
