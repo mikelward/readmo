@@ -8,12 +8,14 @@ import { readFileSync } from 'node:fs';
 // The scan's failure modes are all silent: a dropped version pin floats the
 // audit set, so a verdict can change with no change in this repository; a
 // dropped --offline puts the GitHub API inside the scan; a widened policy
-// exempts refs nobody decided to exempt; a narrowed path filter stops
-// re-running the scan on the files it audits. Every one of those leaves the
-// rest of the suite green, because zizmor only runs inside its own
-// workflow — so the contract is pinned here. Read with regexes like the
-// engine repositories' own suites: no YAML parser, on purpose. Ported from
-// mikelward/codex-review's own zizmor.test.js.
+// exempts refs nobody decided to exempt; a reintroduced path filter stops
+// the scan from ever reporting on a PR that doesn't touch .github/**, which
+// would leave a future required check pending forever (TODO.md, "Make
+// `zizmor` a required check"). Every one of those leaves the rest of the
+// suite green, because zizmor only runs inside its own workflow — so the
+// contract is pinned here. Read with regexes like the engine repositories'
+// own suites: no YAML parser, on purpose. Ported from mikelward/codex-
+// review's own zizmor.test.js.
 
 const workflow = readFileSync('.github/workflows/zizmor.yml', 'utf8');
 const policy = readFileSync('.github/zizmor.yml', 'utf8');
@@ -74,16 +76,21 @@ describe('zizmor workflow', () => {
     expect([...workflow.matchAll(/^ *permissions:/gm)]).toHaveLength(1);
   });
 
-  it('re-runs when anything it scans changes', () => {
-    // Both triggers filter to the same path, which covers everything the
-    // scan reads: .github/** holds the workflows and the policy. Matched as
-    // one contiguous block by construction, not by scanning for any
+  it('runs on every push to main and every pull request, unfiltered', () => {
+    // A paths filter creates NO check run at all on a non-matching PR
+    // (unlike a skipped job, which reports "skipped" and satisfies a
+    // ruleset) — so a future required `zizmor` check plus a path filter
+    // would leave any PR not touching .github/** waiting forever on a check
+    // nothing reports (TODO.md, "Make `zizmor` a required check"). Matched
+    // as one contiguous block by construction, not by scanning for any
     // `paths:` occurrence — renaming `pull_request:` to another trigger (or
     // reordering the block) breaks this exact-structure match, so a
-    // `paths:` line can't survive attached to the wrong trigger.
+    // reintroduced `paths:` line can't survive attached to the wrong
+    // trigger and slip past this check.
     expect(workflowRun).toMatch(
-      /^on:\n {2}push:\n {4}branches: \[main\]\n {4}paths: \['\.github\/\*\*'\]\n {2}pull_request:\n {4}paths: \['\.github\/\*\*'\]\n/m,
+      /^on:\n {2}push:\n {4}branches: \[main\]\n {2}pull_request:\n {4}types: \[opened, synchronize, reopened, edited\]\n/m,
     );
+    expect(workflowRun).not.toMatch(/paths:/);
   });
 });
 
