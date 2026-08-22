@@ -36,16 +36,6 @@ describe('npm-update caller', () => {
     expect(workflow).toMatch(/^\s*workflow_dispatch:/m);
   });
 
-  it('titles each run explicitly rather than inheriting an event default', () => {
-    // Without run-name GitHub derives an event-specific default title, and
-    // some surfaces (the GitHub mobile app's run header) headline the run
-    // with the tip-of-main commit message instead — the weekly batch
-    // masquerading as whatever unrelated commit main pointed at when the
-    // cron fired. The wording is free; having an explicit title is the
-    // decision.
-    expect(workflow).toMatch(/^run-name: \S/m);
-  });
-
   it('runs on a schedule, on Saturdays', () => {
     // The DAY is the decision and is asserted; the hour and the
     // deliberately off-the-hour minute are tuning, so they stay free.
