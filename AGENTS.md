@@ -559,7 +559,6 @@ build/routing/deploy.
 
   | Prefix | For |
   |---|---|
-  | `deps:` | Dependency bumps — the weekly batch and any by hand |
   | `docs:` | Prose: `SPEC.md`, `SETUP.md`, `OBSERVABILITY.md`, this file, the rest |
   | `todo:` | `TODO.md` bookkeeping on its own |
   | `test:` | Tests only, with the code under test unchanged |
@@ -569,12 +568,14 @@ build/routing/deploy.
 - **No `feat:` or `fix:`, on purpose** — they would prefix nearly everything
   left and leave the log as flat as it is now. The prefix marks the exception,
   so the default stays bare.
-- **`deps:` is what earns the rule here**: 23 of the last 50 commits are the
-  weekly batch, every one reading `Update dependencies (<date>)`, so the log's
-  most common line says nothing about whether the app changed.
-  `.github/workflows/npm-update.yml` writes the prefix itself. A bump
-  taken *because* of the behavior it changes is a behavior change — bare, and
-  say what changed.
+- **No `deps:` either — a dependency bump changes what the app runs, so it's
+  bare like any other release-worthy change.**
+  `.github/workflows/npm-update.yml` used to write a `deps:` prefix on the
+  weekly batch specifically, which is how 23 of the last 50 commits ended up
+  reading `deps: Update dependencies (<date>)` with nothing to say whether
+  the app actually changed. That prefix is gone now: a bump taken *because*
+  of the behavior it changes still says what changed; the routine weekly
+  bump has nothing extra to say, but it's bare too.
 - **`TODO.md` and `SPEC.md` ride along and never decide the prefix.** Guardrail
   4 requires SPEC to move in the *same commit* as the behavior it documents, so
   a SPEC edit is almost always riding on a bare commit; either counts only when
