@@ -1,5 +1,12 @@
 name: npm update
 
+# An explicit run title. Without one GitHub derives an event-specific
+# default, and some surfaces (the GitHub mobile app's run header, seen on
+# this workflow's first scheduled run) headline the run with the
+# tip-of-main commit message instead — the weekly batch masquerading as
+# whatever unrelated commit main pointed at when the cron fired.
+run-name: Update npm dependencies
+
 # The thin caller for mikelward/npm-update's reusable workflow — see that
 # repo's README.md for the wiring contract. This repo owns the schedule and
 # the manual trigger, and grants the permissions the reusable workflow's jobs
