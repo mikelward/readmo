@@ -568,18 +568,24 @@ permanent by default. Each is cheap to change.
   (non-blocking) zizmor job red, not `npm test` or any required gate. Same
   gap flagged by Codex on the identical change in newshacker#532; recorded
   here too rather than waiting for the same finding to repeat.
-  - [ ] **First, widen the trigger.** Both of `zizmor.yml`'s triggers are
-        scoped to `paths: ['.github/**']`, which was fine while the job was
-        purely advisory but blocks making it required — GitHub leaves a
-        required check pending (not passing) when its workflow is skipped
-        by a path filter, so any PR touching `src/`, `supabase/`, or
-        anything outside `.github/` would become permanently unmergeable.
-        `repo-rules`' own never-reported guard would not catch this, since
-        the job HAS reported somewhere (on `.github/**` PRs) — the gap is
-        "does it run on every PR", not "has it ever run at all". Drop the
-        `paths:` filter on both triggers; still $0/month per the
-        workflow's own cost note even at full volume. Same fix needed in
+  - [x] ~~First, widen the trigger.~~ Done — `zizmor.yml`'s `paths:
+        ['.github/**']` filter is gone from both triggers (it blocked making
+        the check required: GitHub leaves a required check pending, not
+        passing, when its workflow is skipped by a path filter, so any PR
+        touching `src/`, `supabase/`, or anything outside `.github/` would
+        have become permanently unmergeable), and `pull_request` now lists
+        its types explicitly, `edited` included. Same fix still needed in
         newshacker, homepage, gedmap, and web's identical copies.
+  - [ ] **Also first: a dispatch route for the weekly dependency PR**
+        (Codex flagged this on the identical gedmap and newshacker
+        changes). The batch PR is authored with `GITHUB_TOKEN`, whose
+        events start no workflows — the same trap the batch's explicit
+        ci.yml and codex-review-check dispatches exist for — so a required
+        `zizmor` would block every weekly batch forever. Before the flip,
+        give zizmor.yml a `workflow_dispatch` trigger and teach
+        mikelward/npm-update's reusable workflow to dispatch it alongside
+        ci.yml — a shared-mechanism change that lands in that repository,
+        piloted through one consumer per its conventions.
   - [ ] Then: `repo-rules mikelward/readmo` (now defaults to `lanes codex
         zizmor`) once zizmor has reported on a `pull_request` run here —
         outside what a session without ruleset API access can do.
