@@ -9,6 +9,8 @@ import {
   HIDE_SPORTS_SPOILERS_KEY,
   ITEM_SORT_KEY,
   LIST_LAYOUT_KEY,
+  ARTICLES_PER_PAGE_KEY,
+  ARTICLES_PER_SECTION_KEY,
   SHOW_ROW_FAVICON_KEY,
   SAVE_SERVICE_KEY,
   AUTO_SAVE_ON_FAVORITE_KEY,
@@ -23,6 +25,8 @@ import {
   useEffectiveHideSpoilers,
   useItemSort,
   useListLayout,
+  useArticlesPerPage,
+  useArticlesPerSection,
   useShowRowFavicon,
   useSaveService,
   useAutoSaveOnFavorite,
@@ -440,6 +444,120 @@ describe('useReadingPrefs', () => {
       act(() => screen.getByRole('button').click());
       expect(screen.getByRole('button')).toHaveTextContent('excerpt');
       expect(window.localStorage.getItem(LIST_LAYOUT_KEY)).toBe('excerpt');
+    });
+  });
+
+  // The flat page size and the grouped section window are two independent
+  // prefs over one shared scale, so the same table drives both.
+  // Each entry renders the size its own hook reports and flips it between two
+  // offered values, so the shared cases below don't need to know which pref
+  // they're driving.
+  function PerPageProbe() {
+    const { articlesPerPage, setArticlesPerPage } = useArticlesPerPage();
+    return (
+      <button
+        type="button"
+        onClick={() => setArticlesPerPage(articlesPerPage === 20 ? 30 : 20)}
+      >
+        {articlesPerPage}
+      </button>
+    );
+  }
+  function PerSectionProbe() {
+    const { articlesPerSection, setArticlesPerSection } =
+      useArticlesPerSection();
+    return (
+      <button
+        type="button"
+        onClick={() =>
+          setArticlesPerSection(articlesPerSection === 20 ? 30 : 20)
+        }
+      >
+        {articlesPerSection}
+      </button>
+    );
+  }
+
+  describe.each([
+    {
+      label: 'articles per page',
+      key: ARTICLES_PER_PAGE_KEY,
+      otherKey: ARTICLES_PER_SECTION_KEY,
+      SizeProbe: PerPageProbe,
+      fallback: '30',
+      // 5 is a section-only size; the page size must not accept it.
+      offOther: '5',
+    },
+    {
+      label: 'articles per feed section',
+      key: ARTICLES_PER_SECTION_KEY,
+      otherKey: ARTICLES_PER_PAGE_KEY,
+      SizeProbe: PerSectionProbe,
+      fallback: '10',
+      // The section list is a superset, so there's no page-only size to
+      // reject; 25 stands in as an off-list value it must still refuse.
+      offOther: '25',
+    },
+  ] as const)('$label', ({ key, otherKey, SizeProbe, fallback, offOther }) => {
+
+    it(`defaults to ${fallback}`, () => {
+      render(<SizeProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent(fallback);
+    });
+
+    it('reads a persisted choice on mount', () => {
+      window.localStorage.setItem(key, '20');
+      resetReadingPrefsCacheForTest();
+      render(<SizeProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent('20');
+    });
+
+    it('persists a change', () => {
+      window.localStorage.setItem(key, '20');
+      resetReadingPrefsCacheForTest();
+      render(<SizeProbe />);
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('30');
+      expect(window.localStorage.getItem(key)).toBe('30');
+      act(() => screen.getByRole('button').click());
+      expect(screen.getByRole('button')).toHaveTextContent('20');
+      expect(window.localStorage.getItem(key)).toBe('20');
+    });
+
+    // A size the chips can't show would leave Settings with nothing selected
+    // while the view paged by it, so anything off THIS picker's list reads as
+    // unset — including a size only the other picker offers (`offOther`).
+    // '' and '0' also cover Number()'s two falsy coercions.
+    it.each(['bogus', '', '0', '15', '25', '20.5'])(
+      'falls back to the default for a persisted %j',
+      (raw) => {
+        window.localStorage.setItem(key, raw);
+        resetReadingPrefsCacheForTest();
+        render(<SizeProbe />);
+        expect(screen.getByRole('button')).toHaveTextContent(fallback);
+      },
+    );
+
+    it('falls back to the default for a size only the other picker offers', () => {
+      window.localStorage.setItem(key, offOther);
+      resetReadingPrefsCacheForTest();
+      render(<SizeProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent(fallback);
+    });
+
+    // The two sizes are independent: setting one must leave the other alone.
+    it('leaves the other size untouched', () => {
+      render(<SizeProbe />);
+      act(() => screen.getByRole('button').click());
+      expect(window.localStorage.getItem(otherKey)).toBeNull();
+    });
+
+    // Per-device, like the bottom bar and article layout: it must not be
+    // pushed to the server with the synced prefs.
+    it('does not mark the settings-sync dirty set', () => {
+      render(<SizeProbe />);
+      act(() => screen.getByRole('button').click());
+      expect(window.localStorage.getItem(DIRTY_SETTINGS_KEY)).toBeNull();
     });
   });
 

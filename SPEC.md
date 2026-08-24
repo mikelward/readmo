@@ -1500,6 +1500,38 @@ negligible and off every critical path. See the External services table in
      Sweep refetched; readmo defers it so nothing reorders under the reader on a
      local action.) (When grouping by feed — below — pinned items lead **their
      own feed's section** rather than a global top section.)
+   - **How much loads at a time** — two sizes, drawn from one scale but
+     offering different choices. They are separate settings, not one, because
+     they cost different things: the page size is a **fetch**, the section
+     window is only a **display** window over rows already fetched.
+     - **Articles per page** (`readmo:articles-per-page`, default **30**;
+       **10 / 20 / 30 / 40 / 50**) is the **flat river's** page size — what a
+       fresh load lands and what each **More** appends, on Home, folders and a
+       single feed. Every step of it is a request, so the choices run either
+       side of the default: up to **50** for one big load then read, down to
+       **10** for a reader who wants the list short. It offers no **5** — a
+       five-row page turns ordinary reading into a **More** drill.
+     - **Articles per feed section** (`readmo:articles-per-section`, default
+       **10**; **5 / 10 / 20 / 30**) is the **group-by-feed** display window —
+       how many body rows each section opens with and each section **More**
+       reveals — over rows the view already has, so changing it costs no
+       request and works offline, at any size. It's smaller by default because
+       a section is a slice of the screen, not the whole of it. It alone offers
+       **5** — a short section is how you skim many feeds' headlines at once
+       rather than read one feed down — and it stops at **30**, past which a
+       single section fills the screen and grouping stops buying anything over
+       the flat river.
+     Each size affects only the view it drives — the section window never
+     disturbs the flat river, and the page size never disturbs a grouped one.
+     **A page size keeps its own place in the list**: move to a size you
+     haven't read at and the river opens at its first page; move back to one
+     you had paged into and you land where you left it, for as long as that set
+     is still held (*A stable set of articles*) — so the page size re-reads only
+     when the list for the size you moved to isn't already in hand, and the
+     section window never re-reads at all.
+     Both per-device rather than synced (see *Settings scope*):
+     how much to land at once is a call about this screen and this connection,
+     like the article layout. Settings only — neither earns a toolbar toggle.
    - **Sort & grouping** (per-account, synced — see *Settings → Sort order*,
      *Group by feed*, and *Settings scope*; applied server-side so they hold
      across pages, not a client re-sort of loaded pages):
@@ -1590,14 +1622,14 @@ negligible and off every critical path. See the External services table in
        (all already collapsed / nothing collapsed). A collapsed feed's hidden
        rows aren't navigable or swept.
      - **Per-section More + per-feed window** (group-by-feed only). Each section
-       opens showing **all of its pinned rows** plus its newest
-       **`PER_FEED_WINDOW` (10)** listable body rows, so a busy feed doesn't
+       opens showing **all of its pinned rows** plus its newest **Articles per
+       feed section** listable body rows, so a busy feed doesn't
        dump its whole set into the view at once — and pins never crowd
        articles out: after any refresh a section is its full pinned block *and*
-       the first 10 articles, however many pins there are. A
+       that many articles, however many pins there are. A
        **"More"** at the **foot of each section** reveals that feed's next batch
-       **inline** (another 10), independent of the other sections, until the feed
-       is exhausted — its window ∪ floor ∪ pinned set, the same ceiling the
+       **inline** (another windowful), independent of the other sections, until
+       the feed is exhausted — its window ∪ floor ∪ pinned set, the same ceiling the
        single-feed page shows. The opening view is a **single batched read that
        fetches and accepts everything the server returns** for every section —
        **the server decides any fetch cap, never the client** (today it returns
@@ -1605,8 +1637,9 @@ negligible and off every critical path. See the External services table in
        deployable without a client change). The per-feed window is purely a
        client-side **display** window over that response, so every section
        lands in one page and there's **no global bottom "More"** in this view
-       (only Back-to-top remains). A section "More" **reveals the next 10
-       already-fetched rows instantly — no request, and it works offline**
+       (only Back-to-top remains). A section "More" **reveals the next
+       windowful of already-fetched rows instantly — no request, and it works
+       offline**
        since the whole response lands in the cache. The fetched run IS the
        feed: once its rows are all revealed (or it fit inside the opening
        window) the section shows **no More** — no dead button, no wasted
@@ -1615,7 +1648,7 @@ negligible and off every critical path. See the External services table in
        (PostgREST's 1000), the read pages by cursor via a bottom "More" so
        later sections aren't dropped. (Overflow depends on how many *listable*
        rows each feed contributes — its freshness window plus pins, not the
-       10-row display window — so it's the busy-feed row volume, not the feed
+       display window — so it's the busy-feed row volume, not the feed
        count alone, that drives paging.) The **per-account feed cap** (100
        feeds, enforced server-side on subscribe) bounds that volume loosely and
        primarily guards abuse/cost. (Drilling into a single feed's own page is
@@ -1624,8 +1657,8 @@ negligible and off every critical path. See the External services table in
        (locally Done/Hidden are filtered, pin/opened read from the store), and
        the whole fetched set self-heals together on the next refetch.
        - **Sticky displayed window per section.** Each section's displayed set
-         is anchored from its first read (the opening pinned block +
-         `PER_FEED_WINDOW` body rows)
+         is anchored from its first read (the opening pinned block + its
+         **Articles per feed section** body rows)
          and extended only by tapping "More" — *within* a frozen set. (A dismiss
          or Sweep never refetches — see *A dismiss never refetches* — so nothing
          refills a section behind the reader's back.) Concretely this means
@@ -1661,9 +1694,9 @@ negligible and off every critical path. See the External services table in
    - **Done and Hidden filtered out**; **Opened** items render with the faded
      title.
    - **Filtered words filtered out** — see *Filtered words* below.
-   - **Initial paint one page (30 items)** in the flat river; the grouped view
-     instead opens each feed at its pinned rows plus its first
-     **`PER_FEED_WINDOW` (10)** articles — from one deep read that already
+   - **Initial paint one page** in the flat river — **Articles per page**
+     articles; the grouped view instead opens each feed at its pinned rows plus
+     **Articles per feed section** articles — from one deep read that already
      carries everything the server returned for each feed — and grows per
      section. Further flat pages only via an explicit **More**
      button (no infinite scroll). Same pagination discipline.
@@ -2011,7 +2044,15 @@ negligible and off every critical path. See the External services table in
       (`readmo:group-by-feed`, **off by default**), sectioning Home/folder lists
       by feed (see *Feed views → Sort & grouping*) — followed by the **Sort
       order** picker (`readmo:item-sort`): **Newest first** (default) or **Oldest
-      first**. All per-account, synced (see *Settings scope*).
+      first**. Those are all per-account, synced (see *Settings scope*). The
+      section then closes with the two size pickers — **Articles per page**
+      (`readmo:articles-per-page`, default **30**, offering
+      **10 / 20 / 30 / 40 / 50**) and **Articles per feed section**
+      (`readmo:articles-per-section`, default
+      **10**, offering **5 / 10 / 20 / 30**) — labeled by the bare number, the
+      heading being the copy. The page size leads: the flat river is the
+      default layout, and the only one the single-feed page uses. Both
+      per-device (see *Feed views → How much loads at a time*).
     - **Appearance** — the **Color theme** (Ink/Grape swatches), **Dark/light
       mode** (light/dark/system icons), **Text size** (Extra Small–Huge
       A-glyphs), and **Font** pickers (all symbolic segmented controls), then the
@@ -2066,7 +2107,9 @@ negligible and off every critical path. See the External services table in
       everything under Appearance (color theme, dark/light mode, text size,
       font), the **Bottom toolbar** position and **Article layout** default
       (screen-size calls — the synced per-feed *Card style* override rides the
-      subscription instead), the **Read later** save-service choice and its
+      subscription instead), both article-load sizes — **Articles per page**
+      and **Articles per feed section** (screen-and-connection calls for the
+      same reason), the **Read later** save-service choice and its
       **Auto-save on favorite** toggle (see *Article actions*), and the
       `/debug` diagnostics toggle. Like all
       per-account data, the synced settings are purged from the device on

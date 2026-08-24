@@ -12,6 +12,8 @@ import {
   AUTO_SUMMARIZE_PINNED_KEY,
   ITEM_SORT_KEY,
   LIST_LAYOUT_KEY,
+  ARTICLES_PER_PAGE_KEY,
+  ARTICLES_PER_SECTION_KEY,
   SHOW_ROW_FAVICON_KEY,
   SHOW_GROUP_FAVICON_KEY,
   SAVE_SERVICE_KEY,
@@ -407,6 +409,101 @@ describe('SettingsPage — Article layout', () => {
     expect(
       within(group()).getByRole('radio', { name: 'Large thumbnail' }),
     ).toHaveAttribute('aria-checked', 'true');
+  });
+});
+
+describe('SettingsPage — article load sizes', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+  afterEach(() => {
+    localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+
+  const group = (name: string) => screen.getByRole('radiogroup', { name });
+
+  // Two independent pickers over one scale — the flat page size defaults to
+  // today's 30, the grouped section window to today's 10.
+  // The section window offers a 5 the page size doesn't: it costs no request,
+  // and a short section is how you skim many feeds at once.
+  it.each([
+    {
+      name: 'Articles per page',
+      key: ARTICLES_PER_PAGE_KEY,
+      def: '30',
+      sizes: ['10', '20', '30', '40', '50'],
+    },
+    {
+      name: 'Articles per feed section',
+      key: ARTICLES_PER_SECTION_KEY,
+      def: '10',
+      sizes: ['5', '10', '20', '30'],
+    },
+  ])('offers $sizes for $name, defaulting to $def', ({ name, def, sizes }) => {
+    renderWithProviders(<SettingsPage />);
+    expect(
+      within(group(name))
+        .getAllByRole('radio')
+        .map((r) => r.textContent),
+    ).toEqual(sizes);
+    expect(
+      within(group(name)).getByRole('radio', { name: def }),
+    ).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it.each([
+    { name: 'Articles per page', key: ARTICLES_PER_PAGE_KEY, pick: '10' },
+    {
+      name: 'Articles per feed section',
+      key: ARTICLES_PER_SECTION_KEY,
+      pick: '30',
+    },
+  ])('persists the chosen $name to localStorage', async ({ name, key, pick }) => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    await user.click(within(group(name)).getByRole('radio', { name: pick }));
+    expect(window.localStorage.getItem(key)).toBe(pick);
+    expect(
+      within(group(name)).getByRole('radio', { name: pick }),
+    ).toHaveAttribute('aria-checked', 'true');
+  });
+
+  // The two pickers are separate prefs: choosing on one must not move the other.
+  it('leaves the section window alone when the page size changes', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    await user.click(
+      within(group('Articles per page')).getByRole('radio', { name: '10' }),
+    );
+    expect(window.localStorage.getItem(ARTICLES_PER_SECTION_KEY)).toBeNull();
+    expect(
+      within(group('Articles per feed section')).getByRole('radio', {
+        name: '10',
+      }),
+    ).toHaveAttribute('aria-checked', 'true');
+  });
+
+  // Guardrail 12: the heading is the copy. The chips carry the bare number and
+  // neither control ships an explanatory blurb beside it.
+  it('closes out Reading with both pickers and no explanatory copy', () => {
+    renderWithProviders(<SettingsPage />);
+    const reading = screen
+      .getByRole('heading', { level: 2, name: 'Reading' })
+      .closest('section');
+    expect(reading).not.toBeNull();
+    const subheadings = within(reading as HTMLElement)
+      .getAllByRole('heading', { level: 3 })
+      .map((h) => h.textContent);
+    expect(subheadings.slice(-2)).toEqual([
+      'Articles per page',
+      'Articles per feed section',
+    ]);
+    expect(within(group('Articles per page')).queryByText(/\D/)).toBeNull();
+    expect(
+      within(group('Articles per feed section')).queryByText(/\D/),
+    ).toBeNull();
   });
 });
 

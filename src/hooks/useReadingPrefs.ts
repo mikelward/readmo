@@ -1,6 +1,13 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import type { ItemSort } from '../lib/data/DataSource';
-import type { ListLayout } from '../lib/types';
+import {
+  ARTICLES_PER_PAGE_OPTIONS,
+  ARTICLES_PER_SECTION_OPTIONS,
+  DEFAULT_ARTICLES_PER_PAGE,
+  DEFAULT_ARTICLES_PER_SECTION,
+  type ArticleLoadCount,
+  type ListLayout,
+} from '../lib/types';
 import { isReadLaterService, type ReadLaterService } from '../lib/readLater';
 import {
   createPersistentStore,
@@ -27,7 +34,7 @@ import { usePersistentStore } from './usePersistentStore';
 // Re-exported so existing callers can keep importing `ListLayout` from here; the
 // canonical definition now lives in lib/types (it's also a Subscription field —
 // the per-feed override).
-export type { ListLayout };
+export type { ListLayout, ArticleLoadCount };
 
 // Reading-behavior preferences, persisted in localStorage and shared across
 // tabs and every mounted component via createPersistentStore.
@@ -39,7 +46,8 @@ export type { ListLayout };
 // one source of truth for the stores here, the sync engine, and the purge list
 // (userCache clears them on sign-out/account switch, guardrail #8). The
 // device-ergonomic prefs — bottom-bar position, the app-wide list-layout
-// default, and the debug toggle — stay per-device and are declared below.
+// default, articles-per-page, and the debug toggle — stay per-device and are
+// declared below.
 //
 //  - hide-on-scroll (default off, synced): mark an unpinned row Done the moment
 //    it scrolls off the top of the viewport — an automatic Sweep (see ItemList /
@@ -79,6 +87,17 @@ export type { ListLayout };
 //    title with a preview excerpt ('excerpt'). Kept per-device: row density is
 //    a screen-size call (the synced per-feed override is on the subscription).
 //    See ItemRow / lib/itemPreview.
+//  - articles-per-page (default 30, per-device): the FLAT river's page size —
+//    the `limit` on each read, so what a fresh load lands and what each "More"
+//    appends. Every step of it is a request.
+//  - articles-per-section (default 10, per-device): the group-by-feed DISPLAY
+//    window — how many body rows each feed's section opens with and each
+//    section "More" reveals, out of rows the one deep read already fetched, so
+//    it costs no request at any size. A separate number from the page size
+//    above for that reason (see lib/types): a section is a slice of the
+//    screen, not the whole of it.
+//    Both kept per-device for the same reason as row density: how much list
+//    you want to land at once is a call about this screen and this connection.
 
 // Synced-pref keys re-exported under their historical names.
 export {
@@ -95,6 +114,8 @@ export {
 export const BOTTOM_BAR_KEY = 'readmo:bottom-bar';
 export const LIST_LAYOUT_KEY = 'readmo:list-layout';
 export const DEBUG_SCROLL_JUMPS_KEY = 'readmo:debug-scroll-jumps';
+export const ARTICLES_PER_PAGE_KEY = 'readmo:articles-per-page';
+export const ARTICLES_PER_SECTION_KEY = 'readmo:articles-per-section';
 export const SAVE_SERVICE_KEY = 'readmo:save-service';
 export const AUTO_SAVE_ON_FAVORITE_KEY = 'readmo:auto-save-on-favorite';
 
@@ -228,6 +249,40 @@ const listLayoutStore = createPersistentStore<ListLayout>({
       ? raw
       : DEFAULT_LIST_LAYOUT,
 });
+
+// The two article-load sizes. Stored as the decimal number; anything that
+// isn't one of the offered sizes (a hand-edited value, or a size this build no
+// longer offers) reads as unset so the store falls back to its default rather
+// than paging by some number the Settings chips can't show.
+// Each store validates against ITS OWN option list, not the shared scale: a
+// size the other picker offers is still one this one can't show.
+function loadCountStore(
+  storageKey: string,
+  options: readonly ArticleLoadCount[],
+  defaultValue: ArticleLoadCount,
+) {
+  return createPersistentStore<ArticleLoadCount>({
+    storageKey,
+    changeEvent: CHANGE_EVENT,
+    defaultValue,
+    parse: (raw) => {
+      const n = Number(raw);
+      return options.find((size) => size === n);
+    },
+    serialize: (value) => String(value),
+  });
+}
+
+const articlesPerPageStore = loadCountStore(
+  ARTICLES_PER_PAGE_KEY,
+  ARTICLES_PER_PAGE_OPTIONS,
+  DEFAULT_ARTICLES_PER_PAGE,
+);
+const articlesPerSectionStore = loadCountStore(
+  ARTICLES_PER_SECTION_KEY,
+  ARTICLES_PER_SECTION_OPTIONS,
+  DEFAULT_ARTICLES_PER_SECTION,
+);
 
 // The single read-later service the reader offers, or null for None (the
 // default — save is opt-in, so the ⋮ menu shows no "Save to …" until you pick
@@ -452,6 +507,38 @@ export function useListLayout(): {
   return { listLayout, setListLayout };
 }
 
+/** The FLAT river's page size — the `limit` on each read, so what a fresh load
+ * lands and what each "More" tap appends. Not used while grouping by feed (the
+ * grouped read sends no fetch cap); that view has its own window below.
+ * Per-device. See lib/types `DEFAULT_ARTICLES_PER_PAGE` / FeedPages. */
+export function useArticlesPerPage(): {
+  articlesPerPage: ArticleLoadCount;
+  setArticlesPerPage: (next: ArticleLoadCount) => void;
+} {
+  const articlesPerPage = usePersistentStore(articlesPerPageStore);
+  const setArticlesPerPage = useCallback(
+    (next: ArticleLoadCount) => articlesPerPageStore.set(next),
+    [],
+  );
+  return { articlesPerPage, setArticlesPerPage };
+}
+
+/** The group-by-feed display window — how many body rows each feed's section
+ * opens with, and how many each section "More" reveals from the rows the one
+ * deep read already fetched (so it costs no request). Per-device. See
+ * lib/types `DEFAULT_ARTICLES_PER_SECTION` / ItemList's `perFeedLimit`. */
+export function useArticlesPerSection(): {
+  articlesPerSection: ArticleLoadCount;
+  setArticlesPerSection: (next: ArticleLoadCount) => void;
+} {
+  const articlesPerSection = usePersistentStore(articlesPerSectionStore);
+  const setArticlesPerSection = useCallback(
+    (next: ArticleLoadCount) => articlesPerSectionStore.set(next),
+    [],
+  );
+  return { articlesPerSection, setArticlesPerSection };
+}
+
 /** The single read-later service the reader offers, or null for None (the
  * default — save is opt-in). At most one is enabled. Per-device. See
  * lib/readLater / SettingsPage. */
@@ -547,6 +634,8 @@ export function resetReadingPrefsCacheForTest(): void {
   bottomBarStore.resetForTest();
   itemSortStore.resetForTest();
   listLayoutStore.resetForTest();
+  articlesPerPageStore.resetForTest();
+  articlesPerSectionStore.resetForTest();
   saveServiceStore.resetForTest();
   autoSaveOnFavoriteStore.resetForTest();
   spoilerSessionOverride = null;

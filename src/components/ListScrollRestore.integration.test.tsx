@@ -6,7 +6,7 @@ import { renderWithProviders } from '../test/renderWithProviders';
 import { ItemList } from './ItemList';
 import { ListScrollRestore } from './ListScrollRestore';
 import { MockDataSource } from '../lib/data/MockDataSource';
-import { PER_FEED_WINDOW } from '../lib/types';
+import { DEFAULT_ARTICLES_PER_SECTION } from '../lib/types';
 import { clearListScrollAnchors } from '../lib/listScrollAnchor';
 import {
   HIDE_ON_SCROLL_KEY,
@@ -148,7 +148,7 @@ describe('<ListScrollRestore> over a real feed list', () => {
                   source.getHomeItems({ cursor, groupByFeed: grouped, limit: 100 })
                 }
                 groupByFeed={grouped}
-                perFeedLimit={grouped ? PER_FEED_WINDOW : undefined}
+                perFeedLimit={grouped ? DEFAULT_ARTICLES_PER_SECTION : undefined}
                 emptyLabel="All caught up."
               />
             }

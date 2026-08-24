@@ -2215,7 +2215,8 @@ export class SupabaseDataSource implements DataSource {
    *
    * The RPC caps the account at 100 feeds server-side (0059; idempotent
    * re-subscribes exempt) — bounding abuse/cost and keeping the group-by-feed
-   * read's opening page under the PostgREST 1000-row cap (100 × PER_FEED_WINDOW).
+   * read's opening page within reach of the PostgREST 1000-row cap (the grouped
+   * read pages by row cursor past it — see feedView).
    * A subscribe past the cap comes back as SQLSTATE 53400, mapped below to a
    * typed AddFeedError('feed-limit') so both the Add-a-feed UI and importOpml
    * see the limit. Older backends predating 0059 never raise it. */
