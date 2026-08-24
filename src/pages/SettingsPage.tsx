@@ -12,6 +12,8 @@ import {
   useHideSportsSpoilers,
   useAutoSummarizePinned,
   useListLayout,
+  useArticlesPerPage,
+  useArticlesPerSection,
   useSaveService,
   useAutoSaveOnFavorite,
   useTitleFilters,
@@ -19,6 +21,10 @@ import {
   type ListLayout,
 } from '../hooks/useReadingPrefs';
 import { READ_LATER_SERVICES, type ReadLaterService } from '../lib/readLater';
+import {
+  ARTICLES_PER_PAGE_OPTIONS,
+  ARTICLES_PER_SECTION_OPTIONS,
+} from '../lib/types';
 import type { ItemSort } from '../lib/data/DataSource';
 import { useCapabilities, canUseFullText } from '../hooks/useCapabilities';
 import { useAuth } from '../hooks/useAuth';
@@ -51,6 +57,8 @@ export function SettingsPage() {
   const { titleFilters, addTitleFilter, removeTitleFilter } = useTitleFilters();
   const [filterDraft, setFilterDraft] = useState('');
   const { listLayout, setListLayout } = useListLayout();
+  const { articlesPerPage, setArticlesPerPage } = useArticlesPerPage();
+  const { articlesPerSection, setArticlesPerSection } = useArticlesPerSection();
   const { saveService, setSaveService } = useSaveService();
   const { autoSaveOnFavorite, setAutoSaveOnFavorite } = useAutoSaveOnFavorite();
   const capabilities = useCapabilities();
@@ -197,6 +205,57 @@ export function SettingsPage() {
               onClick={() => setItemSort(value)}
             >
               {label}
+            </button>
+          ))}
+        </div>
+
+        {/* The two article-load sizes (SPEC.md *Feed views → Articles per page
+            / per feed section*) — separate because one is a fetch and the other
+            is a window over rows already fetched. Same chip scale, sizes
+            ascending. The page size leads: the flat river is the default
+            layout, and it's the only one the single-feed page uses. */}
+        <h3 className="settings__subheading">Articles per page</h3>
+        <div
+          className="settings__theme"
+          role="radiogroup"
+          aria-label="Articles per page"
+        >
+          {ARTICLES_PER_PAGE_OPTIONS.map((size) => (
+            <button
+              key={size}
+              type="button"
+              role="radio"
+              aria-checked={articlesPerPage === size}
+              className={
+                'settings__theme-btn' +
+                (articlesPerPage === size ? ' is-active' : '')
+              }
+              onClick={() => setArticlesPerPage(size)}
+            >
+              {size}
+            </button>
+          ))}
+        </div>
+
+        <h3 className="settings__subheading">Articles per feed section</h3>
+        <div
+          className="settings__theme"
+          role="radiogroup"
+          aria-label="Articles per feed section"
+        >
+          {ARTICLES_PER_SECTION_OPTIONS.map((size) => (
+            <button
+              key={size}
+              type="button"
+              role="radio"
+              aria-checked={articlesPerSection === size}
+              className={
+                'settings__theme-btn' +
+                (articlesPerSection === size ? ' is-active' : '')
+              }
+              onClick={() => setArticlesPerSection(size)}
+            >
+              {size}
             </button>
           ))}
         </div>

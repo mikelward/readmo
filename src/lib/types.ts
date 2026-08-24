@@ -239,13 +239,43 @@ export const HOME_WINDOW_MS = 3 * DAY_MS;
  * the `feed_items` RPC. */
 export const FEED_FLOOR = 10;
 
-/** Per-feed DISPLAY window for the group-by-feed view: each feed section opens
- * showing ALL of its pinned items plus at most this many of its listable body
- * items, with a per-section "More" button to reveal the next `PER_FEED_WINDOW`
- * (and so on) from the already-fetched rows. Pinned items are exempt from the
- * window so pins never crowd articles out of a refreshed section. Only applies
- * when grouping by feed; the flat river pages globally instead. Purely a
- * client-side display window: the grouped read fetches whatever the server
+/** Every article-load size any picker offers, smallest first (the order the
+ * Settings chips take). Each preference below draws its own choices from this
+ * scale — the two paging shapes want different amounts, so they share neither
+ * a number nor a list. */
+export const ARTICLE_LOAD_COUNTS = [5, 10, 20, 30, 40, 50] as const;
+
+export type ArticleLoadCount = (typeof ARTICLE_LOAD_COUNTS)[number];
+
+/** Sizes offered for *Articles per page*, spanning both sides of the default
+ * (30). No 5 — the flat river's page size is a fetch, and a five-row page
+ * would turn ordinary reading into a "More" drill; 10 is kept as the floor
+ * even though it's small for a river, since offering it costs nothing. The
+ * upper end runs to 50 for the opposite reader: one big load, then read. */
+export const ARTICLES_PER_PAGE_OPTIONS = [10, 20, 30, 40, 50] as const;
+
+/** Sizes offered for *Articles per feed section*. Includes 5, which the page
+ * size doesn't: a section window costs no request, and a short one is how you
+ * skim many feeds' headlines at once rather than reading one down. Stops at 30
+ * — past that a single section fills the screen and grouping stops buying
+ * anything over the flat river. */
+export const ARTICLES_PER_SECTION_OPTIONS = [5, 10, 20, 30] as const;
+
+/** Default *Articles per page*: how many rows the FLAT river loads per read —
+ * what a fresh load lands and what each "More" appends. Sent as the read's
+ * `limit`, so every step of it is a request (SPEC.md *Feed views → Articles
+ * per page*). */
+export const DEFAULT_ARTICLES_PER_PAGE: ArticleLoadCount = 30;
+
+/** Default *Articles per feed section*: the per-feed DISPLAY window for the
+ * group-by-feed view. Each section opens showing ALL of its pinned items plus
+ * at most this many of its listable body items, and the section's own "More"
+ * reveals the next windowful. Pinned items are exempt so pins never crowd
+ * articles out of a refreshed section.
+ *
+ * Purely a client-side window: the grouped read fetches whatever the server
  * returns for each feed — the server decides any fetch cap, not the client
- * (SPEC.md *Per-section More + per-feed window*). */
-export const PER_FEED_WINDOW = 10;
+ * (SPEC.md *Per-section More + per-feed window*) — so this costs no request at
+ * any size. That's why it's a separate number from the page size above, and a
+ * smaller one: a section is a slice of the screen, not the whole of it. */
+export const DEFAULT_ARTICLES_PER_SECTION: ArticleLoadCount = 10;

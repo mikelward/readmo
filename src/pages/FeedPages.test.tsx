@@ -11,8 +11,11 @@ import { FeedPage, HomePage } from './FeedPages';
 import {
   GROUP_BY_FEED_KEY,
   ITEM_SORT_KEY,
+  ARTICLES_PER_PAGE_KEY,
+  ARTICLES_PER_SECTION_KEY,
   resetReadingPrefsCacheForTest,
 } from '../hooks/useReadingPrefs';
+import { DEFAULT_ARTICLES_PER_PAGE } from '../lib/types';
 
 function renderFeed(source: MockDataSource, feedId: string) {
   return renderWithProviders(
@@ -179,6 +182,298 @@ describe('HomePage (group-by-feed toolbar toggle)', () => {
     expect(spy).not.toHaveBeenCalledWith(
       expect.objectContaining({ perFeedLimit: expect.anything() }),
     );
+  });
+});
+
+describe('Feed views (article load sizes)', () => {
+  afterEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+    vi.restoreAllMocks();
+  });
+
+  it('sends the default page size on the flat home read', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const spy = vi.spyOn(source, 'getHomeItems');
+    renderWithProviders(<HomePage />, { source, route: '/' });
+
+    await screen.findAllByTestId('item-row');
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: DEFAULT_ARTICLES_PER_PAGE }),
+    );
+  });
+
+  it('sends the persisted page size on the flat home read', async () => {
+    window.localStorage.setItem(ARTICLES_PER_PAGE_KEY, '10');
+    resetReadingPrefsCacheForTest();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const spy = vi.spyOn(source, 'getHomeItems');
+    renderWithProviders(<HomePage />, { source, route: '/' });
+
+    await screen.findAllByTestId('item-row');
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ limit: 10 }));
+    expect(spy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ limit: DEFAULT_ARTICLES_PER_PAGE }),
+    );
+  });
+
+  it('sends the persisted page size on a single feed read', async () => {
+    window.localStorage.setItem(ARTICLES_PER_PAGE_KEY, '10');
+    resetReadingPrefsCacheForTest();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const spy = vi.spyOn(source, 'getFeedItems');
+    renderFeed(source, 'feed-verge');
+
+    await screen.findAllByTestId('item-row');
+    expect(spy).toHaveBeenCalledWith(
+      'feed-verge',
+      expect.objectContaining({ limit: 10 }),
+    );
+  });
+
+  // The size in effect is folded into the view key, so changing it restarts the
+  // view at its first page rather than appending a differently-sized page onto
+  // the offsets the old size produced.
+  it('re-reads from the first page when the page size changes', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const spy = vi.spyOn(source, 'getHomeItems');
+    const { rerender } = renderWithProviders(<HomePage />, {
+      source,
+      route: '/',
+    });
+
+    await screen.findAllByTestId('item-row');
+    spy.mockClear();
+
+    act(() => {
+      window.localStorage.setItem(ARTICLES_PER_PAGE_KEY, '10');
+      window.dispatchEvent(new Event('readmo:reading-pref-changed'));
+    });
+    rerender(<HomePage />);
+
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 10, cursor: null }),
+      );
+    });
+  });
+
+  // Grouped, the client sends NO fetch cap — the server decides what each
+  // section carries. Sending the flat page size here would cap the deep read
+  // and truncate the later sections.
+  it('sends no limit on the grouped read, whatever the page size', async () => {
+    window.localStorage.setItem(GROUP_BY_FEED_KEY, '1');
+    window.localStorage.setItem(ARTICLES_PER_PAGE_KEY, '10');
+    resetReadingPrefsCacheForTest();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const spy = vi.spyOn(source, 'getHomeItems');
+    renderWithProviders(<HomePage />, { source, route: '/' });
+
+    await screen.findAllByTestId('item-row');
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ groupByFeed: true }),
+    );
+    for (const [opts] of spy.mock.calls) {
+      expect(opts?.limit).toBeUndefined();
+    }
+  });
+
+  // Every offered size, so a section window pinned back to a constant fails.
+  // The section window is a display window over the one deep read — it never
+  // reaches the server.
+  it.each([10, 20, 30])(
+    'opens each grouped section at %i rows',
+    async (size) => {
+      window.localStorage.setItem(GROUP_BY_FEED_KEY, '1');
+      window.localStorage.setItem(ARTICLES_PER_SECTION_KEY, String(size));
+      resetReadingPrefsCacheForTest();
+      const source = new MockDataSource(`test-${Math.random()}`);
+      // One feed carrying more rows than any offered size, so the rendered
+      // count is the window rather than the whole set. The grouped read carries
+      // every section in full (no client fetch cap), so the page is the feed.
+      const [sample] = (await source.getHomeItems()).items;
+      const many = Array.from({ length: 35 }, (_, i) => ({
+        ...sample,
+        item: { ...sample.item, id: `bulk-${i}`, guid: `bulk-guid-${i}` },
+      }));
+      vi.spyOn(source, 'getHomeItems').mockResolvedValue({
+        items: many,
+        nextCursor: null,
+      });
+      renderWithProviders(<HomePage />, { source, route: '/' });
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId('item-row')).toHaveLength(size);
+      });
+    },
+  );
+
+  // Guardrail 11: the view key is what the persisted query cache is stored
+  // under, so a default-sized view must keep the exact key it had before the
+  // sizes were configurable — otherwise a PWA that upgrades and opens OFFLINE
+  // meets an empty query instead of its cached articles. (Codex P2 on #667.)
+  it.each([
+    { label: 'flat home', route: '/', grouped: false, key: 'home-all:newest:flat' },
+    {
+      label: 'grouped home',
+      route: '/',
+      grouped: true,
+      key: 'home-all:newest:grouped',
+    },
+  ])('keys the default-sized $label view legacily', async ({ grouped, key }) => {
+    if (grouped) window.localStorage.setItem(GROUP_BY_FEED_KEY, '1');
+    resetReadingPrefsCacheForTest();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderWithProviders(<HomePage />, { source, route: '/', queryClient });
+
+    await screen.findAllByTestId('item-row');
+    const keys = queryClient
+      .getQueryCache()
+      .getAll()
+      .map((q) => q.queryKey)
+      .filter((k) => k[0] === 'feed')
+      .map((k) => k[1]);
+    expect(keys).toContain(key);
+  });
+
+  it('keys the default-sized single-feed view legacily', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderWithProviders(
+      <Routes>
+        <Route path="/feed/:feedId" element={<FeedPage />} />
+      </Routes>,
+      { source, route: '/feed/feed-verge', queryClient },
+    );
+
+    await screen.findAllByTestId('item-row');
+    const keys = queryClient
+      .getQueryCache()
+      .getAll()
+      .map((q) => q.queryKey)
+      .filter((k) => k[0] === 'feed')
+      .map((k) => k[1]);
+    expect(keys).toContain('feed:feed-verge:newest');
+  });
+
+  // A chosen non-default size does take its own key — different size, different
+  // page contents, so sharing the default's cache would be wrong.
+  it('keys a non-default page size distinctly', async () => {
+    window.localStorage.setItem(ARTICLES_PER_PAGE_KEY, '10');
+    resetReadingPrefsCacheForTest();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderWithProviders(<HomePage />, { source, route: '/', queryClient });
+
+    await screen.findAllByTestId('item-row');
+    const keys = queryClient
+      .getQueryCache()
+      .getAll()
+      .map((q) => q.queryKey)
+      .filter((k) => k[0] === 'feed')
+      .map((k) => k[1]);
+    expect(keys).toContain('home-all:newest:flat:10');
+  });
+
+  // The section window is display-only over a read that already carries every
+  // section in full, so keying the query on it would discard the cached
+  // response to re-window rows already in hand — and offline, replace a good
+  // cached list with an error. (Codex P1 on #667.)
+  it('does not refetch the grouped view when the section window changes', async () => {
+    window.localStorage.setItem(GROUP_BY_FEED_KEY, '1');
+    resetReadingPrefsCacheForTest();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const spy = vi.spyOn(source, 'getHomeItems');
+    const { rerender } = renderWithProviders(<HomePage />, {
+      source,
+      route: '/',
+    });
+
+    await screen.findAllByTestId('item-row');
+    spy.mockClear();
+
+    act(() => {
+      window.localStorage.setItem(ARTICLES_PER_SECTION_KEY, '20');
+      window.dispatchEvent(new Event('readmo:reading-pref-changed'));
+    });
+    rerender(<HomePage />);
+
+    await screen.findAllByTestId('item-row');
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  // …but it must still re-window, in BOTH directions. The seeding effect only
+  // ever extends a section (the sticky window is what stops rows moving under
+  // the reader), so a SHRINK is the case that needs ItemList's explicit reset.
+  it.each([
+    { from: '10', to: '20' },
+    { from: '20', to: '10' },
+  ])(
+    're-windows grouped sections from $from to $to with no refetch',
+    async ({ from, to }) => {
+      window.localStorage.setItem(GROUP_BY_FEED_KEY, '1');
+      window.localStorage.setItem(ARTICLES_PER_SECTION_KEY, from);
+      resetReadingPrefsCacheForTest();
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const [sample] = (await source.getHomeItems()).items;
+      const many = Array.from({ length: 35 }, (_, i) => ({
+        ...sample,
+        item: { ...sample.item, id: `bulk-${i}`, guid: `bulk-guid-${i}` },
+      }));
+      const spy = vi
+        .spyOn(source, 'getHomeItems')
+        .mockResolvedValue({ items: many, nextCursor: null });
+      const { rerender } = renderWithProviders(<HomePage />, {
+        source,
+        route: '/',
+      });
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId('item-row')).toHaveLength(Number(from));
+      });
+      spy.mockClear();
+
+      act(() => {
+        window.localStorage.setItem(ARTICLES_PER_SECTION_KEY, to);
+        window.dispatchEvent(new Event('readmo:reading-pref-changed'));
+      });
+      rerender(<HomePage />);
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId('item-row')).toHaveLength(Number(to));
+      });
+      expect(spy).not.toHaveBeenCalled();
+    },
+  );
+
+  // The section window doesn't reach the read at all, so changing it must not
+  // re-key the flat view and cost a refetch.
+  it('does not refetch the flat view when the section window changes', async () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const spy = vi.spyOn(source, 'getHomeItems');
+    const { rerender } = renderWithProviders(<HomePage />, {
+      source,
+      route: '/',
+    });
+
+    await screen.findAllByTestId('item-row');
+    spy.mockClear();
+
+    act(() => {
+      window.localStorage.setItem(ARTICLES_PER_SECTION_KEY, '30');
+      window.dispatchEvent(new Event('readmo:reading-pref-changed'));
+    });
+    rerender(<HomePage />);
+
+    await screen.findAllByTestId('item-row');
+    expect(spy).not.toHaveBeenCalled();
   });
 });
 

@@ -3,13 +3,35 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
 import { useHomeFeed } from '../hooks/useHomeFeed';
 import { usePageTitle } from '../hooks/useDocumentTitle';
-import { useItemSort, useGroupByFeed } from '../hooks/useReadingPrefs';
+import {
+  useItemSort,
+  useGroupByFeed,
+  useArticlesPerPage,
+  useArticlesPerSection,
+} from '../hooks/useReadingPrefs';
 import { ItemList } from '../components/ItemList';
 import { HomeEmptyCoach } from '../components/HomeEmptyCoach';
 import { Edit } from '../components/icons';
 import { FeedFavicon } from '../components/FeedFavicon';
-import { PER_FEED_WINDOW } from '../lib/types';
+import {
+  DEFAULT_ARTICLES_PER_PAGE,
+  type ArticleLoadCount,
+} from '../lib/types';
 import './PageHeader.css';
+
+/** The size's contribution to a view key — EMPTY at the default size, so a
+ * default-sized view keeps the exact key it had before the sizes were
+ * configurable. The key is what the persisted query cache is stored under
+ * (`['feed', viewKey]`, see useFeedItems), so suffixing it unconditionally
+ * would orphan every entry a pre-upgrade client wrote: a PWA that upgrades and
+ * opens OFFLINE would meet an empty query and no articles, instead of its
+ * cached list under a failed refresh (guardrail 11 — Codex P2 on #667). Both
+ * defaults are the values that shipped before, so almost every reader keeps
+ * their cache; only someone who has actually chosen a size takes the one-time
+ * miss, which is the trade a different page size implies anyway. */
+function sizeKey(size: ArticleLoadCount, defaultSize: ArticleLoadCount): string {
+  return size === defaultSize ? '' : `:${size}`;
+}
 
 /** `/` — the aggregate river across all non-muted subscriptions, or a chosen
  * folder when the drawer Home picker has swapped it (URL stays `/`). */
@@ -18,6 +40,8 @@ export function HomePage() {
   const { homeFeed } = useHomeFeed();
   const { itemSort, setItemSort } = useItemSort();
   const { groupByFeed, setGroupByFeed } = useGroupByFeed();
+  const { articlesPerPage } = useArticlesPerPage();
+  const { articlesPerSection } = useArticlesPerSection();
   const toggleGroupByFeed = () => setGroupByFeed(!groupByFeed);
   const toggleSort = () => setItemSort(itemSort === 'newest' ? 'oldest' : 'newest');
   usePageTitle();
@@ -60,15 +84,30 @@ export function HomePage() {
     return <HomeEmptyCoach />;
   }
   // Fold the sort/group prefs into both the query key (so a change refetches
-  // from page 1 with the new ordering) and the fetch options. Grouping fetches
-  // each feed's whole listable set in the one deep read — the client sends no
-  // fetch cap; the server decides how much each section carries and the view
-  // accepts all of it. Each section opens at PER_FEED_WINDOW and its "More"
-  // reveals the next PER_FEED_WINDOW from the already-fetched rows until
-  // they're spent — a section's fetched run IS the feed, so an exhausted
-  // section shows no dead "More" button.
-  const opts = { sort: itemSort, groupByFeed };
-  const prefKey = `${itemSort}:${groupByFeed ? 'grouped' : 'flat'}`;
+  // from page 1 with the new ordering) and the fetch options. The page size
+  // joins them on the flat path only — there it decides what's fetched. The
+  // section size never does; see the key below.
+  //
+  // Grouping fetches each feed's whole listable set in the one deep read — the
+  // client sends NO fetch cap, so `limit` must be left off entirely here; the
+  // server decides how much each section carries and the view accepts all of
+  // it. Each section then opens at `articlesPerSection` and its "More" reveals
+  // the next `articlesPerSection` from those already-fetched rows until they're
+  // spent — a section's fetched run IS the feed, so an exhausted section shows
+  // no dead "More" button.
+  const opts = groupByFeed
+    ? { sort: itemSort, groupByFeed }
+    : { sort: itemSort, groupByFeed, limit: articlesPerPage };
+  // Grouped carries NO size: the section window is display-only over a read
+  // that already fetched every section in full, so keying the query on it would
+  // discard the cached response and re-read the server to re-window rows
+  // already in hand (and offline, replace a good cached list with an error).
+  // ItemList re-seeds its windows off the `perFeedLimit` prop instead.
+  const prefKey = `${itemSort}:${
+    groupByFeed
+      ? 'grouped'
+      : `flat${sizeKey(articlesPerPage, DEFAULT_ARTICLES_PER_PAGE)}`
+  }`;
   if (homeFeed.kind === 'folder') {
     const name = homeFeed.name;
     return (
@@ -77,7 +116,7 @@ export function HomePage() {
         fetchPage={(cursor) => ds.getFolderItems(name, { cursor, ...opts })}
         emptyLabel={`No items in ${name}.`}
         groupByFeed={groupByFeed}
-        perFeedLimit={groupByFeed ? PER_FEED_WINDOW : undefined}
+        perFeedLimit={groupByFeed ? articlesPerSection : undefined}
         onToggleGroupByFeed={toggleGroupByFeed}
         itemSort={itemSort}
         onToggleSort={toggleSort}
@@ -90,7 +129,7 @@ export function HomePage() {
       fetchPage={(cursor) => ds.getHomeItems({ cursor, ...opts })}
       emptyLabel="You’re all caught up."
       groupByFeed={groupByFeed}
-      perFeedLimit={groupByFeed ? PER_FEED_WINDOW : undefined}
+      perFeedLimit={groupByFeed ? articlesPerSection : undefined}
       onToggleGroupByFeed={toggleGroupByFeed}
       itemSort={itemSort}
       onToggleSort={toggleSort}
@@ -104,8 +143,19 @@ export function FolderPage() {
   const ds = useDataSource();
   const { itemSort, setItemSort } = useItemSort();
   const { groupByFeed, setGroupByFeed } = useGroupByFeed();
+  const { articlesPerPage } = useArticlesPerPage();
+  const { articlesPerSection } = useArticlesPerSection();
   usePageTitle(name);
-  const prefKey = `${itemSort}:${groupByFeed ? 'grouped' : 'flat'}`;
+  // Grouped carries NO size: the section window is display-only over a read
+  // that already fetched every section in full, so keying the query on it would
+  // discard the cached response and re-read the server to re-window rows
+  // already in hand (and offline, replace a good cached list with an error).
+  // ItemList re-seeds its windows off the `perFeedLimit` prop instead.
+  const prefKey = `${itemSort}:${
+    groupByFeed
+      ? 'grouped'
+      : `flat${sizeKey(articlesPerPage, DEFAULT_ARTICLES_PER_PAGE)}`
+  }`;
   return (
     <>
       <div className="page-header">
@@ -114,13 +164,19 @@ export function FolderPage() {
       <ItemList
         viewKey={`folder:${name}:${prefKey}`}
         fetchPage={(cursor) =>
-          // Grouped: one deep uncapped read; sections open at PER_FEED_WINDOW
+          // Grouped: one deep read with NO client fetch cap, windowed for
+          // display at `articlesPerSection`; flat: `limit` is the page size
           // (see HomePage).
-          ds.getFolderItems(name, { cursor, sort: itemSort, groupByFeed })
+          ds.getFolderItems(name, {
+            cursor,
+            sort: itemSort,
+            groupByFeed,
+            ...(groupByFeed ? null : { limit: articlesPerPage }),
+          })
         }
         emptyLabel={`No items in ${name}.`}
         groupByFeed={groupByFeed}
-        perFeedLimit={groupByFeed ? PER_FEED_WINDOW : undefined}
+        perFeedLimit={groupByFeed ? articlesPerSection : undefined}
         onToggleGroupByFeed={() => setGroupByFeed(!groupByFeed)}
         itemSort={itemSort}
         onToggleSort={() =>
@@ -136,6 +192,7 @@ export function FeedPage() {
   const { feedId = '' } = useParams();
   const ds = useDataSource();
   const { itemSort, setItemSort } = useItemSort();
+  const { articlesPerPage } = useArticlesPerPage();
   const queryClient = useQueryClient();
   const { data: feed } = useQuery({
     queryKey: ['feed-meta', feedId],
@@ -199,8 +256,17 @@ export function FeedPage() {
       {/* Single feed: sort order applies; grouping-by-feed is a no-op (one
           feed), so no section headers. */}
       <ItemList
-        viewKey={`feed:${feedId}:${itemSort}`}
-        fetchPage={(cursor) => ds.getFeedItems(feedId, { cursor, sort: itemSort })}
+        viewKey={`feed:${feedId}:${itemSort}${sizeKey(
+          articlesPerPage,
+          DEFAULT_ARTICLES_PER_PAGE,
+        )}`}
+        fetchPage={(cursor) =>
+          ds.getFeedItems(feedId, {
+            cursor,
+            sort: itemSort,
+            limit: articlesPerPage,
+          })
+        }
         emptyLabel="No items in this feed yet."
         itemSort={itemSort}
         onToggleSort={() =>

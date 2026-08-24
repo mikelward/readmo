@@ -1242,6 +1242,30 @@ export function ItemList({
     }
   }, [viewKey]);
 
+  // Re-seed every section's window when the SIZE of the window changes (the
+  // reader moved *Articles per feed section* — SPEC *Feed views → How much
+  // loads at a time*). Must run before the seeding effect below, whose queued
+  // functional update then sees the cleared map and re-seeds at the new size.
+  //
+  // Needed because that effect only ever EXTENDS an existing section — the
+  // sticky window is what stops rows moving under the reader — so a SMALLER
+  // size would otherwise not take effect until the set next re-materialized.
+  // Deliberately not routed through `viewKey`: this preference doesn't change
+  // what's fetched (the grouped read carries every section in full), so keying
+  // the query on it would throw away the cached response and re-read the
+  // server for a change that only re-windows rows already in hand — and
+  // offline, would replace a perfectly good cached list with an error.
+  // (Codex P1 on #667.)
+  const prevPerFeedLimit = useRef(perFeedLimit);
+  useEffect(() => {
+    if (prevPerFeedLimit.current === perFeedLimit) return;
+    prevPerFeedLimit.current = perFeedLimit;
+    setDisplayedByFeed(new Map());
+    // A section "More" deferred behind an in-flight refresh was a tap against
+    // the old window; the fresh window carries its own.
+    setPendingFeedMore(new Set());
+  }, [perFeedLimit]);
+
   // Re-anchor the sticky display window when the published set RE-MATERIALIZES:
   // any non-Undo whole-list refetch — a stale mount/focus past the 6h freshness
   // TTL, a reconnect confirm, a subscription-change invalidation, or the

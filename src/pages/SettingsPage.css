@@ -173,6 +173,12 @@
 .settings__theme-btn {
   padding: 10px 16px;
   min-height: var(--rm-tap);
+  /* Both axes, not just the height: the horizontal padding (32px) plus borders
+     leaves a one- or two-character label short of the 44px floor — the article
+     size pickers' "5" is the narrowest label in the app. Guardrail 2 is 44×44
+     for every interactive control, so state the width too rather than let it
+     depend on glyph metrics and the reader's text size. */
+  min-width: var(--rm-tap);
   border: 1px solid var(--rm-border-strong);
   border-radius: var(--rm-radius);
   background: var(--rm-bg-card);
@@ -185,6 +191,16 @@
   border-color: var(--rm-accent);
   color: var(--rm-accent);
   background: color-mix(in srgb, var(--rm-accent) 10%, transparent);
+}
+
+/* Pressed state (guardrail 2), following the app-wide convention — see
+   ColorThemeControl.css / ListToolbar.css. Without it these chips gave no
+   pointer-down feedback at all: the only visual change was the selection
+   landing after the click, and re-picking the current value changed nothing.
+   Tints on top of `.is-active` too, so a press registers on the selected chip. */
+html:not(.rm-suppress-press) .settings__btn:active,
+html:not(.rm-suppress-press) .settings__theme-btn:active {
+  background: color-mix(in srgb, var(--rm-accent) 20%, transparent);
 }
 
 .settings__toggles,
