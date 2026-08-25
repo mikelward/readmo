@@ -459,6 +459,24 @@ describe('ItemPage (reader)', () => {
     ]);
   });
 
+  it("sinks a generic 'News' tag to the end, keeping the specific ones in view", async () => {
+    // The Verge's own tag order; "News" says nothing about the article, so it
+    // must not push a real tag past the cap.
+    const source = new MockDataSource(`test-${Math.random()}`);
+    const detail = (await source.getItem('item-1'))!;
+    vi.spyOn(source, 'getItem').mockResolvedValue({
+      ...detail,
+      item: { ...detail.item, categories: ['News', 'Ride-sharing', 'Transportation'] },
+    });
+    renderReader(source, 'item-1');
+    const tags = await screen.findByTestId('reader-tags');
+    expect(Array.from(tags.querySelectorAll('.reader__tag')).map((el) => el.textContent)).toEqual([
+      'Ride-sharing',
+      'Transportation',
+      'News',
+    ]);
+  });
+
   it('renders no tags list for an article with no categories', async () => {
     // item-2 (feed-nasa) has no `categories` spec, so it defaults to [].
     const source = new MockDataSource(`test-${Math.random()}`);

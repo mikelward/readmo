@@ -20,6 +20,7 @@ import {
   useTitleFilters,
 } from '../hooks/useReadingPrefs';
 import { filterCandidates, normalizeFilter } from '../lib/titleFilter';
+import { orderCategories } from '../lib/categories';
 import { leadImageUrl, itemPreviewText } from '../lib/itemPreview';
 import { useCapabilities, canUseFullText } from '../hooks/useCapabilities';
 import { displayTitle } from '../lib/spoilerHeadline';
@@ -250,7 +251,7 @@ export function ItemRow({
     // OFFERED as its own menu entry depends on being active yet.
     const seenCategoryFolds = new Set<string>();
     const categoryEntries: ItemRowMenuItem[] = [];
-    for (const category of item.categories ?? []) {
+    for (const category of orderCategories(item.categories)) {
       const folded = normalizeFilter(category);
       if (!folded || seenCategoryFolds.has(folded)) continue;
       seenCategoryFolds.add(folded);
@@ -663,12 +664,14 @@ export function ItemRow({
           source: showSource ? source : '',
           domain,
           publishedAt: item.publishedAt,
-          // Optional chaining: a persisted query-cache entry written by a build
-          // predating this field has no `categories` at all (PersistQueryClient
-          // can paint it before the refetch replaces it — see main.tsx
-          // CACHE_BUSTER), so `Item.categories` being typed non-optional doesn't
-          // guarantee it exists at runtime here.
-          category: item.categories?.[0],
+          // orderCategories both demotes a generic tag ("News") behind the
+          // specific one and tolerates the field being absent: a persisted
+          // query-cache entry written by a build predating it has no
+          // `categories` at all (PersistQueryClient can paint it before the
+          // refetch replaces it — see main.tsx CACHE_BUSTER), so
+          // `Item.categories` being typed non-optional doesn't guarantee it
+          // exists at runtime here.
+          category: orderCategories(item.categories)[0],
           // Last-resort fallback when the row has neither a domain nor a
           // category — still just display, not the eventual author filter.
           author: item.author ?? undefined,

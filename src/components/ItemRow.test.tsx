@@ -112,6 +112,19 @@ describe('ItemRow', () => {
     expect(meta).not.toHaveTextContent('Jane Doe');
   });
 
+  it("skips a generic 'News' category for the tag that says something", () => {
+    // The Verge tags nearly every article "News", so taking the publisher's
+    // first would spend the slot on a label its whole feed shares.
+    const vergeish: FeedItem = {
+      item: { ...FEED_ITEM.item, categories: ['News', 'Ride-sharing', 'Transportation'] },
+      feed: FEED_ITEM.feed,
+    };
+    renderWithProviders(<ItemRow feedItem={vergeish} />);
+    const meta = screen.getByTestId('item-meta');
+    expect(meta).toHaveTextContent('Ride-sharing');
+    expect(meta).not.toHaveTextContent('News');
+  });
+
   it('omits the fallback slot entirely when the item has no domain, category, or author', () => {
     const bareItem: FeedItem = {
       item: { ...FEED_ITEM.item, author: null },
@@ -848,6 +861,23 @@ describe('ItemRow', () => {
       const items = within(menu).getAllByRole('menuitem');
       const labels = items.map((el) => el.textContent);
       expect(labels.indexOf('Tax and spending')).toBeLessThan(labels.indexOf('Trump'));
+    });
+
+    it("offers a generic 'News' category behind the specific one", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <ItemRow
+          feedItem={{
+            ...FILTERABLE,
+            item: { ...FILTERABLE.item, categories: ['News', 'Tax and spending'] },
+          }}
+        />,
+      );
+      const menu = await openFilterMenu(user);
+      const labels = within(menu)
+        .getAllByRole('menuitem')
+        .map((el) => el.textContent);
+      expect(labels.indexOf('Tax and spending')).toBeLessThan(labels.indexOf('News'));
     });
 
     it('stores a category tap as the same folded entry a typed word would be', async () => {
