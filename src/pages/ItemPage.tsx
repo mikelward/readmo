@@ -20,6 +20,7 @@ import { useMarkDoneOnOpenFeeds } from '../hooks/useSubscriptionFeeds';
 import { readLaterTarget } from '../lib/readLater';
 import { readmoItemUrl } from '../lib/shareLinks';
 import { filterCandidates, normalizeFilter } from '../lib/titleFilter';
+import { orderCategories } from '../lib/categories';
 import {
   articleSourceDomain,
   formatAge,
@@ -733,7 +734,7 @@ export function ItemPage() {
     };
     const seenCategoryFolds = new Set<string>();
     const categoryEntries: ItemRowMenuItem[] = [];
-    for (const category of it.categories ?? []) {
+    for (const category of orderCategories(it.categories)) {
       const folded = normalizeFilter(category);
       if (!folded || seenCategoryFolds.has(folded)) continue;
       seenCategoryFolds.add(folded);
@@ -1002,6 +1003,8 @@ export function ItemPage() {
     readOnly,
   } as const;
 
+  const readerTags = orderCategories(item.categories).slice(0, MAX_READER_TAGS);
+
   return (
     <article className="reader">
       <ReaderToolbar
@@ -1058,12 +1061,14 @@ export function ItemPage() {
             </span>
           ) : null}
         </div>
-        {/* Optional chaining: a persisted query-cache entry written by a build
-            predating this field has no `categories` at all (same rationale
-            as ItemRow.tsx's meta-tail category, which hits the same cache). */}
-        {item.categories?.length > 0 ? (
+        {/* orderCategories demotes a generic tag ("News") behind the specific
+            ones, so the few shown here are the ones that say something; it also
+            absorbs the field being absent, which it is on a persisted
+            query-cache entry written by a build predating it (same cache as
+            ItemRow.tsx's meta-tail category). */}
+        {readerTags.length > 0 ? (
           <ul className="reader__tags" data-testid="reader-tags">
-            {item.categories.slice(0, MAX_READER_TAGS).map((category) => (
+            {readerTags.map((category) => (
               <li key={category} className="reader__tag">
                 {category}
               </li>

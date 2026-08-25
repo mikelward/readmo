@@ -2455,10 +2455,15 @@ Hacker News or Reddit, where knowing the actual destination site —
 article's **primary category** when the feed supplies one — the first of the
 publisher's own categories/tags (RSS/RDF `<category>`, Atom `<category>`,
 JSON Feed `tags`) — else the **author** when present, so a row with neither a
-domain nor a category still shows more than a bare age; then **age**. The
-author is otherwise a last resort here (still shown unconditionally in the
-reader header; an eventual author-based filter, matching title filters, stays
-tracked in TODO.md). The feed's **site favicon** sits at the start of the meta
+domain nor a category still shows more than a bare age; then **age**.
+Wherever categories are shown, a bare **News** tag sinks to the end of the
+list: a publisher that files every article under it (The Verge's
+`News, Ride-sharing, Transportation`) would otherwise spend this one slot on a
+label its whole feed shares, hiding the tag that says what the story is about.
+Display only — what's stored, and what filters match, keep the publisher's own
+order. The author is otherwise a last resort here (still shown unconditionally
+in the reader header; an eventual author-based filter, matching title filters,
+stays tracked in TODO.md). The feed's **site favicon** sits at the start of the meta
 line — but where it appears depends on
 grouping. In **group-by-feed** view it's on the **section header** only (beside
 the feed name), identifying a feed's run of rows once rather than repeating on
@@ -2566,8 +2571,8 @@ page's discipline is unchanged.
   fallback* provenance tag when applicable. The **feed name is not repeated in
   the header** — it lives on the reader bars next to the leading button (see
   *Reader action bar*), so the header is just title + meta. Below the meta
-  line, the article's own **categories/tags** (publisher order, first few
-  only) show as plain display-only labels — not tappable; adding one as a
+  line, the article's own **categories/tags** (publisher order with the *News*
+  demotion above, first few only) show as plain display-only labels — not tappable; adding one as a
   filter is still done from the row menu (below).
 - **Loading state:** the blank centered **"Loading…"** (with the tip
   **"Tip: 📌 pin an article to make it load faster"** — using the same
