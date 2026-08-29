@@ -470,7 +470,7 @@ describe('useReadingPrefs', () => {
       <button
         type="button"
         onClick={() =>
-          setArticlesPerSection(articlesPerSection === 20 ? 30 : 20)
+          setArticlesPerSection(articlesPerSection === 10 ? 20 : 10)
         }
       >
         {articlesPerSection}
@@ -485,8 +485,14 @@ describe('useReadingPrefs', () => {
       otherKey: ARTICLES_PER_SECTION_KEY,
       SizeProbe: PerPageProbe,
       fallback: '30',
-      // 5 is a section-only size; the page size must not accept it.
-      offOther: '5',
+      from: '20',
+      to: '30',
+      // 5 is a section-only size; the page size must not accept it. All of
+      // these sit below the page picker's 50 ceiling, so none of them takes
+      // the clamp path.
+      offList: ['bogus', '', '0', '15', '25', '20.5', '5'],
+      aboveMax: '99',
+      clampsTo: '50',
     },
     {
       label: 'articles per feed section',
@@ -494,11 +500,29 @@ describe('useReadingPrefs', () => {
       otherKey: ARTICLES_PER_PAGE_KEY,
       SizeProbe: PerSectionProbe,
       fallback: '10',
-      // The section list is a superset, so there's no page-only size to
-      // reject; 25 stands in as an off-list value it must still refuse.
-      offOther: '25',
+      from: '10',
+      to: '20',
+      // Every page-only size (30/40/50) now sits ABOVE this picker's ceiling,
+      // so they clamp rather than falling back — see the clamp test below.
+      // What still has to read as unset is an off-list size under the
+      // ceiling, plus Number()'s falsy coercions.
+      offList: ['bogus', '', '0', '15'],
+      aboveMax: '30',
+      clampsTo: '20',
     },
-  ] as const)('$label', ({ key, otherKey, SizeProbe, fallback, offOther }) => {
+  ] as const)(
+    '$label',
+    ({
+      key,
+      otherKey,
+      SizeProbe,
+      fallback,
+      from,
+      to,
+      offList,
+      aboveMax,
+      clampsTo,
+    }) => {
 
     it(`defaults to ${fallback}`, () => {
       render(<SizeProbe />);
@@ -513,36 +537,38 @@ describe('useReadingPrefs', () => {
     });
 
     it('persists a change', () => {
-      window.localStorage.setItem(key, '20');
+      window.localStorage.setItem(key, from);
       resetReadingPrefsCacheForTest();
       render(<SizeProbe />);
       act(() => screen.getByRole('button').click());
-      expect(screen.getByRole('button')).toHaveTextContent('30');
-      expect(window.localStorage.getItem(key)).toBe('30');
+      expect(screen.getByRole('button')).toHaveTextContent(to);
+      expect(window.localStorage.getItem(key)).toBe(to);
       act(() => screen.getByRole('button').click());
-      expect(screen.getByRole('button')).toHaveTextContent('20');
-      expect(window.localStorage.getItem(key)).toBe('20');
+      expect(screen.getByRole('button')).toHaveTextContent(from);
+      expect(window.localStorage.getItem(key)).toBe(from);
     });
 
     // A size the chips can't show would leave Settings with nothing selected
-    // while the view paged by it, so anything off THIS picker's list reads as
-    // unset — including a size only the other picker offers (`offOther`).
-    // '' and '0' also cover Number()'s two falsy coercions.
-    it.each(['bogus', '', '0', '15', '25', '20.5'])(
-      'falls back to the default for a persisted %j',
-      (raw) => {
-        window.localStorage.setItem(key, raw);
-        resetReadingPrefsCacheForTest();
-        render(<SizeProbe />);
-        expect(screen.getByRole('button')).toHaveTextContent(fallback);
-      },
-    );
-
-    it('falls back to the default for a size only the other picker offers', () => {
-      window.localStorage.setItem(key, offOther);
+    // while the view paged by it, so anything off THIS picker's list and under
+    // its ceiling reads as unset. '' and '0' also cover Number()'s two falsy
+    // coercions.
+    it.each(offList)('falls back to the default for a persisted %j', (raw) => {
+      window.localStorage.setItem(key, raw);
       resetReadingPrefsCacheForTest();
       render(<SizeProbe />);
       expect(screen.getByRole('button')).toHaveTextContent(fallback);
+    });
+
+    // A size ABOVE the ceiling is the one off-list case that does NOT default:
+    // it's a window the reader chose when we offered it, so narrowing the list
+    // seats them at the largest we still offer rather than undoing their
+    // choice by more than the change removed. This is the path a stored 30
+    // takes now that the section picker stops at 20.
+    it('clamps a persisted size above the ceiling to the largest offered', () => {
+      window.localStorage.setItem(key, aboveMax);
+      resetReadingPrefsCacheForTest();
+      render(<SizeProbe />);
+      expect(screen.getByRole('button')).toHaveTextContent(clampsTo);
     });
 
     // The two sizes are independent: setting one must leave the other alone.
@@ -559,7 +585,8 @@ describe('useReadingPrefs', () => {
       act(() => screen.getByRole('button').click());
       expect(window.localStorage.getItem(DIRTY_SETTINGS_KEY)).toBeNull();
     });
-  });
+    },
+  );
 
   describe('save service', () => {
     function SaveServiceProbe() {

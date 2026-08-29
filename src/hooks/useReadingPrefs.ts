@@ -267,7 +267,20 @@ function loadCountStore(
     defaultValue,
     parse: (raw) => {
       const n = Number(raw);
-      return options.find((size) => size === n);
+      const exact = options.find((size) => size === n);
+      if (exact !== undefined) return exact;
+      // A size we USED to offer and no longer do clamps down to the largest
+      // still on the list, rather than falling through to the default: the
+      // reader who picked the biggest window meant "as much as this offers",
+      // so the biggest one left is what they meant now. Dropping them to the
+      // default instead would silently undo a preference they set — and by
+      // more than the change actually removed. This is the path a stored 30
+      // takes now that *Articles per feed section* stops at 20.
+      // Anything else off-list (garbage, or a size below the floor) still
+      // falls through to the default.
+      const max = options.reduce((a, b) => (b > a ? b : a));
+      if (Number.isFinite(n) && n > max) return max;
+      return undefined;
     },
     serialize: (value) => String(value),
   });
