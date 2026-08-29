@@ -1512,15 +1512,19 @@ negligible and off every critical path. See the External services table in
        **10** for a reader who wants the list short. It offers no **5** — a
        five-row page turns ordinary reading into a **More** drill.
      - **Articles per feed section** (`readmo:articles-per-section`, default
-       **10**; **5 / 10 / 20 / 30**) is the **group-by-feed** display window —
+       **10**; **5 / 10 / 20**) is the **group-by-feed** display window —
        how many body rows each section opens with and each section **More**
        reveals — over rows the view already has, so changing it costs no
        request and works offline, at any size. It's smaller by default because
        a section is a slice of the screen, not the whole of it. It alone offers
        **5** — a short section is how you skim many feeds' headlines at once
-       rather than read one feed down — and it stops at **30**, past which a
-       single section fills the screen and grouping stops buying anything over
-       the flat river.
+       rather than read one feed down — and it stops at **20**, past which the
+       grouped view scrolls badly enough that grouping stops buying anything
+       over the flat river. Offering a larger window again waits on that
+       getting cheaper, not on raising this number. A stored window above the
+       ceiling — the **30** this picker used to offer — reads as the largest
+       still offered rather than reverting to the default, so narrowing the
+       list doesn't undo a reader's choice by more than it removed.
      Each size affects only the view it drives — the section window never
      disturbs the flat river, and the page size never disturbs a grouped one.
      **A page size keeps its own place in the list**: move to a size you
@@ -2049,7 +2053,7 @@ negligible and off every critical path. See the External services table in
       (`readmo:articles-per-page`, default **30**, offering
       **10 / 20 / 30 / 40 / 50**) and **Articles per feed section**
       (`readmo:articles-per-section`, default
-      **10**, offering **5 / 10 / 20 / 30**) — labeled by the bare number, the
+      **10**, offering **5 / 10 / 20**) — labeled by the bare number, the
       heading being the copy. The page size leads: the flat river is the
       default layout, and the only one the single-feed page uses. Both
       per-device (see *Feed views → How much loads at a time*).

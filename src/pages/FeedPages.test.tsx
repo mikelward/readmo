@@ -15,7 +15,10 @@ import {
   ARTICLES_PER_SECTION_KEY,
   resetReadingPrefsCacheForTest,
 } from '../hooks/useReadingPrefs';
-import { DEFAULT_ARTICLES_PER_PAGE } from '../lib/types';
+import {
+  ARTICLES_PER_SECTION_OPTIONS,
+  DEFAULT_ARTICLES_PER_PAGE,
+} from '../lib/types';
 
 function renderFeed(source: MockDataSource, feedId: string) {
   return renderWithProviders(
@@ -281,7 +284,7 @@ describe('Feed views (article load sizes)', () => {
   // Every offered size, so a section window pinned back to a constant fails.
   // The section window is a display window over the one deep read — it never
   // reaches the server.
-  it.each([10, 20, 30])(
+  it.each([...ARTICLES_PER_SECTION_OPTIONS])(
     'opens each grouped section at %i rows',
     async (size) => {
       window.localStorage.setItem(GROUP_BY_FEED_KEY, '1');

@@ -439,7 +439,7 @@ describe('SettingsPage — article load sizes', () => {
       name: 'Articles per feed section',
       key: ARTICLES_PER_SECTION_KEY,
       def: '10',
-      sizes: ['5', '10', '20', '30'],
+      sizes: ['5', '10', '20'],
     },
   ])('offers $sizes for $name, defaulting to $def', ({ name, def, sizes }) => {
     renderWithProviders(<SettingsPage />);
@@ -458,7 +458,7 @@ describe('SettingsPage — article load sizes', () => {
     {
       name: 'Articles per feed section',
       key: ARTICLES_PER_SECTION_KEY,
-      pick: '30',
+      pick: '20',
     },
   ])('persists the chosen $name to localStorage', async ({ name, key, pick }) => {
     const user = userEvent.setup();

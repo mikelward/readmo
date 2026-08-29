@@ -256,10 +256,16 @@ export const ARTICLES_PER_PAGE_OPTIONS = [10, 20, 30, 40, 50] as const;
 
 /** Sizes offered for *Articles per feed section*. Includes 5, which the page
  * size doesn't: a section window costs no request, and a short one is how you
- * skim many feeds' headlines at once rather than reading one down. Stops at 30
- * — past that a single section fills the screen and grouping stops buying
- * anything over the flat river. */
-export const ARTICLES_PER_SECTION_OPTIONS = [5, 10, 20, 30] as const;
+ * skim many feeds' headlines at once rather than reading one down.
+ *
+ * Stops at 20. The window is the count of rows the grouped view puts in the
+ * DOM per section, and nothing virtualizes them, so the whole view costs
+ * `sections × window` rows — 30 across 25 feeds is ~760, where scrolling
+ * spends most frames over the 16.7ms budget. Measured on the same scroll,
+ * 30 cost ~2.7x the wall time of 10 and ~16x the main-thread blocking; 20 is
+ * the largest window that still leaves grouping usable on a phone. Raising it
+ * again wants windowing the list first, not just a bigger number here. */
+export const ARTICLES_PER_SECTION_OPTIONS = [5, 10, 20] as const;
 
 /** Default *Articles per page*: how many rows the FLAT river loads per read —
  * what a fresh load lands and what each "More" appends. Sent as the read's
