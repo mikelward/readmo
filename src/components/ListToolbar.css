@@ -1,3 +1,29 @@
+/* The host of a bottom bar (the feed list, and the shared shell for library /
+   search / offline) grows into whatever `.app-main`'s column has left — after a
+   page header above it on /feed/:feedId and /folder/:name, all of it on Home —
+   so its foot always reaches the bottom of the screen. Without that, the
+   container ended right under short content (a refresh spinner, an empty
+   result, a list of three rows) and the bar hung in the middle of the page,
+   then jumped down as rows arrived. It never shrinks below its content, so a
+   populated list is unaffected and the bar keeps the end-of-list position
+   SPEC.md *Bottom action bar* describes. */
+.list-toolbar-host {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+  /* `.app-main`'s bottom padding is inside its border-box min-height, so its
+     content box — and a host that fills it — stops one safe-area inset above
+     the screen edge. Two things then go wrong: the bar's own row already pads
+     by that inset (`.list-toolbar--bottom .list-toolbar__row`), so a short
+     list's controls sit two insets up; and the pinned bar ignores the padding
+     entirely once it sticks at `bottom: 0`, so it would seat an inset lower on
+     a long list than on a short one. The row owns that clearance, so pull the
+     host back over the padding and let it reach the true foot of the screen.
+     Total page height is unchanged: the host grows by exactly what the margin
+     takes back. */
+  margin-bottom: calc(-1 * env(safe-area-inset-bottom));
+}
+
 .list-toolbar {
   position: sticky;
   z-index: 10;
@@ -10,9 +36,19 @@
 }
 
 /* The bottom copy mirrors the top bar but pins to the foot of the viewport,
-   so Back to top is always reachable without a separate floating button. */
+   so Back to top is always reachable without a separate floating button.
+
+   The auto margin eats the host column's slack, putting the bar at the foot of
+   the screen when the content above it doesn't fill one. Both positions need
+   it, including the sticky one: a `bottom` inset only ever shifts a sticky box
+   UP, to keep a flow position below the fold from scrolling out of view — it
+   never pushes a box that already fits down the page, so a tall host alone
+   would leave the pinned bar sitting under the spinner. On a list taller than
+   the viewport there is no slack, the margin resolves to 0, and both positions
+   behave exactly as before. */
 .list-toolbar--bottom {
   bottom: 0;
+  margin-top: auto;
   border-top: 1px solid var(--rm-border);
 }
 
@@ -23,9 +59,9 @@
 /* Default bottom bar (readmo:bottom-bar = 'list'): sit at the end of the list
    in normal flow — scrolled to, never overlapping rows — matching newshacker's
    relative footer. The 'screen' option drops this class and falls back to the
-   sticky rule above, pinning the bar to the viewport foot. The sweep
-   IntersectionObserver needs no change: measureStickyBottomInset already clamps
-   a below-the-fold toolbar's intrusion to 0. */
+   sticky rule above, pinning the bar to the viewport foot. This bar never
+   overlaps rows, so the sweep IntersectionObserver excludes nothing for it:
+   measureStickyBottomInset reads this class and returns 0. */
 .list-toolbar--bottom.list-toolbar--relative {
   position: static;
 }

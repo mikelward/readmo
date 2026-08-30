@@ -2001,6 +2001,14 @@ negligible and off every critical path. See the External services table in
      bar to the viewport foot** so the actions stay in reach without scrolling
      to the end. Only the bottom bar is repositioned; the top toolbar always
      sticks below the header.
+   - **Either position sits at the foot of the screen when the list doesn't
+     fill one** — while a refresh shows its spinner, on an empty result, on a
+     load failure, or on a list of three rows. The bar is chrome, not a thing
+     that drifts: it never hangs in the middle of the page under short content
+     and then jumps down as rows arrive. The exception is auto-hide-on-scroll's
+     blank tail, which by the rule above follows the relative bar: that tail
+     fills the page, so the bar keeps its end-of-list place above it (`TODO.md`
+     — the two rules are in tension and the trade-off is undecided).
    - **In the default `list` (relative) position, More just fetches** the next
      page (and scrolls its first row up) — the reader only reaches the bar at
      the foot of the list, so it tracks `hasMore` and never needs a page-down

@@ -363,10 +363,24 @@ button {
   color: inherit;
 }
 
+/* A column that always reaches the foot of the screen, so a `.list-toolbar-host`
+   child can claim whatever is left over below any page header above it and put
+   its bottom toolbar at the bottom of the viewport rather than mid-page (see
+   ListToolbar.css). The floor subtracts the sticky header only: its
+   `height: var(--rm-header-h)` is a border box that swallows its own
+   safe-area-inset-top padding, and this element's own safe-area-inset-bottom
+   padding is inside the min-height for the same reason — so header + main comes
+   to exactly one viewport and a short page still has nothing to scroll.
+   `.signin` already floors itself the same way. dvh tracks the mobile
+   dynamic-toolbar viewport; vh is the fallback. */
 .app-main {
   max-width: 720px;
   margin: 0 auto;
   padding: 0 0 env(safe-area-inset-bottom);
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - var(--rm-header-h));
+  min-height: calc(100dvh - var(--rm-header-h));
 }
 
 /* Desktop/large-tablet: give the reading column a little more room so a

@@ -105,6 +105,14 @@ export function measureStickyBottomInset(): number {
   if (typeof document === 'undefined' || typeof window === 'undefined') return 0;
   const el = document.querySelector('.list-toolbar--bottom');
   if (!el) return 0;
+  // The default `list` position is an in-flow footer that never overlaps a row,
+  // whether it sits below the fold or — on a list too short to fill the screen —
+  // at the viewport foot with the slack above it (ListToolbar.css). Read the
+  // class rather than inferring "below the fold" from its rect: the auto margin
+  // that stops it hanging mid-page also puts it exactly ON the fold, where a
+  // geometry-only reading would report a full toolbar of intrusion and shrink
+  // the sweep observer's root past rows the reader can plainly see.
+  if (el.classList.contains('list-toolbar--relative')) return 0;
   const rect = el.getBoundingClientRect();
   const intrusion = window.innerHeight - rect.top;
   return Math.max(0, Math.min(Math.floor(intrusion), Math.floor(rect.height)));

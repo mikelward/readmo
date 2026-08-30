@@ -170,6 +170,22 @@ describe('measureStickyBottomInset', () => {
     expect(measureStickyBottomInset()).toBe(48);
   });
 
+  // The default `list` bottom bar is an in-flow footer that never overlaps a
+  // row. Its host grows to the foot of the page column (ListToolbar.css), so on
+  // a list too short to fill the screen the auto margin seats it exactly ON the
+  // fold rather than letting it hang mid-page — geometry indistinguishable from
+  // a pinned bar. Reading the class keeps the inset at 0 there, so the sweep
+  // observer doesn't shrink its root past a row sitting flush above a bar that
+  // covers nothing.
+  it('returns 0 for the relative bar seated at the fold', () => {
+    setInnerHeight(768);
+    makeStickyEl(
+      'list-toolbar list-toolbar--bottom list-toolbar--relative',
+      768,
+    ); // top = 720, same rect as the pinned case above
+    expect(measureStickyBottomInset()).toBe(0);
+  });
+
   it('clamps to 0 when the toolbar sits below the fold (normal flow)', () => {
     setInnerHeight(500);
     // top = 760, well past the 500px viewport bottom → negative intrusion.
