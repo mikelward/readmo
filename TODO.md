@@ -3,21 +3,6 @@
 Deferred work, tracked here so it isn't lost. Each item links to where the
 constraint is documented in more detail.
 
-## Finish the gate → lanes check rename
-
-The consumer-facing required check was renamed from `gate` to `lanes`
-(mikelward/lanes#9). `lanes` now runs alongside `gate` here (both green),
-but two steps remain, outside what a session without ruleset API access can
-do:
-
-- [ ] Flip the ruleset to require `lanes` instead of `gate`, now that
-      `lanes` has reported on a `pull_request` run here: `repo-rules
-      mikelward/readmo lanes ...` (naming every check the ruleset should
-      require — `mikelward/scripts`' tool).
-- [ ] Once the ruleset requires `lanes`, delete the now-redundant `gate`
-      job and its parity test (`.github/workflow-check-rename.test.ts`) in
-      a follow-up PR.
-
 ## Decisions needing review
 
 Calls that haven't been settled — guesses autopilot made without asking, and
@@ -629,12 +614,12 @@ permanent by default. Each is cheap to change.
   the hand-rolled "no expression is spliced into a run: script" test in
   `npm-update.test.ts` in favor of zizmor's `template-injection` audit —
   correctly, since the regex missed real cases across six separate rounds
-  and zizmor catches them natively — but `.github/workflows/zizmor.yml`
-  is still advisory/non-blocking today, so until it's a required status
-  check, a future regression of that shape would only turn the
-  (non-blocking) zizmor job red, not `npm test` or any required gate. Same
-  gap flagged by Codex on the identical change in newshacker#532; recorded
-  here too rather than waiting for the same finding to repeat.
+  and zizmor catches them natively — leaving a regression of that shape
+  visible only in a non-blocking job. The ruleset now requires `zizmor`
+  (2026-08-30), which closes that gap and opens the one below: the check is
+  required before anything can produce it on a `GITHUB_TOKEN`-authored PR.
+  Same sequencing flagged by Codex on the identical change in
+  newshacker#532.
   - [x] ~~First, widen the trigger.~~ Done — `zizmor.yml`'s `paths:
         ['.github/**']` filter is gone from both triggers (it blocked making
         the check required: GitHub leaves a required check pending, not
@@ -643,16 +628,24 @@ permanent by default. Each is cheap to change.
         have become permanently unmergeable), and `pull_request` now lists
         its types explicitly, `edited` included. Same fix still needed in
         newshacker, homepage, gedmap, and web's identical copies.
-  - [ ] **Also first: a dispatch route for the weekly dependency PR**
-        (Codex flagged this on the identical gedmap and newshacker
-        changes). The batch PR is authored with `GITHUB_TOKEN`, whose
-        events start no workflows — the same trap the batch's explicit
-        ci.yml and codex-review-check dispatches exist for — so a required
-        `zizmor` would block every weekly batch forever. Before the flip,
-        give zizmor.yml a `workflow_dispatch` trigger and teach
+  - [x] ~~Then: `repo-rules mikelward/readmo` (now defaults to `lanes codex
+        zizmor`)~~ Done by the maintainer, 2026-08-30 — the ruleset now
+        requires `lanes` + `zizmor` and no longer requires `gate`.
+  - [ ] **OVERDUE, and now live: a dispatch route for the weekly dependency
+        PR.** This was written as a prerequisite ("before the flip") and the
+        flip happened first, so the gap is no longer hypothetical: the batch
+        PR is authored with `GITHUB_TOKEN`, whose events start no workflows
+        — the same trap the batch's explicit ci.yml and codex-review-check
+        dispatches exist for — so the next weekly batch (Saturdays 06:17
+        UTC) will open and sit permanently pending on a required `zizmor`
+        status nothing can produce. Codex flagged it here on #677, and on
+        the identical gedmap and newshacker changes before that. Two halves:
+        give `zizmor.yml` a `workflow_dispatch` trigger, and teach
         mikelward/npm-update's reusable workflow to dispatch it alongside
         ci.yml — a shared-mechanism change that lands in that repository,
-        piloted through one consumer per its conventions.
-  - [ ] Then: `repo-rules mikelward/readmo` (now defaults to `lanes codex
-        zizmor`) once zizmor has reported on a `pull_request` run here —
-        outside what a session without ruleset API access can do.
+        piloted through one consumer per its conventions. Until both land,
+        the stopgap is dropping `zizmor` back out of the ruleset (a
+        maintainer action; no ruleset API access from an agent session).
+        Note `zizmor.yml`'s own header still says nothing requires it and a
+        PyPI outage therefore cannot stall a merge — that is now false, and
+        the comment needs correcting with whichever way this is resolved.

@@ -22,7 +22,7 @@ has stopped biting.
    PRs (root-level markdown and the `docs/` tree — markdown anywhere else is
    code, since it can sit beside what CI validates) ride the docs lane
    instead, and
-   the required `gate` check independently re-verifies any skip (the shared
+   the required `lanes` check independently re-verifies any skip (the shared
    mikelward/lanes action; the policy is `.github/lanes.conf`). Fix a red
    baseline first, on its own commit. 80% coverage floor for `src/lib/` and
    server handlers — enforced in CI by `npm run test:coverage` (aggregate
