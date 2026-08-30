@@ -5,6 +5,7 @@ import {
   clearExplicitSignOut,
   clearUserCaches,
   COLLAPSED_FEEDS_KEY,
+  REVEALED_SPOILERS_KEY,
   itemStateKey,
   markExplicitSignOut,
   outboxKey,
@@ -49,6 +50,7 @@ describe('clearUserCaches', () => {
     window.localStorage.setItem(rqCacheKey('u2'), 'keep'); // another user's data
     window.localStorage.setItem(outboxKey('u2'), 'keep'); // another user's outbox
     window.localStorage.setItem(COLLAPSED_FEEDS_KEY, '["feed-1"]'); // subscription-derived
+    window.localStorage.setItem(REVEALED_SPOILERS_KEY, '["item-1"]'); // ditto
 
     const del = vi.fn().mockResolvedValue(true);
     vi.stubGlobal('caches', { delete: del });
@@ -60,8 +62,12 @@ describe('clearUserCaches', () => {
     // The departing user's queued offline writes are purged too.
     expect(window.localStorage.getItem(outboxKey('u1'))).toBeNull();
     // The collapsed-feeds set is subscription-derived, so it must not survive an
-    // account change on a shared device (guardrail #8).
+    // account change on a shared device (guardrail #8). The revealed-spoilers
+    // set names items one account subscribed to and chose to look at — same
+    // rule, and it would tell the next reader which headlines the last one
+    // peeked at.
     expect(window.localStorage.getItem(COLLAPSED_FEEDS_KEY)).toBeNull();
+    expect(window.localStorage.getItem(REVEALED_SPOILERS_KEY)).toBeNull();
     // A different user's persisted data is untouched.
     expect(window.localStorage.getItem(rqCacheKey('u2'))).toBe('keep');
     expect(window.localStorage.getItem(outboxKey('u2'))).toBe('keep');

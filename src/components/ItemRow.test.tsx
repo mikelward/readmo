@@ -22,6 +22,7 @@ import {
   resetReadingPrefsCacheForTest,
   useEffectiveHideSpoilers,
 } from '../hooks/useReadingPrefs';
+import { resetRevealedSpoilersCacheForTest } from '../hooks/useRevealedSpoilers';
 import type { FeedItem } from '../lib/types';
 
 /** Surfaces the router's current path so a test can assert in-app navigation
@@ -1099,10 +1100,12 @@ describe('ItemRow', () => {
     beforeEach(() => {
       window.localStorage.clear();
       resetReadingPrefsCacheForTest();
+      resetRevealedSpoilersCacheForTest();
     });
     afterEach(() => {
       window.localStorage.clear();
       resetReadingPrefsCacheForTest();
+      resetRevealedSpoilersCacheForTest();
     });
 
     it('shows the rewrite and a marker when the setting is on (default) and caller allowed', () => {
@@ -1290,6 +1293,26 @@ describe('ItemRow', () => {
         'EPL MNU v ARS spoiler',
         'Man Utd beat Arsenal 3-1 to go top',
       ]);
+    });
+
+    it('stays revealed across a remount', async () => {
+      // A refresh, a pull-to-refresh, a sort/group re-key and a PWA relaunch all
+      // remount the row. Re-hiding a headline the reader has already read is
+      // friction with nothing behind it — the knowledge doesn't come back with
+      // the concealment.
+      const user = userEvent.setup();
+      const { unmount } = renderWithProviders(<ItemRow feedItem={SPOILER_ITEM} />);
+      await user.click(screen.getByTestId('item-title'));
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'Man Utd beat Arsenal 3-1 to go top',
+      );
+      unmount();
+
+      renderWithProviders(<ItemRow feedItem={SPOILER_ITEM} />);
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'Man Utd beat Arsenal 3-1 to go top',
+      );
+      expect(screen.queryByTestId('item-spoiler-flag')).toBeNull();
     });
 
     it('re-hides a tapped row when the session toggle re-hides everything', async () => {

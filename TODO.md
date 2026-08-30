@@ -324,6 +324,17 @@ permanent by default. Each is cheap to change.
 ## UI / layout
 
 
+- **Decide whether a revealed spoiler should sync across devices.** Shipped
+  per-device (`readmo:revealed-spoilers`, `useRevealedSpoilers`) — enough for
+  the ask, which was surviving a refresh. Syncing is defensible: `opened`
+  already syncs, and once you have read a result, hiding it on your other
+  device is theatre. What it costs is the reason it isn't done: a column on
+  `item_state` (a migration plus a manual `make deploy`, guardrail 11's two
+  clocks) and a server write per headline merely glanced at, on a table whose
+  rows otherwise mean something durable — pinned, favorite, done, opened.
+  Cheap to add later: the client already keeps a set of item ids, so the change
+  is additive on both halves. Decide when there's a second device in play often
+  enough to notice.
 - **With auto-hide-on-scroll on, the relative bottom bar still sits directly
   under a short list rather than at the foot of the screen.** Codex P2 on PR
   #674. The one-viewport `.item-list__scroll-space` renders *after* the

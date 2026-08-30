@@ -39,6 +39,11 @@ const ITEM_STATE_BASE = 'readmo:item-state:v2';
 // prefs (theme/palette/font/text size, bottom-bar, list-layout default, debug
 // toggles) carry no user data and stay global.
 export const COLLAPSED_FEEDS_KEY = 'readmo:collapsed-feeds';
+// Item ids whose spoiler-free headline the reader has tapped to reveal (see
+// useRevealedSpoilers). Same shape and same reason as the collapsed set above:
+// one per-device key, but a list of items THIS account subscribes to and chose
+// to look at, so it must not survive an account change on a shared device.
+export const REVEALED_SPOILERS_KEY = 'readmo:revealed-spoilers';
 // Suffix SupabaseDataSource appends to the item-state key for its offline write
 // outbox. Defined here so clearUserCaches purges queued mutations with the rest
 // of a departing user's data (SPEC/AGENTS: the outbox is flushed-or-discarded on
@@ -237,6 +242,7 @@ export async function clearUserCaches(uid: string | null): Promise<void> {
     // Global (not uid-scoped), but subscription-derived — purge it so a departing
     // user's collapsed feeds don't carry into the next account on a shared device.
     window.localStorage.removeItem(COLLAPSED_FEEDS_KEY);
+    window.localStorage.removeItem(REVEALED_SPOILERS_KEY);
     // The synced reading-behavior prefs mirror the departing account's
     // user_settings row — account data, same rule (see the key comment above).
     clearSyncedSettingsKeys();
@@ -260,6 +266,7 @@ export async function clearUserCaches(uid: string | null): Promise<void> {
     window.localStorage.removeItem(itemStateKey(uid));
     window.localStorage.removeItem(outboxKey(uid));
     window.localStorage.removeItem(COLLAPSED_FEEDS_KEY);
+    window.localStorage.removeItem(REVEALED_SPOILERS_KEY);
     clearSyncedSettingsKeys();
   } catch {
     // ignore (storage unavailable/denied)
