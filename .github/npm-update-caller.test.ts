@@ -116,6 +116,24 @@ describe('npm-update caller', () => {
     expect(zizmor).toMatch(/^\s*workflow_dispatch:/m);
   });
 
+  it('opens the batch PR as a real collaborator, not as GITHUB_TOKEN', () => {
+    // The dispatch declarations above close one required check at a time,
+    // by name; this closes the class. A PR opened by GITHUB_TOKEN starts no
+    // `on: pull_request` workflow at all, so a required check nobody
+    // thought to name holds the batch open forever on a status nothing
+    // produces — no red tick, no explanation. With this secret the ordinary
+    // round runs for the batch PR like any other, covering checks added
+    // after this line was written. Losing the line is silent in the worst
+    // way: the batch keeps opening PRs, they just stop being checked.
+    //
+    // Matched under `secrets:` specifically -- the hub declares no such
+    // `with:` input, so the same line one block up would fail the call
+    // rather than downgrade the credential.
+    const secrets = workflow.match(/^ {4}secrets:\n((?: {6}.*\n?)+)/m);
+    expect(secrets).not.toBeNull();
+    expect(secrets![1]).toContain('token: ${{ secrets.NPM_UPDATE_PAT }}');
+  });
+
   it('keeps zizmor unfiltered by path, now that it is required', () => {
     // A workflow skipped by a `paths:` filter creates no check run at all,
     // and a ruleset waits on a missing required check rather than passing
