@@ -1,20 +1,22 @@
-# Advisory scan of the workflows with zizmor (https://docs.zizmor.sh).
-#
-# Advisory MEANS advisory: nothing requires this check, on purpose. Running
-# it fetches zizmor from PyPI, and a registry outage must not stall the merge
-# gate. A red run here is a finding to read, not a gate — ported from
+# Scan of the workflows with zizmor (https://docs.zizmor.sh) — ported from
 # mikelward/codex-review, which runs the same scan on itself.
 #
-# There is no `paths:` filter, even though the job is still advisory: making
-# it required is TODO.md's "Make `zizmor` a required check" item, and a
-# workflow filtered by paths creates NO check run at all on a non-matching
-# pull request (unlike a skipped job, which reports "skipped" and satisfies
-# a ruleset) -- so a required `zizmor` plus a path filter would leave any
-# pull request not touching `.github/**` waiting forever on a check nothing
-# reports. Widening the trigger now, ahead of the ruleset change, means the
-# job is already unfiltered by the time that item is actioned. The scan is
-# a free sub-minute job, so it simply runs on every pull request and every
-# push to main.
+# REQUIRED, as of 2026-08-30. It was advisory for most of its life, on the
+# argument that fetching zizmor from PyPI put a registry outage on the merge
+# path; the ruleset now requires it, so that cost is accepted and a PyPI
+# outage does stall merges here. #651 is why: the hand-rolled
+# "no expression is spliced into a `run:` script" test was retired in favor
+# of zizmor's `template-injection` audit, and a non-blocking scan is not a
+# replacement for a test that used to fail the build.
+#
+# There is no `paths:` filter, and now there cannot be one: a workflow
+# filtered by paths creates NO check run at all on a non-matching pull
+# request (unlike a skipped job, which reports "skipped" and satisfies a
+# ruleset), so a required `zizmor` plus a path filter would leave any pull
+# request not touching `.github/**` waiting forever. The filter was removed
+# ahead of the ruleset change for exactly this. The scan is a free
+# sub-minute job, so it simply runs on every pull request and every push to
+# main.
 #
 # The version is pinned because a new zizmor release adds audits, so an
 # unpinned run could turn red with no change in this repository. Bump it
@@ -24,21 +26,30 @@
 # Cost and reliability: PyPI is free, keyless, and unmetered, so this is
 # $0/month at any run volume. A cold pipx install-and-scan typically finishes
 # in well under a minute; the 5-minute timeout is headroom for a slow PyPI
-# resolve, not the expected case. The only new failure mode is a PyPI outage,
-# and it fails only this advisory job -- it cannot block a merge, since
-# nothing requires this check.
+# resolve, not the expected case. The one failure mode is a PyPI outage, and
+# now that the ruleset requires this check it blocks the merge rather than
+# failing quietly beside it -- the accepted cost of the check being real.
 #
 # `pull_request` lists its types explicitly because the default set lacks
 # `edited`: a retarget regenerates the merge ref against the new base while
 # the head -- and the green `zizmor` run already attached to it -- stays
 # put, so without `edited` the old target's scan would satisfy the new one
 # unexamined. Title and body edits re-run the scan too; redundant but cheap.
+#
+# `workflow_dispatch` is what keeps the weekly dependency batch mergeable.
+# That PR is opened by `GITHUB_TOKEN`, whose events start no workflows, so
+# `pull_request` never fires for it — and a required check that never runs
+# holds the PR open forever rather than failing it. mikelward/npm-update
+# dispatches this explicitly, named in npm-update.yml's `dispatch-workflows`;
+# the trigger has to be visible on the DEFAULT BRANCH for that call to
+# resolve, however the branch under test spells it.
 name: zizmor
 on:
   push:
     branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
