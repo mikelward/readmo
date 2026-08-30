@@ -11,10 +11,7 @@ import {
 import {
   useShowRowFavicon,
   useShowGroupFavicon,
-  useEffectiveHideSpoilers,
 } from '../hooks/useReadingPrefs';
-import { useCapabilities, canUseFullText } from '../hooks/useCapabilities';
-import { displayTitle } from '../lib/spoilerHeadline';
 import { FeedFavicon } from './FeedFavicon';
 import { ItemRow, type RightAction } from './ItemRow';
 import { ChevronRight, Sweep, Undo } from './icons';
@@ -173,10 +170,10 @@ export function ItemRows({
 }: Props) {
   const share = useShareItem();
   // Share the DISPLAYED headline, not the raw title, so a spoiler-hidden row
-  // doesn't leak the original scoreline into the share sheet (same gate the row
-  // renders with — see ItemRow / lib/spoilerHeadline).
-  const { hideSpoilers } = useEffectiveHideSpoilers();
-  const spoilerAllowed = canUseFullText(useCapabilities());
+  // doesn't leak the original scoreline into the share sheet. The row passes it
+  // out rather than this deciding again: only the row knows whether its own
+  // first-tap reveal has already opened that headline up (see ItemRow /
+  // lib/spoilerHeadline).
   // Feeds the user set to "open original" — their rows link straight to the
   // source website instead of the in-app reader. One shared subscriptions read
   // backs every row, deduped via React Query.
@@ -266,14 +263,11 @@ export function ItemRows({
           markDoneOnOpen={markDoneOnOpenFeeds.has(fi.item.feedId)}
           listLayout={listLayoutFeeds.get(fi.item.feedId)}
           showFavicon={showRowFavicon}
-          onShare={() =>
-            share({
-              title: displayTitle(fi.item, {
-                hideSpoilers,
-                allowed: spoilerAllowed,
-              }).text,
-              url: fi.item.url,
-            })
+          // The row hands over the headline it is showing: recomputing it here
+          // would miss its per-row reveal and share the rewrite out from under a
+          // row the reader had already opened up.
+          onShare={(_item, displayedTitle) =>
+            share({ title: displayedTitle, url: fi.item.url })
           }
           rightAction={undoAction ?? rightAction?.(fi)}
           onOpenReader={onOpenReader}

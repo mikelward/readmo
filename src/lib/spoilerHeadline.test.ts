@@ -41,4 +41,22 @@ describe('displayTitle', () => {
     expect(out.text).toBe(REWRITE);
     expect(out.rewritten).toBe(true);
   });
+
+  it('shows the original once this row has been revealed', () => {
+    const out = displayTitle(item(REWRITE), {
+      hideSpoilers: true,
+      allowed: true,
+      revealed: true,
+    });
+    // `rewritten: false` is what tells the row there is nothing left concealed —
+    // it drops the marker, and its next tap opens instead of revealing again.
+    expect(out).toEqual({ text: ORIGINAL, rewritten: false, original: ORIGINAL });
+  });
+
+  it('defaults to concealed when no reveal is passed', () => {
+    // Every other caller (the reader, any future one) gets the pre-reveal
+    // behavior without opting out of anything.
+    const out = displayTitle(item(REWRITE), { hideSpoilers: true, allowed: true });
+    expect(out.rewritten).toBe(true);
+  });
 });

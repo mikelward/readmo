@@ -1167,6 +1167,162 @@ describe('ItemRow', () => {
         'EPL MNU v ARS spoiler',
       );
     });
+
+    // Two taps on a concealed row: the first reveals the real headline in
+    // place, the second opens the article. The row body stays one tap zone
+    // either way (guardrail #2) — the reveal changes what the existing zone
+    // does on its first activation, it doesn't add a control.
+    it('reveals the real headline on the first row-body tap without opening', async () => {
+      const user = userEvent.setup();
+      const { source } = renderWithProviders(
+        <>
+          <ItemRow feedItem={SPOILER_ITEM} />
+          <LocationProbe />
+        </>,
+      );
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'EPL MNU v ARS spoiler',
+      );
+
+      await user.click(screen.getByTestId('item-title'));
+
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'Man Utd beat Arsenal 3-1 to go top',
+      );
+      // Nothing hidden is left, so the marker goes with it.
+      expect(screen.queryByTestId('item-spoiler-flag')).toBeNull();
+      // The reveal is not an open: no navigation, and — the part that would
+      // gray out a row the reader has only just looked at — no Opened.
+      expect(screen.getByTestId('location')).not.toHaveTextContent('/item/item-1');
+      expect(source.stateStore.get('item-1').opened).toBe(false);
+    });
+
+    it('opens the article on the second row-body tap', async () => {
+      const user = userEvent.setup();
+      const { source } = renderWithProviders(
+        <>
+          <ItemRow feedItem={SPOILER_ITEM} />
+          <LocationProbe />
+        </>,
+      );
+      await user.click(screen.getByTestId('item-title'));
+      await user.click(screen.getByTestId('item-title'));
+
+      expect(screen.getByTestId('location')).toHaveTextContent('/item/item-1');
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+    });
+
+    it('opens on the first tap when the row was never concealing anything', async () => {
+      // The guard keys on what the row is currently hiding, not on whether a
+      // rewrite exists: with the setting off there is nothing to reveal, so the
+      // first tap must open exactly as it does on any other row.
+      window.localStorage.setItem(HIDE_SPORTS_SPOILERS_KEY, '0');
+      resetReadingPrefsCacheForTest();
+      const user = userEvent.setup();
+      const { source } = renderWithProviders(
+        <>
+          <ItemRow feedItem={SPOILER_ITEM} />
+          <LocationProbe />
+        </>,
+      );
+      await user.click(screen.getByTestId('item-title'));
+
+      expect(screen.getByTestId('location')).toHaveTextContent('/item/item-1');
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+    });
+
+    it('lets a modified click through to a new tab rather than revealing', async () => {
+      // A ctrl/cmd-click opens in a NEW tab, which reveals the result by showing
+      // the article. Swallowing it for a reveal would break the one gesture
+      // whose point is "not here, over there" — and leave the reader on a list
+      // whose row silently changed instead.
+      const user = userEvent.setup();
+      renderWithProviders(
+        <>
+          <ItemRow feedItem={SPOILER_ITEM} />
+          <LocationProbe />
+        </>,
+      );
+      await user.keyboard('{Control>}');
+      await user.click(screen.getByTestId('item-title'));
+      await user.keyboard('{/Control}');
+
+      // Still concealed here: the new tab is where the result shows up.
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'EPL MNU v ARS spoiler',
+      );
+      expect(screen.getByTestId('item-spoiler-flag')).toBeInTheDocument();
+    });
+
+    // The row owns the reveal, so it also owns which headline a share carries:
+    // ItemRows takes the row's word for it rather than re-deciding, which would
+    // send the rewrite out from under a row the reader had already opened up.
+    // SPEC: a list share sends what the list shows.
+    it('shares the concealed headline, then the revealed one', async () => {
+      const shared: string[] = [];
+      const user = userEvent.setup();
+      renderWithProviders(
+        <ItemRow
+          feedItem={SPOILER_ITEM}
+          enableSwipe={false}
+          onShare={(_item, displayedTitle) => shared.push(displayedTitle)}
+        />,
+      );
+
+      const openShare = async () => {
+        const body = screen.getByTestId('item-title');
+        body.focus();
+        await user.keyboard(' ');
+        const menu = await screen.findByTestId('item-row-menu');
+        await user.click(within(menu).getByTestId('item-row-menu-share'));
+      };
+
+      await openShare();
+      expect(shared).toEqual(['EPL MNU v ARS spoiler']);
+
+      await user.click(screen.getByTestId('item-title'));
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'Man Utd beat Arsenal 3-1 to go top',
+      );
+
+      await openShare();
+      expect(shared).toEqual([
+        'EPL MNU v ARS spoiler',
+        'Man Utd beat Arsenal 3-1 to go top',
+      ]);
+    });
+
+    it('re-hides a tapped row when the session toggle re-hides everything', async () => {
+      // The eye's "re-hide all" has to mean all — a row opened up by its own tap
+      // would otherwise sit there still showing the scoreline.
+      function SpoilerToggle() {
+        const { toggle } = useEffectiveHideSpoilers();
+        return (
+          <button type="button" onClick={toggle}>
+            toggle
+          </button>
+        );
+      }
+      const user = userEvent.setup();
+      renderWithProviders(
+        <>
+          <SpoilerToggle />
+          <ItemRow feedItem={SPOILER_ITEM} />
+        </>,
+      );
+      await user.click(screen.getByTestId('item-title'));
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'Man Utd beat Arsenal 3-1 to go top',
+      );
+
+      // Reveal-all, then re-hide-all.
+      await user.click(screen.getByRole('button', { name: 'toggle' }));
+      await user.click(screen.getByRole('button', { name: 'toggle' }));
+
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'EPL MNU v ARS spoiler',
+      );
+    });
   });
 
   describe('article layout variants', () => {
@@ -1228,7 +1384,7 @@ describe('ItemRow', () => {
       };
       renderLayout('excerpt', spoiler);
       const excerpt = screen.getByTestId('item-excerpt');
-      expect(excerpt).toHaveTextContent('Spoilers hidden. Tap to see article.');
+      expect(excerpt).toHaveTextContent('Spoilers hidden. Tap to reveal.');
       // The real body — and the scoreline in it — never renders.
       expect(excerpt).not.toHaveTextContent('3-1');
       expect(excerpt).toHaveClass('item-row__excerpt--spoiler');
