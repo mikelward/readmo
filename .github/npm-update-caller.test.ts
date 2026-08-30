@@ -27,6 +27,7 @@ const consumerCheck = readFileSync(
   fileURLToPath(new URL('./workflows/codex-review-check.yml', import.meta.url)),
   'utf8',
 );
+const zizmor = readFileSync(fileURLToPath(new URL('./workflows/zizmor.yml', import.meta.url)), 'utf8');
 
 describe('npm-update caller', () => {
   it('can be run by hand as well as on the schedule', () => {
@@ -99,5 +100,28 @@ describe('npm-update caller', () => {
     // Losing this trigger leaves the weekly PR's Codex pin unverified with
     // no error anywhere: the dispatch just silently has nothing to start.
     expect(consumerCheck).toMatch(/^\s*workflow_dispatch:/m);
+  });
+
+  it('declares zizmor.yml for dispatch, and keeps it dispatchable', () => {
+    // The third required check, and the only one the hub does NOT dispatch
+    // unconditionally — so both halves live here and both are load-bearing.
+    // Drop the declaration and the weekly PR sits pending forever on a
+    // required `zizmor` nothing starts; drop the trigger and the hub's
+    // `gh workflow run zizmor.yml` finds nothing to run, which the batch
+    // reports in its PR body but cannot fix. Neither half fails anything on
+    // an ordinary PR, where `pull_request` still starts the scan — the gap
+    // only opens on the GITHUB_TOKEN-authored batch, once a week,
+    // unattended.
+    expect(workflow).toContain('dispatch-workflows: zizmor.yml');
+    expect(zizmor).toMatch(/^\s*workflow_dispatch:/m);
+  });
+
+  it('keeps zizmor unfiltered by path, now that it is required', () => {
+    // A workflow skipped by a `paths:` filter creates no check run at all,
+    // and a ruleset waits on a missing required check rather than passing
+    // it — so a filter here would make every PR touching only src/ or
+    // supabase/ permanently unmergeable. Asserted because the filter was
+    // removed by hand and nothing else would notice it coming back.
+    expect(zizmor).not.toMatch(/^\s*paths:/m);
   });
 });

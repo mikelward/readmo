@@ -610,7 +610,9 @@ permanent by default. Each is cheap to change.
   app only — `edge`'s Deno functions have no `package.json`/lockfile for an
   npm tool to read, needs its own answer, not investigated. Work out
   placement and gate/lanes wiring when actually building this.
-- [ ] **Make `zizmor` a required check, not just advisory.** #651 retired
+- [x] ~~**Make `zizmor` a required check, not just advisory.**~~ Done in
+  this repo, 2026-08-30; the sub-items below record how, and what the
+  sibling repos still owe. #651 retired
   the hand-rolled "no expression is spliced into a run: script" test in
   `npm-update.test.ts` in favor of zizmor's `template-injection` audit —
   correctly, since the regex missed real cases across six separate rounds
@@ -631,21 +633,16 @@ permanent by default. Each is cheap to change.
   - [x] ~~Then: `repo-rules mikelward/readmo` (now defaults to `lanes codex
         zizmor`)~~ Done by the maintainer, 2026-08-30 — the ruleset now
         requires `lanes` + `zizmor` and no longer requires `gate`.
-  - [ ] **OVERDUE, and now live: a dispatch route for the weekly dependency
-        PR.** This was written as a prerequisite ("before the flip") and the
-        flip happened first, so the gap is no longer hypothetical: the batch
-        PR is authored with `GITHUB_TOKEN`, whose events start no workflows
-        — the same trap the batch's explicit ci.yml and codex-review-check
-        dispatches exist for — so the next weekly batch (Saturdays 06:17
-        UTC) will open and sit permanently pending on a required `zizmor`
-        status nothing can produce. Codex flagged it here on #677, and on
-        the identical gedmap and newshacker changes before that. Two halves:
-        give `zizmor.yml` a `workflow_dispatch` trigger, and teach
-        mikelward/npm-update's reusable workflow to dispatch it alongside
-        ci.yml — a shared-mechanism change that lands in that repository,
-        piloted through one consumer per its conventions. Until both land,
-        the stopgap is dropping `zizmor` back out of the ruleset (a
-        maintainer action; no ruleset API access from an agent session).
-        Note `zizmor.yml`'s own header still says nothing requires it and a
-        PyPI outage therefore cannot stall a merge — that is now false, and
-        the comment needs correcting with whichever way this is resolved.
+  - [x] ~~A dispatch route for the weekly dependency PR.~~ Done — the flip
+        landed ahead of this prerequisite, which made it live breakage
+        rather than sequencing (Codex caught it on #677), so both halves
+        were built: `zizmor.yml` now carries `workflow_dispatch`, and
+        mikelward/npm-update grew a `dispatch-workflows` input that this
+        repo's caller sets to `zizmor.yml`. The batch PR is authored with
+        `GITHUB_TOKEN`, whose events start no workflows, so without it the
+        Saturday batch would have opened and sat pending forever on a
+        required check nothing could produce. readmo was the single pilot
+        consumer, per that repo's conventions; the other consumers need the
+        same declaration only if their own rulesets start requiring
+        `zizmor`. `zizmor.yml`'s header no longer claims nothing requires
+        it, and its cost note now says a PyPI outage blocks a merge.

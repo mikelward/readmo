@@ -6,6 +6,9 @@ name: npm update
 # need (its own top-level permissions are empty by design; each job declares
 # only what it needs, capped by what's granted here).
 #
+# dispatch-workflows covers the checks the ruleset requires that the batch
+# would otherwise never start; see that input's comment below.
+#
 # regenerate/regenerated-files keep supabase/functions/import_map.json in
 # sync with package-lock.json: the Edge runtime resolves the import map, not
 # package.json, and import_map.test.ts (run by the dispatched ci.yml) fails
@@ -39,3 +42,10 @@ jobs:
     with:
       regenerate: npm run import-map:sync
       regenerated-files: supabase/functions/import_map.json
+      # The batch PR is opened by `GITHUB_TOKEN`, whose events start no
+      # workflows, so `zizmor.yml`'s own `pull_request` trigger never fires
+      # for it — and the ruleset requires `zizmor`, so without this the PR
+      # would sit pending forever on a check nothing can produce. ci.yml and
+      # codex-review-check.yml are dispatched unconditionally by the reusable
+      # workflow; anything else the ruleset requires is named here.
+      dispatch-workflows: zizmor.yml
