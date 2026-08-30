@@ -324,6 +324,23 @@ permanent by default. Each is cheap to change.
 ## UI / layout
 
 
+- **With auto-hide-on-scroll on, the relative bottom bar still sits directly
+  under a short list rather than at the foot of the screen.** Codex P2 on PR
+  #674. The one-viewport `.item-list__scroll-space` renders *after* the
+  relative bar (SPEC *Bottom action bar* — "It sits below the relative bottom
+  bar"), so the page column has no free space for the bar's `margin-top: auto`
+  to absorb, and a three-row list puts the bar mid-screen above a viewport of
+  blank — the symptom #674 exists to remove, in the one configuration it
+  doesn't reach. Two SPEC decisions are in tension and neither fix is free:
+  moving the tail above the bar (as the pinned position already does) makes
+  the bar the last flow element, but then Back-to-top and More are a blank
+  viewport away from the last row; taking the tail out of flow
+  (`position: absolute; top: 100%` on a positioned host) keeps the order and
+  the slack, but abspos scrollable overflow, scroll anchoring, and the sweep
+  observer all want a device check that the sandbox can't give. Deferred
+  rather than guessed because auto-hide defaults **off**, so this needs both a
+  non-default setting and a list shorter than the screen. Decide the trade-off,
+  then fix and record it in SPEC.
 - **`ItemRowMenu`'s popover items are 36px tall, below the 44px touch floor
   guardrail 2 requires — app-wide, not just one call site.** Found via Codex
   on PR #660 (reader Filter…), but verified pre-existing: `popover = open &&

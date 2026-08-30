@@ -19,7 +19,11 @@ interface Props {
  * toolbar here makes it structural — a page can't forget it. */
 export function ListPage({ header, actions = false, children }: Props) {
   return (
-    <div>
+    // `list-toolbar-host` (ListToolbar.css) grows the shell to the foot of
+    // `.app-main`'s column, so the bottom bar sits at the bottom of the screen
+    // rather than mid-page when the body is a spinner, an empty state, or a
+    // handful of rows.
+    <div className="list-toolbar-host">
       {header != null ? <div className="page-header">{header}</div> : null}
       {children}
       <ListToolbar placement="bottom" actions={actions} />

@@ -1,7 +1,7 @@
-.item-list {
-  display: flex;
-  flex-direction: column;
-}
+/* The list's own column layout (and the growth that keeps its bottom bar at the
+   foot of the screen rather than the middle of the page) comes from
+   `.list-toolbar-host`, which every host of a bottom bar carries — see
+   ListToolbar.css. */
 
 .item-list__rows,
 .item-list__section-rows {

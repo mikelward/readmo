@@ -3345,7 +3345,11 @@ export function ItemList({
 
   return (
     <div
-      className="item-list"
+      // `list-toolbar-host` grows this container to the foot of `.app-main`'s
+      // column, so the bottom bar lands at the bottom of the screen — never
+      // mid-page — while the rows above it are a refresh spinner, an empty
+      // result, or a short list (ListToolbar.css).
+      className="item-list list-toolbar-host"
       // Pin group-by-feed section headers below the measured top chrome. Set
       // only while grouping (the headers exist) and once measured (>0), so other
       // views and first paint fall back to the CSS default in ItemList.css.
