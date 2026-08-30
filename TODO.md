@@ -24,6 +24,19 @@ Calls that haven't been settled — guesses autopilot made without asking, and
 decisions deliberately postponed — recorded so they don't silently become
 permanent by default. Each is cheap to change.
 
+- **`grafana/README.md` and `infra/cf-gateway/README.md` are now code, not
+  docs** (autopilot, 2026-08-30). Narrowing `.github/lanes.conf` from
+  `docs **/*.md` to `docs *.md` + `docs docs/**/*.md` — the standard
+  mikelward/lanes' README states — moves the two markdown files that are
+  neither at the root nor under `docs/` onto the code lane. **Alternative:**
+  add `docs grafana/*.md` and `docs infra/**/*.md` to keep them on the docs
+  lane. **Not taken**, because a per-path exception list is exactly what
+  lanes' README warns decays silently, and both directories hold
+  configuration *and* tests — a README edit there sits beside things CI
+  validates, which is the case the narrowing exists for. The cost is a full
+  CI run on a prose-only edit to either file. **Reversible** by adding those
+  two lines if that turns out to happen often enough to matter.
+
 - **DEFERRED: US-spelling enforcement (owner call, 2026-08-18).** gedmap
   enforces its US-English rule with a dictionary-difference test
   (usSpelling.test.js: an offense is a word valid in en-GB AND invalid in

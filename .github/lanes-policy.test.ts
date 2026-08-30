@@ -51,7 +51,8 @@ describe('the lane policy', () => {
       { verdict: 'code', pattern: 'api/**' },
       { verdict: 'code', pattern: 'public/**' },
       { verdict: 'code', pattern: 'supabase/**' },
-      { verdict: 'docs', pattern: '**/*.md' },
+      { verdict: 'docs', pattern: '*.md' },
+      { verdict: 'docs', pattern: 'docs/**/*.md' },
     ]);
     // The WHOLE directives object, not per-key reads: a newly added directive
     // changes classify/gate behavior, so an unexpected key fails here rather
@@ -59,12 +60,40 @@ describe('the lane policy', () => {
     expect(directives).toEqual({
       prefixes: ['docs', 'todo'],
       'dispatch-without-pr': ['refuse'],
+      'lint-title': ['no'],
     });
   });
 
-  it('classifies markdown outside the shipped trees as docs', () => {
-    for (const path of ['README.md', 'SPEC.md', 'TODO.md', 'docs/notes.md']) {
+  it('classifies root markdown and the docs/ tree as docs', () => {
+    for (const path of [
+      'README.md',
+      'SPEC.md',
+      'TODO.md',
+      'docs/notes.md',
+      // `docs/**/*.md` crosses `/`, so the tree rule reaches every depth.
+      // Writing it `docs/*.md` would strand this one on the code lane.
+      'docs/a/b/deep.md',
+    ]) {
       expect(classify(path), path).toBe('docs');
+    }
+  });
+
+  it('does not treat markdown as docs merely for its extension', () => {
+    // The narrowed rules replaced a bare `**/*.md`, which made a markdown
+    // file documentation at ANY depth. Being documentation is now a matter
+    // of where a file lives: the root, or the docs/ tree. Markdown anywhere
+    // else can sit beside code or config that CI validates, so it stays on
+    // the code lane. The first two exist today and change lane with this
+    // rule; the rest do not, which is the point -- the rule has to hold for
+    // a tree nobody has added yet.
+    for (const path of [
+      'grafana/README.md',
+      'infra/cf-gateway/README.md',
+      'scripts/README.md',
+      'a/b/notes.md',
+      'notdocs/README.md',
+    ]) {
+      expect(classify(path), path).toBe('code');
     }
   });
 
