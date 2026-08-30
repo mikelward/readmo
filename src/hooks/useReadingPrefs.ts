@@ -29,6 +29,7 @@ import {
   type SyncedSettingKey,
 } from '../lib/settingsSync';
 import { normalizeFilter } from '../lib/titleFilter';
+import { clearRevealedSpoilers } from './useRevealedSpoilers';
 import { usePersistentStore } from './usePersistentStore';
 
 // Re-exported so existing callers can keep importing `ListLayout` from here; the
@@ -481,10 +482,15 @@ export function useEffectiveHideSpoilers(): {
     getSpoilerSessionOverride,
   );
   const hideSpoilers = override ?? hideSportsSpoilers;
-  const toggle = useCallback(
-    () => setSpoilerSessionOverride(!hideSpoilers),
-    [hideSpoilers],
-  );
+  const toggle = useCallback(() => {
+    const next = !hideSpoilers;
+    // Re-hiding drops every remembered per-row reveal: "re-hide all" that left
+    // rows tapped open earlier still showing their scorelines wouldn't be all.
+    // Here rather than in the rows so it happens once, and so a row that isn't
+    // even mounted (below the fold, another view) is covered too.
+    if (next) clearRevealedSpoilers();
+    setSpoilerSessionOverride(next);
+  }, [hideSpoilers]);
   return { hideSpoilers, toggle };
 }
 

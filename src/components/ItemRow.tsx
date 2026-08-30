@@ -23,6 +23,7 @@ import { filterCandidates, normalizeFilter } from '../lib/titleFilter';
 import { orderCategories } from '../lib/categories';
 import { leadImageUrl, itemPreviewText } from '../lib/itemPreview';
 import { useCapabilities, canUseFullText } from '../hooks/useCapabilities';
+import { useRevealedSpoilers } from '../hooks/useRevealedSpoilers';
 import { displayTitle } from '../lib/spoilerHeadline';
 import { ItemRowMenu, type ItemRowMenuItem } from './ItemRowMenu';
 import { TooltipButton } from './TooltipButton';
@@ -151,23 +152,13 @@ export function ItemRow({
   // avoid firing Edge calls — here there's no request, just which text to paint.)
   const spoilerAllowed = canUseFullText(useCapabilities());
   // First tap on a concealed row reveals its real headline; only the second tap
-  // opens the article (see handleSpoilerReveal). Per row, and deliberately
-  // ephemeral: it lives in the row, so a re-key (sort, group, view change) drops
-  // it back to concealed rather than quietly carrying a reveal into a list the
-  // reader didn't ask to open up.
-  const [spoilerRevealed, setSpoilerRevealed] = useState(false);
-  // The session eye re-hiding everything takes a per-row reveal back with it —
-  // "re-hide all" that left a tapped row showing its scoreline wouldn't be all.
-  // Adjusted during render off the previous value (React's documented shape for
-  // this) rather than in an effect: an effect would paint the stale reveal for a
-  // frame first, and the flip is a state change we can answer synchronously. A
-  // true→false→true round trip returns the same value, so the reset has to key
-  // on the flip itself, not on comparing `hideSpoilers` to what it was at reveal.
-  const [hideSpoilersWas, setHideSpoilersWas] = useState(hideSpoilers);
-  if (hideSpoilersWas !== hideSpoilers) {
-    setHideSpoilersWas(hideSpoilers);
-    if (hideSpoilers) setSpoilerRevealed(false);
-  }
+  // opens the article (see handleSpoilerReveal). Remembered per device rather
+  // than in the row: a refresh, a pull-to-refresh, a sort/group re-key and a
+  // relaunch all remount this component, and re-hiding a headline the reader has
+  // already read is friction with nothing behind it. The eye's re-hide is what
+  // clears the memory (useRevealedSpoilers / useEffectiveHideSpoilers).
+  const { isRevealed, reveal } = useRevealedSpoilers();
+  const spoilerRevealed = isRevealed(item);
   const headline = displayTitle(item, {
     hideSpoilers,
     allowed: spoilerAllowed,
@@ -193,10 +184,10 @@ export function ItemRow({
         return false;
       }
       e.preventDefault();
-      setSpoilerRevealed(true);
+      reveal(item);
       return true;
     },
-    [headline.rewritten],
+    [headline.rewritten, reveal, item],
   );
   const source = feed.title || formatDisplayDomain(item.url);
   // Surface the article's domain next to the feed name on aggregator feeds

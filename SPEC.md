@@ -3203,10 +3203,20 @@ page's discipline is unchanged.
     row you merely looked at doesn't gray out. It **adds no tap zone**
     (guardrail #2): the row body is one zone whose first activation now means
     something else. A **modified or middle click** is left alone — it opens in a
-    new tab, which reveals the result by showing the article. The reveal is per
-    row and lasts for the session; the toolbar eye's **re-hide takes revealed
-    rows back with it**, since "re-hide all" that left one row showing wouldn't
-    be all. **The reader always shows the real
+    new tab, which reveals the result by showing the article.
+  - **A reveal is remembered, per device.** It survives a refresh, a
+    pull-to-refresh, a sort or grouping change and a relaunch: re-hiding a
+    headline you have already read is friction with nothing behind it, since the
+    concealment comes back but the knowledge doesn't. The toolbar eye's
+    **re-hide clears every remembered reveal** — "re-hide all" that left rows
+    tapped open earlier still showing their scorelines wouldn't be all. Kept to
+    the device rather than synced: syncing "I peeked at this one" is a larger
+    claim, and one worth deciding on its own (`TODO.md`). What is remembered is
+    the **headline**, not the row: a publisher can update an article in place,
+    and a row whose headline changes comes back concealed rather than showing a
+    result nobody asked for. The remembered set is capped and, like the
+    collapsed-feed sections, purged on an account change — it names items one
+    account chose to look at (guardrail #8). **The reader always shows the real
     headline** (no rewrite, no marker): once the article is open its body reveals
     the result anyway, so de-spoilering the headline above it buys nothing.
     Accordingly, **Share from a list row** sends the displayed headline so a
