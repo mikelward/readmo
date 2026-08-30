@@ -89,7 +89,11 @@ interface Props {
    * set it wins over the app-wide Article layout setting for this row; when
    * omitted the row uses the app-wide setting. See ItemRows / useListLayoutFeeds. */
   listLayout?: ListLayout;
-  onShare?: (item: FeedItem) => void;
+  /** `displayedTitle` is the headline this row is showing right now — the
+   * spoiler-free rewrite while concealed, the original once the first tap has
+   * revealed it. The row is the only place that knows which, since the reveal
+   * lives here, and SPEC has a list share send what the list shows. */
+  onShare?: (item: FeedItem, displayedTitle: string) => void;
   /** Fired when this row opens the *in-app reader* (body tap in reader mode, or
    * the reader button on an external-open row) — never on an external open. The
    * feed view uses it to warm its own query cache while the reader is up, so the
@@ -146,11 +150,54 @@ export function ItemRow({
   // the FETCH gate `useFullTextAllowed`, which must stay closed while loading to
   // avoid firing Edge calls — here there's no request, just which text to paint.)
   const spoilerAllowed = canUseFullText(useCapabilities());
+  // First tap on a concealed row reveals its real headline; only the second tap
+  // opens the article (see handleSpoilerReveal). Per row, and deliberately
+  // ephemeral: it lives in the row, so a re-key (sort, group, view change) drops
+  // it back to concealed rather than quietly carrying a reveal into a list the
+  // reader didn't ask to open up.
+  const [spoilerRevealed, setSpoilerRevealed] = useState(false);
+  // The session eye re-hiding everything takes a per-row reveal back with it —
+  // "re-hide all" that left a tapped row showing its scoreline wouldn't be all.
+  // Adjusted during render off the previous value (React's documented shape for
+  // this) rather than in an effect: an effect would paint the stale reveal for a
+  // frame first, and the flip is a state change we can answer synchronously. A
+  // true→false→true round trip returns the same value, so the reset has to key
+  // on the flip itself, not on comparing `hideSpoilers` to what it was at reveal.
+  const [hideSpoilersWas, setHideSpoilersWas] = useState(hideSpoilers);
+  if (hideSpoilersWas !== hideSpoilers) {
+    setHideSpoilersWas(hideSpoilers);
+    if (hideSpoilers) setSpoilerRevealed(false);
+  }
   const headline = displayTitle(item, {
     hideSpoilers,
     allowed: spoilerAllowed,
+    revealed: spoilerRevealed,
   });
   const title = headline.text || '[untitled]';
+
+  // First tap on a row that is still concealing a spoiler reveals it in place
+  // instead of opening; the second tap opens as usual. Returns true when it
+  // consumed the tap, so each row-body handler can bail before its own
+  // mark-opened side effects run — revealing a headline is not reading the
+  // article, and marking it Opened (or Done, on a mark-done-on-open feed) would
+  // grey out a row the reader has only just looked at.
+  //
+  // A modified or non-primary click is left alone: it opens in a NEW tab, which
+  // reveals the result by showing the article, and swallowing it would break the
+  // one gesture whose whole point is "not here, over there". Same rule React
+  // Router applies to its own navigation, mirrored in handleOpenReaderBody.
+  const handleSpoilerReveal = useCallback(
+    (e: MouseEvent) => {
+      if (!headline.rewritten) return false;
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+        return false;
+      }
+      e.preventDefault();
+      setSpoilerRevealed(true);
+      return true;
+    },
+    [headline.rewritten],
+  );
   const source = feed.title || formatDisplayDomain(item.url);
   // Surface the article's domain next to the feed name on aggregator feeds
   // (Hacker News, Reddit) whose rows link out elsewhere. Only when there's a
@@ -221,7 +268,10 @@ export function ItemRow({
   const handlePin = useCallback(() => set('pinned', true), [set]);
   const handleTogglePin = useCallback(() => toggle('pinned'), [toggle]);
   const handleMarkUnread = useCallback(() => set('opened', false), [set]);
-  const handleShare = useCallback(() => onShare?.(feedItem), [onShare, feedItem]);
+  const handleShare = useCallback(
+    () => onShare?.(feedItem, headline.text),
+    [onShare, feedItem, headline.text],
+  );
   const { titleFilters, addTitleFilter } = useTitleFilters();
   // The filter submenu: this item's own categories up front, then
   // capitalized terms from the title, the rest of its content words behind
@@ -319,6 +369,17 @@ export function ItemRow({
       if (link?.linked) markReverseSyncPending(item.id);
     }
   }, [set, markDoneOnOpen, externalIsNewshacker, item.id, queryClient]);
+  // The external-open row body carries the same first-tap reveal as the reader
+  // one: the guard runs first so a reveal doesn't mark the item Opened (and, on
+  // a mark-done-on-open feed, Done) for an article nobody has gone to yet.
+  const handleOpenExternalBody = useCallback(
+    (e: MouseEvent) => {
+      if (handleSpoilerReveal(e)) return;
+      markOpenedExternal();
+    },
+    [handleSpoilerReveal, markOpenedExternal],
+  );
+
   // The `o` keyboard shortcut always opens the ORIGINAL article (item.url) in a
   // new tab, regardless of the feed's open mode — so it must NOT apply the
   // newshacker-handoff side effects markOpenedExternal does for an
@@ -343,6 +404,7 @@ export function ItemRow({
   // runs the same open side effects — mark Opened, and warm the feed cache.
   const handleOpenReaderBody = useCallback(
     (e: MouseEvent) => {
+      if (handleSpoilerReveal(e)) return;
       markOpened();
       // Only warm the cache when the click will navigate THIS tab (unmount →
       // Back-remount). A modified or non-primary click (Ctrl/Cmd/Shift/Alt, or a
@@ -362,7 +424,7 @@ export function ItemRow({
         onOpenReader();
       }
     },
-    [markOpened, onOpenReader],
+    [handleSpoilerReveal, markOpened, onOpenReader],
   );
 
   const openMenu = useCallback(() => {
@@ -610,10 +672,13 @@ export function ItemRow({
           // Non-interactive marker (NOT a tap zone — guardrail #2): flags that the
           // headline was rewritten to hide a sports result. role="img" + label so
           // it's announced; native `title` reveals the original on hover/long-press.
+          // The label names the row-body tap because that gesture is otherwise
+          // invisible to a screen reader: the body is still a link, and its first
+          // activation reveals rather than navigates.
           <span
             className="item-row__spoiler-flag"
             role="img"
-            aria-label="Spoiler-free headline"
+            aria-label="Spoiler-free headline, tap to reveal"
             title={headline.original}
             data-testid="item-spoiler-flag"
           >
@@ -626,13 +691,15 @@ export function ItemRow({
         // (`headline.rewritten`), the feed body almost always repeats the
         // result the rewrite just concealed — so swap the preview for a
         // placeholder rather than leak the scoreline in the excerpt. The
-        // row-body link still opens the full article on tap.
+        // placeholder names what the tap now does: the first one reveals this
+        // row in place (headline, excerpt and thumbnail together), and only the
+        // second opens the article.
         headline.rewritten ? (
           <span
             className="item-row__excerpt item-row__excerpt--spoiler"
             data-testid="item-excerpt"
           >
-            Spoilers hidden. Tap to see article.
+            Spoilers hidden. Tap to reveal.
           </span>
         ) : (
           <span className="item-row__excerpt" data-testid="item-excerpt">
@@ -720,7 +787,7 @@ export function ItemRow({
             rel={externalIsNewshacker ? undefined : 'noopener noreferrer'}
             className="item-row__body"
             data-testid="item-title"
-            onClick={markOpenedExternal}
+            onClick={handleOpenExternalBody}
             onKeyDown={handleRowKeyDown}
           >
             {bodyContent}

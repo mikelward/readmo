@@ -13,6 +13,7 @@ import {
   BOTTOM_BAR_KEY,
   HIDE_ON_SCROLL_KEY,
   HIDE_ON_SCROLL_REMOVE_KEY,
+  HIDE_SPORTS_SPOILERS_KEY,
   TITLE_FILTERS_KEY,
   resetReadingPrefsCacheForTest,
 } from '../hooks/useReadingPrefs';
@@ -8578,6 +8579,21 @@ describe('ItemList', () => {
     // Back-remount paints a settled list instead of reflowing under a tap. The
     // prefetch honors the same staleTime TTL: stale feeds refetch early, fresh
     // ones are left alone.
+    //
+    // The seed's newest home item is the World Cup spoiler row, and a concealed
+    // row spends its first tap on the reveal (ItemRow). These cases are about
+    // the prefetch, not about spoilers, so turn the hiding off and let the tap
+    // mean "open" — otherwise the no-refetch case below would pass for the
+    // wrong reason, having never opened anything.
+    beforeEach(() => {
+      window.localStorage.setItem(HIDE_SPORTS_SPOILERS_KEY, '0');
+      resetReadingPrefsCacheForTest();
+    });
+    afterEach(() => {
+      window.localStorage.removeItem(HIDE_SPORTS_SPOILERS_KEY);
+      resetReadingPrefsCacheForTest();
+    });
+
     it('refetches a stale feed when a row opens the reader', async () => {
       const user = userEvent.setup();
       const source = new MockDataSource(`test-${Math.random()}`);

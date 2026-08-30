@@ -2412,8 +2412,8 @@ four steps:
   spoiler** (the row shows the spoiler-free rewrite — see *Spoiler-free sports
   headlines*), the thumbnail is **blurred** and carries a centered
   `VisibilityOff` marker, since the article's own image can reveal the result (a
-  scoreboard, a celebration); the row-body tap still opens the full article to
-  reveal it.
+  scoreboard, a celebration); the first row-body tap unblurs it along with the
+  headline, the second opens the full article.
 - **Excerpt** (`excerpt`) — a larger title with a **two-line preview**
   of the feed body (`contentHtml` stripped to plain text, entities decoded; *not*
   the AI `summary`), no image. The preview sits a half-step below the headline
@@ -2422,9 +2422,9 @@ four steps:
   item is opened. When the headline itself is a **hidden sports
   spoiler** (the row shows the spoiler-free rewrite — see *Spoiler-free sports
   headlines*), the preview is replaced by a muted placeholder — **"Spoilers
-  hidden. Tap to see article."** — since the feed body almost always repeats the
-  result the headline just concealed; the row-body tap still opens the full
-  article.
+  hidden. Tap to reveal."** — since the feed body almost always repeats the
+  result the headline just concealed; the first row-body tap reveals the row,
+  the second opens the article.
 
 The thumbnail and excerpt both render **inside the row-body link**, so the row
 keeps its **two tap zones** (body link + right-side button) — the image/excerpt
@@ -3189,15 +3189,30 @@ page's discipline is unchanged.
     rewritten row carries a **subtle, non-interactive marker**
     (`VisibilityOff` glyph, no tap zone — guardrail #2) whose native tooltip
     reveals the original. In the **Title + excerpt** layout the body preview is
-    likewise replaced by a **"Spoilers hidden. Tap to see article."**
+    likewise replaced by a **"Spoilers hidden. Tap to reveal."**
     placeholder, and in **Title + thumbnail** the image is **blurred** behind the
     same marker (the feed body/image would otherwise repeat or reveal the
-    concealed result — see *Article layout*). **The reader always shows the real
+    concealed result — see *Article layout*).
+  - **Two taps: the first reveals the row, the second opens it.** Tapping the
+    body of a row that is still hiding something swaps in the real headline,
+    the real excerpt and the unblurred thumbnail together, and the marker goes
+    with them; only the next tap opens the article. So a reader can check one
+    headline without committing to the article, and without reaching for the
+    toolbar eye and un-hiding the whole list. The reveal is **not an open** — it
+    doesn't mark the item Opened (nor Done on a mark-done-on-open feed), so a
+    row you merely looked at doesn't gray out. It **adds no tap zone**
+    (guardrail #2): the row body is one zone whose first activation now means
+    something else. A **modified or middle click** is left alone — it opens in a
+    new tab, which reveals the result by showing the article. The reveal is per
+    row and lasts for the session; the toolbar eye's **re-hide takes revealed
+    rows back with it**, since "re-hide all" that left one row showing wouldn't
+    be all. **The reader always shows the real
     headline** (no rewrite, no marker): once the article is open its body reveals
     the result anyway, so de-spoilering the headline above it buys nothing.
-    Accordingly, **Share from a list row** sends the displayed (spoiler-free)
-    headline so a share doesn't leak the scoreline, while **Share from the reader**
-    sends the real headline — matching what each surface shows.
+    Accordingly, **Share from a list row** sends the displayed headline so a
+    share doesn't leak a scoreline the row is still hiding — the rewrite while
+    concealed, the original once that row has been revealed — while **Share from
+    the reader** sends the real headline. Each surface shares what it shows.
     TODO: make it per-feed as well as per-user.
   - **Deploy dependency.** The spoiler-free title only appears once `make
     migrate` + `make deploy` land and the poller populates the column; until then

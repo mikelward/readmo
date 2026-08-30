@@ -179,7 +179,7 @@ html:not(.rm-suppress-press) .item-row__body:active {
 }
 
 /* Spoiler placeholder standing in for a hidden excerpt: muted + italic so it
- * reads as a hint ("Spoilers hidden. Tap to see article.") rather than as the
+ * reads as a hint ("Spoilers hidden. Tap to reveal.") rather than as the
  * article's own preview text. */
 .item-row__excerpt--spoiler {
   font-style: italic;
