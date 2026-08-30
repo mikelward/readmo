@@ -24,6 +24,32 @@ Calls that haven't been settled — guesses autopilot made without asking, and
 decisions deliberately postponed — recorded so they don't silently become
 permanent by default. Each is cheap to change.
 
+- **RAISED, NOT FIXED: two reveal-persistence edge cases under a storage that
+  starts refusing writes** (Claude, 2026-08-30, PR #676). Codex's fourth
+  consecutive round on `src/hooks/useRevealedSpoilers.ts` — each round opened by
+  the previous round's fix — flagged two more, both verified real and both left
+  in place rather than patched, because the findings on that seam stopped
+  converging:
+  1. **The combined snapshot isn't capped.** `effectiveRevealed()` unions the
+     persisted set and the session fallback without re-capping. If storage
+     already holds `MAX_REVEALED` entries and *then* starts refusing writes,
+     each new reveal can't evict a persisted entry and lands in the
+     independently-capped session set, so the active snapshot can reach 2 ×
+     `MAX_REVEALED` and the oldest rows stay revealed until a reload.
+  2. **`clearRevealedSpoilers` depends on a successful `setItem`.** The eye's
+     "re-hide all" clears the session set, but the persisted clear goes through
+     `createPersistentStore.set()`, which swallows a refused write — so a
+     previously-persisted reveal survives the re-hide and that row keeps showing
+     its original headline.
+  **Alternative:** cap the union in `effectiveRevealed()`, and track the
+  persisted keys a refused write meant to remove (a session-level tombstone set)
+  so the clear holds without storage. **Not taken now** — both need storage to
+  transition from working to refusing *within one session*, both self-correct on
+  the next reload (the store re-reads from storage), and four rounds of fixes on
+  this seam each introduced the next finding, so a fifth is more likely to add a
+  new case than close this one. **Reversible** — the whole seam is one module and
+  one hook; nothing outside it knows how the union is built.
+
 - **`grafana/README.md` and `infra/cf-gateway/README.md` are now code, not
   docs** (autopilot, 2026-08-30). Narrowing `.github/lanes.conf` from
   `docs **/*.md` to `docs *.md` + `docs docs/**/*.md` — the standard
