@@ -34,7 +34,12 @@ concurrency:
 
 jobs:
   npm-update:
-    uses: mikelward/npm-update/.github/workflows/npm-update.yml@main
+    # PILOT — not for merge. Points at the mikelward/npm-update branch that
+    # arms auto-merge on a batch that regenerated a derived file and drops
+    # the update job's npm cache, per that repository's "pilot ONE consumer
+    # before the merge" rule; this repository is the one consumer with a
+    # regenerate hook. Goes back to @main once the hub change lands.
+    uses: mikelward/npm-update/.github/workflows/npm-update.yml@claude/github-checks-workflows-review-w2e7w6
     permissions:
       contents: write
       pull-requests: write

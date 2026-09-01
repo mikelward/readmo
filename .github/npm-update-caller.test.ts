@@ -45,9 +45,9 @@ describe('npm-update caller', () => {
     expect(cron![1].trim().split(/\s+/)[4]).toBe('6');
   });
 
-  it('calls the hub reusable workflow at @main', () => {
+  it('calls the hub reusable workflow at the pilot branch (back to @main once it merges)', () => {
     expect(workflow).toContain(
-      'uses: mikelward/npm-update/.github/workflows/npm-update.yml@main',
+      'uses: mikelward/npm-update/.github/workflows/npm-update.yml@claude/github-checks-workflows-review-w2e7w6',
     );
   });
 
