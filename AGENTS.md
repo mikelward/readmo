@@ -19,11 +19,12 @@ has stopped biting.
    `npm test`, `npm run lint`, and `npm run typecheck` on every change, and
    `npm run build` when you touch build, routing, or deploy config.
    CI mirrors this on every diff that can change behavior; housekeeping-only
-   PRs (root-level markdown and the `docs/` tree — markdown anywhere else is
-   code, since it can sit beside what CI validates) ride the docs lane
-   instead, and
-   the required `lanes` check independently re-verifies any skip (the shared
-   mikelward/lanes action; the policy is `.github/lanes.conf`). Fix a red
+   changes (root-level markdown and the `docs/` tree — markdown anywhere else
+   is code, since it can sit beside what CI validates) ride the docs lane
+   instead, on a pull request and on a push to `main` alike, and Vercel skips
+   the deployment for one too (`vercel.json`'s `ignoreCommand`, see *Deploying*
+   below). The required `lanes` check independently re-verifies any skip (the
+   shared mikelward/lanes action; the policy is `.github/lanes.conf`). Fix a red
    baseline first, on its own commit. 80% coverage floor for `src/lib/` and
    server handlers — enforced in CI by `npm run test:coverage` (aggregate
    lines per area; the Deno-only Edge entry files and `ssrf.ts` are measured
