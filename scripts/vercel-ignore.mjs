@@ -131,6 +131,21 @@ export function classify(files, policyText) {
   return { docsOnly: true, reason: `all ${files.length} changed file(s) are documentation` };
 }
 
+/**
+ * One line of a thrown error, for the build log.
+ *
+ * Every fail-open path below builds either way, so the reason string is the
+ * ONLY diagnostic this has — and without the underlying failure, a corrupt
+ * object store or a permission problem is indistinguishable from the expected
+ * shallow-clone miss, which is how an infrastructure fault hides for months.
+ * Sanitized by construction: these are git and fs failures about paths inside
+ * Vercel's own build container, never repository content.
+ */
+function why(error) {
+  const text = String(error?.stderr || error?.message || error || '').trim();
+  return text.split('\n')[0].slice(0, 200) || 'no error text';
+}
+
 /** A SHA Vercel handed us, or null if it isn't one. */
 function sha(value) {
   const trimmed = (value ?? '').trim();
@@ -157,8 +172,15 @@ const git = (...args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8'
 export function decide(env) {
   const previous = sha(env.VERCEL_GIT_PREVIOUS_SHA);
   if (!previous) {
-    // Empty on a branch's first deployment, and reportedly on some projects
-    // that have not enabled system environment variables.
+    // Empty on a branch's FIRST deployment, and reportedly on some projects
+    // that have not enabled system environment variables. So a docs-only
+    // branch still builds its first preview, once, and skips every push after
+    // it; production, where the previous successful deployment always exists,
+    // skips from the first docs-only merge onward. That is deliberate rather
+    // than a gap to close: the only base available for a first deployment
+    // would have to be fetched (this clone is `--depth=10` of one branch, so
+    // `origin/<default>` is not in it), which puts a network call and a new
+    // failure mode on the decision path to save a single build per branch.
     return { docsOnly: false, reason: 'VERCEL_GIT_PREVIOUS_SHA is unset — no range to measure' };
   }
   const current = sha(env.VERCEL_GIT_COMMIT_SHA) ?? 'HEAD';
@@ -166,10 +188,13 @@ export function decide(env) {
   for (const rev of [previous, current]) {
     try {
       git('cat-file', '-e', `${rev}^{commit}`);
-    } catch {
-      // Vercel clones shallow (--depth=10), so a busy week can put the last
-      // deployed commit out of reach.
-      return { docsOnly: false, reason: `${rev} is not in this clone` };
+    } catch (error) {
+      // Usually the expected case: Vercel clones shallow (--depth=10), so a
+      // busy week can put the last deployed commit out of reach. But a corrupt
+      // object store, a permission problem, or no git at all fail identically,
+      // so the failure travels with the verdict rather than being asserted as
+      // absence.
+      return { docsOnly: false, reason: `cannot read ${rev} in this clone (${why(error)})` };
     }
   }
 
@@ -181,8 +206,8 @@ export function decide(env) {
   let policyText;
   try {
     policyText = readFileSync(path.join(ROOT, POLICY_PATH), 'utf8');
-  } catch {
-    return { docsOnly: false, reason: `${POLICY_PATH} is unreadable` };
+  } catch (error) {
+    return { docsOnly: false, reason: `${POLICY_PATH} is unreadable (${why(error)})` };
   }
 
   return classify(files, policyText);
@@ -193,7 +218,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   try {
     verdict = decide(process.env);
   } catch (error) {
-    verdict = { docsOnly: false, reason: `the check itself failed: ${error.message}` };
+    verdict = { docsOnly: false, reason: `the check itself failed: ${why(error)}` };
   }
   console.log(`vercel-ignore: ${verdict.docsOnly ? 'skipping' : 'building'} — ${verdict.reason}`);
   process.exit(verdict.docsOnly ? 0 : 1);
