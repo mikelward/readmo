@@ -182,8 +182,13 @@ Readmo ships as two halves that deploy on **different clocks**:
   one thing that does not deploy: `vercel.json`'s `ignoreCommand` runs
   `scripts/vercel-ignore.mjs`, which reads the same `.github/lanes.conf` the
   docs lane reads and cancels the build when every changed path is
-  documentation. It fails open — no previous deployment to measure from, a SHA
-  outside Vercel's shallow clone, anything unrecognized, and it builds.
+  documentation. It measures from the last successful deployment of this
+  project and branch, so production skips from the first docs-only merge
+  onward, while a branch builds its first preview and skips the docs-only
+  pushes after it — a first deployment has no earlier one to measure against.
+  It fails open — no previous deployment to measure from, a SHA outside
+  Vercel's shallow clone, anything unrecognized, and it builds, saying in the
+  build log which of those it was and what the underlying failure said.
 - **Backend** — Supabase **Edge Functions** (`supabase/functions/**`, incl.
   `_shared/`) and **Postgres migrations** (`supabase/migrations/*.sql`). **CI
   never deploys these** — it only type-checks/tests them. They go live only when

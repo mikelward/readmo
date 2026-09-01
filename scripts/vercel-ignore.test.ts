@@ -176,7 +176,35 @@ describe('deciding from a real clone', () => {
       VERCEL_GIT_COMMIT_SHA: shas[1],
     });
     expect(code).toBe(BUILD);
-    expect(out).toContain('not in this clone');
+    expect(out).toContain('cannot read');
+    expect(out).toContain(missing);
+  });
+
+  // Every fail-open path builds either way, so the reason string is the only
+  // diagnostic. Without the underlying failure traveling with it, a broken
+  // checkout reads exactly like the expected shallow-clone miss.
+  it('names the underlying failure when git itself cannot answer', () => {
+    const { repo } = fixture([['AGENTS.md']]);
+    rmSync(join(repo, '.git'), { recursive: true, force: true });
+    const { code, out } = run(repo, {
+      VERCEL_GIT_PREVIOUS_SHA: 'a'.repeat(40),
+      VERCEL_GIT_COMMIT_SHA: 'b'.repeat(40),
+    });
+    expect(code).toBe(BUILD);
+    expect(out).toMatch(/not a git repository/i);
+  });
+
+  it('names the underlying failure when the policy cannot be read', () => {
+    const { repo, shas } = fixture([['AGENTS.md']]);
+    rmSync(join(repo, '.github/lanes.conf'));
+    mkdirSync(join(repo, '.github/lanes.conf'));
+    const { code, out } = run(repo, {
+      VERCEL_GIT_PREVIOUS_SHA: shas[0],
+      VERCEL_GIT_COMMIT_SHA: shas[1],
+    });
+    expect(code).toBe(BUILD);
+    expect(out).toContain('unreadable');
+    expect(out).toMatch(/EISDIR|illegal operation/i);
   });
 
   it('builds when the policy file itself changed', () => {
