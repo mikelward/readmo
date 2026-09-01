@@ -177,7 +177,12 @@ Readmo ships as two halves that deploy on **different clocks**:
 - **Frontend (the client)** — React/Vite on Vercel. **Auto-deploys** on every
   push/merge to `main` via Vercel's GitHub integration; no manual step. (Lone
   exception: after changing a Vercel env var you must redeploy — existing
-  deployments keep their original env snapshot.)
+  deployments keep their original env snapshot.) A **docs-only** commit is the
+  one thing that does not deploy: `vercel.json`'s `ignoreCommand` runs
+  `scripts/vercel-ignore.mjs`, which reads the same `.github/lanes.conf` the
+  docs lane reads and cancels the build when every changed path is
+  documentation. It fails open — no previous deployment to measure from, a SHA
+  outside Vercel's shallow clone, anything unrecognized, and it builds.
 - **Backend** — Supabase **Edge Functions** (`supabase/functions/**`, incl.
   `_shared/`) and **Postgres migrations** (`supabase/migrations/*.sql`). **CI
   never deploys these** — it only type-checks/tests them. They go live only when
@@ -216,7 +221,7 @@ summary:
 
 | You changed… | Goes live via | Manual? |
 |---|---|---|
-| `src/`, `index.html`, frontend build/routing config | push/merge to `main` (Vercel) | No — auto |
+| `src/`, `index.html`, frontend build/routing config | push/merge to `main` (Vercel) | No — auto (docs-only commits are skipped) |
 | `supabase/migrations/*.sql` | `make migrate` (`supabase db push`) | **Yes** |
 | `supabase/functions/**` (incl. `_shared/`) | `make deploy` (migrates first) or `supabase functions deploy <fn> --import-map …` | **Yes** |
 | Supabase secret/config (`MIN_CLIENT_BUILD`, `JINA_API_KEY`, `SMTP_*`, …) | set via Supabase dashboard/CLI; arming the version gate is an operator action | **Yes** |
