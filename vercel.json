@@ -1,3 +1,4 @@
 {
+  "ignoreCommand": "node scripts/vercel-ignore.mjs",
   "rewrites": [{ "source": "/((?!api/|assets/).*)", "destination": "/index.html" }]
 }
