@@ -335,6 +335,18 @@ permanent by default. Each is cheap to change.
 ## UI / layout
 
 
+- **Check whether Settings rows and the dropdown menus want to scale with the
+  text size** (maintainer, during PR #693). They read as too small — the
+  question is whether that is about the text setting at all or just about 44px
+  being a tight base for a menu row. Both `ItemRowMenu` and `HeaderAccountMenu`
+  set `min-height: var(--rm-tap)`, which is now a fixed 44px again, but their
+  content is `rem` text, so a row already grows past it once the type is taller
+  — meaning the complaint may be at the default size rather than at the large
+  ones. Measure before changing anything. Note what PR #693 learned the hard
+  way: scaling `--rm-tap` itself breaks every fixed-width row sized against it
+  (the reader's 320px action bar, the six-across text-size picker), so if these
+  do want to grow it has to be per-surface, not by moving the token.
+
 - **Decide whether a revealed spoiler should sync across devices.** Shipped
   per-device (`readmo:revealed-spoilers`, `useRevealedSpoilers`) — enough for
   the ask, which was surviving a refresh. Syncing is defensible: `opened`

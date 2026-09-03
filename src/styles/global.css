@@ -57,9 +57,27 @@
   --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 
   --rm-radius: 10px;
+
+  /* The tap target does NOT scale with the text, and that is the considered
+     answer rather than an oversight. 44px is an accessibility floor (guardrail
+     #2), not a design value, and the thing inside these controls is a fixed
+     24px icon — so a wider button displays nothing more while costing the
+     rows it sits in. Every fixed-width row in the app is sized against this:
+     the reader's action bar puts five controls across 320px, and the settings
+     text-size picker puts six across a 375px phone. Scaling it broke both. */
   --rm-tap: 44px;
 
-  --rm-header-h: 56px;
+  /* The header DOES scale, because unlike the tap target it has rem-sized
+     content: the brand is 1.25rem, so a fixed 56px bar clips it once the root
+     outgrows the bar — which is what capped the text-size ladder at 24px.
+     `3.5rem` is exactly 56px at the default root, so nothing moves at or below
+     it; `max()` keeps it from shrinking at the smaller sizes.
+     Spacing stays on the fixed 4dp grid for the same reason as the tap target:
+     at large text a reader wants more of the *article* on screen, not a bigger
+     logo, so the chrome grows to fit its own contents and no further. (Simmo's
+     rule too — it scales only `Density.fontScale`, leaving paddings, icons and
+     touch targets on the grid they were designed for.) */
+  --rm-header-h: max(56px, 3.5rem);
 
   /* Base body text size. The settings "Text size" picker overrides this via the
      `data-font-size` attribute on <html>; 16px is the default (no attribute). */
