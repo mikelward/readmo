@@ -5,7 +5,18 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- Zoom is locked to 1 because readmo does its own: a two-finger pinch
+         steps the in-app "Text size" ladder (usePinchFontSize) rather than
+         scaling the page, which keeps the layout reflowed to the viewport
+         instead of leaving the reader panning sideways across a magnified
+         column. Without the lock the browser's zoom fights the gesture for the
+         same two fingers. Android honors this; iOS Safari has ignored
+         `user-scalable` since iOS 10, so the hook cancels Safari's own
+         `gesture*` events to hold the same line there. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
     <!-- Matches the in-app header bg (`--rm-bg` in global.css) so the mobile
          browser URL-bar tint and the sticky app header paint the same color.
          The content is seeded by the theme boot script below and kept in sync

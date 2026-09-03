@@ -231,6 +231,24 @@ Everything else about the visual system mirrors newshacker.
   so that changing the ladder's shape never costs a reader their setting. It
   holds from the first paint, so a reader never sees one size resolve into
   another.
+- **Pinch to resize.** A two-finger pinch anywhere in the app steps that same
+  ladder, so the setting is reachable without opening the drawer — the gesture
+  people already expect to make text bigger does the thing they meant by it.
+  It is **continuous and snapped, not one step per gesture**: the text resizes
+  under the fingers as they move and settles on release. How far the fingers
+  travel per rung is tuned **independently of the ladder's px range**, which is
+  only 2.3× end to end — mapping the fingers onto it directly would put every
+  size inside a twitch. What that tuning has to deliver: a small pinch moves one
+  rung, and running the ladder end to end takes a deliberate two-handed spread.
+  A gesture is **one** saved change, at the size it settled on, however many
+  rungs it crossed on the way. Pinching back out past the end of the ladder and
+  in again returns the size the fingers are asking for, rather than starting its
+  descent from the end.
+- **Mobile browser zoom is locked** because readmo does its own: page zoom and
+  the pinch above compete for the same two fingers, and scaling the page leaves
+  the reader panning sideways across a magnified column instead of reflowing to
+  the viewport. The cost is that an article's images can no longer be zoomed
+  into; the text-size ladder replaces text zoom, not image zoom.
 - Icons inlined monochrome SVG (Material Symbols, `fill="currentColor"`), no
   icon font / runtime request.
 

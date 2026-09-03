@@ -16,6 +16,7 @@ import { useStateSync } from './hooks/useStateSync';
 import { useSettingsSync } from './hooks/useSettingsSync';
 import { useNewshackerSync } from './hooks/useNewshackerSync';
 import { useScrollDiag } from './hooks/useScrollDiag';
+import { usePinchFontSize } from './hooks/usePinchFontSize';
 import { useDebugScrollJumps } from './hooks/useReadingPrefs';
 import { HomePage, FolderPage, FeedPage } from './pages/FeedPages';
 import {
@@ -100,6 +101,11 @@ export default function App() {
   // a jump-to-top can be inspected at /debug/scroll. A no-op while disabled.
   const { debugScrollJumps } = useDebugScrollJumps();
   useScrollDiag(debugScrollJumps);
+  // Two-finger pinch anywhere in the app steps the "Text size" ladder, and
+  // holds the mobile viewport lock the meta tag can't hold on iOS. Mounted here
+  // rather than on the reader alone: text size is one app-wide setting, so the
+  // gesture that changes it works on every screen, sign-in included.
+  usePinchFontSize();
   // Gate rendering across an auth transition: while the previous user's caches
   // are being purged and the app reloads, paint nothing so the next user can't
   // briefly see the previous user's cached content (guardrail #8).
