@@ -191,11 +191,17 @@ describe('the header scales with the text size, and only the header', () => {
     expect(root['--rm-header-h']).toMatch(/^max\(\s*56px\s*,/);
   });
 
-  // At the 16px default the rem half resolves to exactly the old value, so this
-  // is a no-op for anyone who never moves the setting.
-  it('resolves to the previous fixed size at the default root', () => {
+  // The header scales with the reading text, and at the default the rem half
+  // now wins: `3.5rem` is 59.5px against a 17px root. This used to assert the
+  // opposite — that the default resolved to exactly 56px and moved nothing —
+  // which was true only while the default was 16 and kept passing after it
+  // moved, because it multiplied by a hard-coded 16 rather than the default.
+  it('lets the header follow the default text size, and floors it below', () => {
     const rem = Number(/([\d.]+)rem/.exec(root['--rm-header-h'])?.[1]);
-    expect(rem * 16).toBe(56);
+    const atDefault = rem * Number(DEFAULT_FONT_SIZE);
+    expect(atDefault).toBeGreaterThan(56);
+    // And the floor still does its job where the rem half would undercut it.
+    expect(rem * Number(FONT_SIZES[0])).toBeLessThan(56);
   });
 
   // The tap target deliberately does NOT scale, and this is the regression
@@ -237,8 +243,9 @@ describe('text-size ladder', () => {
     // empty set differences to empty and passes while checking nothing.
     expect(declared.size).toBeGreaterThan(0);
 
-    // 16px owns the bare `:root`, so it is deliberately not in the attribute
-    // list; every other rung must be.
+    // The default owns the bare `:root`, so it is deliberately not in the
+    // attribute list; every other rung must be. Derived from
+    // `DEFAULT_FONT_SIZE` so moving the default moves this with it.
     const expected = FONT_SIZES.filter((size) => size !== DEFAULT_FONT_SIZE);
     expect([...declared].sort()).toEqual([...expected].sort());
   });

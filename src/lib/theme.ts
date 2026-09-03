@@ -12,9 +12,10 @@ export type Theme = 'light' | 'dark' | 'system';
 export type Palette = 'ink' | 'grape';
 
 // Body text size, in px. The values double as both the stored token and the
-// `data-font-size` attribute; `global.css` maps each to `--rm-font-size`. `16`
-// is the default (Medium) and owns the bare `:root` block (no attribute),
-// matching the theme/palette default pattern.
+// `data-font-size` attribute; `global.css` maps each to `--rm-font-size`. `17`
+// is the default and owns the bare `:root` block (no attribute), matching the
+// theme/palette default pattern — see DEFAULT_FONT_SIZE, which is the one
+// place that decides it.
 export type FontSize =
   | '14'
   | '15'
@@ -28,7 +29,8 @@ export type FontSize =
   | '26'
   | '28'
   | '30'
-  | '32';
+  | '32'
+  | '34';
 
 // Body typeface. Each non-system option is a self-hosted webfont (Fontsource)
 // chosen so the app renders identically on every platform — the previous
@@ -53,9 +55,15 @@ const PALETTES: readonly Palette[] = ['ink', 'grape'];
 // The ladder grew upward rather than being re-spaced: it ran 14-19 and topped
 // out at 1.19x the default, which is not much of a large-text mode, but every
 // one of those rungs is in use — so the fix is more reach, not coarser steps.
+// The top rung is set by the ratio rather than by taste: 34 is 2x 17, the
+// magnification WCAG 1.4.4 asks for, and the only magnification an iOS
+// home-screen app has. So moving the default moves the top with it — 32 was
+// exactly 2x the old 16px default and is only 1.88x this one.
 // The steps widen only past 20px, where a reader has stopped nudging and wants
-// the text bigger, and another 1px is a 5% change nobody can see. 24px is near
-// the practical ceiling while `--rm-header-h` stays a fixed 56px.
+// the text bigger, and another 1px is a 5% change nobody can see. The rungs
+// past 24px became practical once `--rm-header-h` stopped being a fixed 56px
+// and started scaling with the root (`max(56px, 3.5rem)`), so the bar grows to
+// fit its own contents rather than the type outgrowing it.
 //
 // Nothing is ever removed from this list without a reason: `getStoredFontSize`
 // snaps a retired step to its neighbor, which is a change to a setting someone
@@ -74,6 +82,7 @@ export const FONT_SIZES: readonly FontSize[] = [
   '28',
   '30',
   '32',
+  '34',
 ];
 const FONTS: readonly FontFamily[] = [
   'roboto',
@@ -84,9 +93,15 @@ const FONTS: readonly FontFamily[] = [
   'system',
 ];
 
-// 16px (Medium) is the default, so it owns the bare `:root` block and needs no
-// `data-font-size` attribute.
-export const DEFAULT_FONT_SIZE: FontSize = '16';
+// 17px is the default, so it owns the bare `:root` block and needs no
+// `data-font-size` attribute. Moving the default moves that block: 17 loses its
+// attribute rung and 16 gains one, and `setStoredFontSize` clears the key on
+// the default rather than writing it — so a reader sitting at 16 arrives at 17
+// whether they chose 16 or never touched the setting. The two are not
+// distinguishable by design, which is the cost of the default-owns-the-baseline
+// pattern (shared with palette and font) and the reason moving a default is a
+// product decision rather than a constant edit.
+export const DEFAULT_FONT_SIZE: FontSize = '17';
 
 // Roboto is the default typeface, so it owns the bare `:root` font token and
 // needs no `data-font` attribute (same default-owns-root pattern as palette and
@@ -145,6 +160,7 @@ export const FONT_SIZE_LABELS: Record<FontSize, string> = {
   '28': '28px',
   '30': '30px',
   '32': '32px',
+  '34': '34px',
 };
 
 // Display names for each palette, used by the drawer/settings pickers.
@@ -224,9 +240,11 @@ export function getStoredPalette(): Palette {
  * The ladder is allowed to change shape, and this is what stops that costing
  * readers their setting: the plain `isFontSize` check would send everyone
  * stored on a retired step back to the default, which reads as the app losing
- * their preference rather than as the ladder moving. Ties round up (17 lands on
- * 18, not 16) — someone who chose a size above the default was asking for
- * bigger, so the ambiguous case should keep going that way.
+ * their preference rather than as the ladder moving. Ties round up (21 lands on
+ * 22, not 20) — someone stored between two rungs was closer to asking for
+ * bigger, so the ambiguous case should keep going that way. The old example
+ * here was 17 landing on 18, which cannot happen: 17 is itself a rung, so
+ * `isFontSize` catches it before this runs.
  */
 function nearestFontSize(raw: string | null): FontSize | null {
   const px = Number(raw);

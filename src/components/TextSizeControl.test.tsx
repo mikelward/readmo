@@ -46,13 +46,18 @@ describe('TextSizeControl', () => {
 
   it('reaches the new top of the ladder', async () => {
     const user = userEvent.setup();
-    vi.spyOn(themeLib, 'getStoredFontSize').mockReturnValue('30');
+    // Derived, not written down: a literal here passed unchanged when the
+    // ladder grew a rung, so the case kept its name while testing a step in
+    // the middle of the ladder.
+    const top = FONT_SIZES[FONT_SIZES.length - 1];
+    const penultimate = FONT_SIZES[FONT_SIZES.length - 2];
+    vi.spyOn(themeLib, 'getStoredFontSize').mockReturnValue(penultimate);
     const setSpy = vi
       .spyOn(themeLib, 'setStoredFontSize')
       .mockImplementation(() => {});
     renderWithProviders(<TextSizeControl />);
     await user.click(screen.getByRole('button', { name: 'Larger text' }));
-    expect(setSpy).toHaveBeenCalledWith('32');
+    expect(setSpy).toHaveBeenCalledWith(top);
   });
 
   it('goes inert at each end rather than wrapping around', async () => {

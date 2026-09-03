@@ -1,4 +1,4 @@
-import { FONT_SIZES, type FontSize } from './theme';
+import { DEFAULT_FONT_SIZE, FONT_SIZES, type FontSize } from './theme';
 
 /** How far the fingers must spread to move one step on the text-size ladder.
  *
@@ -50,7 +50,7 @@ export function fontSizeAfterSteps(base: FontSize, steps: number): FontSize {
   const from = FONT_SIZES.indexOf(base);
   // A stored value outside the ladder can't happen (`getStoredFontSize`
   // validates), but clamp from 0 rather than -1 if it ever does.
-  const start = from < 0 ? FONT_SIZES.indexOf('16') : from;
+  const start = from < 0 ? FONT_SIZES.indexOf(DEFAULT_FONT_SIZE) : from;
   const next = Math.min(
     FONT_SIZES.length - 1,
     Math.max(0, start + Math.round(steps)),
