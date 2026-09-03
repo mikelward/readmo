@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type Palette,
+  DEFAULT_FONT_SIZE,
   FONT_LABELS,
   FONT_SIZE_STORAGE_KEY,
   FONT_STACKS,
@@ -256,8 +257,12 @@ describe('font size', () => {
     document.documentElement.removeAttribute('data-font-size');
   });
 
-  it('defaults to "16" when storage is empty', () => {
-    expect(getStoredFontSize()).toBe('16');
+  it('defaults to "17" when storage is empty', () => {
+    expect(getStoredFontSize()).toBe('17');
+    // Spelled out rather than compared to DEFAULT_FONT_SIZE: this is the one
+    // place the default's actual value should have to be restated, so moving
+    // it can't pass silently everywhere.
+    expect(getStoredFontSize()).toBe(DEFAULT_FONT_SIZE);
   });
 
   it('reads a stored font size on the ladder', () => {
@@ -281,14 +286,14 @@ describe('font size', () => {
     window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '9');
     expect(getStoredFontSize()).toBe('14');
     window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '99');
-    expect(getStoredFontSize()).toBe('32');
+    expect(getStoredFontSize()).toBe('34');
   });
 
   it('falls back to the default for a value that was never a size', () => {
     window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, 'huge');
-    expect(getStoredFontSize()).toBe('16');
+    expect(getStoredFontSize()).toBe(DEFAULT_FONT_SIZE);
     window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '');
-    expect(getStoredFontSize()).toBe('16');
+    expect(getStoredFontSize()).toBe(DEFAULT_FONT_SIZE);
   });
 
   it('setStoredFontSize persists a non-default size and sets the attribute', () => {
@@ -301,18 +306,27 @@ describe('font size', () => {
     expect(document.documentElement.getAttribute('data-font-size')).toBe('18');
   });
 
-  it('setStoredFontSize("16") clears the attribute and the key', () => {
+  it('setStoredFontSize(default) clears the attribute and the key', () => {
     setStoredFontSize('18');
-    setStoredFontSize('16');
+    setStoredFontSize(DEFAULT_FONT_SIZE);
     expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBeNull();
     expect(document.documentElement.hasAttribute('data-font-size')).toBe(false);
+  });
+
+  it('persists 16 like any other rung now that it is not the default', () => {
+    // The other half of moving a default, and the easy one to miss: the size
+    // that used to own the bare `:root` has to start writing storage and
+    // painting an attribute.
+    setStoredFontSize('16');
+    expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBe('16');
+    expect(document.documentElement.getAttribute('data-font-size')).toBe('16');
   });
 
   it('applyFontSize toggles the attribute without touching storage', () => {
     applyFontSize('18');
     expect(document.documentElement.getAttribute('data-font-size')).toBe('18');
     expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBeNull();
-    applyFontSize('16');
+    applyFontSize(DEFAULT_FONT_SIZE);
     expect(document.documentElement.hasAttribute('data-font-size')).toBe(false);
   });
 
@@ -500,16 +514,19 @@ describe('index.html theme boot script', () => {
     }
     expect(runBoot({ 'readmo:font': 'roboto' }).attributes.size).toBe(0);
     expect(runBoot({ 'readmo:font': 'comic-sans' }).attributes.size).toBe(0);
-    for (const size of ['14', '15', '17', '18', '19', '20', '22', '24']) {
+    for (const size of ['14', '15', '16', '18', '19', '20', '22', '24']) {
       expect(runBoot({ 'readmo:fontSize': size }).attributes.get('data-font-size')).toBe(size);
     }
-    expect(runBoot({ 'readmo:fontSize': '16' }).attributes.size).toBe(0);
+    // The default is the one rung that sets no attribute — it owns the bare
+    // `:root`. 16 is in the loop above for the same reason it used to be the
+    // exception here.
+    expect(runBoot({ 'readmo:fontSize': '17' }).attributes.size).toBe(0);
     // Snaps exactly as `getStoredFontSize` does — a size off the ladder
     // resolving one way here and the other way in the app would repaint on
     // every load.
     expect(runBoot({ 'readmo:fontSize': '21' }).attributes.get('data-font-size')).toBe('22');
     expect(runBoot({ 'readmo:fontSize': '23' }).attributes.get('data-font-size')).toBe('24');
-    expect(runBoot({ 'readmo:fontSize': '99' }).attributes.get('data-font-size')).toBe('32');
+    expect(runBoot({ 'readmo:fontSize': '99' }).attributes.get('data-font-size')).toBe('34');
     expect(runBoot({ 'readmo:fontSize': '9' }).attributes.get('data-font-size')).toBe('14');
     expect(runBoot({ 'readmo:fontSize': 'huge' }).attributes.size).toBe(0);
   });

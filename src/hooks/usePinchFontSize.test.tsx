@@ -61,9 +61,9 @@ describe('usePinchFontSize', () => {
   it('repaints as the fingers move without writing storage', () => {
     pinchTo('touchstart', START);
     pinchTo('touchmove', OUT_ONE_STEP);
-    expect(attribute()).toBe('17');
-    pinchTo('touchmove', OUT_TWO_STEPS);
     expect(attribute()).toBe('18');
+    pinchTo('touchmove', OUT_TWO_STEPS);
+    expect(attribute()).toBe('19');
     // Still mid-gesture: the size on screen is a preview, not a decision.
     expect(stored()).toBeNull();
   });
@@ -73,15 +73,15 @@ describe('usePinchFontSize', () => {
     pinchTo('touchmove', OUT_TWO_STEPS);
     pinchTo('touchmove', OUT_ONE_STEP);
     fireTouch('touchend', []);
-    expect(stored()).toBe('17');
-    expect(attribute()).toBe('17');
+    expect(stored()).toBe('18');
+    expect(attribute()).toBe('18');
   });
 
   it('walks back down the ladder when the fingers close', () => {
     pinchTo('touchstart', START);
     pinchTo('touchmove', IN_ONE_STEP);
     fireTouch('touchend', []);
-    expect(stored()).toBe('15');
+    expect(stored()).toBe('16');
   });
 
   it('measures every step from the size the fingers landed on', () => {
@@ -94,17 +94,17 @@ describe('usePinchFontSize', () => {
 
   it('clamps at the end of the ladder but remembers the overshoot', () => {
     pinchTo('touchstart', START);
-    // From the 16px default that is 14 rungs' worth of spread against a ladder
+    // From the 17px default that is 12 rungs' worth of spread against a ladder
     // that has 10 left, so it clamps with two steps of overshoot banked.
     pinchTo('touchmove', START * ZOOM_PER_STEP ** 12);
-    expect(attribute()).toBe('32');
-    // Coming back to one step out from the *base* gives 17, not the 30 a
+    expect(attribute()).toBe('34');
+    // Coming back to one step out from the *base* gives 18, not the 32 a
     // gesture that had clamped its own count would report: the fingers, not the
     // end of the ladder, say where the size is.
     pinchTo('touchmove', START * ZOOM_PER_STEP);
-    expect(attribute()).toBe('17');
+    expect(attribute()).toBe('18');
     fireTouch('touchend', []);
-    expect(stored()).toBe('17');
+    expect(stored()).toBe('18');
   });
 
   it('arms a pinch that starts too close together and then spreads', () => {
@@ -119,9 +119,9 @@ describe('usePinchFontSize', () => {
     // Now far enough apart to measure: this becomes the baseline.
     pinchTo('touchmove', 100);
     pinchTo('touchmove', 100 * ZOOM_PER_STEP);
-    expect(attribute()).toBe('17');
+    expect(attribute()).toBe('18');
     fireTouch('touchend', []);
-    expect(stored()).toBe('17');
+    expect(stored()).toBe('18');
   });
 
   it('holds a below-threshold pinch rather than letting the page zoom', () => {
@@ -184,10 +184,10 @@ describe('usePinchFontSize', () => {
     pinchTo('touchstart', START);
     pinchTo('touchmove', OUT_ONE_STEP);
     fireTouch('touchstart', [0, OUT_ONE_STEP, 300]);
-    expect(stored()).toBe('17');
+    expect(stored()).toBe('18');
     // The third finger's frame must not be read as a zoom off the old pair.
     fireTouch('touchmove', [0, 500, 900]);
-    expect(attribute()).toBe('17');
+    expect(attribute()).toBe('18');
   });
 
   it('keeps suppressing the page zoom while a third finger is down', () => {
@@ -200,7 +200,7 @@ describe('usePinchFontSize', () => {
     fireTouch('touchstart', [0, OUT_ONE_STEP, 300]);
     const move = fireTouch('touchmove', [0, 500, 900]);
     expect(move.defaultPrevented).toBe(true);
-    expect(stored()).toBe('17');
+    expect(stored()).toBe('18');
   });
 
   it('still yields to native zoom when three fingers land on an image', () => {
@@ -224,7 +224,7 @@ describe('usePinchFontSize', () => {
     pinchTo('touchstart', START);
     pinchTo('touchmove', OUT_ONE_STEP);
     fireTouch('touchcancel', []);
-    expect(stored()).toBe('17');
+    expect(stored()).toBe('18');
   });
 
   it('yields to native zoom on an image rather than resizing text', () => {
@@ -258,7 +258,7 @@ describe('usePinchFontSize', () => {
 
     pinchTo('touchstart', START, img);
     pinchTo('touchmove', OUT_ONE_STEP, img);
-    expect(attribute()).toBe('17');
+    expect(attribute()).toBe('18');
     fireTouch('touchend', []);
 
     row.remove();
@@ -321,7 +321,7 @@ describe('usePinchFontSize', () => {
     try {
       pinchTo('touchstart', START, img);
       pinchTo('touchmove', OUT_ONE_STEP, img);
-      expect(attribute()).toBe('17');
+      expect(attribute()).toBe('18');
     } finally {
       delete nav.standalone;
       img.remove();
@@ -345,7 +345,7 @@ describe('usePinchFontSize', () => {
     try {
       pinchTo('touchstart', START, img);
       pinchTo('touchmove', OUT_ONE_STEP, img);
-      expect(attribute()).toBe('17');
+      expect(attribute()).toBe('18');
     } finally {
       window.matchMedia = original;
       img.remove();
@@ -388,7 +388,7 @@ describe('usePinchFontSize', () => {
 
     pinchTo('touchstart', START, glyph as unknown as Element);
     pinchTo('touchmove', OUT_ONE_STEP, glyph as unknown as Element);
-    expect(attribute()).toBe('17');
+    expect(attribute()).toBe('18');
 
     button.remove();
   });
@@ -404,7 +404,7 @@ describe('usePinchFontSize', () => {
 
     pinchTo('touchstart', START, icon);
     pinchTo('touchmove', OUT_ONE_STEP, icon);
-    expect(attribute()).toBe('17');
+    expect(attribute()).toBe('18');
 
     icon.remove();
   });
@@ -473,7 +473,7 @@ describe('usePinchFontSize', () => {
 
     pinchTo('touchstart', START, paragraph);
     pinchTo('touchmove', OUT_ONE_STEP, paragraph);
-    expect(attribute()).toBe('17');
+    expect(attribute()).toBe('18');
 
     paragraph.remove();
   });
@@ -632,16 +632,16 @@ describe('usePinchFontSize vs. single-pointer gestures', () => {
   it('re-arms from the remaining two when a third finger lifts', () => {
     pinchTo('touchstart', START);
     pinchTo('touchmove', OUT_ONE_STEP);
-    // Third finger arrives: the gesture banks at 17px.
+    // Third finger arrives: the gesture banks at 18px.
     fireTouch('touchstart', [0, OUT_ONE_STEP, 300]);
-    expect(stored()).toBe('17');
+    expect(stored()).toBe('18');
     // It lifts, leaving two. Those two must pick straight back up rather than
     // sitting inert until both leave the glass.
     fireTouch('touchend', [0, START]);
     pinchTo('touchmove', OUT_ONE_STEP);
-    expect(attribute()).toBe('18');
+    expect(attribute()).toBe('19');
     fireTouch('touchend', []);
-    expect(stored()).toBe('18');
+    expect(stored()).toBe('19');
   });
 
   it('broadcasts once per gesture, not once per frame', () => {

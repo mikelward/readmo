@@ -126,7 +126,7 @@ describe('useTheme', () => {
 
   it('returns the stored font size and persists changes independently', () => {
     const { result } = renderHook(() => useTheme());
-    expect(result.current.fontSize).toBe('16');
+    expect(result.current.fontSize).toBe('17');
 
     act(() => result.current.setFontSize('18'));
     expect(result.current.fontSize).toBe('18');
@@ -136,10 +136,18 @@ describe('useTheme', () => {
     expect(document.documentElement.hasAttribute('data-theme')).toBe(false);
     expect(document.documentElement.hasAttribute('data-palette')).toBe(false);
 
-    act(() => result.current.setFontSize('16'));
-    expect(result.current.fontSize).toBe('16');
+    // Back to the default: the key is cleared rather than written, and the
+    // attribute comes off, because the default owns the bare `:root`.
+    act(() => result.current.setFontSize('17'));
+    expect(result.current.fontSize).toBe('17');
     expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBeNull();
     expect(document.documentElement.hasAttribute('data-font-size')).toBe(false);
+
+    // And 16, no longer the default, now persists and paints like any other
+    // rung — the half of the move a default change is easiest to miss.
+    act(() => result.current.setFontSize('16'));
+    expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBe('16');
+    expect(document.documentElement.getAttribute('data-font-size')).toBe('16');
   });
 
   it('syncs font size across hook instances via the change event', () => {
