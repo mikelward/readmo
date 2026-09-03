@@ -1,7 +1,8 @@
 /* Item row — the core list unit. At most three tap zones (two shipped): the
  * stretched body link, the right-side icon button, and a reserved middle slot
  * (unused). 44x44 touch floor, >=12px gap to the right button. Compact vertical
- * rhythm matches newshacker's .story-row (6px padding, tap-floor on the body). */
+ * rhythm matches newshacker's .story-row: 6px of inset INSIDE the tap floor,
+ * never added to it, so the row follows the text size down. */
 
 .item-row {
   position: relative;
@@ -11,10 +12,18 @@
    * the stretched-link tap zone still fills the row height. */
   align-items: center;
   gap: 12px;
-  /* Compact vertical rhythm to match newshacker's .story-row (6px). The
-   * 44px tap floor on the body keeps the row at the SPEC's 48px+ height
-   * without padding it out. */
-  padding: 6px 12px;
+  /* No VERTICAL padding here, deliberately. The body carries a 44px tap floor
+   * and .pin-btn is 44px tall, so a flex child already holds this row's
+   * CONTENT box at 44px — vertical padding would stack on top of that rather
+   * than fit inside it, and the row could never be shorter than 56px however
+   * far the reader turned the text size down. The 6px of optical inset moved
+   * onto .item-row__body, inside the floor. */
+  padding: 0 12px;
+  /* SPEC's row minimum, stated on the element the stretched link actually
+   * covers. Distinct from --rm-tap (44px), which is the touch-target floor:
+   * this is the row's own height floor and it stops binding as the type
+   * grows, rather than pinning the row from below. */
+  min-height: 48px;
   background: var(--rm-bg-card);
   border-bottom: 1px solid var(--rm-border);
   /* Let the row translate horizontally over its swipe hints. */
@@ -41,6 +50,11 @@
   align-self: stretch;
   justify-content: center;
   min-height: var(--rm-tap);
+  /* The row's former 6px, moved inside the tap floor rather than stacked on
+   * it: same optical inset above the title and below the meta, same room for
+   * the pressed and hover tint, but the row is now free to shrink toward its
+   * 48px minimum as the text size comes down. */
+  padding: 6px 0;
 }
 
 @media (hover: hover) {
@@ -148,6 +162,10 @@ html:not(.rm-suppress-press) .item-row__body:active {
 .item-row--excerpt .item-row__body {
   justify-content: flex-start;
   gap: 6px;
+  /* This variant pads the ROW out to a card (12px below), which is design
+   * rather than a floor being worked around — so the body's compact-row inset
+   * would simply double it. */
+  padding: 0;
 }
 .item-row--excerpt .item-row__title-text {
   font-size: 1.125rem;
@@ -195,6 +213,8 @@ html:not(.rm-suppress-press) .item-row__body:active {
 }
 .item-row--thumbnail .item-row__body {
   display: block;
+  /* Padded out to a card by the row, as in --excerpt above. */
+  padding: 0;
 }
 .item-row--thumbnail .item-row__title-text {
   font-size: 1.125rem;

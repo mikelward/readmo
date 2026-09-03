@@ -120,3 +120,102 @@ describe('row interaction states (guardrail #2 / newshacker parity)', () => {
     );
   });
 });
+
+/** Everything outside every `@media` block. `declarationsFor` above does NOT
+ * exclude them — the rule regex cannot match across nested braces, so it
+ * resumes *inside* a media block and captures the bare inner selector — and
+ * the hover-state case relies on exactly that to read `.item-row:hover`. The
+ * row's height contract needs the opposite: `.pin-btn` is 44px at base and
+ * 36px under `(pointer: fine)`, and merging the two reports only the second.
+ * So this is a second reader rather than a change to the first. */
+const baseCss = (() => {
+  let out = '';
+  let cursor = 0;
+  const mediaRe = /@media[^{]*\{/g;
+  let m: RegExpExecArray | null;
+  while ((m = mediaRe.exec(cssNoComments))) {
+    out += cssNoComments.slice(cursor, m.index);
+    let depth = 1;
+    let i = m.index + m[0].length;
+    while (i < cssNoComments.length && depth > 0) {
+      if (cssNoComments[i] === '{') depth++;
+      else if (cssNoComments[i] === '}') depth--;
+      i++;
+    }
+    cursor = i;
+    mediaRe.lastIndex = i;
+  }
+  return out + cssNoComments.slice(cursor);
+})();
+
+/** `declarationsFor`, restricted to rules outside every `@media` block. */
+function baseDeclarationsFor(selector: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const ruleRe = /([^{}]+)\{([^{}]*)\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = ruleRe.exec(baseCss))) {
+    const selectors = m[1].split(',').map((s) => s.trim());
+    if (!selectors.includes(selector)) continue;
+    for (const decl of m[2].split(';')) {
+      const [prop, ...rest] = decl.split(':');
+      if (!prop.trim() || rest.length === 0) continue;
+      out[prop.trim()] = rest.join(':').trim();
+    }
+  }
+  return out;
+}
+
+/** The vertical half of a `padding` shorthand, in px. A unitless `0` is the
+ * value the row-height contract turns on, so it has to parse — reading it as
+ * "unrecognized" would make the assertion below vacuous. */
+function paddingBlock(selector: string): number | undefined {
+  const value = baseDeclarationsFor(selector)['padding'];
+  if (!value) return undefined;
+  const first = value.split(/\s+/)[0];
+  if (first === '0') return 0;
+  return first.endsWith('px') ? Number(first.slice(0, -2)) : undefined;
+}
+
+describe('row height contract', () => {
+  it('keeps the tap floor on the row body and the pin button', () => {
+    // Both are flex CHILDREN of .item-row, so either one alone already holds
+    // the row's content box at 44px. That is the fact the next case depends
+    // on, so it is asserted rather than assumed.
+    expect(baseDeclarationsFor('.item-row__body')['min-height']).toBe(
+      'var(--rm-tap)',
+    );
+    expect(baseDeclarationsFor('.pin-btn')['height']).toBe('var(--rm-tap)');
+  });
+
+  it('gives the row no vertical padding, so nothing stacks on that floor', () => {
+    // The invariant that actually decides the row's height. `min-height` on
+    // the row is NOT enough to catch a regression here: it was already at the
+    // floor while every row rendered 12px taller, because a child's
+    // constraint sets the CONTENT box and the row's own padding is added to
+    // it. Restoring `padding: 6px 12px` fails here.
+    expect(paddingBlock('.item-row')).toBe(0);
+  });
+
+  it('puts the optical inset inside the floor, on the body', () => {
+    // Moving the padding is only correct if it survives somewhere — dropping
+    // it entirely would tighten the title against the row edge.
+    expect(paddingBlock('.item-row__body')).toBeGreaterThan(0);
+  });
+
+  it("states SPEC's 48px row minimum on the row itself", () => {
+    // The stretched link covers the row, not the inner <a>'s content box, so
+    // this is where the floor belongs. It exceeds --rm-tap (44px) on purpose:
+    // the touch target and the row's height are different requirements.
+    expect(baseDeclarationsFor('.item-row')['min-height']).toBe('48px');
+  });
+
+  it('does not double the padding on the card-like variants', () => {
+    // --excerpt and --thumbnail pad the ROW out to a card deliberately; with
+    // the compact row's inset now on the body, they have to zero it or every
+    // card grows by 12px.
+    for (const variant of ['.item-row--excerpt', '.item-row--thumbnail']) {
+      expect(paddingBlock(variant)).toBe(12);
+      expect(paddingBlock(`${variant} .item-row__body`)).toBe(0);
+    }
+  });
+});
