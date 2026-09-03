@@ -2682,9 +2682,11 @@ dropping the user at the top of the subscriptions list.
 source/date links, external-link chevron (the reader's "Open original" owns
 that). (No points/comments/Hot flag/"N new" — those are HN-specific.)
 
-Sizing: 6px vertical padding, 48px+ row (the 44×44 tap floor lives on the row
-body, so the row stays compact), 44×44 hit areas, ≥8px gaps, pressed-state on
-every zone. Matches newshacker's `.story-row` density.
+Sizing: 6px vertical inset, 48px+ row, 44×44 hit areas, ≥8px gaps,
+pressed-state on every zone. **Row height tracks the text size** down to that
+48px minimum: choosing a smaller size gives shorter rows, not the same rows
+with more white space around smaller type. Matches newshacker's `.story-row`
+density.
 
 ### Swipe gestures (same as newshacker)
 
