@@ -120,7 +120,7 @@ export function AppDrawer({ open, onClose }: Props) {
           <div className="app-drawer__heading">Appearance</div>
           <div className="app-drawer__appearance">
             <ThemeModeControl />
-            <TextSizeControl className="text-size--grid" />
+            <TextSizeControl />
           </div>
         </div>
 

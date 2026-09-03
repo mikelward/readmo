@@ -38,21 +38,27 @@ describe('AppDrawer', () => {
       screen.getByRole('radiogroup', { name: 'Dark/Light mode' }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('radiogroup', { name: 'Text size' }),
+      screen.getByRole('group', { name: 'Text size' }),
     ).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: 'Light' })).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: 'Small' })).toBeInTheDocument();
+    // The text size is a readout on the stepper now, not one radio per rung.
+    expect(screen.getByText('16px')).toBeInTheDocument();
     // Color Theme (palette) stays in Settings.
     expect(screen.queryByRole('radiogroup', { name: 'Color theme' })).toBeNull();
   });
 
-  it('lays out the drawer text-size picker as a two-row grid', () => {
+  it('offers the text-size stepper in the drawer', () => {
     renderDrawer();
-    // The grid variant keeps the six sizes as two even rows of three in the
-    // narrow drawer panel instead of wrapping unpredictably.
-    expect(screen.getByRole('radiogroup', { name: 'Text size' })).toHaveClass(
-      'text-size--grid',
-    );
+    // A stepper is a fixed three controls however long the ladder is, so the
+    // narrow drawer panel needs no layout variant of its own.
+    const group = screen.getByRole('group', { name: 'Text size' });
+    expect(group).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Smaller text' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Larger text' }),
+    ).toBeInTheDocument();
   });
 
   it('has an App section linking to Settings, About, and Legal (Debug lives on About)', () => {

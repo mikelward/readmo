@@ -260,17 +260,34 @@ describe('font size', () => {
     expect(getStoredFontSize()).toBe('16');
   });
 
-  it('reads a stored font size and ignores garbage', () => {
+  it('reads a stored font size on the ladder', () => {
     window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '14');
     expect(getStoredFontSize()).toBe('14');
-    window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '19');
-    expect(getStoredFontSize()).toBe('19');
-    // '13'/'20' fall outside the offered range, so they're rejected as garbage.
-    window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '13');
-    expect(getStoredFontSize()).toBe('16');
-    window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '20');
-    expect(getStoredFontSize()).toBe('16');
+    window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '24');
+    expect(getStoredFontSize()).toBe('24');
+  });
+
+  it('snaps a size that is not on the ladder, rounding ties up', () => {
+    // Nothing has been retired yet, but a size the ladder no longer offers must
+    // land on the rung next to it rather than reset to the default — that would
+    // read as the app forgetting a choice, and would make the text *smaller*.
+    window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '21');
+    expect(getStoredFontSize()).toBe('22');
+    window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '23');
+    expect(getStoredFontSize()).toBe('24');
+  });
+
+  it('clamps a size beyond either end of the ladder', () => {
+    window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '9');
+    expect(getStoredFontSize()).toBe('14');
     window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '99');
+    expect(getStoredFontSize()).toBe('32');
+  });
+
+  it('falls back to the default for a value that was never a size', () => {
+    window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, 'huge');
+    expect(getStoredFontSize()).toBe('16');
+    window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, '');
     expect(getStoredFontSize()).toBe('16');
   });
 
@@ -279,21 +296,21 @@ describe('font size', () => {
     expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBe('15');
     expect(document.documentElement.getAttribute('data-font-size')).toBe('15');
 
-    setStoredFontSize('17');
-    expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBe('17');
-    expect(document.documentElement.getAttribute('data-font-size')).toBe('17');
+    setStoredFontSize('18');
+    expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBe('18');
+    expect(document.documentElement.getAttribute('data-font-size')).toBe('18');
   });
 
   it('setStoredFontSize("16") clears the attribute and the key', () => {
-    setStoredFontSize('17');
+    setStoredFontSize('18');
     setStoredFontSize('16');
     expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBeNull();
     expect(document.documentElement.hasAttribute('data-font-size')).toBe(false);
   });
 
   it('applyFontSize toggles the attribute without touching storage', () => {
-    applyFontSize('17');
-    expect(document.documentElement.getAttribute('data-font-size')).toBe('17');
+    applyFontSize('18');
+    expect(document.documentElement.getAttribute('data-font-size')).toBe('18');
     expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBeNull();
     applyFontSize('16');
     expect(document.documentElement.hasAttribute('data-font-size')).toBe(false);
@@ -302,7 +319,7 @@ describe('font size', () => {
   it('setStoredFontSize fires a change event', () => {
     const handler = vi.fn();
     window.addEventListener(THEME_CHANGE_EVENT, handler);
-    setStoredFontSize('17');
+    setStoredFontSize('18');
     expect(handler).toHaveBeenCalledTimes(1);
     window.removeEventListener(THEME_CHANGE_EVENT, handler);
   });
@@ -449,12 +466,12 @@ describe('index.html theme boot script', () => {
       'readmo:theme': 'dark',
       'readmo:palette': 'grape',
       'readmo:font': 'fira-sans',
-      'readmo:fontSize': '19',
+      'readmo:fontSize': '24',
     });
     expect(attributes.get('data-theme')).toBe('dark');
     expect(attributes.get('data-palette')).toBe('grape');
     expect(attributes.get('data-font')).toBe('fira-sans');
-    expect(attributes.get('data-font-size')).toBe('19');
+    expect(attributes.get('data-font-size')).toBe('24');
     expect(meta.content).toBe(metaColorFor('dark', 'grape'));
   });
 
@@ -483,11 +500,18 @@ describe('index.html theme boot script', () => {
     }
     expect(runBoot({ 'readmo:font': 'roboto' }).attributes.size).toBe(0);
     expect(runBoot({ 'readmo:font': 'comic-sans' }).attributes.size).toBe(0);
-    for (const size of ['14', '15', '17', '18', '19']) {
+    for (const size of ['14', '15', '17', '18', '19', '20', '22', '24']) {
       expect(runBoot({ 'readmo:fontSize': size }).attributes.get('data-font-size')).toBe(size);
     }
     expect(runBoot({ 'readmo:fontSize': '16' }).attributes.size).toBe(0);
-    expect(runBoot({ 'readmo:fontSize': '99' }).attributes.size).toBe(0);
+    // Snaps exactly as `getStoredFontSize` does — a size off the ladder
+    // resolving one way here and the other way in the app would repaint on
+    // every load.
+    expect(runBoot({ 'readmo:fontSize': '21' }).attributes.get('data-font-size')).toBe('22');
+    expect(runBoot({ 'readmo:fontSize': '23' }).attributes.get('data-font-size')).toBe('24');
+    expect(runBoot({ 'readmo:fontSize': '99' }).attributes.get('data-font-size')).toBe('32');
+    expect(runBoot({ 'readmo:fontSize': '9' }).attributes.get('data-font-size')).toBe('14');
+    expect(runBoot({ 'readmo:fontSize': 'huge' }).attributes.size).toBe(0);
   });
 
   it('resolves a system mode against the OS preference for the tint', () => {

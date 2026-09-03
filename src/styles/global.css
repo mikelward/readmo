@@ -122,6 +122,34 @@
   --rm-font-size: 19px;
 }
 
+:root[data-font-size='20'] {
+  --rm-font-size: 20px;
+}
+
+:root[data-font-size='22'] {
+  --rm-font-size: 22px;
+}
+
+:root[data-font-size='24'] {
+  --rm-font-size: 24px;
+}
+
+:root[data-font-size='26'] {
+  --rm-font-size: 26px;
+}
+
+:root[data-font-size='28'] {
+  --rm-font-size: 28px;
+}
+
+:root[data-font-size='30'] {
+  --rm-font-size: 30px;
+}
+
+:root[data-font-size='32'] {
+  --rm-font-size: 32px;
+}
+
 /* Typeface (settings "Font" picker). Orthogonal to mode/palette/size, so it
    lives in its own attribute and only overrides the font token. Roboto is the
    default and owns the bare :root above (no attribute); "System" drops the

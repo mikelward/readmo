@@ -180,13 +180,35 @@ Everything else about the visual system mirrors newshacker.
   In Settings the **Color Theme** picker renders each option as a two-tone
   color **swatch** (paper background + accent, split on the diagonal), with the
   active palette's swatch ringed.
-- **Text size:** a third orthogonal appearance axis with six steps — Extra
-  Small (14px), Small (15px), Medium (16px, default), Large (17px), Extra Large
-  (18px), Huge (19px). Selectable in Settings
-  ("Text size" section) as a segmented row of capital-**A** glyphs of
-  increasing size (accessible name from each button's label). The choice drives the `data-font-size`
+- **Text size:** a third orthogonal appearance axis running 14, 15, 16
+  (default), 17, 18, 19, 20, 22, 24, 26, 28, 30, 32px — labeled by their px
+  value. The ladder ran 14–19 and topped out at 1.19× the default, which is not
+  much of a large-text mode; it now reaches **2×**, the magnification WCAG 1.4.4
+  asks for. That target is the ladder's alone on an iOS home-screen app, where
+  the system offers no page zoom to fall back on. It **grew upward rather than
+  being re-spaced**: every one of the old rungs is in use, so the fix is more
+  reach, not coarser steps. The steps widen only past 20px, where a reader has
+  stopped nudging and wants the text bigger, and another 1px is a 5% change
+  nobody can see. Labels are the px values rather than the old Extra
+  Small/Medium/Huge scale: English runs out of degrees of "large" before the
+  ladder does — 19px was "Huge" and is a comfortable everyday size for at least
+  one reader — and relative names have to be re-coined every time the ladder
+  grows.
+  Selectable in Settings ("Text size" section) and in the navigation drawer's
+  quick **Appearance** section as a **stepper** — smaller, the current size,
+  larger — with the readout showing that size as a capital **A** rendered at
+  roughly it, so the control demonstrates what it sets. It replaced a segmented
+  row of one button per rung, which stopped working once the ladder grew: a
+  button per size is a lot of tap targets for one setting, and the A glyphs that
+  gave the row its ramp are bounded by the tap target's own height, so the top
+  rungs all drew the same size and the ramp said nothing. A stepper costs random
+  access — reaching the far end is several taps — which the pinch gesture pays
+  for by being the fast path, and it means the ladder's length no longer
+  constrains the control's layout. Each end goes inert rather than wrapping, and
+  the readout is announced on change so stepping is not silent to a screen
+  reader. The choice drives the `data-font-size`
   attribute on
-  `<html>` (Medium = 16px owns the bare `:root`, no attribute), which maps to
+  `<html>` (16px owns the bare `:root`, no attribute), which maps to
   the `--rm-font-size` token; the token sets the **root** (`html`) font-size so
   the `rem`-based type throughout the UI — including the reader article body —
   scales with it. **The header bar scales too**, as a floor rather than a fixed
@@ -196,14 +218,19 @@ Everything else about the visual system mirrors newshacker.
   accessibility floor rather than a design value, and what these controls hold
   is a fixed-size icon, so a wider button shows nothing more while costing the
   fixed-width rows sized against it — the reader's action bar fits five controls
-  across a 320px screen, and the text-size picker six across a phone. The chrome
-  grows to fit its own contents and no further: at large text a reader wants
-  more of the *article* on screen, not a bigger logo. In the navigation drawer's quick **Appearance** section the
-  same picker uses a fixed 3-column grid (`text-size--grid`) so the six sizes
-  render as two even rows of three in the narrow panel.
+  across a 320px screen. The chrome grows to fit its own contents and no
+  further: at large text a reader wants more of the *article* on screen, not a
+  bigger logo.
   Persisted in `localStorage` under `readmo:fontSize`, applied before first
   paint (alongside theme/palette) to avoid a flash, and synced across tabs/hook
   instances via the shared `readmo:themeChanged` event.
+  **A stored size that is not on the ladder snaps to the nearest rung** (ties
+  round up) rather than falling back to the default, which would read as the app
+  forgetting a choice the reader made — and would make their text *smaller* at
+  the moment the ladder grew. Nothing has been retired yet, and the rule exists
+  so that changing the ladder's shape never costs a reader their setting. It
+  holds from the first paint, so a reader never sees one size resolve into
+  another.
 - Icons inlined monochrome SVG (Material Symbols, `fill="currentColor"`), no
   icon font / runtime request.
 
@@ -2086,8 +2113,8 @@ negligible and off every critical path. See the External services table in
       default layout, and the only one the single-feed page uses. Both
       per-device (see *Feed views → How much loads at a time*).
     - **Appearance** — the **Color theme** (Ink/Grape swatches), **Dark/light
-      mode** (light/dark/system icons), **Text size** (Extra Small–Huge
-      A-glyphs), and **Font** pickers (all symbolic segmented controls), then the
+      mode** (light/dark/system icons), **Text size** (a 14–32px
+      smaller/current/larger stepper), and **Font** pickers, then the
       minor display settings placed further down: the **Bottom toolbar**
       picker (`readmo:bottom-bar`) — **Bottom of list** (default) or **Bottom of
       screen** (see *Bottom action bar*) — and, at the very bottom of the
