@@ -5,18 +5,16 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <!-- Zoom is locked to 1 because readmo does its own: a two-finger pinch
-         steps the in-app "Text size" ladder (usePinchFontSize) rather than
-         scaling the page, which keeps the layout reflowed to the viewport
-         instead of leaving the reader panning sideways across a magnified
-         column. Without the lock the browser's zoom fights the gesture for the
-         same two fingers. Android honors this; iOS Safari has ignored
-         `user-scalable` since iOS 10, so the hook cancels Safari's own
-         `gesture*` events to hold the same line there. -->
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
-    />
+    <!-- Deliberately NOT `user-scalable=no`. A two-finger pinch steps the in-app
+         "Text size" ladder instead of scaling the page (usePinchFontSize), but
+         that hook suppresses the browser's zoom per gesture, by canceling the
+         events it claims. Locking the viewport here as well would add nothing
+         it doesn't already do, and would take away the two things that make the
+         override safe: browser zoom still works where our replacement can't
+         help (an article's images, which reflowing text does not magnify), and
+         it still works everywhere if the script fails to load. A blanket
+         `user-scalable=no` is also the shape that fails WCAG 1.4.4. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <!-- Matches the in-app header bg (`--rm-bg` in global.css) so the mobile
          browser URL-bar tint and the sticky app header paint the same color.
          The content is seeded by the theme boot script below and kept in sync

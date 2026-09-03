@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { ReorderableSubscriptions, type SubscriptionEntry } from './ReorderableSubscriptions';
 import type { Feed, FeedId } from '../lib/types';
+import { GESTURE_CANCEL_EVENT } from '../lib/gestureCancel';
 
 function feed(id: string, title: string, host = `${id}.example.com`): Feed {
   return {
@@ -253,6 +254,34 @@ describe('ReorderableSubscriptions', () => {
     fireEvent.keyDown(handles[0], { key: 'ArrowDown' });
     flushPersist();
     expect(onReorder).toHaveBeenCalledWith(['b', 'a', 'c']);
+  });
+
+  it('abandons a pointer drag and restores the order when a pinch claims it', () => {
+    // The handle holds pointer capture under `touch-action: none`, so nothing
+    // takes this gesture away on its own — no `pointercancel` arrives. Without
+    // the broadcast the first finger keeps reordering while the second resizes
+    // text, and its release PERSISTS an order the user never chose.
+    const { onReorder } = setup();
+    const handle = screen.getAllByTestId('sub-drag-handle')[0];
+    handle.setPointerCapture = () => {};
+    handle.releasePointerCapture = () => {};
+
+    fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientY: 0 });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientY: 400 });
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(GESTURE_CANCEL_EVENT));
+    });
+
+    // The release must now commit nothing — the drag is already abandoned.
+    fireEvent.pointerUp(handle, { pointerId: 1, clientY: 400 });
+    flushPersist();
+    expect(onReorder).not.toHaveBeenCalled();
+    // And the list is back where the drag started, not left half-moved.
+    const names = screen
+      .getAllByTestId('sub-drag-handle')
+      .map((h) => /Reorder (\w+)/.exec(h.getAttribute('aria-label') ?? '')?.[1]);
+    expect(names).toEqual(['Alpha', 'Beta', 'Gamma']);
   });
 
   it('moves a feed up with ArrowUp on its handle', () => {

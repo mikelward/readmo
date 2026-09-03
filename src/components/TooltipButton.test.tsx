@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { TooltipButton } from './TooltipButton';
+import { cancelPointerGestures } from '../lib/gestureCancel';
 
 // jsdom ships no real PointerEvent constructor, so Testing Library's
 // `fireEvent.pointerEnter/Leave` fall back to a plain Event and drop the
@@ -654,6 +655,140 @@ describe('TooltipButton', () => {
       expect(onClick).not.toHaveBeenCalled();
       expect(btn).toHaveAttribute('aria-disabled', 'true');
       expect(btn).not.toBeDisabled();
+    });
+  });
+  describe('when a pinch claims the fingers', () => {
+    // A finger resting on Done or Pin while the other pinches: the browser
+    // sends no `pointercancel` (nothing went wrong from its point of view) and
+    // the row's `touch-action: pan-y` keeps the pointer stream alive, so the
+    // stationary finger's release would still fire the action mid-resize.
+    it('swallows the trailing click of a pointer that was already down', () => {
+      const onClick = vi.fn();
+      render(
+        <TooltipButton tooltip="Pin" data-testid="btn" onClick={onClick}>
+          x
+        </TooltipButton>,
+      );
+      const btn = screen.getByTestId('btn');
+
+      act(() => {
+        fireEvent.pointerDown(btn, { pointerType: 'touch', pointerId: 1, clientX: 0, clientY: 0 });
+      });
+      act(() => {
+        cancelPointerGestures();
+      });
+      act(() => {
+        fireEvent.pointerUp(btn, { pointerType: 'touch', pointerId: 1, clientX: 0, clientY: 0 });
+        btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+      });
+
+      expect(onClick).not.toHaveBeenCalled();
+    });
+
+    it('leaves the next real tap alone', () => {
+      // The latch must not outlive the gesture: every genuine pointer
+      // activation clears it in `pointerdown`.
+      const onClick = vi.fn();
+      render(
+        <TooltipButton tooltip="Pin" data-testid="btn" onClick={onClick}>
+          x
+        </TooltipButton>,
+      );
+      const btn = screen.getByTestId('btn');
+
+      act(() => {
+        cancelPointerGestures();
+      });
+      act(() => {
+        fireEvent.pointerDown(btn, { pointerType: 'touch', pointerId: 1, clientX: 0, clientY: 0 });
+        fireEvent.pointerUp(btn, { pointerType: 'touch', pointerId: 1, clientX: 0, clientY: 0 });
+        btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+      });
+
+      expect(onClick).toHaveBeenCalledTimes(1);
+    });
+
+    it('covers a plain button that never heard of this component', () => {
+      // Sign out, and the feed import/export controls, are native <button>s.
+      // The suppression has to reach them too, or the first finger's release
+      // signs the user out mid-resize.
+      const onClick = vi.fn();
+      render(
+        <button type="button" data-testid="plain" onClick={onClick}>
+          Sign out
+        </button>,
+      );
+      const btn = screen.getByTestId('plain');
+
+      act(() => {
+        fireEvent.pointerDown(btn, { pointerType: 'touch', pointerId: 1, clientX: 0, clientY: 0 });
+      });
+      act(() => {
+        cancelPointerGestures();
+      });
+      act(() => {
+        fireEvent.pointerUp(btn, { pointerType: 'touch', pointerId: 1, clientX: 0, clientY: 0 });
+        btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+      });
+
+      expect(onClick).not.toHaveBeenCalled();
+    });
+
+    it('stays armed when a third finger joins the pinch', () => {
+      // A third finger's `pointerdown` reaches the document before its
+      // `touchstart`, so it disarms the latch; the pinch hook re-asserts on
+      // every additional finger. Without that, the finger resting on the
+      // control fires its action when the hand lifts.
+      const onClick = vi.fn();
+      render(
+        <TooltipButton tooltip="Pin" data-testid="btn" onClick={onClick}>
+          x
+        </TooltipButton>,
+      );
+      const btn = screen.getByTestId('btn');
+
+      act(() => {
+        fireEvent.pointerDown(btn, { pointerType: 'touch', pointerId: 1, clientX: 0, clientY: 0 });
+      });
+      act(() => {
+        cancelPointerGestures();
+      });
+      // Third finger: its pointerdown lands elsewhere and clears the latch,
+      // then its touchstart re-arms — which is what the hook now does.
+      act(() => {
+        fireEvent.pointerDown(document.body, {
+          pointerType: 'touch',
+          pointerId: 3,
+          clientX: 200,
+          clientY: 200,
+        });
+        cancelPointerGestures();
+      });
+      act(() => {
+        fireEvent.pointerUp(btn, { pointerType: 'touch', pointerId: 1, clientX: 0, clientY: 0 });
+        btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+      });
+
+      expect(onClick).not.toHaveBeenCalled();
+    });
+
+    it('never swallows a keyboard activation', () => {
+      const onClick = vi.fn();
+      render(
+        <TooltipButton tooltip="Pin" data-testid="btn" onClick={onClick}>
+          x
+        </TooltipButton>,
+      );
+      const btn = screen.getByTestId('btn');
+
+      act(() => {
+        cancelPointerGestures();
+      });
+      act(() => {
+        btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 0 }));
+      });
+
+      expect(onClick).toHaveBeenCalledTimes(1);
     });
   });
 });

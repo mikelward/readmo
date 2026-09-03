@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 import { usePullToRefresh } from './usePullToRefresh';
+import { cancelPointerGestures } from '../lib/gestureCancel';
 
 // Thresholds in the hook (kept in sync with the source):
 //   START_THRESHOLD_PX = 8; TRIGGER_PX = 64; RESISTANCE = 0.5.
@@ -144,5 +145,33 @@ describe('usePullToRefresh', () => {
       );
     });
     expect(result.current.phase).toBe('pulling');
+  });
+  it('abandons a pull armed in the same tick a pinch claims the fingers', () => {
+    // The race: the second finger lands just as the first crosses the arm
+    // threshold. `setPhase('pulling')` is queued but the effect that syncs
+    // `phaseRef` has not run, so a cancel handler that trusts the ref alone
+    // reads `idle`, clears the tracked pointer, and skips the reset — leaving
+    // the queued `pulling` painted with nothing left to finish it.
+    const onRefresh = vi.fn();
+    const { result } = renderHook(() =>
+      usePullToRefresh({ onRefresh, isAtTop: () => true }),
+    );
+
+    act(() => {
+      result.current.handlers.onPointerDown(
+        makePointerEvent({ clientX: 100, clientY: 100, pointerId: 1 }),
+      );
+    });
+    // Arm and cancel inside one act(), so no effect flushes between them.
+    act(() => {
+      result.current.handlers.onPointerMove(
+        makePointerEvent({ clientX: 100, clientY: 200, pointerId: 1 }),
+      );
+      cancelPointerGestures();
+    });
+
+    expect(result.current.phase).toBe('idle');
+    expect(result.current.pull).toBe(0);
+    expect(onRefresh).not.toHaveBeenCalled();
   });
 });

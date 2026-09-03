@@ -244,11 +244,27 @@ Everything else about the visual system mirrors newshacker.
   rungs it crossed on the way. Pinching back out past the end of the ladder and
   in again returns the size the fingers are asking for, rather than starting its
   descent from the end.
-- **Mobile browser zoom is locked** because readmo does its own: page zoom and
-  the pinch above compete for the same two fingers, and scaling the page leaves
-  the reader panning sideways across a magnified column instead of reflowing to
-  the viewport. The cost is that an article's images can no longer be zoomed
-  into; the text-size ladder replaces text zoom, not image zoom.
+- **The pinch suppresses browser zoom per gesture, and the viewport is
+  deliberately NOT locked.** Page zoom and the pinch compete for the same two
+  fingers, and scaling the page leaves the reader panning sideways across a
+  magnified column instead of reflowing to the viewport — so on the gestures it
+  claims, readmo wins. But `user-scalable=no` was the wrong way to win it: a
+  blanket lock buys nothing that canceling the claimed gestures doesn't already
+  do, and costs the two things that make the override defensible.
+  - **A pinch on a photograph or a chart still gets the browser's
+    magnification.** Resizing text is the right answer for a pinch on text and
+    no answer at all for one on an image, which reflowing cannot magnify at any
+    size — and that case is the one WCAG 1.4.4 is really about.
+    **Where the browser would not have magnified it anyway, the pinch resizes
+    text rather than doing nothing.** Standing aside on a surface with no zoom
+    to hand over would suppress the resize and deliver no magnification, which
+    is worse than either outcome alone; app chrome that merely happens to be
+    drawn with an image is not a photograph and is treated as text.
+  - **Zoom still works if the script doesn't.** A meta lock applies before any
+    JS runs and regardless of whether it ever does; this doesn't.
+- **The text ladder is not a general magnifier**, and isn't meant to replace one:
+  it reflows text, so it does not enlarge images or chrome. That is why the
+  browser keeps the gestures above rather than readmo taking all of them.
 - Icons inlined monochrome SVG (Material Symbols, `fill="currentColor"`), no
   icon font / runtime request.
 
