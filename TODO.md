@@ -658,3 +658,249 @@ permanent by default. Each is cheap to change.
         same declaration only if their own rulesets start requiring
         `zizmor`. `zizmor.yml`'s header no longer claims nothing requires
         it, and its cost note now says a PyPI outage blocks a merge.
+
+## Billing, entitlements, and cost ceilings
+
+Readmo is the only product in the portfolio with a subscription's shape — daily
+habit, accumulating state, real ongoing poll cost. The business-model reasoning
+(what is in the paid tier, what is deliberately *not*, pricing, Stripe vs. a
+merchant of record) lives in `MONETIZATION.md`; this section is the engineering.
+
+**Nothing here paywalls anything.** The first version writes a row for every
+existing user on the current tier and changes no behavior — the gates simply
+read a table instead of a constant. That gets the whole mechanism in place with
+zero user-visible change and no risk of a takeaway, which is also the honest
+framing given the current user count: this is a learning artifact first.
+
+### Entitlements (generalize the allowlist — don't build a parallel system)
+
+- [ ] `entitlements` table: `user_id`, `tier`, `status`, `current_period_end`,
+      `feed_cap`, `stripe_customer_id`, `stripe_subscription_id`. RLS lets a
+      user `select` their own row and grants **no** insert or update at all —
+      only `service_role` writes (guardrail 7).
+- [ ] `loadEntitlement` in `_shared/`, mirroring `loadAllowlistFromDb`: read
+      with the service-role client, **inside the Edge Function, before the
+      expensive work**. That position is the whole security property.
+- [ ] **Add** the entitlement check to `summary` — do **not** swap out
+      `loadAllowlistFromDb`. `summary` fetches the full article through Jina,
+      so its allowlist gate is a legal one; replacing it with a paid check
+      would sell the full-text access `MONETIZATION.md` says must not be sold.
+      Entitlement **AND** allowlist.
+- [ ] **Do not gate the pin trigger as a whole** (0053/0054, retried by 0066).
+      One `summary` call launches both the AI summary *and* the full-text
+      download — 0066's header says so — so an entitlement gate on the trigger
+      would switch off the server-side full-text prewarm `SPEC.md` promises for
+      pinned items, for an allowlisted user who just hasn't paid. Gate the
+      summary leg only, or split the legs so full text keeps its own check.
+- [ ] **Enforce the EFFECTIVE cap in `subscribe_to_feed`, not the stored
+      one** — replacing 0059's `v_cap constant int := 100` with a bare read of
+      `entitlements.feed_cap` reintroduces exactly the split `get_entitlement()`
+      exists to close. `subscribe_to_feed` is plpgsql (`0059_feed_cap.sql:32-45`)
+      and cannot call `resolveEntitlement`, so a paid row with `feed_cap = 500`
+      that is past its grace window would keep admitting feeds up to 500 while
+      the display RPC has already resolved that account to free/100 — enforcement
+      more generous than the tier it shows, which is the direction that costs
+      money rather than trust. **Factor the expiry/grace resolution into one SQL
+      function and have both `get_entitlement()` and `subscribe_to_feed` call
+      it**, rather than writing the rule a third time: the Deno/SQL pair is
+      unavoidable (nothing spans both runtimes), a third copy is not, and this
+      finding is what a third copy looks like before it ships. Cover an expired
+      paid row in the feed-cap SQL test — the case has no coverage today, in
+      either language. The per-user advisory lock (`0059:66`) already serializes
+      the count-then-insert, so nothing about the locking changes. (No allowlist
+      to preserve on this one.)
+- [ ] **Gate cached summary DELIVERY, not just generation.** `feed_items`
+      returns `ai_summary` on the row gated only on `email_is_allowlisted()`
+      (0073), and `useSummary` renders that ride-along with no Edge call —
+      instantly, and offline. So gating the `summary` function alone stops a
+      free user generating a summary and not reading one someone else
+      generated. The allowlist is the family, so as written the paid tier
+      would gate nothing for exactly the people being asked to pay. Gate the
+      row projection and the display path too, keeping the allowlist alongside.
+- [ ] **The spoiler path needs its own gate, in three places the above
+      misses — and DELIVERY is the one that actually leaks.** Two are about a
+      paid user not getting what they bought: the poller selects work through
+      `feeds_with_allowlisted_subscriber` (0045, service-role only), and the
+      client hides the controls behind the full-text capability. The third runs
+      the other way. `feed_items` NULLs `ai_summary` for an off-list caller and
+      says so in its header, but passes `spoiler_free_title` through untouched
+      (`0073_title_normalized_column.sql:543-552`), and the direct-item read
+      names it in `ITEM_COLS` unconditionally (`SupabaseDataSource.ts:83-94`).
+      The rewrite caches on the **shared** item, so one entitled subscriber
+      generating it hands it to every co-subscriber of that feed, cached on
+      device — the UI gate then hides a value the client already holds, which
+      is a display preference, not an entitlement. Gate it in the row
+      projection **server-side**, the way `ai_summary` already is; dropping the
+      column from the client's select list is not a gate, and that file's own
+      comment explains why it would also be dangerous (PostgREST rejects the
+      whole explicit column list with 42703/PGRST204 when a named column is
+      missing, so a projection change has to survive the deploy gap in both
+      directions). Entitlement **OR** allowlist here, not AND: the rewrite
+      reads the headline and the already-stored feed body only, so it carries
+      none of `summary`'s full-text exposure. The client capability stays
+      server-derived.
+- [ ] **An absent TABLE means current behavior; an absent ROW does not.**
+      Guardrail 11's "tolerate the old backend" is about the *table* — the two
+      halves deploy on different clocks, so a client in front of a backend
+      without entitlements keeps working, and existing users are grandfathered
+      by rows written *for* them rather than by a gate flipping shut. Once the
+      table is live and backfilled, a missing row is a **new signup**, not an
+      old backend, and reading it as "current behavior" hands every future free
+      user the legacy uncapped feed permanently. Table absent → legacy; table
+      present, row absent → free tier. Provision a free row on signup so the
+      second case is rare rather than load-bearing.
+- [ ] **Fail closed when the entitlement read fails** — guardrail 7, and what
+      `loadAllowlistFromDb` already does. Unknown status treated as paid hands
+      out the feed cap and uncontrolled Gemini/Jina work exactly while the
+      backend is degraded. Retryable error, not a silent downgrade.
+- [ ] **Grace window is the separate case**: a row read *successfully* whose
+      `current_period_end` has just lapsed keeps access, so a dropped webhook
+      or failed renewal doesn't lock out someone who paid. "Couldn't check"
+      and "checked, recently expired" must not share a code path.
+- [ ] Client displays tier and never decides it — the FAMILY chip in the
+      account menu is the pattern. Feature-detect so a client in front of a
+      backend without the table still works.
+
+### Stripe
+
+- [ ] `stripe-webhook` Edge Function: public (no JWT), verifies the Stripe
+      signature, handles `checkout.session.completed`,
+      `customer.subscription.updated`, `customer.subscription.deleted`,
+      `invoice.payment_failed`. **The webhook is the source of truth — never
+      the checkout success redirect**, which lies.
+- [ ] Idempotency by event id (store processed ids). Stripe retries, and a
+      double-applied upgrade or a double-applied cancel are both bad.
+- [ ] **Carry the user id on the subscription, not just the session.**
+      `client_reference_id` exists only on `checkout.session.completed`; the
+      three subscription/invoice events identify a customer and a subscription
+      and nothing that maps to `auth.uid()`. Looking the row up by
+      `stripe_customer_id` works only once a row exists, which is exactly what
+      the out-of-order case above says can't be assumed. Stamp
+      `subscription_data.metadata.user_id` at session creation as well —
+      Stripe copies it onto the subscription and every later event about it —
+      and test a subscription event arriving *before* its checkout event.
+- [ ] **Monotonic writes per subscription — idempotency does not cover this.**
+      Event-id dedup stops the same event applying twice; it does nothing about
+      two *different* events arriving out of order. A late
+      `subscription.updated` after a `deleted` restores access to a cancelled
+      sub; a stale `payment_failed` revokes access that has since renewed.
+      **Not by event timestamp** — Stripe's `created` has second resolution,
+      so an update and a deletion raised in the same second are unorderable:
+      accepting equal timestamps restores deleted access, rejecting them
+      discards the newer event. Re-fetch current state from Stripe and write
+      that, or order on a token that actually increases per subscription.
+- [ ] Stripe Checkout + Customer Portal, both hosted. No billing UI, no card
+      data near the database.
+- [ ] **Two authenticated endpoints of our own, before the webhook is useful.**
+      (a) Create the Checkout session server-side for the signed-in caller and
+      stamp `client_reference_id` with `auth.uid()` — the webhook has no other
+      trustworthy way to pick a `user_id`, and matching on checkout email is
+      wrong (buyer-supplied, mutable, need not be the account's). (b) Create
+      the Portal session from the caller's *own* stored `stripe_customer_id`,
+      never a client-supplied one, or anyone can open anyone's billing page.
+      Cross-account tests for both.
+- [ ] **Make Checkout session creation idempotent — with a persisted attempt
+      row, not a time window.** A retry, a double tap, or two tabs mints two
+      sessions; two completed sessions mean two live subscriptions against a
+      one-row-per-user model, so the second is a charge nothing points at. A
+      clock-derived `Idempotency-Key` fails on requests straddling a window
+      boundary (different keys, two sessions), and neither the open-session nor
+      the active-entitlement check sees anything in the gap between Checkout
+      completing and its webhook landing. Persist an attempt row keyed by user
+      with a unique constraint, derive the idempotency key from its stable id,
+      reuse its live session, and refuse when an active entitlement exists —
+      the Portal is where changing a subscription belongs. Test two concurrent
+      creates and a create inside the post-checkout gap.
+- [ ] **Register all three functions in the `Makefile` first.** `deploy`
+      enumerates every function by name, so an unregistered one is never
+      deployed and Checkout/Portal 404 after a rollout that looked complete.
+      The webhook's target takes `--no-verify-jwt` (like `deploy-poll`): it is
+      public and verifies Stripe's signature itself. Code, not configuration —
+      it belongs in the PR.
+- [ ] **Manual setup is more than the two deploys** — see
+      `MONETIZATION.md` §"Rolling this out". Beyond `make migrate` /
+      `make deploy` (called out in the PR, guardrail 11): the Stripe API key
+      and webhook signing secret set as Supabase secrets, the webhook endpoint
+      registered in Stripe against **all six** events listed above (nothing is
+      delivered until it is, an unregistered webhook is indistinguishable from
+      a broken one, and the two `checkout.session.async_payment_*` ones are the
+      easy omission — leave one off and a delayed settlement is never activated
+      or cleared, silently), and the price created with its id configured. **Order matters and
+      is not the obvious one**: registering the endpoint is what *generates*
+      the signing secret, so deploy, register, then set secrets — not secrets
+      first. Test mode end to end first; none of it is in this repository, so
+      CI can't catch a missed step.
+- [ ] **Record Stripe's cost and reliability envelope** (guardrail 5) — done in
+      `MONETIZATION.md` §"Rolling this out"; re-check the figures against
+      current Stripe pricing before the first real charge, and confirm the
+      claimed failure shape by testing it: a session endpoint that fails
+      visibly, and an unprocessed webhook that returns 5xx so Stripe's
+      three-day retry actually fires rather than being swallowed by a 2xx.
+- [ ] **Measure Checkout/Portal session-creation latency on the real API.**
+      Hosting the resulting pages at Stripe does not take Stripe off the click:
+      both endpoints call it synchronously before they can redirect. Give the
+      call an explicit timeout and the button a pending state, then replace the
+      estimate in `MONETIZATION.md` with a measured number.
+- [ ] Test the failure paths, not just the happy one: a webhook that arrives
+      late, one that never arrives, a card that fails on renewal, a
+      cancellation mid-period.
+
+### Cost ceilings and overload
+
+- [ ] **Write down what a 10× user day costs.** Gemini, Jina, and Supabase
+      compute are the metered lines. The architecture is favorable — poll cost
+      scales with distinct feeds not users, summaries and spoiler rewrites are
+      cached on the shared item — so the number should be small. Confirm that
+      rather than assuming it.
+- [ ] **Set a provider-side spend ceiling** on Gemini and Jina. An in-code
+      guard can be bypassed by a bug; a provider cap can't.
+- [ ] **Audit that every metered path degrades visibly.** A summary that
+      silently never appears is the same failure gedmap had with geocoding: it
+      reads as a broken app rather than a temporary limit. The `unavailable` /
+      `unreachable` split already exists for summaries — confirm the reader
+      actually sees the difference, and check the poller's spoiler pass and the
+      Jina fetch for the same property.
+- [ ] Decide what happens to the poller when Supabase is at its compute
+      ceiling — degrade poll frequency, or let reads win? `SCALING.md` names
+      the tier as the first thing to fall over.
+
+### Alerting (observability exists; alerting is thin)
+
+`OBSERVABILITY.md` and the Grafana Cloud scrape of the Supabase Metrics API are
+the best instrumentation in the portfolio. The gap is what actually pages.
+
+- [ ] Confirm the DB-performance alert rules are live and routed somewhere that
+      reaches a phone, not just a dashboard.
+- [ ] Add alerts for the things a paying customer would notice first: the
+      poller not running, auth failing, the error rate on `feed_items`.
+- [ ] Once anyone pays, a silent outage stops being a private annoyance. Decide
+      the response expectation *before* selling anything, not after.
+
+### Product analytics (the denominator)
+
+Signups and `list_users()` say who exists, not whether anyone stayed. Every
+conversion or pricing question is unanswerable without retention.
+
+- [ ] Weekly actives and 30-day retention are the two numbers worth having.
+      **`item_state.updated_at` is not an activity signal, and using it as one
+      distorts both.** It records when the *server received a write*, so it
+      misses a reader who browses feeds without pinning, marking done, or
+      favoriting anything — which is most reading — and, because the live
+      source drains its outbox asynchronously, it stamps an offline action at
+      sync time rather than action time, moving activity into the wrong period.
+      Either define a real activity event (a cheap authenticated ping on
+      session start, aggregated) or derive the metric from action timestamps
+      and state its coverage limits wherever the number is shown. What is not
+      acceptable is a number on `/admin` that reads as "weekly actives" and
+      silently means "people who wrote item state this week".
+- [ ] Surface them on `/admin` alongside the existing user list.
+- [ ] Privacy floor unchanged: aggregates only, and none of it leaves the
+      machine (guardrail 12 — operator data stays behind `/admin`).
+
+### Before charging anyone
+
+See `MONETIZATION.md` §"Before charging anyone" — terms of service, refund
+policy, an accurate privacy policy, a monitored support address, account
+deletion and export (confirm 0061 `export_subscriptions` covers what a
+departing customer is owed), and a decision about what happens to paid features
+if the service is ever shut down. None of it is code, all of it is required.
