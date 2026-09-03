@@ -140,7 +140,12 @@
   --rm-border: #2c3038;
   --rm-border-strong: #3a3f4a;
 
-  --rm-text: #ececec;
+  /* Softened from #ececec: near-white on a near-black card blooms, and the
+     unread title carries it worst (500 weight, the largest contrast on the
+     row), reading as bold and blurry rather than crisp when the panel is dim.
+     The fix for halation is less peak luminance, not more — raising contrast
+     here makes it worse. 11:1 on the card, still far past AAA's 7:1. */
+  --rm-text: #d4d4d4;
   --rm-read: #a8a8a8;
   --rm-meta: #8b8b8b;
 
@@ -174,7 +179,7 @@
     --rm-border: #2c3038;
     --rm-border-strong: #3a3f4a;
 
-    --rm-text: #ececec;
+    --rm-text: #d4d4d4;
     --rm-read: #a8a8a8;
     --rm-meta: #8b8b8b;
 
@@ -250,7 +255,9 @@
   --rm-border: #352a40;
   --rm-border-strong: #453953;
 
-  --rm-text: #ece4f3;
+  /* Softened from #ece4f3, matching Ink's luminance step — same halation, same
+     fix. See the note on Ink's dark --rm-text. */
+  --rm-text: #d9cfe2;
   --rm-read: #b4a6c2;
   --rm-meta: #978aa6;
 
@@ -288,7 +295,7 @@
     --rm-border: #352a40;
     --rm-border-strong: #453953;
 
-    --rm-text: #ece4f3;
+    --rm-text: #d9cfe2;
     --rm-read: #b4a6c2;
     --rm-meta: #978aa6;
 

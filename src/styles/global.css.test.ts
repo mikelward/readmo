@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const css = readFileSync(new URL('./global.css', import.meta.url), 'utf8');
+const cssNoComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
 
 function declarationsFor(selector: string): Record<string, string> {
   const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -86,5 +87,89 @@ describe('main column reaches the foot of the screen', () => {
     expect(declarationsFor('.app-main').padding).toContain(
       'env(safe-area-inset-bottom)',
     );
+  });
+});
+
+/** WCAG 2.x relative luminance. */
+function luminance(hex: string): number {
+  const h = hex.replace('#', '');
+  const channel = (i: number) => {
+    const c = parseInt(h.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+}
+
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+interface Pairing {
+  selector: string;
+  text: string;
+  card: string;
+}
+
+/** Every declaration block that sets both `--rm-text` and `--rm-bg-card` — one
+ * per palette per mode. Discovered rather than listed by selector, so a new
+ * palette is held to the same bounds the day it lands instead of the day
+ * somebody remembers to add it here. */
+function textOnCardPairings(): Pairing[] {
+  const out: Pairing[] = [];
+  const ruleRe = /([^{}]+)\{([^{}]*)\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = ruleRe.exec(cssNoComments))) {
+    const text = /--rm-text:\s*(#[0-9a-f]{6})/i.exec(m[2])?.[1];
+    const card = /--rm-bg-card:\s*(#[0-9a-f]{6})/i.exec(m[2])?.[1];
+    if (!text || !card) continue;
+    out.push({ selector: m[1].trim().replace(/\s+/g, ' '), text, card });
+  }
+  return out;
+}
+
+describe('global.css body-text contrast', () => {
+  const pairings = textOnCardPairings();
+
+  it('finds a text-on-card pairing for every palette and mode', () => {
+    // The regexes above are the kind that go quietly green when the file moves
+    // underneath them, so assert the parse found something first: two palettes
+    // x (light, dark, system-dark) = six.
+    expect(pairings.length).toBe(6);
+  });
+
+  it('clears AAA everywhere', () => {
+    for (const { selector, text, card } of pairings) {
+      const ratio = contrast(text, card);
+      expect(ratio, `${selector} — ${text} on ${card} is ${ratio.toFixed(2)}:1`)
+        .toBeGreaterThanOrEqual(7);
+    }
+  });
+
+  it('caps dark-mode body text below the halation ceiling', () => {
+    // The unusual half of this test, and the point of it: in dark mode MORE
+    // contrast is not better. Near-white on near-black blooms, and the unread
+    // title wears it worst — it reads bold and blurry rather than crisp on a dim
+    // panel. A future "improve the contrast" edit would silently bring that
+    // back, so the ceiling is asserted, not just the floor.
+    const dark = pairings.filter(
+      ({ text, card }) => luminance(text) > luminance(card),
+    );
+    expect(dark.length).toBe(4);
+    for (const { selector, text, card } of dark) {
+      const ratio = contrast(text, card);
+      expect(ratio, `${selector} — ${text} on ${card} is ${ratio.toFixed(2)}:1`)
+        .toBeLessThanOrEqual(12);
+    }
+  });
+
+  it('keeps the two dark palettes within a step of each other', () => {
+    // Ink and Grape should read as the same weight of text in the same room; a
+    // change to one that skips the other is the drift this catches.
+    const dark = pairings.filter(
+      ({ text, card }) => luminance(text) > luminance(card),
+    );
+    const ratios = dark.map(({ text, card }) => contrast(text, card));
+    expect(Math.max(...ratios) - Math.min(...ratios)).toBeLessThan(1);
   });
 });
