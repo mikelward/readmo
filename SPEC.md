@@ -155,7 +155,18 @@ Everything else about the visual system mirrors newshacker.
   860px once the viewport clears ~1060px. Safe-area
   insets reserve space for landscape-iPhone notches on the edge controls.
 - **Navigation drawer sections:** Home (link to `/`), Library (Pinned / Favorites / Done / Opened / Offline), Feeds (subscription list, with an **edit pencil** beside the heading linking to the Feeds management page at `/feeds`), Appearance (the **Dark/Light mode** and **Text size** pickers — kept here because they're the most-changed settings and the drawer is one tap from anywhere), App (Settings, About). The remaining appearance controls (Color Theme, Font) live in Settings; Debug is reached from the About page (not the drawer). Feeds and Settings are also reachable from the **account menu** (top-right avatar); the menu also shows a **FAMILY** chip beside the signed-in email when the user is on the trusted-user allowlist, and an **Admin** link to `/admin` for admin users (both hidden otherwise — see *Admin* and *Full-text reading mode*). **Not yet in the drawer (TODO):** the Home feed picker (All subscriptions / per-folder) and a Folders nav section were dropped pending a proper design; `/` still renders the All-subscriptions river by default (`useHomeFeed`). The Dark/Light mode and Text size pickers are shared components (`ThemeModeControl`, `TextSizeControl`), so the drawer and Settings render the identical controls.
-- **Dark mode:** full light/dark/system via tokens.
+- **Dark mode:** full light/dark/system via tokens. **Body text in dark mode is
+  bounded at both ends, not maximized.** Near-white on a near-black card
+  *blooms* — the strokes bleed outward — and the unread title wears it worst,
+  being both the heaviest weight on the row and its highest contrast: on a dim
+  panel it reads bold and blurry rather than crisp, which is *harder* to read,
+  not easier. The fix is less peak luminance, so dark body text is deliberately
+  softened: comfortably clear of AAA, and just as deliberately short of the
+  maximum, because the obvious future "improve the contrast here" edit is the
+  thing that brings the bloom back. Both palettes take the same step, so Ink and
+  Grape read as the same weight of text in the same room. Light mode has no
+  ceiling — dark ink on paper does not bloom. The unread/read **weight** step is
+  unchanged and stays identical in both modes.
 - **Palette:** two color families selectable in Settings, orthogonal to the
   light/dark/**mode** axis — **Ink** (default, the monochrome ink-on-paper above)
   and **Grape** (a vivid violet: grape accent
