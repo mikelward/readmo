@@ -15,7 +15,20 @@ export type Palette = 'ink' | 'grape';
 // `data-font-size` attribute; `global.css` maps each to `--rm-font-size`. `16`
 // is the default (Medium) and owns the bare `:root` block (no attribute),
 // matching the theme/palette default pattern.
-export type FontSize = '14' | '15' | '16' | '17' | '18' | '19';
+export type FontSize =
+  | '14'
+  | '15'
+  | '16'
+  | '17'
+  | '18'
+  | '19'
+  | '20'
+  | '22'
+  | '24'
+  | '26'
+  | '28'
+  | '30'
+  | '32';
 
 // Body typeface. Each non-system option is a self-hosted webfont (Fontsource)
 // chosen so the app renders identically on every platform — the previous
@@ -33,7 +46,35 @@ export type FontFamily =
 
 const THEMES: readonly Theme[] = ['light', 'dark', 'system'];
 const PALETTES: readonly Palette[] = ['ink', 'grape'];
-const FONT_SIZES: readonly FontSize[] = ['14', '15', '16', '17', '18', '19'];
+// Exported (unlike the sibling ladders) because the pinch gesture walks it:
+// `pinchFontSize.ts` maps a zoom ratio onto positions in this order, so the
+// ascending order is a contract, not just a validation list.
+//
+// The ladder grew upward rather than being re-spaced: it ran 14-19 and topped
+// out at 1.19x the default, which is not much of a large-text mode, but every
+// one of those rungs is in use — so the fix is more reach, not coarser steps.
+// The steps widen only past 20px, where a reader has stopped nudging and wants
+// the text bigger, and another 1px is a 5% change nobody can see. 24px is near
+// the practical ceiling while `--rm-header-h` stays a fixed 56px.
+//
+// Nothing is ever removed from this list without a reason: `getStoredFontSize`
+// snaps a retired step to its neighbor, which is a change to a setting someone
+// chose, and the rungs are cheap.
+export const FONT_SIZES: readonly FontSize[] = [
+  '14',
+  '15',
+  '16',
+  '17',
+  '18',
+  '19',
+  '20',
+  '22',
+  '24',
+  '26',
+  '28',
+  '30',
+  '32',
+];
 const FONTS: readonly FontFamily[] = [
   'roboto',
   'inter',
@@ -45,7 +86,7 @@ const FONTS: readonly FontFamily[] = [
 
 // 16px (Medium) is the default, so it owns the bare `:root` block and needs no
 // `data-font-size` attribute.
-const DEFAULT_FONT_SIZE: FontSize = '16';
+export const DEFAULT_FONT_SIZE: FontSize = '16';
 
 // Roboto is the default typeface, so it owns the bare `:root` font token and
 // needs no `data-font` attribute (same default-owns-root pattern as palette and
@@ -82,14 +123,28 @@ export const FONT_STACKS: Record<FontFamily, string> = {
 };
 
 // Display labels for the size pickers (Settings text buttons + the drawer's
-// A-glyph row). A relative Small/Medium/Large scale rather than raw px.
+// A-glyph row), and the accessible name of each radio.
+//
+// Raw px rather than the Extra Small/Medium/Huge scale these used to carry.
+// English runs out of degrees of "large" well before the ladder does — it ran
+// out at nine — and the relative names would have to be re-coined every time the
+// ladder grows. A px label says something true, survives a ladder change, and
+// leaves the small-to-large reading to the A glyph, which shows it better than a
+// word can.
 export const FONT_SIZE_LABELS: Record<FontSize, string> = {
-  '14': 'Extra Small',
-  '15': 'Small',
-  '16': 'Medium',
-  '17': 'Large',
-  '18': 'Extra Large',
-  '19': 'Huge',
+  '14': '14px',
+  '15': '15px',
+  '16': '16px',
+  '17': '17px',
+  '18': '18px',
+  '19': '19px',
+  '20': '20px',
+  '22': '22px',
+  '24': '24px',
+  '26': '26px',
+  '28': '28px',
+  '30': '30px',
+  '32': '32px',
 };
 
 // Display names for each palette, used by the drawer/settings pickers.
@@ -162,11 +217,39 @@ export function getStoredPalette(): Palette {
   }
 }
 
+/**
+ * The nearest rung to a size that was on the ladder once and isn't now, or
+ * `null` for a value that was never a size at all.
+ *
+ * The ladder is allowed to change shape, and this is what stops that costing
+ * readers their setting: the plain `isFontSize` check would send everyone
+ * stored on a retired step back to the default, which reads as the app losing
+ * their preference rather than as the ladder moving. Ties round up (17 lands on
+ * 18, not 16) — someone who chose a size above the default was asking for
+ * bigger, so the ambiguous case should keep going that way.
+ */
+function nearestFontSize(raw: string | null): FontSize | null {
+  const px = Number(raw);
+  if (!raw || !Number.isFinite(px)) return null;
+  let best: FontSize | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const size of FONT_SIZES) {
+    const distance = Math.abs(Number(size) - px);
+    // `<=` rather than `<`, walking an ascending ladder, is what rounds a tie up.
+    if (distance <= bestDistance) {
+      bestDistance = distance;
+      best = size;
+    }
+  }
+  return best;
+}
+
 export function getStoredFontSize(): FontSize {
   if (!hasWindow()) return DEFAULT_FONT_SIZE;
   try {
     const raw = window.localStorage.getItem(FONT_SIZE_STORAGE_KEY);
-    return isFontSize(raw) ? raw : DEFAULT_FONT_SIZE;
+    if (isFontSize(raw)) return raw;
+    return nearestFontSize(raw) ?? DEFAULT_FONT_SIZE;
   } catch {
     return DEFAULT_FONT_SIZE;
   }

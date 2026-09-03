@@ -92,15 +92,26 @@
           ) {
             document.documentElement.setAttribute('data-font', f);
           }
-          var fs = localStorage.getItem('readmo:fontSize');
-          if (
-            fs === '14' ||
-            fs === '15' ||
-            fs === '17' ||
-            fs === '18' ||
-            fs === '19'
-          ) {
-            document.documentElement.setAttribute('data-font-size', fs);
+          // Mirrors FONT_SIZES + nearestFontSize in src/lib/theme.ts. Snapping
+          // (not a whitelist) because the ladder has changed shape before: a
+          // reader stored on a retired step resolves to a neighbor in the app,
+          // so this has to resolve to the same one or every load paints the
+          // default and then jumps. Ties round up, as they do there.
+          var sizes = [14, 15, 16, 17, 18, 19, 20, 22, 24, 26, 28, 30, 32];
+          var fs = Number(localStorage.getItem('readmo:fontSize'));
+          if (isFinite(fs) && fs > 0) {
+            var best = sizes[0];
+            var bestDistance = Infinity;
+            for (var i = 0; i < sizes.length; i++) {
+              var distance = Math.abs(sizes[i] - fs);
+              if (distance <= bestDistance) {
+                bestDistance = distance;
+                best = sizes[i];
+              }
+            }
+            if (best !== 16) {
+              document.documentElement.setAttribute('data-font-size', String(best));
+            }
           }
           // Seed <meta name="theme-color"> from the resolved mode + palette so
           // the browser-chrome tint matches the header on the very first

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { TextSizeControl } from './TextSizeControl';
 import * as themeLib from '../lib/theme';
+import { FONT_SIZES } from '../lib/theme';
 
 describe('TextSizeControl', () => {
   afterEach(() => {
@@ -12,39 +13,87 @@ describe('TextSizeControl', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders Extra Small through Huge A-glyph buttons as a Text size radiogroup', () => {
+  it('is three controls whatever the ladder length', () => {
+    // The point of the stepper: it does not grow a tap target per rung, so a
+    // longer ladder costs no layout.
     renderWithProviders(<TextSizeControl />);
-    const group = screen.getByRole('radiogroup', { name: 'Text size' });
-    expect(group).toBeInTheDocument();
-    for (const name of [
-      'Extra Small',
-      'Small',
-      'Medium',
-      'Large',
-      'Extra Large',
-      'Huge',
-    ]) {
-      const btn = screen.getByRole('radio', { name });
-      expect(btn).toBeInTheDocument();
-      // Accessible name comes from aria-label; the visible glyph is just "A".
-      expect(btn).toHaveTextContent('A');
-    }
+    expect(screen.getByRole('group', { name: 'Text size' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button')).toHaveLength(2);
+    expect(FONT_SIZES.length).toBeGreaterThan(2);
   });
 
-  it('marks the stored font size as checked', () => {
-    vi.spyOn(themeLib, 'getStoredFontSize').mockReturnValue('17');
+  it('shows the current size', () => {
+    vi.spyOn(themeLib, 'getStoredFontSize').mockReturnValue('19');
     renderWithProviders(<TextSizeControl />);
-    expect(screen.getByRole('radio', { name: 'Large' })).toHaveAttribute('aria-checked', 'true');
-    expect(screen.getByRole('radio', { name: 'Medium' })).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByText('19px')).toBeInTheDocument();
   });
 
-  it('calls setStoredFontSize when a size is clicked', async () => {
+  it('steps one rung at a time in each direction', async () => {
     const user = userEvent.setup();
-    const setSpy = vi.spyOn(themeLib, 'setStoredFontSize').mockImplementation(() => {});
+    vi.spyOn(themeLib, 'getStoredFontSize').mockReturnValue('19');
+    const setSpy = vi
+      .spyOn(themeLib, 'setStoredFontSize')
+      .mockImplementation(() => {});
     renderWithProviders(<TextSizeControl />);
-    await user.click(screen.getByRole('radio', { name: 'Extra Small' }));
-    expect(setSpy).toHaveBeenCalledWith('14');
-    await user.click(screen.getByRole('radio', { name: 'Huge' }));
-    expect(setSpy).toHaveBeenCalledWith('19');
+
+    await user.click(screen.getByRole('button', { name: 'Larger text' }));
+    expect(setSpy).toHaveBeenCalledWith('20');
+
+    setSpy.mockClear();
+    await user.click(screen.getByRole('button', { name: 'Smaller text' }));
+    expect(setSpy).toHaveBeenCalledWith('18');
+  });
+
+  it('reaches the new top of the ladder', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(themeLib, 'getStoredFontSize').mockReturnValue('30');
+    const setSpy = vi
+      .spyOn(themeLib, 'setStoredFontSize')
+      .mockImplementation(() => {});
+    renderWithProviders(<TextSizeControl />);
+    await user.click(screen.getByRole('button', { name: 'Larger text' }));
+    expect(setSpy).toHaveBeenCalledWith('32');
+  });
+
+  it('goes inert at each end rather than wrapping around', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(themeLib, 'getStoredFontSize').mockReturnValue(FONT_SIZES[0]);
+    const setSpy = vi
+      .spyOn(themeLib, 'setStoredFontSize')
+      .mockImplementation(() => {});
+    renderWithProviders(<TextSizeControl />);
+
+    const smaller = screen.getByRole('button', { name: 'Smaller text' });
+    expect(smaller).toHaveAttribute('aria-disabled', 'true');
+    await user.click(smaller);
+    expect(setSpy).not.toHaveBeenCalled();
+    // The other direction is still live at the floor.
+    expect(screen.getByRole('button', { name: 'Larger text' })).not.toHaveAttribute(
+      'aria-disabled',
+    );
+  });
+
+  it('announces the size, so stepping is not silent to a screen reader', () => {
+    vi.spyOn(themeLib, 'getStoredFontSize').mockReturnValue('22');
+    renderWithProviders(<TextSizeControl />);
+    expect(screen.getByText('22px').closest('[aria-live]')).toHaveAttribute(
+      'aria-live',
+      'polite',
+    );
+  });
+
+  it('stays usable if the stored size is somehow off the ladder', async () => {
+    // Belt and braces against a future ladder edit: an unrecognized value must
+    // not leave both directions inert with no way back.
+    const user = userEvent.setup();
+    vi.spyOn(themeLib, 'getStoredFontSize').mockReturnValue(
+      '21' as themeLib.FontSize,
+    );
+    const setSpy = vi
+      .spyOn(themeLib, 'setStoredFontSize')
+      .mockImplementation(() => {});
+    renderWithProviders(<TextSizeControl />);
+    await user.click(screen.getByRole('button', { name: 'Larger text' }));
+    expect(setSpy).toHaveBeenCalled();
   });
 });

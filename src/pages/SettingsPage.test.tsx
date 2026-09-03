@@ -97,37 +97,30 @@ describe('SettingsPage — Appearance (symbolic controls)', () => {
   });
 
   describe('Text size', () => {
-    it('renders Extra Small through Huge A-glyph buttons in one segmented row', () => {
+    it('offers the text-size stepper', () => {
       renderWithProviders(<SettingsPage />);
-      const group = screen.getByRole('radiogroup', { name: 'Text size' });
+      const group = screen.getByRole('group', { name: 'Text size' });
       expect(group).toHaveClass('text-size');
-      for (const name of [
-        'Extra Small',
-        'Small',
-        'Medium',
-        'Large',
-        'Extra Large',
-        'Huge',
-      ]) {
-        const btn = screen.getByRole('radio', { name });
-        expect(btn).toBeInTheDocument();
-        // Accessible name comes from aria-label; the visible glyph is just "A".
-        expect(btn).toHaveTextContent('A');
-      }
+      expect(
+        screen.getByRole('button', { name: 'Smaller text' }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Larger text' }),
+      ).toBeInTheDocument();
     });
 
-    it('marks the stored font size as checked', () => {
+    it('shows the stored font size', () => {
       vi.spyOn(themeLib, 'getStoredFontSize').mockReturnValue('17');
       renderWithProviders(<SettingsPage />);
-      expect(screen.getByRole('radio', { name: 'Large' })).toHaveAttribute('aria-checked', 'true');
-      expect(screen.getByRole('radio', { name: 'Medium' })).toHaveAttribute('aria-checked', 'false');
+      expect(screen.getByText('17px')).toBeInTheDocument();
     });
 
-    it('calls setStoredFontSize when a size is clicked', async () => {
+    it('calls setStoredFontSize when a step is clicked', async () => {
       const user = userEvent.setup();
+      vi.spyOn(themeLib, 'getStoredFontSize').mockReturnValue('16');
       const setSpy = vi.spyOn(themeLib, 'setStoredFontSize').mockImplementation(() => {});
       renderWithProviders(<SettingsPage />);
-      await user.click(screen.getByRole('radio', { name: 'Small' }));
+      await user.click(screen.getByRole('button', { name: 'Smaller text' }));
       expect(setSpy).toHaveBeenCalledWith('15');
     });
   });

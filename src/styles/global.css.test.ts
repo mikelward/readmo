@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_FONT_SIZE, FONT_SIZES } from '../lib/theme';
 
 const css = readFileSync(new URL('./global.css', import.meta.url), 'utf8');
 const cssNoComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -216,5 +217,39 @@ describe('the header scales with the text size, and only the header', () => {
   // large text buys more article on screen rather than a bigger logo.
   it('leaves the spacing grid alone', () => {
     expect(root['--rm-radius']).toBe('10px');
+  });
+});
+
+// The bug this exists for: `FONT_SIZES` gained 26-32 while this stylesheet
+// still stopped at 24, so picking one set `data-font-size="32"`, persisted it,
+// and displayed "32px" in the stepper while the text fell back to the root
+// 16px default. Every test in the suite asserted the *attribute*, so all of
+// them stayed green over it.
+describe('text-size ladder', () => {
+  it('defines a token override for every rung except the default', () => {
+    const declared = new Set(
+      Array.from(
+        css.matchAll(/:root\[data-font-size='(\d+)'\]/g),
+        (m) => m[1],
+      ),
+    );
+    // Assert the scan found something before trusting a set difference — an
+    // empty set differences to empty and passes while checking nothing.
+    expect(declared.size).toBeGreaterThan(0);
+
+    // 16px owns the bare `:root`, so it is deliberately not in the attribute
+    // list; every other rung must be.
+    const expected = FONT_SIZES.filter((size) => size !== DEFAULT_FONT_SIZE);
+    expect([...declared].sort()).toEqual([...expected].sort());
+  });
+
+  it('maps each rung to its own px value', () => {
+    for (const size of FONT_SIZES) {
+      if (size === DEFAULT_FONT_SIZE) continue;
+      const rule = new RegExp(
+        `:root\\[data-font-size='${size}'\\]\\s*\\{[^}]*--rm-font-size:\\s*${size}px`,
+      );
+      expect(css).toMatch(rule);
+    }
   });
 });

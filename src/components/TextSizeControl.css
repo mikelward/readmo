@@ -1,8 +1,10 @@
-/* Segmented text-size picker (S / M / L capital-A glyphs). Shared by Settings
-   and the drawer; spacing around it is left to the consumer. */
+/* Text-size stepper: smaller / current / larger. Shared by Settings and the
+   drawer; spacing around it is left to the consumer. Its width no longer
+   depends on how many rungs the ladder has, so the `--grid` variant the
+   segmented row needed in the narrow drawer panel is gone. */
 .text-size {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   padding: 4px;
   background: var(--rm-bg);
@@ -10,19 +12,13 @@
   border-radius: 8px;
 }
 
-/* Drawer variant: a fixed 3-column grid so the six sizes lay out as two even
-   rows of three, rather than wrapping unpredictably in the narrow drawer panel. */
-.text-size--grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-}
-
-.text-size__btn {
-  /* min-width holds the 44px tap floor; flex-grow shares the row evenly. */
-  flex: 1 1 var(--rm-tap);
+.text-size__step {
+  /* Fixed at the tap floor rather than flex-grown: the two steppers are equal
+     controls, and giving the readout the remaining space is what keeps the
+     current size centered as its glyph changes width. */
+  flex: 0 0 var(--rm-tap);
   min-width: var(--rm-tap);
   min-height: var(--rm-tap);
-  padding: 8px 4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -30,28 +26,45 @@
   border: none;
   border-radius: 6px;
   color: var(--rm-text);
+  font-size: 20px;
+  line-height: 1;
   cursor: pointer;
 }
 
-/* Per-button inline font-size sets the scale; line-height: 1 keeps each "A"
-   vertically centered in the shared 44px button regardless of glyph size. */
+.text-size__step[aria-disabled='true'] {
+  color: var(--rm-meta);
+  cursor: default;
+}
+
+.text-size__value {
+  flex: 1 1 auto;
+  min-height: var(--rm-tap);
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+  color: var(--rm-text);
+}
+
+/* line-height: 1 keeps the "A" centered in the shared row height whatever size
+   it is rendering at. */
 .text-size__glyph {
   font-weight: 700;
   line-height: 1;
 }
 
-.text-size__btn[data-active] {
-  background: var(--rm-bg-card);
-  color: var(--rm-accent);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+.text-size__px {
+  color: var(--rm-meta);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
 }
 
-html:not(.rm-suppress-press) .text-size__btn:active {
+html:not(.rm-suppress-press) .text-size__step:not([aria-disabled='true']):active {
   background: color-mix(in srgb, var(--rm-accent) 12%, transparent);
 }
 
 @media (hover: hover) {
-  .text-size__btn:not([data-active]):hover {
+  .text-size__step:not([aria-disabled='true']):hover {
     background: color-mix(in srgb, var(--rm-accent) 8%, transparent);
   }
 }

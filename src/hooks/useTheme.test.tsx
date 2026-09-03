@@ -128,10 +128,10 @@ describe('useTheme', () => {
     const { result } = renderHook(() => useTheme());
     expect(result.current.fontSize).toBe('16');
 
-    act(() => result.current.setFontSize('17'));
-    expect(result.current.fontSize).toBe('17');
-    expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBe('17');
-    expect(document.documentElement.getAttribute('data-font-size')).toBe('17');
+    act(() => result.current.setFontSize('18'));
+    expect(result.current.fontSize).toBe('18');
+    expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBe('18');
+    expect(document.documentElement.getAttribute('data-font-size')).toBe('18');
     // Mode/palette attributes are untouched by a text-size change.
     expect(document.documentElement.hasAttribute('data-theme')).toBe(false);
     expect(document.documentElement.hasAttribute('data-palette')).toBe(false);
@@ -146,9 +146,9 @@ describe('useTheme', () => {
     const a = renderHook(() => useTheme());
     const b = renderHook(() => useTheme());
 
-    act(() => a.result.current.setFontSize('17'));
-    expect(b.result.current.fontSize).toBe('17');
-    expect(document.documentElement.getAttribute('data-font-size')).toBe('17');
+    act(() => a.result.current.setFontSize('18'));
+    expect(b.result.current.fontSize).toBe('18');
+    expect(document.documentElement.getAttribute('data-font-size')).toBe('18');
   });
 
   it('returns the stored font and persists changes independently', () => {
