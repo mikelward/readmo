@@ -674,6 +674,51 @@ newshacker_link (user_id PK/FK, token, created_at)                    -- compani
   still never returned, so a secret-backed feed exports its token-stripped `url`
   and may not round-trip.
 
+### Entitlements — what tier an account is on, and what it allows
+
+A per-account `entitlements` row records the tier (`free` / `paid`), the
+subscription status and period end where there is one, and the account's feed
+cap. It exists so allowances become **per-account data rather than constants in
+code**, which is the precondition for a paid tier; it does not itself gate
+anything. The commercial plan built on it is in `MONETIZATION.md`.
+
+**It is a separate boundary from the allowlist and does not replace it.** The
+allowlist is a *legal* gate on what Readmo may fetch and store (full-text
+reading, Google News feeds); an entitlement is a *commercial* gate on who has
+paid. A surface subject to both consults both, so a paying non-allowlisted
+caller gains nothing on the legal surfaces and an allowlisted caller who has
+not paid keeps everything they have today.
+
+Observable contract:
+
+- **A caller may read their own tier and nothing else.** Tier, status, period
+  end and feed cap; never the payment-provider identifiers stored alongside
+  them, which stay server-side and reach no client on any path.
+- **The client displays tier; the server decides it.** Every enforcement
+  decision is made server-side against the same row, so a client that lies
+  about its tier changes only what it draws. What it is given to display is the
+  **effective** entitlement, so the two cannot disagree — handing back a lapsed
+  `paid` would put the app in the state a user reports as "it says I'm
+  subscribed but it won't let me".
+- **No client can promote itself or widen its own cap.** Entitlements are
+  written only by the server.
+- **A missing table and a missing row mean different things.** An absent table
+  is an older backend in front of a newer client and must behave exactly as
+  before (the client feature-detects). An absent row, once the table exists, is
+  a new signup and resolves to the **free** tier — treating it as "carry on as
+  before" would grandfather every future account into the legacy allowance
+  permanently, invisibly, because the backfill would have worked for everyone
+  who already existed.
+- **An unreadable row is not a tier.** A failed read surfaces as a retryable
+  error rather than resolving to free or paid: free would silently downgrade a
+  paying customer during an outage, paid would hand out uncontrolled metered
+  work exactly when the backend is degraded.
+- **A lapsed period gets a grace window** (currently three days) so a dropped
+  renewal webhook doesn't lock out someone who paid. Past it, the tier *and the
+  allowances it bought* both revert — a raised cap belongs to the subscription,
+  not to the account. A deliberate override for a non-subscriber is therefore
+  expressed as a free row with a raised cap, where nothing expires it.
+
 ### Sharing an article
 
 The reader's **Share** hands out the **hosted `/item/:id` link** so the recipient
