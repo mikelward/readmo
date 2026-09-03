@@ -36,18 +36,29 @@
   cursor: default;
 }
 
+/* Two nested boxes because the readout needs both alignments at once, and a
+   flex line can only hold one: the pair sits on a shared baseline, and the pair
+   as a whole sits centered in the row. Baseline-aligned flex items are placed
+   flush to the cross-start edge, so asking one box for both left "A 20px"
+   riding the top of the 44px row while the steppers beside it were centered —
+   and drifting further as the glyph grew. */
 .text-size__value {
   flex: 1 1 auto;
   min-height: var(--rm-tap);
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: center;
-  gap: 8px;
   color: var(--rm-text);
 }
 
-/* line-height: 1 keeps the "A" centered in the shared row height whatever size
-   it is rendering at. */
+.text-size__readout {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+/* line-height: 1 trims the glyph's own box to the letter, so the centering
+   above measures the "A" rather than the font's leading. */
 .text-size__glyph {
   font-weight: 700;
   line-height: 1;

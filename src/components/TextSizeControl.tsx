@@ -68,14 +68,16 @@ export function TextSizeControl({ className }: { className?: string }) {
           than only on focus — a stepper whose readout is silent leaves a
           screen-reader user stepping blind. */}
       <span className="text-size__value" aria-live="polite">
-        <span
-          className="text-size__glyph"
-          style={{ fontSize: glyphSize(fontSize) }}
-          aria-hidden="true"
-        >
-          A
+        <span className="text-size__readout">
+          <span
+            className="text-size__glyph"
+            style={{ fontSize: glyphSize(fontSize) }}
+            aria-hidden="true"
+          >
+            A
+          </span>
+          <span className="text-size__px">{FONT_SIZE_LABELS[fontSize]}</span>
         </span>
-        <span className="text-size__px">{FONT_SIZE_LABELS[fontSize]}</span>
       </span>
       <TooltipButton
         type="button"
