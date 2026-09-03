@@ -674,13 +674,24 @@ framing given the current user count: this is a learning artifact first.
 
 ### Entitlements (generalize the allowlist — don't build a parallel system)
 
-- [ ] `entitlements` table: `user_id`, `tier`, `status`, `current_period_end`,
+- [x] `entitlements` table: `user_id`, `tier`, `status`, `current_period_end`,
       `feed_cap`, `stripe_customer_id`, `stripe_subscription_id`. RLS lets a
       user `select` their own row and grants **no** insert or update at all —
-      only `service_role` writes (guardrail 7).
-- [ ] `loadEntitlement` in `_shared/`, mirroring `loadAllowlistFromDb`: read
-      with the service-role client, **inside the Edge Function, before the
-      expensive work**. That position is the whole security property.
+      only `service_role` writes (guardrail 7). **Landed in 0077**, with the
+      backfill, a signup trigger provisioning a free row, and
+      `get_entitlement()` for display. Needs a manual `make migrate`.
+- [x] `loadEntitlement` in `_shared/entitlement.ts`, mirroring
+      `loadAllowlistFromDb` — **landed**, with fail-closed reads, the grace
+      window, and an unknown tier degrading to free. Kept separate from the
+      allowlist on purpose: legal gate vs commercial gate, so a surface
+      needing both consults both.
+- [ ] **Nothing calls it yet, and that is the next step.** The helper must be
+      invoked **inside the Edge Function, before the expensive work** — that
+      position is the whole security property, and a spine nothing reads
+      provides none of it. Start with `subscribe_to_feed`'s cap, which is the
+      one surface where the entitlement stands alone: it has no allowlist to
+      preserve, and `feed_cap` is already on the row waiting to replace 0059's
+      hard-coded `v_cap constant int := 100`.
 - [ ] **Add** the entitlement check to `summary` — do **not** swap out
       `loadAllowlistFromDb`. `summary` fetches the full article through Jina,
       so its allowlist gate is a legal one; replacing it with a paid check
