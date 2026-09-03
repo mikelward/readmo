@@ -13,6 +13,7 @@ import {
   type PointerEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { onGestureCancel } from '../lib/gestureCancel';
 import './TooltipButton.css';
 
 const DEFAULT_DELAY_MS = 500;
@@ -265,6 +266,24 @@ export const TooltipButton = forwardRef<HTMLButtonElement, TooltipButtonProps>(
         longPressShownRef.current = false;
       },
       [onPointerCancel, clearShowTimer, clearHideTimer],
+    );
+
+    // A pinch has claimed the fingers, and one of them may be resting on this
+    // button — the browser sends no `pointercancel` for that, so tear the
+    // long-press state down as a real cancel would rather than leaving a
+    // tooltip up and a timer running. Swallowing the trailing *click* is not
+    // done here: `gestureCancel` does it at the document, because the plain
+    // `<button>`s this component doesn't wrap need it just as much.
+    useEffect(
+      () =>
+        onGestureCancel(() => {
+          startRef.current = null;
+          clearShowTimer();
+          clearHideTimer();
+          setOpen(false);
+          longPressShownRef.current = false;
+        }),
+      [clearShowTimer, clearHideTimer],
     );
 
     // Mouse hover / keyboard focus: desktop equivalents of the

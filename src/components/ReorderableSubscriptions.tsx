@@ -13,6 +13,7 @@ import { arrayMove, orderForPointer } from '../lib/arrayMove';
 import { usePopoverDismiss } from '../hooks/usePopoverDismiss';
 import { DragHandle } from './icons';
 import { TooltipButton } from './TooltipButton';
+import { onGestureCancel } from '../lib/gestureCancel';
 
 export interface SubscriptionEntry {
   subscription: Subscription;
@@ -448,6 +449,25 @@ export function ReorderableSubscriptions({
     setDraggingId(id);
     e.currentTarget.setPointerCapture(e.pointerId);
   }
+
+  // A pinch (or any other multi-touch gesture) has claimed the fingers: abandon
+  // the drag and put the order back where it started. The handle holds pointer
+  // capture under `touch-action: none`, so nothing else can take this gesture
+  // away — no `pointercancel` arrives — and without this the first finger keeps
+  // reordering while the second resizes text, then its release PERSISTS an order
+  // the user never chose. Restoring rather than dropping in place is the point:
+  // a half-finished drag is not a decision.
+  useEffect(
+    () =>
+      onGestureCancel(() => {
+        const drag = dragging.current;
+        if (!drag) return;
+        dragging.current = null;
+        setDraggingId(null);
+        setOrder(drag.startOrder);
+      }),
+    [],
+  );
 
   function onHandlePointerMove(e: ReactPointerEvent<HTMLButtonElement>) {
     const drag = dragging.current;
