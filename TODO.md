@@ -776,11 +776,24 @@ framing given the current user count: this is a learning artifact first.
 
 - [ ] `stripe-webhook` Edge Function: public (no JWT), verifies the Stripe
       signature, handles `checkout.session.completed`,
+      `checkout.session.async_payment_succeeded`,
+      `checkout.session.async_payment_failed`,
       `customer.subscription.updated`, `customer.subscription.deleted`,
       `invoice.payment_failed`. **The webhook is the source of truth — never
-      the checkout success redirect**, which lies.
+      the checkout success redirect**, which lies. Register all six in Stripe,
+      not just the ones the happy path uses — an unregistered event is
+      delivered to nobody and reports nothing.
 - [ ] Idempotency by event id (store processed ids). Stripe retries, and a
       double-applied upgrade or a double-applied cancel are both bad.
+- [ ] **Never activate on `checkout.session.completed` alone.** With a
+      delayed-notification payment method it fires before the money settles,
+      so activating there grants access unpaid — and an account that settles
+      later is never activated, since `checkout.session.async_payment_succeeded`
+      isn't in the handled set. Restrict Checkout to card (removes the case),
+      **and** handle `async_payment_succeeded` / `async_payment_failed` and
+      gate activation on an authoritative paid/active state anyway — the
+      restriction is configuration someone can widen later without reading
+      this.
 - [ ] **Carry the user id on the subscription, not just the session.**
       `client_reference_id` exists only on `checkout.session.completed`; the
       three subscription/invoice events identify a customer and a subscription
@@ -799,7 +812,45 @@ framing given the current user count: this is a learning artifact first.
       so an update and a deletion raised in the same second are unorderable:
       accepting equal timestamps restores deleted access, rejecting them
       discards the newer event. Re-fetch current state from Stripe and write
-      that, or order on a token that actually increases per subscription.
+      that — but re-fetching alone isn't monotonic, since two concurrent
+      handlers can both read and the slower one lands its stale read on top of
+      the newer write. **Serialize with a versioned compare-and-swap, not an
+      advisory lock.** The lock `subscribe_to_feed` uses works there because
+      count-then-insert is one SQL function and therefore one transaction; this
+      handler has to call Stripe *between* its read and its write, and
+      `_shared/coalesce.ts` already records why a lock cannot span that — a
+      pooled PostgREST connection drops a session- or transaction-scoped
+      advisory lock the moment the claiming statement commits, long before a
+      Deno-side `await` finishes. So carry a per-row version, read it before
+      the Stripe fetch, and write conditionally on it (`… where user_id = $1
+      and version = $2`, bumping it); zero rows updated means someone else
+      wrote first, so re-fetch from Stripe and retry, bounded. That is
+      monotonic without mutual exclusion — the last write to land is always the
+      one whose Stripe read came after every earlier write — and it is the
+      pattern `item_state` already uses for concurrent devices (0007/0023).
+      Test reverse-order delivery *and* two interleaved handlers.
+- [ ] **Ordering is not ownership — reject events from a superseded
+      subscription.** The compare-and-swap above decides which write lands
+      last; it says nothing about *which subscription the row is currently
+      about*, and re-fetching from Stripe does not help, because it returns
+      that subscription's authoritative state rather than the account's. So a
+      customer who cancels and later resubscribes has two: a delayed
+      `subscription.deleted` for the old one re-fetches its genuinely canceled
+      state, wins a perfectly valid CAS against the row's newest version, and
+      **cancels the subscription they are currently paying for** — with the
+      unique index meaning it also overwrites the new `stripe_subscription_id`.
+      Every guard so far passes it: the event is not a duplicate, not out of
+      order by version, and its state is not stale.
+      The row therefore has to record which subscription owns it, and an event
+      naming a different one applies only as a **handoff** — an activation
+      replacing the owner — never as a downgrade. Concretely: an event whose
+      subscription id matches the row's applies as now; one that doesn't is
+      dropped unless it activates, in which case it takes ownership. That is
+      correct in both delivery orders — a cancel arriving before the
+      replacement activates still finds itself the owner and applies; one
+      arriving after finds it is not and is dropped — and an account with no
+      subscription id yet takes any activation. Test an old-subscription event
+      arriving after a replacement activates, in both orders.
 - [ ] Stripe Checkout + Customer Portal, both hosted. No billing UI, no card
       data near the database.
 - [ ] **Two authenticated endpoints of our own, before the webhook is useful.**

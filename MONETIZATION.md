@@ -245,9 +245,26 @@ don't invent a parallel system.**
   entitlement lands. Test two concurrent creates and a create in that gap.
 - **The webhook is the source of truth, never the checkout redirect.** A public
   Edge Function verifying the Stripe signature, handling
-  `checkout.session.completed`, `customer.subscription.updated`,
+  `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+  `checkout.session.async_payment_failed`, `customer.subscription.updated`,
   `customer.subscription.deleted`, `invoice.payment_failed`. Idempotent by
-  event id — Stripe retries.
+  event id — Stripe retries. The two asynchronous ones are there because of the
+  next bullet, and the registration step in *Rolling this out* has to name all
+  six: a handler Stripe was never told to deliver to is indistinguishable from
+  one that was never written.
+- **`checkout.session.completed` does not mean "paid".** With a
+  delayed-notification method it fires while the payment is still pending, and
+  settlement lands later as `checkout.session.async_payment_succeeded` or
+  `.async_payment_failed`. Activating on `completed` alone therefore grants
+  access before the money arrives — and, worse in the other direction, an
+  account whose payment succeeds *later* is never activated at all, because
+  the event that says so isn't handled. Two things, not one: **restrict
+  Checkout to immediately-settling methods** (card), which removes the case
+  rather than managing it, **and still handle both async events and gate
+  activation on an authoritative paid/active state** — `payment_status` on the
+  session, or the subscription's own status — because the restriction is a
+  configuration that can be widened later by someone who doesn't know this
+  paragraph exists.
 - **`client_reference_id` is on the Checkout Session and nothing else, so the
   subscription events need their own copy of the user id.** Only
   `checkout.session.completed` carries it; `customer.subscription.updated`,
@@ -272,9 +289,33 @@ don't invent a parallel system.**
   delayed update restore deleted access, and rejecting them discards an event
   that may be the genuinely newer one. Use an authoritative source instead:
   re-fetch the subscription's current state from Stripe and write that rather
-  than trusting the payload, or order on a token that actually increases per
-  subscription. Test reverse-order delivery explicitly — it is the case that
-  never turns up by accident.
+  than trusting the payload.
+- **Re-fetching does not make the write monotonic on its own** — the fetch and
+  the write have to be one operation. Two webhook invocations run
+  concurrently, so an older handler can read `past_due`, stall on the network,
+  a newer handler read and write `active`, and the older one then land its
+  stale read on top. The read being authoritative at the moment it happened is
+  no help once something else has written in between. So make the **write
+  conditional on the row version the fetch observed** — a compare-and-swap that
+  bumps the version, retrying from a fresh Stripe fetch when it matches nothing
+  — the way `item_state` already reconciles concurrent devices (0007/0023).
+  A per-user advisory lock is the wrong tool here even though
+  `subscribe_to_feed` uses one for its count-then-insert: that is a single SQL
+  function and therefore a single transaction, whereas this handler calls
+  Stripe between its read and its write, and `_shared/coalesce.ts` records why
+  a lock cannot span that — a pooled PostgREST connection releases it as soon
+  as the claiming statement commits. Test reverse-order delivery explicitly,
+  and test two handlers interleaved — neither turns up by accident.
+- **Ordering is not ownership.** The version decides which write lands last;
+  it does not say which subscription the row is *about*, and re-fetching from
+  Stripe returns that subscription's truth rather than the account's. A
+  customer who cancels and resubscribes has two, so a late `deleted` for the
+  old one re-fetches its genuinely canceled state, wins a valid
+  compare-and-swap, and cancels the subscription they are currently paying
+  for — passing every guard above, since it is neither a duplicate nor out of
+  order nor stale. The row records which subscription owns it, and an event
+  naming a different one applies only as a **handoff** (an activation
+  replacing the owner), never as a downgrade.
 - **Enforcement goes exactly where the allowlist's is:** server-side, inside
   the function, before the expensive work.
 - **An entitlement gate is added ALONGSIDE the allowlist, never in place of
@@ -367,8 +408,12 @@ half-wired system.
 1. **Deploy the webhook function**, so there is a URL to register. It will
    reject every event until step 3 gives it a signing secret; that is expected
    at this point and is why nothing is pointed at it yet.
-2. **Register the endpoint in Stripe**, against exactly the four events above
-   and pointing at that URL. Stripe sends nothing until it is told to, so a
+2. **Register the endpoint in Stripe**, against exactly the six events above
+   and pointing at that URL. Six, not four: the two asynchronous settlement
+   events are the ones easiest to leave off, and leaving them off is silent —
+   a delayed-notification payment that settles later is never activated, and
+   one that fails is never cleared, with Stripe delivering nothing either way
+   to say so. Stripe sends nothing until it is told to, so a
    deployed-but-unregistered webhook looks identical to a broken one: payments
    succeed and no entitlement is ever written. **This step is what generates
    the signing secret**, so it cannot come after the step that sets it.
