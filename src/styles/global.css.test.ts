@@ -173,3 +173,48 @@ describe('global.css body-text contrast', () => {
     expect(Math.max(...ratios) - Math.min(...ratios)).toBeLessThan(1);
   });
 });
+
+describe('the header scales with the text size, and only the header', () => {
+  const root = declarationsFor(':root');
+
+  // The whole point, and the thing a later "simplify" would undo: a hard 56px
+  // header is what capped the text-size ladder, because the brand inside it is
+  // `1.25rem` and clips once the root outgrows the bar.
+  it('sizes the header in rem', () => {
+    expect(root['--rm-header-h']).toContain('rem');
+  });
+
+  // `max()` keeps it from shrinking at the smaller text sizes, where a bare
+  // `rem` would drop it below the 56px it has always been.
+  it('holds the 56px header floor with max()', () => {
+    expect(root['--rm-header-h']).toMatch(/^max\(\s*56px\s*,/);
+  });
+
+  // At the 16px default the rem half resolves to exactly the old value, so this
+  // is a no-op for anyone who never moves the setting.
+  it('resolves to the previous fixed size at the default root', () => {
+    const rem = Number(/([\d.]+)rem/.exec(root['--rm-header-h'])?.[1]);
+    expect(rem * 16).toBe(56);
+  });
+
+  // The tap target deliberately does NOT scale, and this is the regression
+  // guard: three separate fixed-width rows broke when it did. 44px is an
+  // accessibility floor, not a design value, and what these controls contain is
+  // a fixed 24px icon — so a wider button shows nothing more while costing the
+  // row. The reader's action bar is the tightest: five controls across 320px
+  // leave 100px for the feed name at 44px and 59px at a scaled 52px.
+  it('keeps the tap target at the bare 44px floor', () => {
+    expect(root['--rm-tap']).toBe('44px');
+  });
+
+  it('leaves five tap targets and a readable feed name inside a 320px bar', () => {
+    const tap = Number(/(\d+)px/.exec(root['--rm-tap'])?.[1]);
+    expect(320 - 5 * tap).toBeGreaterThanOrEqual(96);
+  });
+
+  // Spacing doesn't scale either: the chrome grows to fit its own contents, so
+  // large text buys more article on screen rather than a bigger logo.
+  it('leaves the spacing grid alone', () => {
+    expect(root['--rm-radius']).toBe('10px');
+  });
+});

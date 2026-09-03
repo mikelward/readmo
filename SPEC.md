@@ -189,7 +189,16 @@ Everything else about the visual system mirrors newshacker.
   `<html>` (Medium = 16px owns the bare `:root`, no attribute), which maps to
   the `--rm-font-size` token; the token sets the **root** (`html`) font-size so
   the `rem`-based type throughout the UI — including the reader article body —
-  scales with it. In the navigation drawer's quick **Appearance** section the
+  scales with it. **The header bar scales too**, as a floor rather than a fixed
+  size, so it grows to fit the larger type instead of clipping it — a header
+  that could not was what used to cap the ladder.
+  **The tap target does not scale, and neither does spacing.** 44px is an
+  accessibility floor rather than a design value, and what these controls hold
+  is a fixed-size icon, so a wider button shows nothing more while costing the
+  fixed-width rows sized against it — the reader's action bar fits five controls
+  across a 320px screen, and the text-size picker six across a phone. The chrome
+  grows to fit its own contents and no further: at large text a reader wants
+  more of the *article* on screen, not a bigger logo. In the navigation drawer's quick **Appearance** section the
   same picker uses a fixed 3-column grid (`text-size--grid`) so the six sizes
   render as two even rows of three in the narrow panel.
   Persisted in `localStorage` under `readmo:fontSize`, applied before first
