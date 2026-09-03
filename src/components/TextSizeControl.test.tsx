@@ -82,6 +82,16 @@ describe('TextSizeControl', () => {
     );
   });
 
+  it('keeps the glyph and its label on one baseline, in one box', () => {
+    // The centering below measures that box, so the two must live inside it.
+    vi.spyOn(themeLib, 'getStoredFontSize').mockReturnValue('22');
+    const { container } = renderWithProviders(<TextSizeControl />);
+    const readout = container.querySelector('.text-size__readout');
+    expect(readout).not.toBeNull();
+    expect(readout?.querySelector('.text-size__glyph')?.textContent).toBe('A');
+    expect(readout?.querySelector('.text-size__px')?.textContent).toBe('22px');
+  });
+
   it('stays usable if the stored size is somehow off the ladder', async () => {
     // Belt and braces against a future ladder edit: an unrecognized value must
     // not leave both directions inert with no way back.
