@@ -217,14 +217,36 @@ describe('buildSummaryPrompt', () => {
     expect(prompt).toContain('without bullet points, lists, headings');
   });
 
-  // Ported from newshacker: the author's-voice ask is what keeps the gist an
-  // assertion rather than a description of the article, and it is also what
-  // replaces the old prompt's separate anti-preamble paragraph.
-  it('asks for the author\'s voice and forbids meta-framing', () => {
+  // Keeps the gist an assertion about the subject rather than a description of
+  // the article; also replaces the old prompt's separate anti-preamble
+  // paragraph.
+  it('forbids meta-framing', () => {
     const prompt = buildSummaryPrompt('A Title', 'body');
-    expect(prompt).toContain('in the voice of the author');
-    expect(prompt).toContain('Do not begin with meta-framing');
+    expect(prompt).toContain('do not begin with meta-framing');
     expect(prompt).toContain('The article argues');
+  });
+
+  // Diverges from newshacker deliberately. Its "in the voice of the author"
+  // line suits Hacker News essays, whose author is the claimant; on a news
+  // feed the author is a journalist writing about someone else, and the model
+  // adopted the SUBJECT's voice — an article about a political party summarized
+  // as "We have…". A regression test, so the voice ask can't come back with a
+  // future newshacker port.
+  it('requires the third person and forbids first-person pronouns', () => {
+    const prompt = buildSummaryPrompt('A Title', 'body');
+    expect(prompt).toContain('Write in the third person');
+    expect(prompt).toContain('Never write in the first person');
+    expect(prompt).not.toContain('voice of the author');
+  });
+
+  // Without this the third-person ask contradicts itself on a personal account
+  // whose writer is never named ("Why I left my startup"): no "I", no "the
+  // author", and no other subject to name, leaving the model to invent an
+  // identity or ignore the steer.
+  it('allows "the writer" as the subject when nobody is named, and forbids inventing one', () => {
+    const prompt = buildSummaryPrompt('A Title', 'body');
+    expect(prompt).toContain('its writer is never named');
+    expect(prompt).toContain('Never invent a name');
   });
 
   // The prompt is what stopped asking for a tl;dr; stripSummaryPreamble still
