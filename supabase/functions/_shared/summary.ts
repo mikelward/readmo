@@ -115,7 +115,7 @@ export function pickStoredContent(src: SummarySource): StoredPick | null {
  * context, and the article text between explicit delimiters.
  *
  * SHAPE: ported from newshacker's article prompt (`api/summary.ts`), which asks
- * for a single sentence written as a direct assertion in the author's voice.
+ * for a single sentence written as a direct assertion.
  * This replaces an unsteered "tl;dr" ask that let the model format the gist as
  * a Markdown bullet list — in practice up to five bullets working through the
  * article point by point. Two reasons that shape was wrong for a summary card:
@@ -135,12 +135,37 @@ export function pickStoredContent(src: SummarySource): StoredPick | null {
  *   - the length + no-bullets line, which is the change above;
  *   - the "only the most important point" line, which is what keeps a
  *     two-sentence summary from becoming a compressed table of contents;
- *   - the author's-voice / no-meta-framing lines, ported verbatim in substance
- *     from newshacker. They double as the anti-preamble instruction the old
- *     prompt spent a paragraph on: without the "tl;dr" ask there is no tl;dr
- *     framing to echo back. {@link stripSummaryPreamble} stays a deterministic
- *     backstop anyway — a flash-lite model may still ignore a negative
- *     instruction, and rows cached under the old prompt still flow through it.
+ *   - the no-meta-framing lines, which make the gist a claim about the subject
+ *     rather than a description of the article. They double as the
+ *     anti-preamble instruction the old prompt spent a paragraph on: without
+ *     the "tl;dr" ask there is no tl;dr framing to echo back.
+ *     {@link stripSummaryPreamble} stays a deterministic backstop anyway — a
+ *     flash-lite model may still ignore a negative instruction, and rows cached
+ *     under the old prompt still flow through it;
+ *   - the THIRD-PERSON line, which is where this deliberately diverges from
+ *     newshacker. Its prompt asks for the point "in the voice of the author —
+ *     as if the author is stating the claim itself", which works on Hacker News
+ *     because those links are mostly first-person essays whose author IS the
+ *     claimant. readmo's feeds are news reporting, where the author is a
+ *     journalist writing ABOUT someone else, and that instruction made the
+ *     model adopt the subject's voice: an article about a political party came
+ *     back as "We have…" instead of "<Party> have…". What newshacker's line was
+ *     actually buying is the no-meta-framing above, so that half is kept and
+ *     the voice half is replaced by naming the subject in the third person.
+ *
+ *     THE UNNAMED-WRITER CARVE-OUT is what keeps that from contradicting
+ *     itself. Most first-person articles have a subject that is not a person
+ *     ("Rewriting the build system cut CI times by 60%"), so the third-person
+ *     ask costs nothing. But a personal account whose writer is never named
+ *     ("Why I left my startup") has no other subject available, and the rest
+ *     of the prompt bans both "I" and "the author" — leaving the model to
+ *     invent a name, hedge, or ignore the steer. So "the writer" is allowed
+ *     there, as the SUBJECT of the claim only, still never as framing about
+ *     the article. Passing the stored `items.author` byline instead was the
+ *     alternative and is worse: on the news feeds this divergence exists for,
+ *     the byline is the JOURNALIST rather than the subject, so feeding it in
+ *     invites exactly the article-describing summary the no-meta-framing lines
+ *     exist to prevent.
  *
  * No Markdown-format line: prose needs none, and `MarkdownText` renders plain
  * text unchanged. The renderer keeps its bullet/emphasis support regardless —
@@ -156,12 +181,19 @@ export function buildSummaryPrompt(
     `State only the most important point — the single takeaway a reader would ` +
     `want to know. Do not try to cover everything the article says: leave out ` +
     `supporting detail, examples, and secondary points.\n\n` +
-    `Write it as a direct assertion of that point, in the voice of the author — ` +
-    `as if the author (or someone speaking on their behalf) is stating the ` +
-    `claim itself. Do not refer to "the article", "the author", "the piece", ` +
-    `"the post", "this story", or similar. Do not begin with meta-framing such ` +
-    `as "The article argues", "The author claims", "This piece explains", ` +
-    `"The post describes", or any variant. Just state the point.\n\n` +
+    `State the point directly, as a claim about its subject rather than a ` +
+    `description of the article. Do not refer to "the article", "the author", ` +
+    `"the piece", "the post", "this story", or similar, and do not begin with ` +
+    `meta-framing such as "The article argues", "The author claims", "This ` +
+    `piece explains", "The post describes", or any variant.\n\n` +
+    `Write in the third person, naming whoever or whatever the point is about ` +
+    `("The council has approved…", "The study found…"). Never write in the ` +
+    `first person — no "we", "us", "our", "I" or "my" — even where the article ` +
+    `itself does, unless the pronoun falls inside a direct quotation. Where the ` +
+    `article is a first-person account and its writer is never named, "the ` +
+    `writer" is an acceptable subject ("The writer quit after five years and ` +
+    `regrets it") — but only as the subject of the claim, never as framing ` +
+    `about the article ("The writer argues that…"). Never invent a name.\n\n` +
     titleLine +
     `--- BEGIN ARTICLE ---\n${content}\n--- END ARTICLE ---`
   );

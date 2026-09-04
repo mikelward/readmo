@@ -3080,9 +3080,18 @@ page's discipline is unchanged.
     summary card. **The summary is one or two short sentences stating a single
     point — deliberately selective, not a condensed version of the whole
     article** (the title is passed as context when known), written as a direct
-    assertion rather than a description of the article ("The author argues
-    that…", "This piece explains…"). The shape is **newshacker's**
-    (guardrail #9).
+    assertion about the subject rather than a description of the article ("The
+    author argues that…", "This piece explains…"). The shape is
+    **newshacker's** (guardrail #9), with one **deliberate divergence: the
+    summary is written in the third person, naming its subject.** newshacker
+    asks instead for the author's own voice, which suits Hacker News — mostly
+    first-person essays whose author is the claimant — but readmo's feeds are
+    news reporting, where the author is a journalist writing about someone
+    else, and there it made summaries adopt the *subject's* voice: an article
+    about a political party came back saying "We have…" rather than naming the
+    party. Where an article is a first-person account whose writer is never
+    named, the summary may call them "the writer" rather than invent an
+    identity.
     **This reverses the earlier decision** to leave length unsteered and ask for
     a **Markdown bulleted list** when the article made several distinct points,
     which reliably produced up to five bullets working through an article point
