@@ -193,32 +193,47 @@ describe('clampSummaryText', () => {
 });
 
 describe('buildSummaryPrompt', () => {
-  it('asks for a tl;dr and embeds the title and content', () => {
+  it('asks for a short prose gist and embeds the title and content', () => {
     const prompt = buildSummaryPrompt('A Title', 'the body text');
-    expect(prompt).toContain('Provide a tl;dr of the following article:');
+    expect(prompt).toContain('in one or two short sentences');
     expect(prompt).toContain('A Title');
     expect(prompt).toContain('the body text');
     expect(prompt).toContain('--- BEGIN ARTICLE ---');
     expect(prompt).toContain('--- END ARTICLE ---');
   });
 
-  it('carries the targeted anti-preamble instruction', () => {
+  // The point of the change: a summary card is a teaser, not a stand-in for
+  // the article. Both halves matter — a length cap alone would just produce a
+  // densely-packed two sentences covering everything.
+  it('caps the length and asks for one point rather than full coverage', () => {
     const prompt = buildSummaryPrompt('A Title', 'body');
-    expect(prompt).toContain('no preamble');
-    expect(prompt).toContain('"tl;dr" label');
-    expect(prompt).toContain('The article covers');
+    expect(prompt).toContain('one or two short sentences');
+    expect(prompt).toContain('State only the most important point');
+    expect(prompt).toContain('Do not try to cover everything');
   });
 
-  it('stays unsteered on length/register: no length/register instructions', () => {
+  it('forbids bullet points, lists and headings', () => {
     const prompt = buildSummaryPrompt('A Title', 'body');
-    expect(prompt).not.toContain('sentences');
+    expect(prompt).toContain('without bullet points, lists, headings');
   });
 
-  it('explicitly requests Markdown, a bulleted list, and no headings', () => {
+  // Ported from newshacker: the author's-voice ask is what keeps the gist an
+  // assertion rather than a description of the article, and it is also what
+  // replaces the old prompt's separate anti-preamble paragraph.
+  it('asks for the author\'s voice and forbids meta-framing', () => {
     const prompt = buildSummaryPrompt('A Title', 'body');
-    expect(prompt).toContain('Format the summary in Markdown');
-    expect(prompt).toContain('bulleted list');
-    expect(prompt).toContain('do not use headings');
+    expect(prompt).toContain('in the voice of the author');
+    expect(prompt).toContain('Do not begin with meta-framing');
+    expect(prompt).toContain('The article argues');
+  });
+
+  // The prompt is what stopped asking for a tl;dr; stripSummaryPreamble still
+  // strips one (cached rows, a model that ignores the instruction) — see its
+  // own tests below.
+  it('no longer asks for a tl;dr or for Markdown formatting', () => {
+    const prompt = buildSummaryPrompt('A Title', 'body');
+    expect(prompt).not.toContain('tl;dr');
+    expect(prompt).not.toContain('Markdown');
   });
 
   it('omits the title clause when there is no title', () => {
