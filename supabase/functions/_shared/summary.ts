@@ -110,48 +110,73 @@ export function pickStoredContent(src: SummarySource): StoredPick | null {
   return null;
 }
 
-/** Prompt for the article summary: a tl;dr ask with an anti-preamble
- * instruction and an explicit Markdown-format instruction, the title (when
- * known) passed along as context, and the article text between explicit
- * delimiters.
+/** Prompt for the article summary: a one-or-two-sentence prose gist stating
+ * only the article's main point, the title (when known) passed along as
+ * context, and the article text between explicit delimiters.
  *
- * Length/register are left unsteered — those instructions made the output
- * longer and stiffer in practice, while the bare ask yields short, direct prose.
- * Two targeted steers remain:
- *   - the "respond with only the summary" line, because the "tl;dr" ask made the
- *     model echo that framing back as a preamble ("tl;dr:", "Here's a tl;dr of
- *     the article:", "The article covers…"). It's a negative instruction a
- *     flash-lite model may still ignore, so {@link stripSummaryPreamble} stays a
- *     deterministic backstop on the output; and
- *   - the Markdown-format line. The model already reached for Markdown (bold
- *     spans, and bullet lists for multi-point articles) intermittently, so
- *     rather than fight it we ask for it explicitly and render it with the
- *     `MarkdownText` component. We ask specifically for a *bulleted* list (not
- *     ordered/nested) so the output stays within what that renderer supports. */
+ * SHAPE: ported from newshacker's article prompt (`api/summary.ts`), which asks
+ * for a single sentence written as a direct assertion in the author's voice.
+ * This replaces an unsteered "tl;dr" ask that let the model format the gist as
+ * a Markdown bullet list — in practice up to five bullets working through the
+ * article point by point. Two reasons that shape was wrong for a summary card:
+ * a gist comprehensive enough to stand in for the article is a poorer teaser
+ * AND a worse position to be in on a publisher's copyright, and the card is a
+ * glance surface where a paragraph reads faster than a list. So the ask is now
+ * explicitly SELECTIVE — the single most important takeaway, supporting detail
+ * left out — rather than a shorter version of "cover everything".
+ *
+ * The earlier "length/register steers made the output longer and stiffer"
+ * finding is not contradicted: what failed there was tightening a *tl;dr* ask
+ * that still invited full coverage. Naming the target shape outright (one or
+ * two sentences, one point) is a different instruction, and it is the one
+ * newshacker has run on since the beginning.
+ *
+ * The steers, in order:
+ *   - the length + no-bullets line, which is the change above;
+ *   - the "only the most important point" line, which is what keeps a
+ *     two-sentence summary from becoming a compressed table of contents;
+ *   - the author's-voice / no-meta-framing lines, ported verbatim in substance
+ *     from newshacker. They double as the anti-preamble instruction the old
+ *     prompt spent a paragraph on: without the "tl;dr" ask there is no tl;dr
+ *     framing to echo back. {@link stripSummaryPreamble} stays a deterministic
+ *     backstop anyway — a flash-lite model may still ignore a negative
+ *     instruction, and rows cached under the old prompt still flow through it.
+ *
+ * No Markdown-format line: prose needs none, and `MarkdownText` renders plain
+ * text unchanged. The renderer keeps its bullet/emphasis support regardless —
+ * every summary cached under the old prompt is still a bullet list. */
 export function buildSummaryPrompt(
   title: string | null | undefined,
   content: string,
 ): string {
   const titleLine = title ? `The article is titled "${title}".\n\n` : '';
   return (
-    `Provide a tl;dr of the following article:\n\n` +
-    `Respond with only the summary itself: no preamble or meta-commentary, ` +
-    `no "tl;dr" label, and no "The article covers…" style lead-in.\n\n` +
-    `Format the summary in Markdown: a short bulleted list (using "-" markers) ` +
-    `when the article makes several distinct points, otherwise a short ` +
-    `paragraph. Inline **bold**, *italic*, and \`code\` are welcome where they ` +
-    `aid clarity; do not use headings.\n\n` +
+    `Summarize the article below in one or two short sentences, without bullet ` +
+    `points, lists, headings, or introductory text.\n\n` +
+    `State only the most important point — the single takeaway a reader would ` +
+    `want to know. Do not try to cover everything the article says: leave out ` +
+    `supporting detail, examples, and secondary points.\n\n` +
+    `Write it as a direct assertion of that point, in the voice of the author — ` +
+    `as if the author (or someone speaking on their behalf) is stating the ` +
+    `claim itself. Do not refer to "the article", "the author", "the piece", ` +
+    `"the post", "this story", or similar. Do not begin with meta-framing such ` +
+    `as "The article argues", "The author claims", "This piece explains", ` +
+    `"The post describes", or any variant. Just state the point.\n\n` +
     titleLine +
     `--- BEGIN ARTICLE ---\n${content}\n--- END ARTICLE ---`
   );
 }
 
 /** Strip a leading meta-framing preamble the model sometimes prepends to the
- * gist. Because the prompt asks for a "tl;dr" (see {@link buildSummaryPrompt}),
- * the model occasionally echoes that framing
- * back as a label ("tl;dr:", "**TL;DR:**") or a lead-in sentence ("Here's a
- * tl;dr of the article:", "Summary:") before the actual summary. That preamble
- * is noise in the reader's summary card, so we peel it off here.
+ * gist — a label ("tl;dr:", "**TL;DR:**", "Summary:") or a lead-in sentence
+ * ("Here's a tl;dr of the article:"). That preamble is noise in the reader's
+ * summary card, so we peel it off here.
+ *
+ * The prompt no longer asks for a "tl;dr" (see {@link buildSummaryPrompt}), so
+ * the model has far less to echo back — but this stays for two reasons: it is
+ * the deterministic backstop for a flash-lite model ignoring the prompt's
+ * negative instructions, and it also runs on the CACHE-HIT path, where every
+ * row generated under the old tl;dr prompt still arrives with that framing.
  *
  * Conservative by design — it removes only a recognized lead-in, and only from
  * the very start, so a summary whose real prose merely mentions "tl;dr" mid-text
@@ -159,8 +184,8 @@ export function buildSummaryPrompt(
  * **TL;DR:** …") are all removed. Tolerates surrounding markdown emphasis/heading
  * markers (`*`, `_`, `#`) since the model may bold or head the label.
  *
- * BULLET-LIST SAFETY: the prompt now asks for a Markdown bullet list when the
- * article makes several points, so a label can sit directly above a list
+ * BULLET-LIST SAFETY: rows cached under the old prompt are Markdown bullet
+ * lists (and a model can still reach for one), so a label can sit directly above a list
  * ("Summary:\n- First\n- Second"). The character-level {@link stripHeadPreamble}
  * mop-up below is line-agnostic and would treat that first "- " as a trailing
  * separator and swallow the bullet marker — corrupting the list so its first

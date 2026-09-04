@@ -925,9 +925,11 @@ async function generateSummary(
     }
     const parsed = parseGeminiText(await res.json());
     if (!parsed) return { text: null, httpStatus: res.status };
-    // Peel off any "tl;dr:" / "Here's a tl;dr of the article:" framing the model
-    // echoed back before the gist (the prompt is deliberately unsteered). If
-    // nothing but the preamble came back, treat it as a soft failure.
+    // Peel off any "tl;dr:" / "Summary:" framing the model echoed back before
+    // the gist. The prompt no longer asks for a tl;dr and forbids meta-framing,
+    // so this should rarely fire now — it's the deterministic backstop for a
+    // flash-lite model ignoring a negative instruction. If nothing but the
+    // preamble came back, treat it as a soft failure.
     return { text: stripSummaryPreamble(parsed) || null, httpStatus: res.status };
   } catch (err) {
     console.warn('summary: Gemini call failed:', err);
