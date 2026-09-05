@@ -2383,7 +2383,7 @@ negligible and off every critical path. See the External services table in
     (bootstrapped via SQL — there's no UI to grant admin); the allowlist itself
     gates full-text reading mode and Google News feeds (see *Full-text reading
     mode* and *Feed discovery*). Single-word menu label, no explanatory copy
-    (guardrail #12).
+    (guardrail #13).
 
     - **Feed status** — `/admin/feeds`: an operator console listing **every
       system feed** (not just the admin's own subscriptions), reached from the

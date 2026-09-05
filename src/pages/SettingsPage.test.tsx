@@ -478,7 +478,7 @@ describe('SettingsPage — article load sizes', () => {
     ).toHaveAttribute('aria-checked', 'true');
   });
 
-  // Guardrail 12: the heading is the copy. The chips carry the bare number and
+  // Guardrail 13: the heading is the copy. The chips carry the bare number and
   // neither control ships an explanatory blurb beside it.
   it('closes out Reading with both pickers and no explanatory copy', () => {
     renderWithProviders(<SettingsPage />);
