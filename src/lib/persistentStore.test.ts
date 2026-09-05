@@ -42,6 +42,12 @@ function refuseWrites() {
   });
 }
 
+function refuseReads() {
+  return vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+    throw new DOMException('denied', 'SecurityError');
+  });
+}
+
 beforeEach(() => window.localStorage.clear());
 afterEach(() => vi.restoreAllMocks());
 
@@ -188,6 +194,28 @@ describe('createPersistentStore', () => {
     expect(s.get()).toEqual({ kind: 'refused' });
     // ...and nothing stale left behind for the next one.
     expect(window.localStorage.getItem(KEY)).toBeNull();
+  });
+
+  it('keeps a held value when reads were failing too and then recover', () => {
+    // Blocked storage refuses reads as well, so the refusal saw no baseline at
+    // all. Collapsing that to "the key is absent" makes the value that turns up
+    // when access comes back look like a cross-tab write, and the user's change
+    // reverts on the next read — the swallow this whole mechanism exists to
+    // stop, one step later.
+    const s = holdingStore();
+    window.localStorage.setItem(KEY, JSON.stringify({ kind: 'stored' }));
+    const getItem = refuseReads();
+    const setItem = refuseWrites();
+    s.set({ kind: 'refused' });
+    expect(s.get()).toEqual({ kind: 'refused' });
+
+    getItem.mockRestore();
+    setItem.mockRestore();
+    expect(s.get()).toEqual({ kind: 'refused' });
+    // And it still stands down for a write that lands AFTER the baseline is
+    // adopted — that one really is somebody else's.
+    window.localStorage.setItem(KEY, JSON.stringify({ kind: 'elsewhere' }));
+    expect(s.get()).toEqual({ kind: 'elsewhere' });
   });
 
   it('serializes primitives with String() when no serialize is given', () => {
