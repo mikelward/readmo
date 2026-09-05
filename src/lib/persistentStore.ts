@@ -24,7 +24,8 @@ export interface PersistentStore<T> {
    * `storage`. get() re-reads on notify, so the handler needn't touch state. */
   subscribe(onChange: () => void): () => void;
   /** Drop the parse memo so a test starting from `localStorage.clear()` sees a
-   * clean slate (the memo is module-level and otherwise persists across cases). */
+   * clean slate (the memo is module-level and otherwise persists across cases).
+   * Also clears the shared storage-health flag below. */
   resetForTest(): void;
 }
 
@@ -64,6 +65,50 @@ export interface PersistentStoreConfig<T> {
 
 function hasWindow(): boolean {
   return typeof window !== 'undefined';
+}
+
+// ---------------------------------------------------------------------------
+// Storage health, shared by every store on this origin.
+//
+// Quota and availability are properties of the ORIGIN, not of a key: once one
+// write is refused, the next one is refused too, and a device that is out of
+// space stays out of space until something frees some. Every store attempting
+// (and catching) its own write means one exception per store per pass — a sync
+// or a boot touches several — for an answer the first one already gave.
+//
+// So a refusal is recorded here, and for a cooldown it suppresses the attempts
+// that would only ask the same question again: a store re-writing a value it is
+// already holding. That is the repetitive one — a held value is retried by
+// whatever writes next, and what writes next is usually a poll re-recording
+// flags that have not changed. A write carrying something NEW always tries, even
+// mid-cooldown: it is the user having just done something, and a value dropped
+// for ten seconds to save an exception is a bad trade. Success clears the flag
+// for everyone; expiry lets the next retry probe.
+//
+// (What this does NOT yet do is flush every OTHER store's held value when a
+// probe succeeds — see TODO.md.)
+const WRITE_RETRY_COOLDOWN_MS = 10_000;
+// `performance.now()`, not `Date.now()`: the wall clock can move BACKWARD (a
+// manual correction, an NTP step), and an elapsed time computed from it goes
+// negative — which reads as "still inside the cooldown" and suppresses the
+// retries indefinitely, exactly when the value is sitting in memory waiting for
+// one. `undefined` = no refusal recorded.
+let writesRefusedAt: number | undefined;
+
+function monotonicNow(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
+function storageRefusingWrites(): boolean {
+  return (
+    writesRefusedAt !== undefined &&
+    monotonicNow() - writesRefusedAt < WRITE_RETRY_COOLDOWN_MS
+  );
+}
+
+/** Test seam: forget that storage was refusing writes. */
+export function resetStorageHealthForTest(): void {
+  writesRefusedAt = undefined;
 }
 
 export function createPersistentStore<T>(
@@ -151,16 +196,32 @@ export function createPersistentStore<T>(
    * Installed BEFORE the notification, because the subscriber re-reads
    * synchronously from inside it: assign afterwards and it sees the old value,
    * schedules no render, and the change only surfaces on some unrelated one.
+   *
+   * The notification itself is skipped when nothing this store speaks for
+   * actually moved. A routine rewrite of the same value is common (a completed
+   * read re-remembering what it already knew), and every subscriber re-rendering
+   * for it is work nobody asked for.
    */
   function set(value: T): void {
     if (!hasWindow()) return;
+    const previousRaw = resolveRaw();
     const raw = serialize ? serialize(value) : String(value);
 
+    // A pure retry: this store is already holding exactly this value, so the
+    // write carries no new intent and can wait out the cooldown (see above).
+    const isRetry = unpersisted !== null && unpersisted.raw === raw;
+
     let refused = false;
-    try {
-      window.localStorage.setItem(storageKey, raw);
-    } catch {
+    if (holdRefusedWrite && isRetry && storageRefusingWrites()) {
       refused = true;
+    } else {
+      try {
+        window.localStorage.setItem(storageKey, raw);
+        writesRefusedAt = undefined;
+      } catch {
+        refused = true;
+        writesRefusedAt = monotonicNow();
+      }
     }
 
     if (refused && holdRefusedWrite && discardStaleOnRefusal) {
@@ -181,8 +242,8 @@ export function createPersistentStore<T>(
       unpersisted = null;
     }
 
-    // get() re-reads the now-updated string (or the held value) and yields a
-    // fresh snapshot.
+    // resolveRaw() now reports the stored string, or the held value.
+    if (resolveRaw() === previousRaw) return;
     window.dispatchEvent(new Event(changeEvent));
   }
 
@@ -204,6 +265,7 @@ export function createPersistentStore<T>(
     memoRaw = undefined;
     memoValue = defaultValue;
     unpersisted = null;
+    resetStorageHealthForTest();
   }
 
   return { get, set, subscribe, hasUnpersistedValue, resetForTest };

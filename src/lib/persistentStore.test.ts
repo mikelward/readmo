@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createPersistentStore } from './persistentStore';
+import {
+  createPersistentStore,
+  resetStorageHealthForTest,
+} from './persistentStore';
 
 const KEY = 'readmo:test:store';
 const EVENT = 'readmo:test:store-changed';
@@ -48,7 +51,10 @@ function refuseReads() {
   });
 }
 
-beforeEach(() => window.localStorage.clear());
+beforeEach(() => {
+  window.localStorage.clear();
+  resetStorageHealthForTest();
+});
 afterEach(() => vi.restoreAllMocks());
 
 describe('createPersistentStore', () => {
@@ -216,6 +222,70 @@ describe('createPersistentStore', () => {
     // adopted — that one really is somebody else's.
     window.localStorage.setItem(KEY, JSON.stringify({ kind: 'elsewhere' }));
     expect(s.get()).toEqual({ kind: 'elsewhere' });
+  });
+
+  it('waits out the cooldown before retrying the same value, and probes after it', () => {
+    // Retrying a value already held asks storage a question it just answered.
+    // The retry that matters is a poll re-recording unchanged flags, so it can
+    // wait; anything NEW still writes immediately (the tests above).
+    vi.useFakeTimers();
+    try {
+      const s = holdingStore();
+      const setItem = refuseWrites();
+      s.set({ kind: 'held' });
+      expect(setItem).toHaveBeenCalledTimes(1);
+      setItem.mockRestore();
+
+      s.set({ kind: 'held' }); // same value, inside the cooldown
+      expect(window.localStorage.getItem(KEY)).toBeNull();
+      expect(s.hasUnpersistedValue()).toBe(true);
+
+      vi.advanceTimersByTime(10_000);
+      s.set({ kind: 'held' });
+      expect(window.localStorage.getItem(KEY)).toBe(
+        JSON.stringify({ kind: 'held' }),
+      );
+      expect(s.hasUnpersistedValue()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('measures the cooldown against a clock that cannot move backward', () => {
+    // A wall clock can (an NTP step, a manual correction), and elapsed time
+    // computed from one then goes negative — which reads as "still inside the
+    // cooldown" and suppresses the retries indefinitely, exactly while the value
+    // is sitting in memory waiting for one.
+    vi.useFakeTimers();
+    try {
+      const s = holdingStore();
+      const setItem = refuseWrites();
+      s.set({ kind: 'held' });
+      setItem.mockRestore();
+
+      vi.setSystemTime(Date.now() - 60_000);
+      vi.advanceTimersByTime(10_000);
+      s.set({ kind: 'held' });
+      expect(window.localStorage.getItem(KEY)).toBe(
+        JSON.stringify({ kind: 'held' }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not notify when the write changes nothing', () => {
+    // A completed read re-recording what it already knew is routine; waking
+    // every subscriber for it is work nobody asked for.
+    const s = objStore();
+    s.set({ kind: 'same' });
+    const onChange = vi.fn();
+    const unsub = s.subscribe(onChange);
+    s.set({ kind: 'same' });
+    expect(onChange).not.toHaveBeenCalled();
+    s.set({ kind: 'different' });
+    expect(onChange).toHaveBeenCalledTimes(1);
+    unsub();
   });
 
   it('serializes primitives with String() when no serialize is given', () => {
