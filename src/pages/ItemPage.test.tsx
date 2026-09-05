@@ -10,6 +10,10 @@ import { ToastProvider } from '../components/Toast';
 import { FeedBarProvider } from '../components/FeedBarContext';
 import { DataSourceProvider } from '../lib/data/context';
 import { MockDataSource } from '../lib/data/MockDataSource';
+import {
+  rememberOpenModes,
+  resetOpenModeSnapshotForTest,
+} from '../lib/openModeSnapshot';
 import { _resetNetworkStatusForTests, trackedFetch } from '../lib/networkStatus';
 import { CAPABILITIES_QUERY_KEY } from '../hooks/useCapabilities';
 import {
@@ -161,6 +165,13 @@ afterEach(() => {
 });
 
 describe('ItemPage (reader)', () => {
+  // The row-open settings snapshot is a module-level store, so a case that seeds
+  // it must not leak into the next (the sibling case asserts the setting OFF).
+  afterEach(() => {
+    window.localStorage.removeItem('readmo:feed-open-modes');
+    resetOpenModeSnapshotForTest();
+  });
+
   it('remembers the HN item id when reading an HN article (for the mirror)', async () => {
     class HnReaderSource extends MockDataSource {
       async getItem(itemId: ItemId): Promise<FeedItem | null> {
@@ -734,12 +745,11 @@ describe('ItemPage (reader)', () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    // Prewarm the subscriptions query so useMarkDoneOnOpenFeeds has the flag by
-    // the time the button is clicked (deterministic, no timing race).
-    await queryClient.prefetchQuery({
-      queryKey: ['subscriptions'],
-      queryFn: () => source.getSubscriptions(),
-    });
+    // The row-open settings are read from what the device remembers
+    // (lib/openModeSnapshot), which App keeps level with the server — so this
+    // stands in for "this device has read its subscriptions", deterministically
+    // and with no timing race.
+    rememberOpenModes(await source.getSubscriptions());
     renderReaderWithHistory(source, { entries: ['/', '/item/item-1'], queryClient });
     const openOriginal = await screen.findByTestId('open-original');
     await user.click(openOriginal);

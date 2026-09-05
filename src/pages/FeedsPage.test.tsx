@@ -6,6 +6,11 @@ import { MockDataSource } from '../lib/data/MockDataSource';
 import { AddFeedError, type DiscoveredFeed } from '../lib/data/DataSource';
 import type { AddFeedErrorKind } from '../lib/data/DataSource';
 import { FeedsPage } from './FeedsPage';
+import { useOpenModeSnapshotSync } from '../hooks/useOpenModeSnapshotSync';
+import {
+  readOpenModeSnapshot,
+  resetOpenModeSnapshotForTest,
+} from '../lib/openModeSnapshot';
 import { POPULAR_FEEDS, RECOMMENDED_FEEDS } from '../lib/popularFeeds';
 import { PUBLISHERS, publisherForUrl } from '../lib/feedSections';
 
@@ -1014,5 +1019,103 @@ describe('FeedsPage — OPML import', () => {
     fireEvent.click(screen.getByRole('button', { name: /export/i }));
 
     await screen.findByText('Export failed');
+  });
+
+  // The open mode is the one subscription setting with a device-local copy
+  // outside the query cache (lib/openModeSnapshot), so a change that reaches the
+  // server but not that copy comes back wrong on the next launch.
+  describe('persisting an open-mode change', () => {
+    /** App mounts this once; the Feeds page doesn't, so the test stands in for
+     * App. */
+    function SnapshotSyncMount() {
+      useOpenModeSnapshotSync();
+      return null;
+    }
+
+    it('remembers the new mode even when the refetch never lands', async () => {
+      window.localStorage.clear();
+      resetOpenModeSnapshotForTest();
+      // Only a signed-in read is remembered (useOpenModeSnapshotSync).
+      window.localStorage.setItem('readmo:mock-signed-in', '1');
+
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const read = source.getSubscriptions.bind(source);
+      let reads = 0;
+      vi.spyOn(source, 'getSubscriptions').mockImplementation(() => {
+        reads += 1;
+        // The first read paints the page; the refetch that `invalidate()` kicks
+        // off after the change never settles — offline, or the app closed with
+        // the menu.
+        return reads === 1 ? read() : new Promise(() => {});
+      });
+
+      renderWithProviders(
+        <>
+          <SnapshotSyncMount />
+          <FeedsPage />
+        </>,
+        { source },
+      );
+
+      const overflows = await screen.findAllByRole('button', {
+        name: /^Actions for /,
+      });
+      fireEvent.click(overflows[0]);
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Open on…' }));
+      fireEvent.click(screen.getByRole('menuitemradio', { name: 'Open original' }));
+
+      // The change is on the server and in the cache, so the snapshot has it —
+      // without the cache patch it would still be reading the old list.
+      await waitFor(() =>
+        expect(readOpenModeSnapshot().openOriginal.size).toBe(1),
+      );
+      expect(reads).toBeGreaterThan(1); // the refetch was kicked off, and hung
+    });
+
+    it('forgets an unsubscribed feed even when the refetch never lands', async () => {
+      // Unsubscribing doesn't take the feed's saved articles with it — a pinned
+      // or favorited one stays readable — so a snapshot still carrying the gone
+      // subscription would keep opening those rows externally.
+      window.localStorage.clear();
+      resetOpenModeSnapshotForTest();
+      window.localStorage.setItem('readmo:mock-signed-in', '1');
+
+      const source = new MockDataSource(`test-${Math.random()}`);
+      renderWithProviders(
+        <>
+          <SnapshotSyncMount />
+          <FeedsPage />
+        </>,
+        { source },
+      );
+
+      const overflows = await screen.findAllByRole('button', {
+        name: /^Actions for /,
+      });
+      fireEvent.click(overflows[0]);
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Open on…' }));
+      fireEvent.click(screen.getByRole('menuitemradio', { name: 'Open original' }));
+      await waitFor(() =>
+        expect(readOpenModeSnapshot().openOriginal.size).toBe(1),
+      );
+
+      // From here NO read lands — the page is already painted, so hanging every
+      // one of them leaves the direct cache write as the only way the feed can
+      // leave the snapshot. (Letting even the first one through would serve the
+      // post-unsubscribe list and clear the snapshot without the fix.)
+      vi.spyOn(source, 'getSubscriptions').mockImplementation(
+        () => new Promise(() => {}),
+      );
+
+      fireEvent.click(
+        (await screen.findAllByRole('button', { name: /^Actions for / }))[0],
+      );
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Unsubscribe' }));
+
+      await waitFor(() =>
+        expect(readOpenModeSnapshot().openOriginal.size).toBe(0),
+      );
+    });
+
   });
 });

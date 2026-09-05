@@ -5,6 +5,7 @@ import {
   clearExplicitSignOut,
   clearUserCaches,
   COLLAPSED_FEEDS_KEY,
+  OPEN_MODE_SNAPSHOT_KEY,
   REVEALED_SPOILERS_KEY,
   itemStateKey,
   markExplicitSignOut,
@@ -51,6 +52,10 @@ describe('clearUserCaches', () => {
     window.localStorage.setItem(outboxKey('u2'), 'keep'); // another user's outbox
     window.localStorage.setItem(COLLAPSED_FEEDS_KEY, '["feed-1"]'); // subscription-derived
     window.localStorage.setItem(REVEALED_SPOILERS_KEY, '["item-1"]'); // ditto
+    window.localStorage.setItem(
+      OPEN_MODE_SNAPSHOT_KEY,
+      '{"openNewshacker":["feed-1"]}',
+    ); // ditto
 
     const del = vi.fn().mockResolvedValue(true);
     vi.stubGlobal('caches', { delete: del });
@@ -68,6 +73,7 @@ describe('clearUserCaches', () => {
     // peeked at.
     expect(window.localStorage.getItem(COLLAPSED_FEEDS_KEY)).toBeNull();
     expect(window.localStorage.getItem(REVEALED_SPOILERS_KEY)).toBeNull();
+    expect(window.localStorage.getItem(OPEN_MODE_SNAPSHOT_KEY)).toBeNull();
     // A different user's persisted data is untouched.
     expect(window.localStorage.getItem(rqCacheKey('u2'))).toBe('keep');
     expect(window.localStorage.getItem(outboxKey('u2'))).toBe('keep');

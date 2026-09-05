@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { ItemRows } from './ItemRows';
@@ -10,7 +10,11 @@ import {
   SHOW_GROUP_FAVICON_KEY,
   resetReadingPrefsCacheForTest,
 } from '../hooks/useReadingPrefs';
-import type { FeedItem } from '../lib/types';
+import {
+  rememberOpenModes,
+  resetOpenModeSnapshotForTest,
+} from '../lib/openModeSnapshot';
+import type { FeedItem, Subscription } from '../lib/types';
 
 async function sampleItems(n = 3): Promise<FeedItem[]> {
   const source = new MockDataSource(`test-${Math.random()}`);
@@ -43,10 +47,12 @@ describe('ItemRows', () => {
   beforeEach(() => {
     window.localStorage.clear();
     resetReadingPrefsCacheForTest();
+    resetOpenModeSnapshotForTest();
   });
   afterEach(() => {
     window.localStorage.clear();
     resetReadingPrefsCacheForTest();
+    resetOpenModeSnapshotForTest();
   });
 
   it('shows a labeled loading indicator while loading, not rows or the empty state', () => {
@@ -528,5 +534,154 @@ describe('ItemRows', () => {
     expect(
       collapsedHeader!.querySelector('[data-testid="group-toggle"]'),
     ).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  // The per-feed open mode reaches a row through the ['subscriptions'] query,
+  // which is asynchronous — so these cover the window before it answers, where
+  // treating "no data" as "no feed opens externally" silently opened the in-app
+  // reader on a feed the reader had set to open elsewhere.
+  describe('open mode before the subscriptions read lands', () => {
+    const HN_ITEM: FeedItem = {
+      item: {
+        id: 'item-hn',
+        feedId: 'feed-hn',
+        guid: 'https://news.ycombinator.com/item?id=42662903',
+        url: 'https://example.com/the-article',
+        commentsUrl: 'https://news.ycombinator.com/item?id=42662903',
+        title: 'A Hacker News headline',
+        spoilerFreeTitle: null,
+        author: null,
+        publishedAt: Date.now() - 60 * 60 * 1000,
+        contentHtml: '<p>Body</p>',
+        summary: null,
+        fullContentHtml: null,
+        aiSummary: null,
+        enclosures: [],
+        categories: [],
+      },
+      feed: {
+        id: 'feed-hn',
+        url: 'https://news.ycombinator.com/rss',
+        siteUrl: 'https://news.ycombinator.com',
+        title: 'Hacker News',
+        faviconUrl: null,
+        errorCount: 0,
+        lastError: null,
+        parked: false,
+      },
+    };
+
+    function subscription(flags: Partial<Subscription>): {
+      subscription: Subscription;
+      feed: FeedItem['feed'];
+    } {
+      return {
+        subscription: {
+          feedId: 'feed-hn',
+          folder: null,
+          titleOverride: null,
+          muted: false,
+          openOriginal: false,
+          openNewshacker: false,
+          markDoneOnOpen: false,
+          listLayout: null,
+          sort: 0,
+          ...flags,
+        },
+        feed: HN_ITEM.feed,
+      };
+    }
+
+    /** A source whose subscriptions read never settles — the window this suite
+     * is about, held open. */
+    function pendingSubscriptions(): MockDataSource {
+      const source = new MockDataSource(`test-${Math.random()}`);
+      vi.spyOn(source, 'getSubscriptions').mockReturnValue(
+        new Promise(() => {}),
+      );
+      return source;
+    }
+
+    it('opens on newshacker from the first frame, off the last known modes', () => {
+      rememberOpenModes([subscription({ openNewshacker: true })]);
+      renderWithProviders(
+        <ItemRows items={[HN_ITEM]} emptyLabel="Nothing here." />,
+        { source: pendingSubscriptions() },
+      );
+      expect(screen.getByTestId('item-title')).toHaveAttribute(
+        'href',
+        'https://newshacker.app/item/42662903',
+      );
+    });
+
+    it('opens the source from the first frame for an open-original feed', () => {
+      rememberOpenModes([subscription({ openOriginal: true })]);
+      renderWithProviders(
+        <ItemRows items={[HN_ITEM]} emptyLabel="Nothing here." />,
+        { source: pendingSubscriptions() },
+      );
+      expect(screen.getByTestId('item-title')).toHaveAttribute(
+        'href',
+        'https://example.com/the-article',
+      );
+    });
+
+    it('uses the reader on a device that has never read subscriptions', () => {
+      renderWithProviders(
+        <ItemRows items={[HN_ITEM]} emptyLabel="Nothing here." />,
+        { source: pendingSubscriptions() },
+      );
+      expect(screen.getByTestId('item-title')).toHaveAttribute(
+        'href',
+        '/item/item-hn',
+      );
+    });
+
+    it('follows the mode changing under it', async () => {
+      // What a completed read looks like from a row: the app-wide sync writes
+      // what the server said, and the row re-renders on it (the mode was turned
+      // off on another device).
+      rememberOpenModes([subscription({ openNewshacker: true })]);
+      renderWithProviders(
+        <ItemRows items={[HN_ITEM]} emptyLabel="Nothing here." />,
+        { source: pendingSubscriptions() },
+      );
+      expect(screen.getByTestId('item-title')).toHaveAttribute(
+        'href',
+        'https://newshacker.app/item/42662903',
+      );
+
+      act(() => {
+        rememberOpenModes([subscription({ openNewshacker: false })]);
+      });
+      await waitFor(() =>
+        expect(screen.getByTestId('item-title')).toHaveAttribute(
+          'href',
+          '/item/item-hn',
+        ),
+      );
+    });
+
+    it('leaves refreshing the snapshot to the app-wide sync, not the rows', async () => {
+      // The rows only READ it. The write lives in useOpenModeSnapshotSync,
+      // mounted app-wide, because the page where the setting changes mounts no
+      // rows at all — see that hook and its test.
+      const source = new MockDataSource(`test-${Math.random()}`);
+      const read = vi
+        .spyOn(source, 'getSubscriptions')
+        .mockResolvedValue([subscription({ openNewshacker: true })]);
+      renderWithProviders(
+        <ItemRows items={[HN_ITEM]} emptyLabel="Nothing here." />,
+        { source },
+      );
+      await waitFor(() => expect(read).toHaveBeenCalled());
+      // The read landed and said newshacker; with no sync hook mounted the row
+      // is still the reader, and nothing was written.
+      expect(screen.getByTestId('item-title')).toHaveAttribute(
+        'href',
+        '/item/item-hn',
+      );
+      expect(window.localStorage.getItem('readmo:feed-open-modes')).toBeNull();
+    });
   });
 });

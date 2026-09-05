@@ -39,6 +39,12 @@ const revealedStore = createPersistentStore<ReadonlySet<string>>({
   storageKey: REVEALED_SPOILERS_KEY,
   changeEvent: CHANGE_EVENT,
   defaultValue: EMPTY,
+  // Nothing else reads this key, so a write storage refuses is held for the
+  // session rather than vanishing. It is what makes the eye's "re-hide all"
+  // hold on a device that cannot persist (TODO.md, PR #676): the clear goes
+  // through this store, and a swallowed one left the previously-persisted
+  // reveals showing.
+  holdRefusedWrite: true,
   parse: (raw) => {
     try {
       const parsed: unknown = JSON.parse(raw);
