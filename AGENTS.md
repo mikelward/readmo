@@ -116,7 +116,17 @@ has stopped biting.
     PR description and your end-of-turn summary. See *Deploying & client/server
     compatibility* below.
 
-12. **Ask before adding wordy in-product copy.** Settings options, controls,
+12. **Look at how the repo already does it.** Before adding a client-side store
+    of server state or a second place holding the same fact, read
+    `lib/settingsSync` and the item-state store + outbox. Both are local-first
+    with an async reconcile on top; both are fine. What neither has is a
+    **redundant fallback authority** — a second copy of the same server-read
+    fact, holding no writes of its own, that something then has to choose
+    between. The open-mode snapshot (#700) shipped as one and cost an ordering
+    predicate, a clock-correction exception, a stamp floor and a tie-break
+    across nine review rounds.
+
+13. **Ask before adding wordy in-product copy.** Settings options, controls,
     and labels should speak for themselves. Don't ship "this is self-hosted
     so…", "we do this because…", or any other explanatory blurb/hint/aside
     next to a control without asking first — the control's label is the copy.
@@ -720,7 +730,7 @@ build/routing/deploy.
   that rule exists to prevent. *Safe vs. risky actions*' ask-first list holds
   under autopilot too: adding a paid or third-party service, or changing CI
   secrets or Vercel/Supabase settings, is an ask however reversible it looks
-  from inside the repo — as is guardrail 12's in-product copy, which waits for
+  from inside the repo — as is guardrail 13's in-product copy, which waits for
   an explicit yes. The loop's own steps don't count: committing, pushing,
   opening a PR, reading its CI and review state, arming the
   next scheduled check, and merging a green PR are authorized here, so
@@ -769,6 +779,7 @@ up.
   in.
 - Open PRs ready for review (not draft) unless asked otherwise.
 - **Judge every review comment on merit, whoever wrote it.** Verify the claim before acting; if it doesn't hold up, reply saying why and decline. A comment citing a rule is a *reading* of that rule, not the rule — check what the rule actually says. Codex misreads the privacy rules especially, and in one direction: stricter always feels safer, so an over-strict finding quietly costs capability the product needs. Quote the rule and decline rather than narrowing the code to satisfy it; where the rule really does forbid what the product needs, that conflict is the maintainer's call, not one to settle either way yourself.
+- **A second verified finding in the same mechanism is evidence about the design, not another bug.** Before fixing it, look for the same shape elsewhere and ask whether a different design — an existing one (guardrail 12) or a better new one — would delete the class rather than the instance. Say what you chose on the thread; a design change is the maintainer's call, autopilot included.
 - **Never leave a review comment thread silently dismissed.** Answer on the thread — a disagreement is an answer, so say why — then resolve it once the fix is on the head or the point is rebutted; anything still to do stays open — every thread ends in one of those two states, not "left open and ignored". When you think a comment is a false positive, say *why* on the thread (one or two sentences): the reasoning is exactly what the user wants surfaced, and "Deno-only path, doesn't apply" is more useful on the PR than buried in chat history. Acknowledgement noise ("good catch, will do") is fine and preferred over silence; the discipline is "answer, then resolve", not "say nothing". This applies to human reviewers too, not just Codex.
 - **Don't merge ahead of that verdict**, and don't ask whether it's okay to
   merge — the gate is the rule above, in one place: Codex's verdict for the
