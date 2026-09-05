@@ -174,6 +174,10 @@ describe('openModeSnapshot', () => {
     // The refetch after a refused write usually carries the SAME flags, so a
     // no-op guard that consulted the in-memory copy would never write again and
     // the modes would be lost on the next launch despite storage recovering.
+    // Those repeat writes are what the store's shared cooldown collapses, so the
+    // retry lands on the first read past it rather than the very next one — the
+    // in-memory copy is what rows read in the meantime either way.
+    vi.useFakeTimers();
     const setItem = vi
       .spyOn(Storage.prototype, 'setItem')
       .mockImplementationOnce(() => {
@@ -184,10 +188,12 @@ describe('openModeSnapshot', () => {
       expect(window.localStorage.getItem(OPEN_MODE_SNAPSHOT_KEY)).toBeNull();
 
       // A routine read, carrying exactly what is already remembered.
+      vi.advanceTimersByTime(10_000);
       rememberOpenModes([sub('feed-hn', { openNewshacker: true })]);
       expect(window.localStorage.getItem(OPEN_MODE_SNAPSHOT_KEY)).not.toBeNull();
     } finally {
       setItem.mockRestore();
+      vi.useRealTimers();
     }
     resetOpenModeSnapshotForTest();
     expect([...readOpenModeSnapshot().openNewshacker]).toEqual(['feed-hn']);

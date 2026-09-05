@@ -93,6 +93,21 @@ permanent by default. Each is cheap to change.
   completion a later action superseded. Same reasoning for not taking it now, and
   the same self-correction on the next read.
 
+- **DEFERRED: nothing flushes the OTHER stores' held writes when storage
+  recovers** (Claude, 2026-09-05, maintainer's call on ordering). A write
+  `createPersistentStore` cannot persist is held in memory and retried by
+  whatever writes that store next, and the shared storage-health flag now
+  collapses the repeat attempts across stores into one probe per cooldown. What
+  it does not do is act on the probe's answer for anybody else: when one store's
+  write finally lands, every other store still holding a value goes on holding it
+  until something writes to it, which for a preference nobody touches again is
+  the rest of the session. **Alternative:** a registry of live stores, so a
+  successful write flushes every held value once — probe once, flush many.
+  **Not taken now** — the maintainer asked for the correctness fix and the
+  cooldown first, and the gap only costs durability on a device that was out of
+  storage and then got some back mid-session, with reads correct throughout
+  either way. **Reversible:** additive, entirely inside `persistentStore.ts`.
+
 - **`grafana/README.md` and `infra/cf-gateway/README.md` are now code, not
   docs** (autopilot, 2026-08-30). Narrowing `.github/lanes.conf` from
   `docs **/*.md` to `docs *.md` + `docs docs/**/*.md` — the standard
