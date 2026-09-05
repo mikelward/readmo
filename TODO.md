@@ -9,11 +9,12 @@ Calls that haven't been settled — guesses autopilot made without asking, and
 decisions deliberately postponed — recorded so they don't silently become
 permanent by default. Each is cheap to change.
 
-- **RAISED, NOT FIXED: two reveal-persistence edge cases under a storage that
-  starts refusing writes** (Claude, 2026-08-30, PR #676). Codex's fourth
-  consecutive round on `src/hooks/useRevealedSpoilers.ts` — each round opened by
-  the previous round's fix — flagged two more, both verified real and both left
-  in place rather than patched, because the findings on that seam stopped
+- **RAISED, NOT FIXED: one reveal-persistence edge case under a storage that
+  starts refusing writes** (Claude, 2026-08-30, PR #676; item 2 closed
+  2026-09-05 by PR #700). Codex's fourth consecutive
+  round on `src/hooks/useRevealedSpoilers.ts` — each round opened by the
+  previous round's fix — flagged two more, both verified real and both left in
+  place rather than patched, because the findings on that seam stopped
   converging:
   1. **The combined snapshot isn't capped.** `effectiveRevealed()` unions the
      persisted set and the session fallback without re-capping. If storage
@@ -21,19 +22,76 @@ permanent by default. Each is cheap to change.
      each new reveal can't evict a persisted entry and lands in the
      independently-capped session set, so the active snapshot can reach 2 ×
      `MAX_REVEALED` and the oldest rows stay revealed until a reload.
-  2. **`clearRevealedSpoilers` depends on a successful `setItem`.** The eye's
-     "re-hide all" clears the session set, but the persisted clear goes through
-     `createPersistentStore.set()`, which swallows a refused write — so a
-     previously-persisted reveal survives the re-hide and that row keeps showing
-     its original headline.
-  **Alternative:** cap the union in `effectiveRevealed()`, and track the
-  persisted keys a refused write meant to remove (a session-level tombstone set)
-  so the clear holds without storage. **Not taken now** — both need storage to
-  transition from working to refusing *within one session*, both self-correct on
-  the next reload (the store re-reads from storage), and four rounds of fixes on
-  this seam each introduced the next finding, so a fifth is more likely to add a
-  new case than close this one. **Reversible** — the whole seam is one module and
-  one hook; nothing outside it knows how the union is built.
+  2. ~~**`clearRevealedSpoilers` depends on a successful `setItem`.**~~ **Closed
+     by PR #700**: `createPersistentStore.set()` no longer swallows a refused
+     write — it holds the value in memory and `get()` returns it — so the clear
+     now holds for the session on a device that cannot persist. Every consumer of
+     that store gets the same, which is why it went there rather than into the
+     one module that noticed.
+  **Alternative** for what is left: cap the union in `effectiveRevealed()`.
+  **Not taken now** — it needs storage to transition from working to refusing
+  *within one session*, it self-corrects on the next reload, and four rounds of
+  fixes on this seam each introduced the next finding, so a fifth is more likely
+  to add a new case than close this one. **Reversible** — the whole seam is one
+  module and one hook; nothing outside it knows how the union is built.
+
+- **RAISED, NOT FIXED: a read that is not the server's current answer can revert
+  a just-changed open mode** (Claude, 2026-09-05, Codex P2 + P1 on PR #700).
+  Two ways in, one shape. **(1) A second tab.** The remembered
+  row-open snapshot lives in localStorage and is therefore shared by every tab,
+  while each tab's `['subscriptions']` query is its own. So if tab A changes a
+  feed's open mode while tab B has a pre-change read already in flight, tab B's
+  read completes and replaces the snapshot with the older flags — for both tabs.
+  It self-corrects on the next completed read anywhere (the server has the new
+  value), but with `refetchOnWindowFocus` off and a 5-minute `staleTime` that
+  can be minutes away, and meanwhile a tap opens in the reader on a feed set to
+  open elsewhere. **Alternatives:** (a) order reads against mutations, which is
+  the wall-clock design this PR exists to delete — rejected by the maintainer;
+  (b) `settingsSync`'s dirty-marker shape — record the feed as locally-owned
+  when a mutation settles and let a read skip it until the read confirms it,
+  which needs no clock; (c) broadcast the invalidation across tabs
+  (`broadcastQueryClient`), which is new machinery. **Not taken now** — it needs
+  two tabs, one of them mid-read, the window is bounded by the next read, and
+  (b) reintroduces per-feed reconcile state into a store whose whole point is
+  that it has none. **Reversible:** (b) is additive and local to
+  `openModeSnapshot` plus its two writers.
+
+  **(2) A service-worker cache fallback.** `sw.ts`'s `NetworkFirst` serves the
+  cached subscriptions response when the device is offline or the read outruns
+  its 6 s window, stamped `cache-error` / `cache-timeout`. That reaches React
+  Query as an ordinary success, so `isCompletedRead` counts it — and if a mode
+  change settled after the last successful network GET, the cached body still
+  holds the old flags and reverts it. Only one device and a flaky network, so
+  this is the more reachable of the two. **Alternatives:** the same (b) covers
+  it; or propagate the SW source through the data layer so a cache-served read
+  isn't treated as a read, which fixes this instance and not the tab one.
+
+  Both are the same class — a read that isn't the server's current answer
+  overwriting a settled local change — which is why they belong in one decision
+  rather than two patches. **If it is taken, it copies `lib/settingsSync`**
+  (maintainer, 2026-09-05): a per-feed acked snapshot of the last values the
+  server confirmed, plus a dirty-marker set for the flip that ends back on the
+  acked value; a read applies only to feeds with nothing pending, and the ack
+  advances when the write lands rather than when a read happens to agree.
+
+- **RAISED, NOT FIXED: a zero-row UPDATE reads as a successful mode change**
+  (Claude, 2026-09-05, Codex P2 on PR #700). `setOpenMode` /
+  `setMarkDoneOnOpen` (and `setSubscriptionListLayout`) check only `error`, so
+  a PATCH matching no row — the feed was unsubscribed on another device —
+  resolves, and the snapshot then remembers a mode that was never written.
+  Saved articles from that feed keep opening on it until the next completed
+  read drops the whole entry. **Alternative:** `.select()` the affected rows and
+  refuse to remember when none came back. **Not taken now** — it changes the
+  `DataSource` contract for three methods and adds a throw on a page path whose
+  error handling would need checking, for a case that self-corrects on the next
+  read. **Reversible:** additive, in `SupabaseDataSource` plus the handlers.
+
+  Same symptom by a second route (Codex P2 on #700): the row stays enabled while
+  a mode change is in flight, so reopening the menu and unsubscribing the feed
+  can settle first, and the late mode handler then re-adds the flags the
+  unsubscribe removed. **Alternative:** serialize per-feed mutations, or ignore a
+  completion a later action superseded. Same reasoning for not taking it now, and
+  the same self-correction on the next read.
 
 - **`grafana/README.md` and `infra/cf-gateway/README.md` are now code, not
   docs** (autopilot, 2026-08-30). Narrowing `.github/lanes.conf` from

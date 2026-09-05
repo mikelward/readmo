@@ -1,13 +1,22 @@
-import { useMemo } from 'react';
+import { useMemo, useSyncExternalStore } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useDataSource } from '../lib/data/context';
+import {
+  readOpenModeSnapshot,
+  subscribeOpenModeSnapshot,
+  type OpenModeSnapshot,
+  type RowOpenFlag,
+} from '../lib/openModeSnapshot';
 import type { FeedId, ListLayout } from '../lib/types';
 
-// Per-feed settings derived from the subscription list. Every hook here reads
-// the same shared `['subscriptions']` query, so they're deduped with the
-// drawer / Feeds page and re-derive the moment a settings toggle invalidates
-// that key. Each returns an empty collection until the subscriptions load (or
-// for callers with none), so every feature defaults to off.
+// Per-feed settings a row acts on.
+//
+// The row-open flags (open mode, mark-done-on-open) come from what the DEVICE
+// remembers — lib/openModeSnapshot, read synchronously, because a row's first
+// frame is tappable and the query is not synchronous. The per-feed card style
+// comes from the `['subscriptions']` query itself, deduped with the drawer /
+// Feeds page and re-derived the moment a settings toggle invalidates that key:
+// it only affects how a row looks, so having it a moment late costs nothing.
 
 function useSubscriptionRows() {
   const ds = useDataSource();
@@ -18,18 +27,27 @@ function useSubscriptionRows() {
   return data;
 }
 
-/** The set of feed ids whose subscription has `flag` switched on. */
-function useFlaggedFeedIds(
-  flag: 'openNewshacker' | 'openOriginal' | 'markDoneOnOpen',
-): ReadonlySet<FeedId> {
-  const data = useSubscriptionRows();
-  return useMemo(() => {
-    const ids = new Set<FeedId>();
-    for (const { subscription } of data ?? []) {
-      if (subscription[flag]) ids.add(subscription.feedId);
-    }
-    return ids;
-  }, [data, flag]);
+/** What this device knows about the row-open flags (lib/openModeSnapshot). */
+function useOpenModeSnapshot(): OpenModeSnapshot {
+  return useSyncExternalStore(
+    subscribeOpenModeSnapshot,
+    readOpenModeSnapshot,
+    readOpenModeSnapshot,
+  );
+}
+
+/** The set of feed ids carrying `flag`.
+ *
+ * Read from what the device remembers, not from the query — a row's first frame
+ * is tappable, and the query is asynchronous, so deriving from it would render
+ * every row in reader mode until it answered and a tap landing in that window
+ * would open the wrong place. The remembered copy is kept level with the server
+ * by useOpenModeSnapshotSync (completed reads) and by FeedsPage (settled
+ * changes); the query is where the answer comes from, not a second opinion to
+ * weigh against it. A device that has never read subscriptions remembers
+ * nothing and starts in reader mode. */
+function useFlaggedFeedIds(flag: RowOpenFlag): ReadonlySet<FeedId> {
+  return useOpenModeSnapshot()[flag];
 }
 
 /**

@@ -23,6 +23,25 @@ function objStore() {
   });
 }
 
+/** Same store, opted in to holding what storage refuses. */
+function holdingStore(discardStaleOnRefusal = false) {
+  return createPersistentStore<Obj>({
+    storageKey: KEY,
+    changeEvent: EVENT,
+    defaultValue: { kind: 'default' },
+    parse: (raw) => JSON.parse(raw) as Obj,
+    serialize: (v) => JSON.stringify(v),
+    holdRefusedWrite: true,
+    discardStaleOnRefusal,
+  });
+}
+
+function refuseWrites() {
+  return vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    throw new DOMException('quota', 'QuotaExceededError');
+  });
+}
+
 beforeEach(() => window.localStorage.clear());
 afterEach(() => vi.restoreAllMocks());
 
@@ -85,6 +104,90 @@ describe('createPersistentStore', () => {
     // the cleared store read as default again.
     s.resetForTest();
     expect(s.get()).toEqual({ kind: 'default' });
+  });
+
+  it('reverts a refused write by default, and holds it when asked to', () => {
+    // Default: what is stored wins, because something else may read the same key
+    // directly (settingsSync does, for the synced prefs) and a held value would
+    // split the two. Opted in: the change is kept for the session instead of
+    // vanishing unannounced, which is what a store nothing else reads wants.
+    const plain = objStore();
+    plain.set({ kind: 'stored' });
+    const setItem = refuseWrites();
+    plain.set({ kind: 'refused' });
+    expect(plain.get()).toEqual({ kind: 'stored' });
+    expect(plain.hasUnpersistedValue()).toBe(false);
+    setItem.mockRestore();
+
+    window.localStorage.clear();
+    const holding = holdingStore();
+    holding.set({ kind: 'stored' });
+    refuseWrites();
+    holding.set({ kind: 'refused' });
+    expect(holding.get()).toEqual({ kind: 'refused' });
+    expect(holding.hasUnpersistedValue()).toBe(true);
+    // Storage still holds the old value; the held one is what readers see.
+    expect(window.localStorage.getItem(KEY)).toBe(JSON.stringify({ kind: 'stored' }));
+  });
+
+  it('installs the held value BEFORE notifying', () => {
+    // Subscribers re-read synchronously from inside the notification, so a value
+    // assigned afterwards is invisible to them and schedules no render.
+    const s = holdingStore();
+    const seen: Obj[] = [];
+    const unsub = s.subscribe(() => seen.push(s.get()));
+    refuseWrites();
+    s.set({ kind: 'refused' });
+    unsub();
+    expect(seen).toEqual([{ kind: 'refused' }]);
+  });
+
+  it('drops the held value once storage takes a write again', () => {
+    const s = holdingStore();
+    const setItem = vi
+      .spyOn(Storage.prototype, 'setItem')
+      .mockImplementationOnce(() => {
+        throw new DOMException('quota', 'QuotaExceededError');
+      });
+    s.set({ kind: 'refused' });
+    expect(s.hasUnpersistedValue()).toBe(true);
+    s.set({ kind: 'recovered' });
+    expect(s.hasUnpersistedValue()).toBe(false);
+    expect(window.localStorage.getItem(KEY)).toBe(
+      JSON.stringify({ kind: 'recovered' }),
+    );
+    setItem.mockRestore();
+    s.resetForTest();
+    expect(s.get()).toEqual({ kind: 'recovered' });
+  });
+
+  it('drops the held value when somebody else writes the key', () => {
+    // Another tab, or a module that writes the key directly. Storage is the
+    // current answer again, so masking it with a value from before that write
+    // would show one thing while the writer syncs another.
+    const s = holdingStore();
+    const setItem = refuseWrites();
+    s.set({ kind: 'refused' });
+    expect(s.get()).toEqual({ kind: 'refused' });
+    setItem.mockRestore();
+
+    window.localStorage.setItem(KEY, JSON.stringify({ kind: 'elsewhere' }));
+    expect(s.get()).toEqual({ kind: 'elsewhere' });
+    expect(s.hasUnpersistedValue()).toBe(false);
+  });
+
+  it('discards the stored value on a refused write when asked to', () => {
+    // A cache of something else: what is stored is now known to be out of date,
+    // and it outlives the in-memory copy — after a reload it would read as
+    // current and win over the source it was caching.
+    const s = holdingStore(true);
+    s.set({ kind: 'stored' });
+    refuseWrites();
+    s.set({ kind: 'refused' });
+    // Held in memory for this session...
+    expect(s.get()).toEqual({ kind: 'refused' });
+    // ...and nothing stale left behind for the next one.
+    expect(window.localStorage.getItem(KEY)).toBeNull();
   });
 
   it('serializes primitives with String() when no serialize is given', () => {

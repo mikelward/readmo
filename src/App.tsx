@@ -15,6 +15,7 @@ import { useFeedInvalidation } from './hooks/useFeedInvalidation';
 import { useStateSync } from './hooks/useStateSync';
 import { useSettingsSync } from './hooks/useSettingsSync';
 import { useNewshackerSync } from './hooks/useNewshackerSync';
+import { useOpenModeSnapshotSync } from './hooks/useOpenModeSnapshotSync';
 import { useScrollDiag } from './hooks/useScrollDiag';
 import { usePinchFontSize } from './hooks/usePinchFontSize';
 import { useDebugScrollJumps } from './hooks/useReadingPrefs';
@@ -96,6 +97,11 @@ export default function App() {
   // when the account has linked a newshacker token (no-op otherwise). SPEC.md
   // *Mirror dismissals and pins to newshacker*.
   useNewshackerSync();
+  // Remember each feed's open mode as the subscriptions read lands, so a row's
+  // first (tappable) frame opens where the reader set it to rather than falling
+  // back to the in-app reader while that read is still in flight. App-wide
+  // because the Feeds page — where the setting is changed — mounts no rows.
+  useOpenModeSnapshotSync();
   // Scroll-jump diagnostics (off unless the /debug switch is on): record scroll
   // positions + Done flips and raise a "Done — Report bug" toast on dismiss, so
   // a jump-to-top can be inspected at /debug/scroll. A no-op while disabled.

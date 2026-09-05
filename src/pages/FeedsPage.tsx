@@ -20,7 +20,11 @@ import { ReorderableSubscriptions } from '../components/ReorderableSubscriptions
 import { usePageTitle } from '../hooks/useDocumentTitle';
 import { useToast } from '../hooks/useToast';
 import { presentableDetail } from '../lib/loadErrorCopy';
-import type { Feed, FeedId } from '../lib/types';
+import type { Feed, FeedId, Subscription } from '../lib/types';
+import {
+  forgetFeedOpenModes,
+  rememberFeedOpenModes,
+} from '../lib/openModeSnapshot';
 // Feed management reuses the settings page's section/control styles — the two
 // pages share the same visual vocabulary (sections, buttons, list rows).
 import './SettingsPage.css';
@@ -192,6 +196,45 @@ export function FeedsPage() {
     queryClient.invalidateQueries({ queryKey: ['folders'] });
     queryClient.invalidateQueries({ queryKey: ['feed'] });
   };
+
+  /** Write a settled subscription change into the cached list, ahead of the
+   * refetch `invalidate()` kicks off — so the page doesn't show the old value
+   * for as long as that takes.
+   *
+   * This is the UI's copy only. What a ROW reads is the device's own record of
+   * these settings (lib/openModeSnapshot), which the callers below write
+   * directly: the refetch is fire-and-forget and may never land — the network
+   * can be gone, or the reader can close the app the moment the menu does — and
+   * waiting for it would leave the change on the server, absent here, and the
+   * next launch opening the first tap on the old setting.
+   *
+   * Mute, folder, layout and order are patched by no one: they live only in the
+   * query cache, so a lost refetch costs them a stale render that the next read
+   * fixes, not a persisted wrong answer. */
+  const patchSubscription = (feedId: FeedId, patch: Partial<Subscription>) => {
+    queryClient.setQueryData<Array<{ subscription: Subscription; feed: Feed }>>(
+      ['subscriptions'],
+      (rows) =>
+        rows?.map((row) =>
+          row.subscription.feedId === feedId
+            ? { ...row, subscription: { ...row.subscription, ...patch } }
+            : row,
+        ),
+    );
+  };
+
+  /** The same for a settled unsubscribe: drop the row from the UI's copy. Its
+   * remembered flags are dropped by `forgetFeedOpenModes` alongside — leaving
+   * them would keep opening that feed's saved articles externally, since a
+   * pinned, favorited or done one stays readable through its permanent
+   * `item_state` after the subscription is gone. */
+  const forgetSubscription = (feedId: FeedId) => {
+    queryClient.setQueryData<Array<{ subscription: Subscription; feed: Feed }>>(
+      ['subscriptions'],
+      (rows) => rows?.filter((row) => row.subscription.feedId !== feedId),
+    );
+  };
+
 
   // Best-effort post-subscribe bookkeeping shared by every path (curated,
   // single-candidate, and the multi-select picker): re-fetch the title and fire
@@ -684,10 +727,20 @@ export function FeedsPage() {
             // One atomic write of both open-mode booleans (setOpenMode), so the
             // flags can never be left transiently both-true on a partial failure.
             await ds.setOpenMode(feedId, mode);
+            // Mirrors that atomic pair into the cache for the UI, and into the
+            // snapshot for the next launch's first frame (see patchSubscription).
+            const flags = {
+              openOriginal: mode === 'original',
+              openNewshacker: mode === 'newshacker',
+            };
+            patchSubscription(feedId, flags);
+            rememberFeedOpenModes(feedId, flags);
             invalidate();
           }}
           onSetMarkDoneOnOpen={async (feedId, markDoneOnOpen) => {
             await ds.setMarkDoneOnOpen(feedId, markDoneOnOpen);
+            patchSubscription(feedId, { markDoneOnOpen });
+            rememberFeedOpenModes(feedId, { markDoneOnOpen });
             // Re-read subscriptions so useMarkDoneOnOpenFeeds (which backs the
             // rows' open handlers and the reader's Open-original button) picks up
             // the change on the next render.
@@ -702,6 +755,8 @@ export function FeedsPage() {
           }}
           onUnsubscribe={async (feedId) => {
             await ds.unsubscribe(feedId);
+            forgetSubscription(feedId);
+            forgetFeedOpenModes(feedId);
             invalidate();
           }}
           onRename={async (feedId, title) => {

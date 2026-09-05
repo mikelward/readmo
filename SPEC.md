@@ -1564,6 +1564,12 @@ negligible and off every critical path. See the External services table in
        Falls back to the reader for any item with no derivable HN id. **$0** — a
        plain deep link, no API call (see *External services*: none added).
 
+     **A row's first frame is tappable, so it honors the mode.** Where a feed's
+     rows open is settled before the row can be tapped, from the last mode this
+     device saw for that feed; a device that has never seen one opens the reader.
+     A mode changed anywhere — this device or another — takes effect for that
+     device's rows as soon as it reads the change.
+
      In any non-reader mode, tapping the row body marks the item opened (same as
      the reader; done/pin state behaves exactly as in reader mode), and the row
      gains a dedicated **Open in reader** button to the **left** of the Pin/Done
@@ -1595,7 +1601,9 @@ negligible and off every critical path. See the External services table in
      actions, letting a "read the source and I'm done" feed clear items without a
      second tap. Marking Done clears Pinned (the usual exclusivity). Per-user,
      synced (stored on the subscription as `mark_done_on_open`, 0037, like
-     Mute/Rename); off by default.
+     Mute/Rename); off by default. Known on a row's first frame like the open
+     mode above, and for the same reason: it decides what a tap on that frame
+     does.
    - **Feed-health badge** when the poller parks a feed, with "retry now".
 
 2. **Feed views (the lists)** — the chronological merge of subscription items,
@@ -3810,6 +3818,11 @@ uid the page announces to the worker; the fonts cache alone stays shared.
     uid-*keyed* (a single per-device key), but **subscription-derived**, so it's
     in the `clearUserCaches` purge list and wiped on every account change — a
     shared device must not carry one user's collapsed feed ids into the next.
+  - `readmo:feed-open-modes` — each feed's row-open settings (open mode and
+    mark-done-on-open) as of the last subscriptions read, so a row's first
+    tappable frame honors them before that read lands. Same shape as the key
+    above: a single per-device key, but **subscription-derived**, so it's in the
+    `clearUserCaches` purge list and wiped on every account change.
   - The **synced reading-behavior prefs** (`readmo:item-sort`,
     `readmo:group-by-feed`, `readmo:hide-on-scroll`, the two favicon toggles,
     `readmo:hide-sports-spoilers`, `readmo:auto-summarize-pinned`) and their

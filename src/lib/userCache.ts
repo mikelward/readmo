@@ -44,6 +44,13 @@ export const COLLAPSED_FEEDS_KEY = 'readmo:collapsed-feeds';
 // one per-device key, but a list of items THIS account subscribes to and chose
 // to look at, so it must not survive an account change on a shared device.
 export const REVEALED_SPOILERS_KEY = 'readmo:revealed-spoilers';
+// Which feeds carry each row-open setting (open mode + mark-done-on-open), as
+// of the last subscriptions read — the synchronously-readable copy a row's first
+// frame uses before the `['subscriptions']` query has answered (see
+// lib/openModeSnapshot). Same shape and same reason as the two above: one
+// per-device key, but a list of THIS account's feed ids and how it chose to open
+// them, so it must not survive an account change on a shared device.
+export const OPEN_MODE_SNAPSHOT_KEY = 'readmo:feed-open-modes';
 // Suffix SupabaseDataSource appends to the item-state key for its offline write
 // outbox. Defined here so clearUserCaches purges queued mutations with the rest
 // of a departing user's data (SPEC/AGENTS: the outbox is flushed-or-discarded on
@@ -243,6 +250,7 @@ export async function clearUserCaches(uid: string | null): Promise<void> {
     // user's collapsed feeds don't carry into the next account on a shared device.
     window.localStorage.removeItem(COLLAPSED_FEEDS_KEY);
     window.localStorage.removeItem(REVEALED_SPOILERS_KEY);
+    window.localStorage.removeItem(OPEN_MODE_SNAPSHOT_KEY);
     // The synced reading-behavior prefs mirror the departing account's
     // user_settings row — account data, same rule (see the key comment above).
     clearSyncedSettingsKeys();
@@ -267,6 +275,7 @@ export async function clearUserCaches(uid: string | null): Promise<void> {
     window.localStorage.removeItem(outboxKey(uid));
     window.localStorage.removeItem(COLLAPSED_FEEDS_KEY);
     window.localStorage.removeItem(REVEALED_SPOILERS_KEY);
+    window.localStorage.removeItem(OPEN_MODE_SNAPSHOT_KEY);
     clearSyncedSettingsKeys();
   } catch {
     // ignore (storage unavailable/denied)
