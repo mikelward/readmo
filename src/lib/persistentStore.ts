@@ -86,27 +86,52 @@ export function createPersistentStore<T>(
 
   // The last value storage REFUSED, held so the change doesn't silently revert
   // under the caller (see `set`). Boxed, so "held, and the value happens to be
-  // falsy" is distinguishable from "nothing held". `over` is the raw string that
-  // was in storage at the time: when it changes, somebody else wrote the key
-  // (another tab, or a module that writes it directly) and storage is the
-  // current answer again, so the held value is dropped.
-  let unpersisted: { value: T; over: string | null } | null = null;
+  // falsy" is distinguishable from "nothing held".
+  //
+  // `over` is the raw string that was stored at the time: when it changes,
+  // somebody else wrote the key (another tab, or a module that writes it
+  // directly) and storage is the current answer again, so the held value stands
+  // down. `undefined` means the read that went with the refusal ALSO threw, so
+  // no baseline was seen — kept distinct from a known-absent `null`, because
+  // collapsing the two makes a later recovery look exactly like a cross-tab
+  // write and reverts the user's change on the next read. Whatever is there at
+  // the first readable moment becomes the baseline, and the held value goes on
+  // masking it until somebody writes over THAT.
+  let unpersisted: { value: T; raw: string; over: string | null | undefined } | null =
+    null;
 
-  function readRaw(): string | null {
+  /** A read that reports whether storage answered at all, separately from what
+   * it held. */
+  function storedRead(): { ok: true; raw: string | null } | { ok: false } {
     try {
-      return window.localStorage.getItem(storageKey);
+      return { ok: true, raw: window.localStorage.getItem(storageKey) };
     } catch {
-      return null;
+      return { ok: false };
     }
+  }
+
+  /** The raw string this store currently speaks for: what is stored, or the
+   * held value while it is still masking the baseline it was written over. */
+  function resolveRaw(): string | null {
+    const read = storedRead();
+    if (!unpersisted) return read.ok ? read.raw : null;
+    // A read that threw says nothing about the key, so keep holding.
+    if (!read.ok) return unpersisted.raw;
+    if (unpersisted.over === undefined) {
+      // First readable moment since the refusal: adopt what is there as the
+      // baseline (see `unpersisted`).
+      unpersisted.over = read.raw;
+      return unpersisted.raw;
+    }
+    if (read.raw === unpersisted.over) return unpersisted.raw;
+    unpersisted = null;
+    return read.raw;
   }
 
   function get(): T {
     if (!hasWindow()) return unpersisted ? unpersisted.value : defaultValue;
-    const raw = readRaw();
-    if (unpersisted) {
-      if (raw === unpersisted.over) return unpersisted.value;
-      unpersisted = null;
-    }
+    const raw = resolveRaw();
+    if (unpersisted && raw === unpersisted.raw) return unpersisted.value;
     if (raw === memoRaw) return memoValue;
     memoRaw = raw;
     memoValue = raw === null ? defaultValue : parse(raw) ?? defaultValue;
@@ -129,27 +154,33 @@ export function createPersistentStore<T>(
    */
   function set(value: T): void {
     if (!hasWindow()) return;
+    const raw = serialize ? serialize(value) : String(value);
+
     let refused = false;
     try {
-      window.localStorage.setItem(
-        storageKey,
-        serialize ? serialize(value) : String(value),
-      );
+      window.localStorage.setItem(storageKey, raw);
     } catch {
       refused = true;
-      if (holdRefusedWrite && discardStaleOnRefusal) {
-        try {
-          // What is stored is now known to be out of date, and it outlives the
-          // in-memory copy: after a reload it would read as current and win.
-          window.localStorage.removeItem(storageKey);
-        } catch {
-          // Storage refusing removal too (fully blocked) leaves nothing stored
-          // to go stale in the first place.
-        }
+    }
+
+    if (refused && holdRefusedWrite && discardStaleOnRefusal) {
+      try {
+        // What is stored is now known to be out of date, and it outlives the
+        // in-memory copy: after a reload it would read as current and win.
+        window.localStorage.removeItem(storageKey);
+      } catch {
+        // Storage refusing removal too (fully blocked) leaves nothing stored
+        // to go stale in the first place.
       }
     }
-    unpersisted =
-      refused && holdRefusedWrite ? { value, over: readRaw() } : null;
+
+    if (refused && holdRefusedWrite) {
+      const read = storedRead();
+      unpersisted = { value, raw, over: read.ok ? read.raw : undefined };
+    } else {
+      unpersisted = null;
+    }
+
     // get() re-reads the now-updated string (or the held value) and yields a
     // fresh snapshot.
     window.dispatchEvent(new Event(changeEvent));
