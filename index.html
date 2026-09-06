@@ -71,13 +71,13 @@
     </script>
     <!-- Theme boot: apply the stored appearance axes before first paint. The
          entry module runs long after the HTML + CSS paint, so without this a
-         user on Dark, Grape, a non-default font, or a non-17px size gets a
+         user on Dark, Grape, a non-default font, or a non-16px size gets a
          flash of the default look (and a wrong URL-bar tint) on every cold
          load. Mirrors the getStored*/apply* pairs in src/lib/theme.ts, which
          own the attributes once React mounts. Whitelists are explicit (not
          regexes) so a corrupt stored value falls back to the default rather
          than activating a `:root[data-*]` override with no matching tokens.
-         Defaults (system mode, Ink palette, Roboto, 17px) own the bare
+         Defaults (system mode, Ink palette, Roboto, 16px) own the bare
          `:root` block and need no attribute. -->
     <script>
       (function () {
@@ -118,7 +118,7 @@
                 best = sizes[i];
               }
             }
-            if (best !== 17) {
+            if (best !== 16) {
               document.documentElement.setAttribute('data-font-size', String(best));
             }
           }

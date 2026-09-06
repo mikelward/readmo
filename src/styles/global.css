@@ -70,11 +70,12 @@
   /* The header DOES scale, because unlike the tap target it has rem-sized
      content: the brand is 1.25rem, so a fixed 56px bar clips it once the root
      outgrows the bar — which is what capped the text-size ladder at 24px.
-     `3.5rem` is 59.5px at the 17px default, so the header carries the default's
-     own step like every other reading surface; `max()` keeps it from shrinking
-     below the 56px it has always been, which binds at the 14 and 15px rungs.
-     (It was exactly 56px back when the default was 16 — the calibration moved
-     with the default, the rule did not.)
+     `3.5rem` grows the bar with the reading text like every other surface;
+     `max()` keeps it from shrinking below the 56px it has always been, which
+     binds at every rung at or below the 16px default (3.5rem is exactly 56px
+     there). That coincidence is the default's value, not the rule: the rule is
+     that the bar grows to fit its own contents, and it held at the 17px default
+     too, where the rem half won and the bar was 59.5px.
      Spacing stays on the fixed 4dp grid for the same reason as the tap target:
      at large text a reader wants more of the *article* on screen, not a bigger
      logo, so the chrome grows to fit its own contents and no further. (Simmo's
@@ -83,8 +84,8 @@
   --rm-header-h: max(56px, 3.5rem);
 
   /* Base body text size. The settings "Text size" picker overrides this via the
-     `data-font-size` attribute on <html>; 17px is the default (no attribute). */
-  --rm-font-size: 17px;
+     `data-font-size` attribute on <html>; 16px is the default (no attribute). */
+  --rm-font-size: 16px;
 
   /* Body typeface. The settings "Font" picker overrides this via the
      `data-font` attribute on <html>; Roboto is the default (no attribute).
@@ -113,8 +114,8 @@
   --rm-font-size: 15px;
 }
 
-:root[data-font-size='16'] {
-  --rm-font-size: 16px;
+:root[data-font-size='17'] {
+  --rm-font-size: 17px;
 }
 
 :root[data-font-size='18'] {

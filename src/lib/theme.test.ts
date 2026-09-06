@@ -257,8 +257,8 @@ describe('font size', () => {
     document.documentElement.removeAttribute('data-font-size');
   });
 
-  it('defaults to "17" when storage is empty', () => {
-    expect(getStoredFontSize()).toBe('17');
+  it('defaults to "16" when storage is empty', () => {
+    expect(getStoredFontSize()).toBe('16');
     // Spelled out rather than compared to DEFAULT_FONT_SIZE: this is the one
     // place the default's actual value should have to be restated, so moving
     // it can't pass silently everywhere.
@@ -313,13 +313,13 @@ describe('font size', () => {
     expect(document.documentElement.hasAttribute('data-font-size')).toBe(false);
   });
 
-  it('persists 16 like any other rung now that it is not the default', () => {
+  it('persists 17 like any other rung now that it is not the default', () => {
     // The other half of moving a default, and the easy one to miss: the size
     // that used to own the bare `:root` has to start writing storage and
     // painting an attribute.
-    setStoredFontSize('16');
-    expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBe('16');
-    expect(document.documentElement.getAttribute('data-font-size')).toBe('16');
+    setStoredFontSize('17');
+    expect(window.localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBe('17');
+    expect(document.documentElement.getAttribute('data-font-size')).toBe('17');
   });
 
   it('applyFontSize toggles the attribute without touching storage', () => {
@@ -514,13 +514,13 @@ describe('index.html theme boot script', () => {
     }
     expect(runBoot({ 'readmo:font': 'roboto' }).attributes.size).toBe(0);
     expect(runBoot({ 'readmo:font': 'comic-sans' }).attributes.size).toBe(0);
-    for (const size of ['14', '15', '16', '18', '19', '20', '22', '24']) {
+    for (const size of ['14', '15', '17', '18', '19', '20', '22', '24']) {
       expect(runBoot({ 'readmo:fontSize': size }).attributes.get('data-font-size')).toBe(size);
     }
     // The default is the one rung that sets no attribute — it owns the bare
-    // `:root`. 16 is in the loop above for the same reason it used to be the
+    // `:root`. 17 is in the loop above for the same reason it used to be the
     // exception here.
-    expect(runBoot({ 'readmo:fontSize': '17' }).attributes.size).toBe(0);
+    expect(runBoot({ 'readmo:fontSize': '16' }).attributes.size).toBe(0);
     // Snaps exactly as `getStoredFontSize` does — a size off the ladder
     // resolving one way here and the other way in the app would repaint on
     // every load.

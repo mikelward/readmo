@@ -12,7 +12,7 @@ export type Theme = 'light' | 'dark' | 'system';
 export type Palette = 'ink' | 'grape';
 
 // Body text size, in px. The values double as both the stored token and the
-// `data-font-size` attribute; `global.css` maps each to `--rm-font-size`. `17`
+// `data-font-size` attribute; `global.css` maps each to `--rm-font-size`. `16`
 // is the default and owns the bare `:root` block (no attribute), matching the
 // theme/palette default pattern — see DEFAULT_FONT_SIZE, which is the one
 // place that decides it.
@@ -55,10 +55,12 @@ const PALETTES: readonly Palette[] = ['ink', 'grape'];
 // The ladder grew upward rather than being re-spaced: it ran 14-19 and topped
 // out at 1.19x the default, which is not much of a large-text mode, but every
 // one of those rungs is in use — so the fix is more reach, not coarser steps.
-// The top rung is set by the ratio rather than by taste: 34 is 2x 17, the
-// magnification WCAG 1.4.4 asks for, and the only magnification an iOS
-// home-screen app has. So moving the default moves the top with it — 32 was
-// exactly 2x the old 16px default and is only 1.88x this one.
+// The top rung is set by a ratio rather than by taste: it has to reach at
+// least 2x the default, the magnification WCAG 1.4.4 asks for and the only
+// magnification an iOS home-screen app has. 34 was 2x exactly while the
+// default was 17; against this 16px default it is 2.13x, which clears the
+// target with room rather than missing it — and it stays, because a rung is
+// only ever retired for a reason (see below).
 // The steps widen only past 20px, where a reader has stopped nudging and wants
 // the text bigger, and another 1px is a 5% change nobody can see. The rungs
 // past 24px became practical once `--rm-header-h` stopped being a fixed 56px
@@ -93,15 +95,15 @@ const FONTS: readonly FontFamily[] = [
   'system',
 ];
 
-// 17px is the default, so it owns the bare `:root` block and needs no
-// `data-font-size` attribute. Moving the default moves that block: 17 loses its
-// attribute rung and 16 gains one, and `setStoredFontSize` clears the key on
-// the default rather than writing it — so a reader sitting at 16 arrives at 17
-// whether they chose 16 or never touched the setting. The two are not
+// 16px is the default, so it owns the bare `:root` block and needs no
+// `data-font-size` attribute. Moving the default moves that block: 16 loses its
+// attribute rung and 17 gains one, and `setStoredFontSize` clears the key on
+// the default rather than writing it — so a reader sitting at 17 arrives at 16
+// whether they chose 17 or never touched the setting. The two are not
 // distinguishable by design, which is the cost of the default-owns-the-baseline
 // pattern (shared with palette and font) and the reason moving a default is a
 // product decision rather than a constant edit.
-export const DEFAULT_FONT_SIZE: FontSize = '17';
+export const DEFAULT_FONT_SIZE: FontSize = '16';
 
 // Roboto is the default typeface, so it owns the bare `:root` font token and
 // needs no `data-font` attribute (same default-owns-root pattern as palette and

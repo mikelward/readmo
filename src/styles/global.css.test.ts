@@ -191,15 +191,18 @@ describe('the header scales with the text size, and only the header', () => {
     expect(root['--rm-header-h']).toMatch(/^max\(\s*56px\s*,/);
   });
 
-  // The header scales with the reading text, and at the default the rem half
-  // now wins: `3.5rem` is 59.5px against a 17px root. This used to assert the
-  // opposite — that the default resolved to exactly 56px and moved nothing —
-  // which was true only while the default was 16 and kept passing after it
-  // moved, because it multiplied by a hard-coded 16 rather than the default.
-  it('lets the header follow the default text size, and floors it below', () => {
+  // The header scales with the reading text, on a 56px floor. Both halves are
+  // asserted rather than the arithmetic at one root, because at this 16px
+  // default `3.5rem` is exactly 56px and the two coincide — a property of the
+  // default's value, not of the rule, which held just as well at the 17px
+  // default where the rem half won at 59.5px. Derived from DEFAULT_FONT_SIZE
+  // for that reason: the version that multiplied by a hard-coded 16 kept
+  // passing while asserting a header that no longer existed.
+  it('lets the header follow the text size, and floors it below', () => {
     const rem = Number(/([\d.]+)rem/.exec(root['--rm-header-h'])?.[1]);
-    const atDefault = rem * Number(DEFAULT_FONT_SIZE);
-    expect(atDefault).toBeGreaterThan(56);
+    expect(rem * Number(DEFAULT_FONT_SIZE)).toBeGreaterThanOrEqual(56);
+    // It really does grow: above the default the rem half wins outright.
+    expect(rem * Number(FONT_SIZES[FONT_SIZES.length - 1])).toBeGreaterThan(56);
     // And the floor still does its job where the rem half would undercut it.
     expect(rem * Number(FONT_SIZES[0])).toBeLessThan(56);
   });
