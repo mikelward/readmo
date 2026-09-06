@@ -9,6 +9,19 @@ Calls that haven't been settled — guesses autopilot made without asking, and
 decisions deliberately postponed — recorded so they don't silently become
 permanent by default. Each is cheap to change.
 
+- **OPEN: does passing the title into the article-summary prompt pull the gist
+  toward the headline?** (Claude, 2026-09-06, PR #706.) That PR removed the
+  prompt's "leave out supporting detail" ask, which was making summaries vague
+  and often no more than a restatement of the title. Passing the title in as
+  context is the other plausible cause of the headline-tracking half, but only
+  in combination with the ask now removed, so it was left in place and the two
+  were not changed together — one variable at a time, so the next look at a
+  summary card says which one did the work. **To settle it:** read a few
+  summary cards generated after the deploy; if the gist still tracks the title,
+  drop the title clause from `buildSummaryPrompt` (newshacker passes a title
+  only on its self-post path). Reversible either way — one prompt line, and no
+  cached row changes with it.
+
 - **RAISED, NOT FIXED: one reveal-persistence edge case under a storage that
   starts refusing writes** (Claude, 2026-08-30, PR #676; item 2 closed
   2026-09-05 by PR #700). Codex's fourth consecutive

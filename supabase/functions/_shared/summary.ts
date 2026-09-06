@@ -110,9 +110,9 @@ export function pickStoredContent(src: SummarySource): StoredPick | null {
   return null;
 }
 
-/** Prompt for the article summary: a one-or-two-sentence prose gist stating
- * only the article's main point, the title (when known) passed along as
- * context, and the article text between explicit delimiters.
+/** Prompt for the article summary: a one-or-two-sentence prose gist of the
+ * article's main point, the title (when known) passed along as context, and
+ * the article text between explicit delimiters.
  *
  * SHAPE: ported from newshacker's article prompt (`api/summary.ts`), which asks
  * for a single sentence written as a direct assertion.
@@ -121,20 +121,32 @@ export function pickStoredContent(src: SummarySource): StoredPick | null {
  * article point by point. Two reasons that shape was wrong for a summary card:
  * a gist comprehensive enough to stand in for the article is a poorer teaser
  * AND a worse position to be in on a publisher's copyright, and the card is a
- * glance surface where a paragraph reads faster than a list. So the ask is now
- * explicitly SELECTIVE — the single most important takeaway, supporting detail
- * left out — rather than a shorter version of "cover everything".
+ * glance surface where a paragraph reads faster than a list.
+ *
+ * WHAT IS *NOT* HERE, and deliberately: a "state only the most important point
+ * … leave out supporting detail, examples, and secondary points" paragraph.
+ * That was the first attempt at the bullet-list problem above, and it
+ * over-corrected — summaries came back vague, covering almost none of the
+ * article, often little more than a restatement of the headline. It is the one
+ * instruction that told the model to DISCARD content, which is a different
+ * thing from asking it to be brief, and newshacker (whose output this is
+ * modeled on) has never had it. The length line is what bounds the gist now,
+ * and the no-bullets half of it is what actually prevents a bullet-by-bullet
+ * walk — that was always a formatting problem, not a coverage one.
+ *
+ * The TITLE below is the other plausible pull toward the headline, and it is
+ * still passed: it is only plausible in combination with the ask removed
+ * above, so the two were not changed together. Open, and tracked in `TODO.md`
+ * under *Decisions needing review*.
  *
  * The earlier "length/register steers made the output longer and stiffer"
  * finding is not contradicted: what failed there was tightening a *tl;dr* ask
  * that still invited full coverage. Naming the target shape outright (one or
- * two sentences, one point) is a different instruction, and it is the one
- * newshacker has run on since the beginning.
+ * two sentences) is a different instruction, and it is the one newshacker has
+ * run on since the beginning.
  *
  * The steers, in order:
- *   - the length + no-bullets line, which is the change above;
- *   - the "only the most important point" line, which is what keeps a
- *     two-sentence summary from becoming a compressed table of contents;
+ *   - the length + no-bullets line;
  *   - the no-meta-framing lines, which make the gist a claim about the subject
  *     rather than a description of the article. They double as the
  *     anti-preamble instruction the old prompt spent a paragraph on: without
@@ -178,9 +190,6 @@ export function buildSummaryPrompt(
   return (
     `Summarize the article below in one or two short sentences, without bullet ` +
     `points, lists, headings, or introductory text.\n\n` +
-    `State only the most important point — the single takeaway a reader would ` +
-    `want to know. Do not try to cover everything the article says: leave out ` +
-    `supporting detail, examples, and secondary points.\n\n` +
     `State the point directly, as a claim about its subject rather than a ` +
     `description of the article. Do not refer to "the article", "the author", ` +
     `"the piece", "the post", "this story", or similar, and do not begin with ` +

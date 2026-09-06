@@ -3085,11 +3085,10 @@ page's discipline is unchanged.
     the **`GOOGLE_API_KEY`** Supabase secret (and **`JINA_API_KEY`** for the
     article fetch — without it the function falls back to stored content); unset
     `GOOGLE_API_KEY` → the function reports `unavailable` and the reader shows no
-    summary card. **The summary is one or two short sentences stating a single
-    point — deliberately selective, not a condensed version of the whole
-    article** (the title is passed as context when known), written as a direct
-    assertion about the subject rather than a description of the article ("The
-    author argues that…", "This piece explains…"). The shape is
+    summary card. **The summary is one or two short sentences stating the
+    article's main point** (the title is passed as context when known), written
+    as a direct assertion about the subject rather than a description of the
+    article ("The author argues that…", "This piece explains…"). The shape is
     **newshacker's** (guardrail #9), with one **deliberate divergence: the
     summary is written in the third person, naming its subject.** newshacker
     asks instead for the author's own voice, which suits Hacker News — mostly
@@ -3110,6 +3109,12 @@ page's discipline is unchanged.
     finding that *length/register* steers made the output longer and stiffer
     still holds for what it tested, which was tightening a "tl;dr" ask that
     still invited full coverage.
+    **The gist is bounded by length, never by steering the model to leave
+    content out.** That was tried and **over-corrected**: summaries came back
+    vague, covering almost none of the article and often no more than a
+    restatement of the headline — useless on a card whose job is to tell the
+    reader what the article holds. Brevity is the constraint; coverage within
+    it is not traded away.
     The function also **strips a leading meta-framing preamble** from the output
     (`stripSummaryPreamble` in `_shared/summary.ts`) — no longer something the
     prompt invites, but a deterministic backstop, and the cleaner for every row
