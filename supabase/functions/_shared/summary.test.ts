@@ -202,14 +202,18 @@ describe('buildSummaryPrompt', () => {
     expect(prompt).toContain('--- END ARTICLE ---');
   });
 
-  // The point of the change: a summary card is a teaser, not a stand-in for
-  // the article. Both halves matter — a length cap alone would just produce a
-  // densely-packed two sentences covering everything.
-  it('caps the length and asks for one point rather than full coverage', () => {
+  // A summary card is a teaser, not a stand-in for the article — but the
+  // LENGTH line is what enforces that. An earlier attempt added a "state only
+  // the most important point … leave out supporting detail, examples, and
+  // secondary points" paragraph on top, and it over-corrected: summaries came
+  // back vague, covering almost none of the article and often no more than the
+  // headline. A regression test, since it reads like a reasonable thing to add
+  // back (newshacker, which this prompt is modeled on, has never had it).
+  it('caps the length without telling the model to leave content out', () => {
     const prompt = buildSummaryPrompt('A Title', 'body');
     expect(prompt).toContain('one or two short sentences');
-    expect(prompt).toContain('State only the most important point');
-    expect(prompt).toContain('Do not try to cover everything');
+    expect(prompt).not.toContain('State only the most important point');
+    expect(prompt).not.toContain('Do not try to cover everything');
   });
 
   it('forbids bullet points, lists and headings', () => {
