@@ -43,7 +43,7 @@ describe('AppDrawer', () => {
     expect(screen.getByRole('radio', { name: 'Light' })).toBeInTheDocument();
     // The text size is a readout on the stepper now, not one radio per rung.
     // No stored size, so this is the default.
-    expect(screen.getByText('17px')).toBeInTheDocument();
+    expect(screen.getByText('16px')).toBeInTheDocument();
     // Color Theme (palette) stays in Settings.
     expect(screen.queryByRole('radiogroup', { name: 'Color theme' })).toBeNull();
   });

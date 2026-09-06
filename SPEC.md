@@ -180,13 +180,13 @@ Everything else about the visual system mirrors newshacker.
   In Settings the **Color Theme** picker renders each option as a two-tone
   color **swatch** (paper background + accent, split on the diagonal), with the
   active palette's swatch ringed.
-- **Text size:** a third orthogonal appearance axis running 14, 15, 16, 17
-  (default), 18, 19, 20, 22, 24, 26, 28, 30, 32, 34px — labeled by their px
+- **Text size:** a third orthogonal appearance axis running 14, 15, 16
+  (default), 17, 18, 19, 20, 22, 24, 26, 28, 30, 32, 34px — labeled by their px
   value. The ladder ran 14–19 and topped out at 1.19× the default, which is not
-  much of a large-text mode; the top rung is now **2×** the default, the
+  much of a large-text mode; the top rung now clears **2×** the default, the
   magnification WCAG 1.4.4 asks for. That target is the ladder's alone on an
   iOS home-screen app, where the system offers no page zoom to fall back on, so
-  the top is set by the ratio rather than by taste. It **grew upward rather than
+  the top is set by that ratio rather than by taste. It **grew upward rather than
   being re-spaced**: every one of the old rungs is in use, so the fix is more
   reach, not coarser steps. The steps widen only past 20px, where a reader has
   stopped nudging and wants the text bigger, and another 1px is a 5% change
@@ -209,7 +209,7 @@ Everything else about the visual system mirrors newshacker.
   the readout is announced on change so stepping is not silent to a screen
   reader. The choice drives the `data-font-size`
   attribute on
-  `<html>` (17px owns the bare `:root`, no attribute), which maps to
+  `<html>` (16px owns the bare `:root`, no attribute), which maps to
   the `--rm-font-size` token; the token sets the **root** (`html`) font-size so
   the `rem`-based type throughout the UI — including the reader article body —
   scales with it. **The header bar scales too**, as a floor rather than a fixed
