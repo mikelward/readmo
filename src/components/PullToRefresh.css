@@ -1,0 +1,64 @@
+.ptr {
+  position: relative;
+  /* Prevent the browser's own pull-to-refresh from racing ours at
+     scrollTop === 0. */
+  overscroll-behavior-y: contain;
+}
+
+.ptr__surface {
+  position: relative;
+  will-change: transform;
+}
+
+.ptr__indicator {
+  position: absolute;
+  top: -64px;
+  left: 0;
+  right: 0;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--rm-accent);
+  pointer-events: none;
+}
+
+.ptr__spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid color-mix(in srgb, var(--rm-accent) 25%, transparent);
+  border-top-color: var(--rm-accent);
+  opacity: 0;
+  transform: rotate(0deg);
+  transition: opacity 120ms ease-out;
+}
+
+.ptr__indicator[data-armed='true'] .ptr__spinner {
+  opacity: 1;
+}
+
+.ptr[data-phase='pulling'] .ptr__spinner,
+.ptr[data-phase='refreshing'] .ptr__spinner,
+.ptr[data-phase='settling'] .ptr__spinner {
+  opacity: 1;
+}
+
+.ptr[data-phase='refreshing'] .ptr__spinner {
+  animation: ptr-spin 800ms linear infinite;
+}
+
+@keyframes ptr-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ptr[data-phase='refreshing'] .ptr__spinner {
+    animation: none;
+  }
+  .ptr__surface {
+    transition: none !important;
+  }
+}

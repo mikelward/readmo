@@ -1,0 +1,175 @@
+.debug {
+  padding-bottom: 32px;
+}
+
+.debug__summary {
+  margin: 0 16px 4px;
+  font-size: 1rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
+
+.debug__section {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--rm-border);
+}
+
+.debug__heading {
+  font-size: 0.95rem;
+  margin: 0 0 10px;
+}
+
+.debug__rows {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(7rem, max-content) 1fr;
+  gap: 6px 12px;
+  align-items: baseline;
+}
+
+.debug__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--rm-meta);
+  font-size: 0.85rem;
+}
+
+/* Glanceable status dot at the start of a row (Network, Service worker,
+   Supabase). Always rendered so labels stay aligned; with no state it's an
+   invisible spacer. Matches newshacker's /debug badges. */
+.debug__badge {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.debug__badge[data-state='ok'] {
+  background: var(--rm-success);
+}
+
+.debug__badge[data-state='down'] {
+  background: var(--rm-danger);
+}
+
+.debug__badge[data-state='idle'] {
+  background: var(--rm-meta);
+  opacity: 0.45;
+}
+
+.debug__value {
+  margin: 0;
+  font-size: 0.85rem;
+  word-break: break-word;
+  /* Monospace + tabular so SHAs and counts stay aligned and readable. */
+  font-family: var(--rm-font-mono);
+}
+
+/* Diagnostics toggle — a single self-explanatory checkbox row, tuned to the
+   44px touch floor so it's tappable on a phone. */
+.debug__toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.debug__toggle-check {
+  flex: none;
+  width: 20px;
+  height: 20px;
+}
+
+.debug__toggle-title {
+  font-size: 0.9rem;
+}
+
+/* Standalone nav link to the timeline — its own 44px tap target, kept out of
+   the checkbox label so the switch stays a single control. */
+.debug__link {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 0.9rem;
+}
+
+/* Scroll-jump timeline (/debug/scroll). Monospace + tabular so the times and
+   offsets line up as a readable log. */
+.scroll-diag__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--rm-font-mono);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.scroll-diag__row {
+  display: flex;
+  gap: 10px;
+  padding: 2px 0;
+}
+
+.scroll-diag__t {
+  flex: none;
+  width: 5.5rem;
+  color: var(--rm-meta);
+  text-align: right;
+}
+
+/* A Done marker stands out from the scroll rows around it. */
+.scroll-diag__row[data-kind='done'] .scroll-diag__desc {
+  font-weight: 600;
+  color: var(--rm-accent);
+}
+
+/* A big toward-top jump — the symptom we're hunting. */
+.scroll-diag__row[data-jump] .scroll-diag__desc {
+  font-weight: 600;
+  color: var(--rm-danger);
+}
+
+/* Copy / Clear sit side by side with a comfortable gap so neither is a
+   cramped tap target (guardrail #2). */
+.scroll-diag__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.scroll-diag__button {
+  min-height: 44px;
+  padding: 8px 16px;
+  font-size: 0.9rem;
+}
+
+.scroll-diag__button:disabled {
+  opacity: 0.5;
+}
+
+/* Feed-read probe: the button matches the scroll-diag buttons (44px floor,
+   guardrail #2); the result list reuses the standard debug rows grid. */
+.debug__probe {
+  margin-top: 12px;
+}
+
+.debug__probe-btn {
+  min-height: 44px;
+  padding: 8px 16px;
+  font-size: 0.9rem;
+}
+
+.debug__probe-btn:disabled {
+  opacity: 0.5;
+}
+
+.debug__probe .debug__rows {
+  margin-top: 12px;
+}

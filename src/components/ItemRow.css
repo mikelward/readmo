@@ -1,0 +1,400 @@
+/* Item row — the core list unit. At most three tap zones (two shipped): the
+ * stretched body link, the right-side icon button, and a reserved middle slot
+ * (unused). 44x44 touch floor, >=12px gap to the right button. Compact vertical
+ * rhythm matches newshacker's .story-row: 6px of inset INSIDE the tap floor,
+ * never added to it, so the row follows the text size down. */
+
+.item-row {
+  position: relative;
+  display: flex;
+  /* center so the fixed-height pin button stays vertically centered when the
+   * title wraps to two lines; the body carries its own align-self: stretch so
+   * the stretched-link tap zone still fills the row height. */
+  align-items: center;
+  gap: 12px;
+  /* No VERTICAL padding here, deliberately. The body carries a 44px tap floor
+   * and .pin-btn is 44px tall, so a flex child already holds this row's
+   * CONTENT box at 44px — vertical padding would stack on top of that rather
+   * than fit inside it, and the row could never be shorter than 56px however
+   * far the reader turned the text size down. The 6px of optical inset moved
+   * onto .item-row__body, inside the floor. */
+  padding: 0 12px;
+  /* SPEC's row minimum, stated on the element the stretched link actually
+   * covers. Distinct from --rm-tap (44px), which is the touch-target floor:
+   * this is the row's own height floor and it stops binding as the type
+   * grows, rather than pinning the row from below. */
+  min-height: 48px;
+  background: var(--rm-bg-card);
+  border-bottom: 1px solid var(--rm-border);
+  /* Let the row translate horizontally over its swipe hints. */
+  z-index: 1;
+  touch-action: pan-y;
+}
+
+.item-row--dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.item-row__body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: inherit;
+  text-decoration: none;
+  /* The stretched link fills the row's left zone. The tap floor lives here
+   * (matching newshacker's .story-row__body), so the row stays compact while
+   * still guaranteeing a 44px+ touch target. */
+  align-self: stretch;
+  justify-content: center;
+  min-height: var(--rm-tap);
+  /* The row's former 6px, moved inside the tap floor rather than stacked on
+   * it: same optical inset above the title and below the meta, same room for
+   * the pressed and hover tint, but the row is now free to shrink toward its
+   * 48px minimum as the text size comes down. */
+  padding: 6px 0;
+}
+
+@media (hover: hover) {
+  /* Row-wide hover tint on pointer devices so the whole row (body and
+   * pin-button column alike) signals that it's interactive — same shape as
+   * newshacker's .story-row:hover. The page bg against the card bg is the
+   * same tint pair the pin button's own hover uses. */
+  .item-row:hover {
+    background: var(--rm-bg);
+  }
+  .item-row__body:hover {
+    text-decoration: none;
+  }
+  .item-row__body:hover .item-row__title-text {
+    color: var(--rm-accent);
+  }
+}
+
+/* Pressed state on the body zone (guardrail #2: pressed-state on every zone).
+ * Outside the hover media query so it fires on touch too. */
+html:not(.rm-suppress-press) .item-row__body:active {
+  background: var(--rm-border);
+}
+
+/* Keyboard-navigated active row (j/k/↑/↓ via useListKeyboardNav): a solid 3px
+ * accent line flush with the row's top edge plus the hover tint, so "this is
+ * the row the keys act on" reads at row width — ported from newshacker's
+ * .story-row focus marker. The shadow lives on the outer .item-row (not the
+ * inner <a>) so it spans the full row. `:has(:focus-visible)` keeps the
+ * indicator out of click-focus territory — mouse clicks never leave it stuck
+ * on a row. The global 2px focus outline is suppressed on the body since the
+ * top bar is doing the same job (an outline around a stretched full-width
+ * link draws an awkward box through the pin column). */
+.item-row:has(.item-row__body:focus-visible) {
+  background: var(--rm-bg);
+  box-shadow: inset 0 3px 0 var(--rm-accent);
+}
+.item-row__body:focus-visible {
+  outline: none;
+}
+
+.item-row__title-text {
+  font-size: 1rem;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--rm-text);
+  /* Wrap to at most two lines. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Opened/read titles fade: lighter color + lighter weight (SPEC.md *Visual
+ * design*). */
+.item-row--opened .item-row__title-text {
+  color: var(--rm-read);
+  font-weight: 400;
+}
+
+/* Spoiler-free marker: a small muted glyph trailing a rewritten headline. Inline
+ * and non-interactive — it's not a control (no handler/href/focus), so it adds no
+ * tap zone (guardrail #2); a click just falls through to the row-body link it
+ * sits inside, and hovering it reveals the original headline via the native
+ * title tooltip. The icon baseline-aligns with the title text. */
+.item-row__spoiler-flag {
+  display: inline-flex;
+  vertical-align: -0.15em;
+  margin-inline-start: 0.35em;
+  color: var(--rm-read);
+}
+
+.item-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--rm-meta);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Per-row site icon at the start of the meta line (non-grouped views only).
+   Mirrors .item-list__group-favicon so the row and group-header icons match.
+   The box size (shared with the reserved placeholder) is owned by the
+   FeedFavicon component so they can't drift; this only styles the surface. */
+.item-row__favicon {
+  border-radius: 3px;
+  object-fit: contain;
+}
+
+/* ── Article-layout variants (Settings → Appearance → Article layout) ──
+ * Title-only is the compact base above. These add a right thumbnail (small or
+ * large) or a preview excerpt. The image and excerpt render INSIDE the body
+ * link, so the row keeps its two tap zones (guardrail #2). The large-thumbnail
+ * and excerpt variants top-align the row and pad out to a card; the small
+ * thumbnail keeps the compact title-only row and just floats a smaller image. */
+
+/* Title + excerpt: bigger title, up to two preview lines, no image. */
+.item-row--excerpt {
+  align-items: flex-start;
+  padding: 12px;
+}
+.item-row--excerpt .item-row__body {
+  justify-content: flex-start;
+  gap: 6px;
+  /* This variant pads the ROW out to a card (12px below), which is design
+   * rather than a floor being worked around — so the body's compact-row inset
+   * would simply double it. */
+  padding: 0;
+}
+.item-row--excerpt .item-row__title-text {
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.25;
+  -webkit-line-clamp: 3;
+}
+.item-row--excerpt .pin-btn {
+  align-self: flex-start;
+}
+
+/* The preview line. Only rendered in the excerpt layout, so it needs no
+ * per-variant visibility gate — just its own clamp. */
+.item-row__excerpt {
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  /* Halfway between full body text and the read tone: readable, but a step
+   * below the headline so the title stays the row's anchor. */
+  color: color-mix(in srgb, var(--rm-text) 50%, var(--rm-read));
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Opened/read rows fade the excerpt along with the title. */
+.item-row--opened .item-row__excerpt {
+  color: var(--rm-read);
+}
+
+/* Spoiler placeholder standing in for a hidden excerpt: muted + italic so it
+ * reads as a hint ("Spoilers hidden. Tap to reveal.") rather than as the
+ * article's own preview text. */
+.item-row__excerpt--spoiler {
+  font-style: italic;
+  color: var(--rm-meta);
+}
+
+/* Title + thumbnail: image floated right, bigger title beside it wrapping
+ * underneath, no excerpt. The body switches to block flow so the float works
+ * and the title/meta can reclaim the full width below the image. */
+.item-row--thumbnail {
+  align-items: flex-start;
+  padding: 12px;
+}
+.item-row--thumbnail .item-row__body {
+  display: block;
+  /* Padded out to a card by the row, as in --excerpt above. */
+  padding: 0;
+}
+.item-row--thumbnail .item-row__title-text {
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.26;
+  margin-bottom: 4px;
+  -webkit-line-clamp: 3;
+}
+.item-row--thumbnail .item-row__meta {
+  margin: 0;
+}
+.item-row--thumbnail .pin-btn {
+  align-self: flex-start;
+}
+
+/* Title + small thumbnail: the compact title-only row (base padding, base title
+ * size and two-line clamp) with a smaller right-floated image. Only the body
+ * switches to block flow so the float works and the meta line can reclaim the
+ * full width below the image; everything else stays the compact base. */
+.item-row--thumbnail-small .item-row__body {
+  display: block;
+}
+.item-row--thumbnail-small .item-row__title-text {
+  margin-bottom: 2px;
+}
+.item-row--thumbnail-small .item-row__meta {
+  margin: 0;
+}
+.item-row--thumbnail-small .item-row__lead {
+  width: 72px;
+  margin: 0 0 0 12px;
+}
+
+.item-row__lead {
+  display: block;
+  position: relative;
+  float: right;
+  width: 116px;
+  aspect-ratio: 3 / 2;
+  margin: 2px 0 4px 12px;
+  border-radius: 8px;
+  overflow: hidden;
+  /* A tint while the image loads (and the box a failed load would leave — but
+   * onError drops the element entirely, so that box is never actually shown). */
+  background: var(--rm-border);
+}
+.item-row__lead-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Spoiler thumbnail: the article's own image can reveal the result the
+ * rewritten headline hid, so blur it heavily. scale(1.08) grows the image past
+ * the frame so the blur's semi-transparent edge is clipped away by the lead's
+ * overflow:hidden instead of showing the background tint. The row-body tap
+ * still opens the full article to reveal it. */
+.item-row__lead-img--spoiler {
+  filter: blur(14px);
+  transform: scale(1.08);
+}
+
+/* The VisibilityOff marker centered over the blurred thumbnail. Non-interactive
+ * (inside the aria-hidden lead span, no handler) so it adds no tap zone; the
+ * scrim + shadow keep it legible over any image. */
+.item-row__lead-spoiler-icon {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.28);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
+}
+
+/* Right-side icon button (Pin/Unpin, or a library inverse action). */
+.pin-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--rm-tap);
+  height: var(--rm-tap);
+  border: none;
+  background: none;
+  color: var(--rm-meta);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+@media (pointer: fine) {
+  /* A precise cursor doesn't need a fingertip target (SPEC.md). */
+  .pin-btn {
+    width: 36px;
+    height: 36px;
+  }
+}
+
+.pin-btn--active {
+  color: var(--rm-accent);
+}
+
+.pin-btn__icon {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+}
+
+.pin-btn__icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Reverse-sync "syncing" state: a non-interactive spinner filling the Pin slot
+   after an open-on-newshacker handoff, until the next pull resolves the card.
+   Matches the pull-to-refresh spinner's border style, in the row's meta color. */
+.pin-btn--syncing {
+  cursor: default;
+}
+
+.pin-btn__spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--rm-meta) 30%, transparent);
+  border-top-color: var(--rm-meta);
+  animation: pin-btn-spin 700ms linear infinite;
+}
+
+@keyframes pin-btn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Slow (don't stop) — a frozen spinner reads as broken. */
+  .pin-btn__spinner {
+    animation-duration: 1.8s;
+  }
+}
+
+@media (hover: hover) {
+  .pin-btn:hover {
+    background: var(--rm-bg);
+    color: var(--rm-text);
+  }
+  .pin-btn--active:hover {
+    color: var(--rm-accent-strong);
+  }
+}
+
+html:not(.rm-suppress-press) .pin-btn:active {
+  background: var(--rm-border);
+}
+
+/* Swipe-reveal hints sit behind the row and are exposed as it translates. */
+.item-row__swipe-hint {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #fff;
+  z-index: 0;
+}
+
+.item-row__swipe-hint--left {
+  left: 0;
+  justify-content: flex-start;
+  background: var(--rm-hide-bg);
+}
+
+.item-row__swipe-hint--right {
+  right: 0;
+  justify-content: flex-end;
+  background: var(--rm-pin-bg);
+}

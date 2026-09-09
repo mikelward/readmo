@@ -1,0 +1,1522 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { QueryClient } from '@tanstack/react-query';
+import { NEWSHACKER_LINK_QUERY_KEY } from '../hooks/useNewshackerSync';
+import { useLocation } from 'react-router-dom';
+import { renderWithProviders } from '../test/renderWithProviders';
+import { ItemRow } from './ItemRow';
+import { PushPinFilled } from './icons';
+import { MockDataSource } from '../lib/data/MockDataSource';
+import { consumeDoneMirrorSuppression } from '../lib/newshackerMirrorSuppress';
+import {
+  markReverseSyncPending,
+  clearAllReverseSyncPending,
+  _resetReverseSyncPendingForTests,
+} from '../lib/newshackerReverseSyncPending';
+import { recallHackerNewsItemId } from '../lib/newshackerItemIds';
+import {
+  HIDE_SPORTS_SPOILERS_KEY,
+  LIST_LAYOUT_KEY,
+  TITLE_FILTERS_KEY,
+  resetReadingPrefsCacheForTest,
+  useEffectiveHideSpoilers,
+} from '../hooks/useReadingPrefs';
+import { resetRevealedSpoilersCacheForTest } from '../hooks/useRevealedSpoilers';
+import type { FeedItem } from '../lib/types';
+
+/** Surfaces the router's current path so a test can assert in-app navigation
+ * (the reader button) without a real route tree. */
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location">{location.pathname}</div>;
+}
+
+function stubWideViewport(wide: boolean) {
+  const original = window.matchMedia;
+  window.matchMedia = ((query: string) => ({
+    matches: query.includes('min-width: 960px') ? wide : false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+  return () => {
+    window.matchMedia = original;
+  };
+}
+
+const FEED_ITEM: FeedItem = {
+  item: {
+    id: 'item-1',
+    feedId: 'feed-1',
+    guid: 'g1',
+    url: 'https://example.com/post',
+    commentsUrl: null,
+    title: 'A test headline',
+    spoilerFreeTitle: null,
+    author: 'Jane Doe',
+    publishedAt: Date.now() - 2 * 60 * 60 * 1000,
+    contentHtml: '<p>Body</p>',
+    summary: null,
+    fullContentHtml: null,
+    aiSummary: null,
+    enclosures: [],
+    categories: [],
+  },
+  feed: {
+    id: 'feed-1',
+    url: 'https://example.com/feed',
+    siteUrl: 'https://example.com',
+    title: 'Example Blog',
+    faviconUrl: null,
+    errorCount: 0,
+    lastError: null,
+    parked: false,
+  },
+};
+
+describe('ItemRow', () => {
+  let restoreMatchMedia: (() => void) | null = null;
+  afterEach(() => {
+    restoreMatchMedia?.();
+    restoreMatchMedia = null;
+    // Reverse-sync pending is a sessionStorage singleton — clear it so a marker
+    // from one test can't hide another test's Pin button behind a spinner.
+    clearAllReverseSyncPending();
+    sessionStorage.clear();
+    _resetReverseSyncPendingForTests();
+  });
+
+  it('renders the title and display-only meta (source · author fallback · age)', () => {
+    renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
+    expect(screen.getByTestId('item-title')).toHaveTextContent('A test headline');
+    const meta = screen.getByTestId('item-meta');
+    expect(meta).toHaveTextContent('Example Blog');
+    expect(meta).toHaveTextContent('2h');
+    // No domain or category on this item, so the author fills the fallback slot.
+    expect(meta.textContent).toBe('Example Blog · Jane Doe · 2h');
+  });
+
+  it('shows the item\'s first category instead of the author when present', () => {
+    const categorized: FeedItem = {
+      item: { ...FEED_ITEM.item, categories: ['Podcasts', 'Economics'] },
+      feed: FEED_ITEM.feed,
+    };
+    renderWithProviders(<ItemRow feedItem={categorized} />);
+    const meta = screen.getByTestId('item-meta');
+    expect(meta).toHaveTextContent('Podcasts');
+    expect(meta).not.toHaveTextContent('Economics');
+    expect(meta).not.toHaveTextContent('Jane Doe');
+  });
+
+  it("skips a generic 'News' category for the tag that says something", () => {
+    // The Verge tags nearly every article "News", so taking the publisher's
+    // first would spend the slot on a label its whole feed shares.
+    const vergeish: FeedItem = {
+      item: { ...FEED_ITEM.item, categories: ['News', 'Ride-sharing', 'Transportation'] },
+      feed: FEED_ITEM.feed,
+    };
+    renderWithProviders(<ItemRow feedItem={vergeish} />);
+    const meta = screen.getByTestId('item-meta');
+    expect(meta).toHaveTextContent('Ride-sharing');
+    expect(meta).not.toHaveTextContent('News');
+  });
+
+  it('omits the fallback slot entirely when the item has no domain, category, or author', () => {
+    const bareItem: FeedItem = {
+      item: { ...FEED_ITEM.item, author: null },
+      feed: FEED_ITEM.feed,
+    };
+    renderWithProviders(<ItemRow feedItem={bareItem} />);
+    const meta = screen.getByTestId('item-meta');
+    expect(meta.textContent).toBe('Example Blog · 2h');
+  });
+
+  it('omits the feed name when showSource is false (group-by-feed view)', () => {
+    renderWithProviders(<ItemRow feedItem={FEED_ITEM} showSource={false} />);
+    const meta = screen.getByTestId('item-meta');
+    expect(meta.textContent).toBe('Jane Doe · 2h');
+  });
+
+  it('shows the domain instead of the category or author when present (aggregator feeds)', () => {
+    const aggregatorItem: FeedItem = {
+      item: {
+        ...FEED_ITEM.item,
+        url: 'https://www.thedrive.com/news/story',
+        categories: ['Cars'],
+      },
+      feed: {
+        ...FEED_ITEM.feed,
+        title: 'Hacker News',
+        url: 'https://news.ycombinator.com/rss',
+        siteUrl: 'https://news.ycombinator.com',
+      },
+    };
+    renderWithProviders(<ItemRow feedItem={aggregatorItem} />);
+    const meta = screen.getByTestId('item-meta');
+    expect(meta).toHaveTextContent('thedrive.com');
+    expect(meta).not.toHaveTextContent('Cars');
+    expect(meta).not.toHaveTextContent('Jane Doe');
+  });
+
+  it('does not crash on a persisted item from before this field existed', () => {
+    // The offline query cache is persisted indefinitely (see main.tsx
+    // CACHE_BUSTER) and can rehydrate a FeedItem written by an older build,
+    // where `categories` is absent entirely rather than `[]` — `Item.categories`
+    // being typed non-optional doesn't guarantee it exists at runtime here
+    // (Codex P1 on #653).
+    const legacyItem = { ...FEED_ITEM.item } as { categories?: string[] };
+    delete legacyItem.categories;
+    const stale = { item: legacyItem as typeof FEED_ITEM.item, feed: FEED_ITEM.feed };
+    expect(() => renderWithProviders(<ItemRow feedItem={stale} />)).not.toThrow();
+    // Falls back to the author, same as an item with an explicit empty array.
+    expect(screen.getByTestId('item-meta').textContent).toBe('Example Blog · Jane Doe · 2h');
+  });
+
+  it('does not render a row favicon by default (group-by-feed: header carries it)', () => {
+    // Default showFavicon=false models the group-by-feed view, where the icon
+    // lives on the section header so it isn't repeated on every row.
+    const withIcon: FeedItem = {
+      item: FEED_ITEM.item,
+      feed: { ...FEED_ITEM.feed, faviconUrl: 'https://example.com/favicon.ico' },
+    };
+    const { container } = renderWithProviders(<ItemRow feedItem={withIcon} />);
+    expect(container.querySelector('.item-row__favicon')).toBeNull();
+  });
+
+  it('renders the feed favicon on the row when showFavicon is set (non-grouped views)', () => {
+    const withIcon: FeedItem = {
+      item: FEED_ITEM.item,
+      feed: { ...FEED_ITEM.feed, faviconUrl: 'https://example.com/favicon.ico' },
+    };
+    renderWithProviders(<ItemRow feedItem={withIcon} showFavicon />);
+    const favicon = screen.getByTestId('item-favicon');
+    expect(favicon).toHaveAttribute('src', 'https://example.com/favicon.ico');
+    // Decorative: empty alt + aria-hidden so it adds no accessible name.
+    expect(favicon).toHaveAttribute('alt', '');
+    expect(favicon).toHaveAttribute('aria-hidden', 'true');
+    // It sits inside the meta line, before the source text.
+    expect(screen.getByTestId('item-meta')).toContainElement(favicon);
+  });
+
+  it('falls back to an initials badge when a present icon fails to load', () => {
+    // An invalid/404 favicon URL that errors in the browser is replaced by the
+    // feed's initials badge — no broken glyph, no blank box, no left snap.
+    const withIcon: FeedItem = {
+      item: FEED_ITEM.item,
+      feed: { ...FEED_ITEM.feed, faviconUrl: 'https://example.com/favicon.ico' },
+    };
+    renderWithProviders(<ItemRow feedItem={withIcon} showFavicon />);
+    act(() => {
+      screen.getByTestId('item-favicon').dispatchEvent(new Event('error'));
+    });
+    const badge = screen.getByTestId('item-favicon');
+    expect(badge.tagName).toBe('SPAN');
+    expect(badge).toHaveClass('favicon--initials');
+    expect(badge.textContent).toBe('EB'); // "Example Blog"
+  });
+
+  it('shows an initials badge when showFavicon is set but the feed has no icon', () => {
+    // faviconUrl null (poller hasn't resolved one) → draw the feed's initials on
+    // a color badge (fills the same 16px slot, keeps rows aligned) rather than a
+    // blank placeholder.
+    const { container } = renderWithProviders(
+      <ItemRow feedItem={FEED_ITEM} showFavicon />,
+    );
+    expect(container.querySelector('img.item-row__favicon')).toBeNull();
+    expect(container.querySelector('.item-row__favicon-placeholder')).toBeNull();
+    const badge = container.querySelector('.item-row__favicon.favicon--initials');
+    expect(badge).not.toBeNull();
+    expect(badge?.textContent).toBe('EB');
+  });
+
+  it('shows the article domain next to the feed name when they differ', () => {
+    const aggregatorItem: FeedItem = {
+      item: { ...FEED_ITEM.item, url: 'https://www.thedrive.com/news/story' },
+      feed: {
+        ...FEED_ITEM.feed,
+        title: 'Hacker News',
+        url: 'https://news.ycombinator.com/rss',
+        siteUrl: 'https://news.ycombinator.com',
+      },
+    };
+    renderWithProviders(<ItemRow feedItem={aggregatorItem} />);
+    const meta = screen.getByTestId('item-meta');
+    expect(meta).toHaveTextContent('Hacker News · thedrive.com');
+  });
+
+  it('does not repeat the feed domain for a same-site feed', () => {
+    renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
+    const meta = screen.getByTestId('item-meta');
+    // example.com article on the example.com feed → no redundant domain.
+    expect(meta).toHaveTextContent('Example Blog');
+    expect(meta).not.toHaveTextContent('example.com');
+  });
+
+  it('links the row body to the in-app reader by default', () => {
+    renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
+    const body = screen.getByTestId('item-title');
+    expect(body).toHaveAttribute('href', '/item/item-1');
+    expect(body).not.toHaveAttribute('target');
+  });
+
+  it('fires onOpenReader when the reader-mode row body is tapped', async () => {
+    const user = userEvent.setup();
+    const onOpenReader = vi.fn();
+    renderWithProviders(
+      <ItemRow feedItem={FEED_ITEM} onOpenReader={onOpenReader} />,
+    );
+    await user.click(screen.getByTestId('item-title'));
+    expect(onOpenReader).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fire onOpenReader on a modified click (new-tab open keeps this feed mounted)', () => {
+    const onOpenReader = vi.fn();
+    const { source } = renderWithProviders(
+      <ItemRow feedItem={FEED_ITEM} onOpenReader={onOpenReader} />,
+    );
+    // A Ctrl/Cmd-click opens the reader in a new tab and leaves this feed
+    // mounted, so warming its cache would reflow the list the user is still on.
+    fireEvent.click(screen.getByTestId('item-title'), { ctrlKey: true });
+    expect(onOpenReader).not.toHaveBeenCalled();
+    // Opened is still marked — a new-tab open is still an open.
+    expect(source.stateStore.get('item-1').opened).toBe(true);
+  });
+
+  describe('open original', () => {
+    it('links the row body straight to the source website in a new tab', () => {
+      renderWithProviders(<ItemRow feedItem={FEED_ITEM} openOriginal />);
+      const body = screen.getByTestId('item-title');
+      expect(body).toHaveAttribute('href', 'https://example.com/post');
+      expect(body).toHaveAttribute('target', '_blank');
+      expect(body.getAttribute('rel')).toContain('noopener');
+    });
+
+    it('marks the item opened (not done) when the row body is tapped', async () => {
+      const user = userEvent.setup();
+      const { source } = renderWithProviders(
+        <ItemRow feedItem={FEED_ITEM} openOriginal />,
+      );
+      await user.click(screen.getByTestId('item-title'));
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+      expect(source.stateStore.get('item-1').done).toBe(false);
+    });
+
+    it('does not fire onOpenReader when the row body opens the external source', async () => {
+      // The prefetch is for the in-app reader (the feed remounts on Back). An
+      // external open leaves the feed mounted (new tab) or unloads the page, so
+      // there's nothing to warm.
+      const user = userEvent.setup();
+      const onOpenReader = vi.fn();
+      renderWithProviders(
+        <ItemRow feedItem={FEED_ITEM} openOriginal onOpenReader={onOpenReader} />,
+      );
+      await user.click(screen.getByTestId('item-title'));
+      expect(onOpenReader).not.toHaveBeenCalled();
+    });
+
+    it('fires onOpenReader when the reader button opens the in-app reader', async () => {
+      const user = userEvent.setup();
+      const onOpenReader = vi.fn();
+      renderWithProviders(
+        <ItemRow feedItem={FEED_ITEM} openOriginal onOpenReader={onOpenReader} />,
+      );
+      await user.click(screen.getByTestId('open-reader-btn'));
+      expect(onOpenReader).toHaveBeenCalledTimes(1);
+    });
+
+    it('adds an Open in reader button to the left of the Pin button', () => {
+      renderWithProviders(<ItemRow feedItem={FEED_ITEM} openOriginal />);
+      // Pin stays; the reader shortcut is added (the row body opens the source,
+      // so this button is the row's path back to the in-app reader).
+      expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
+      const openBtn = screen.getByTestId('open-reader-btn');
+      expect(openBtn).toHaveAttribute('aria-label', 'Open A test headline in reader');
+      // The reader button sits before Pin in DOM order (to its left).
+      const buttons = screen.getAllByRole('button');
+      expect(buttons.indexOf(openBtn)).toBeLessThan(
+        buttons.indexOf(screen.getByTestId('pin-btn')),
+      );
+    });
+
+    it('opens the in-app reader (not a new tab) when the reader button is clicked', async () => {
+      const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+      const user = userEvent.setup();
+      const { source } = renderWithProviders(
+        <>
+          <ItemRow feedItem={FEED_ITEM} openOriginal />
+          <LocationProbe />
+        </>,
+      );
+      await user.click(screen.getByTestId('open-reader-btn'));
+      // Navigates in-app rather than opening the source in a new tab…
+      expect(screen.getByTestId('location')).toHaveTextContent('/item/item-1');
+      expect(openSpy).not.toHaveBeenCalled();
+      // …and marks the item opened, like a reader-mode row-body tap.
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+      expect(source.stateStore.get('item-1').done).toBe(false);
+      openSpy.mockRestore();
+    });
+
+    it('keeps Pin and the wide-viewport Done button alongside the reader button', () => {
+      restoreMatchMedia = stubWideViewport(true);
+      renderWithProviders(<ItemRow feedItem={FEED_ITEM} openOriginal />);
+      expect(screen.getByTestId('done-btn')).toBeInTheDocument();
+      expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
+      expect(screen.getByTestId('open-reader-btn')).toBeInTheDocument();
+    });
+
+    it('keeps the library inverse action (no reader button) on library rows', () => {
+      renderWithProviders(
+        <ItemRow
+          feedItem={FEED_ITEM}
+          openOriginal
+          enableSwipe={false}
+          rightAction={{
+            label: 'Unpin',
+            icon: <PushPinFilled />,
+            testId: 'library-action-pinned',
+            onToggle: () => {},
+          }}
+        />,
+      );
+      // The row body still opens the source…
+      expect(screen.getByTestId('item-title')).toHaveAttribute('target', '_blank');
+      // …but the contextual right-side action is preserved, not replaced.
+      expect(screen.getByTestId('library-action-pinned')).toBeInTheDocument();
+      expect(screen.queryByTestId('open-reader-btn')).not.toBeInTheDocument();
+    });
+
+    it('falls back to the in-app reader when the item URL is not a safe http URL', () => {
+      const feedItem: FeedItem = {
+        ...FEED_ITEM,
+        item: { ...FEED_ITEM.item, url: 'javascript:alert(1)' },
+      };
+      renderWithProviders(<ItemRow feedItem={feedItem} openOriginal />);
+      const body = screen.getByTestId('item-title');
+      expect(body).toHaveAttribute('href', '/item/item-1');
+      expect(body).not.toHaveAttribute('target');
+      // Body already goes to the reader ⇒ no separate reader button; Pin stays.
+      expect(screen.queryByTestId('open-reader-btn')).not.toBeInTheDocument();
+      expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
+    });
+  });
+
+  describe('mark done when opening', () => {
+    it('marks the item done when an open-original row body is tapped', async () => {
+      const user = userEvent.setup();
+      const { source } = renderWithProviders(
+        <ItemRow feedItem={FEED_ITEM} openOriginal markDoneOnOpen />,
+      );
+      await user.click(screen.getByTestId('item-title'));
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+      expect(source.stateStore.get('item-1').done).toBe(true);
+    });
+
+    it('marks the item done when a newshacker row body is tapped', async () => {
+      const user = userEvent.setup();
+      const hn: FeedItem = {
+        item: {
+          ...FEED_ITEM.item,
+          guid: 'https://news.ycombinator.com/item?id=42662903',
+          url: 'https://example.com/the-article',
+        },
+        feed: {
+          ...FEED_ITEM.feed,
+          url: 'https://news.ycombinator.com/rss',
+          siteUrl: 'https://news.ycombinator.com',
+          title: 'Hacker News',
+        },
+      };
+      const { source } = renderWithProviders(
+        <ItemRow feedItem={hn} openNewshacker markDoneOnOpen />,
+      );
+      // The row body links to the newshacker discussion in the same tab.
+      const body = screen.getByTestId('item-title');
+      expect(body).toHaveAttribute('href', 'https://newshacker.app/item/42662903');
+      expect(body).not.toHaveAttribute('target');
+      // Rendering an HN row remembers its numeric id for the mirror, so an
+      // unpin/un-dismiss can still resolve it after visibility is cleared.
+      expect(recallHackerNewsItemId('item-1')).toBe(42662903);
+      await user.click(body);
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+      expect(source.stateStore.get('item-1').done).toBe(true);
+      // Opening ON newshacker is a handoff: the Done mirror is suppressed so it
+      // isn't swept to Done on newshacker as the user arrives there.
+      expect(consumeDoneMirrorSuppression('item-1')).toBe(true);
+    });
+
+    it('shows a syncing spinner after an open-on-newshacker handoff (no mark-done-on-open)', async () => {
+      const user = userEvent.setup();
+      const hn: FeedItem = {
+        item: {
+          ...FEED_ITEM.item,
+          guid: 'https://news.ycombinator.com/item?id=42662903',
+          url: 'https://example.com/the-article',
+        },
+        feed: {
+          ...FEED_ITEM.feed,
+          url: 'https://news.ycombinator.com/rss',
+          siteUrl: 'https://news.ycombinator.com',
+          title: 'Hacker News',
+        },
+      };
+      // Linked account → the reverse pull can resolve the marker, so it's set.
+      // Non-zero gcTime so the seeded link status survives with no observer
+      // mounted (ItemRow reads it imperatively, it doesn't useQuery it).
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+      });
+      queryClient.setQueryData(NEWSHACKER_LINK_QUERY_KEY, {
+        linked: true,
+        supported: true,
+      });
+      const { source } = renderWithProviders(<ItemRow feedItem={hn} openNewshacker />, {
+        queryClient,
+      });
+      // Before the handoff: the Pin button is shown, no spinner.
+      expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
+      expect(screen.queryByTestId('row-syncing')).not.toBeInTheDocument();
+
+      await user.click(screen.getByTestId('item-title'));
+
+      // Opened but NOT done (no mark-done-on-open) — outcome is unknown until the
+      // reverse pull, so the card is now awaiting sync.
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+      expect(source.stateStore.get('item-1').done).toBe(false);
+      // The right slot swaps the Pin button for a non-interactive spinner.
+      expect(screen.getByTestId('row-syncing')).toBeInTheDocument();
+      expect(screen.queryByTestId('pin-btn')).not.toBeInTheDocument();
+    });
+
+    it('does NOT show a syncing spinner on a handoff when the account is unlinked', async () => {
+      const user = userEvent.setup();
+      const hn: FeedItem = {
+        item: {
+          ...FEED_ITEM.item,
+          guid: 'https://news.ycombinator.com/item?id=42662903',
+          url: 'https://example.com/the-article',
+        },
+        feed: {
+          ...FEED_ITEM.feed,
+          url: 'https://news.ycombinator.com/rss',
+          siteUrl: 'https://news.ycombinator.com',
+          title: 'Hacker News',
+        },
+      };
+      // No link status seeded → unlinked → no pull will run, so no marker/spinner.
+      const { source } = renderWithProviders(<ItemRow feedItem={hn} openNewshacker />);
+      await user.click(screen.getByTestId('item-title'));
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+      expect(screen.queryByTestId('row-syncing')).not.toBeInTheDocument();
+      expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
+    });
+
+    it('the `o` shortcut opens the original without flagging a newshacker handoff', () => {
+      const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+      const hn: FeedItem = {
+        item: {
+          ...FEED_ITEM.item,
+          guid: 'https://news.ycombinator.com/item?id=42662903',
+          url: 'https://example.com/the-article',
+        },
+        feed: {
+          ...FEED_ITEM.feed,
+          url: 'https://news.ycombinator.com/rss',
+          siteUrl: 'https://news.ycombinator.com',
+          title: 'Hacker News',
+        },
+      };
+      // Linked, so a REAL newshacker handoff would flag pending — proving the `o`
+      // path (which opens the original article) deliberately does not.
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+      });
+      queryClient.setQueryData(NEWSHACKER_LINK_QUERY_KEY, {
+        linked: true,
+        supported: true,
+      });
+      const { source } = renderWithProviders(<ItemRow feedItem={hn} openNewshacker />, {
+        queryClient,
+      });
+      fireEvent.keyDown(screen.getByTestId('item-title'), { key: 'o' });
+      expect(openSpy).toHaveBeenCalledWith(
+        'https://example.com/the-article',
+        '_blank',
+        'noopener,noreferrer',
+      );
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+      // Opening the original is not a newshacker handoff → no syncing spinner.
+      expect(screen.queryByTestId('row-syncing')).not.toBeInTheDocument();
+      expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
+      openSpy.mockRestore();
+    });
+
+    it('resolves the syncing spinner back to the Pin button when the pull clears pending', () => {
+      markReverseSyncPending('item-1');
+      renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
+      expect(screen.getByTestId('row-syncing')).toBeInTheDocument();
+      expect(screen.queryByTestId('pin-btn')).not.toBeInTheDocument();
+
+      // A completed reverse pull clears every pending marker.
+      act(() => clearAllReverseSyncPending());
+
+      expect(screen.queryByTestId('row-syncing')).not.toBeInTheDocument();
+      expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
+    });
+
+    it('does NOT mark done when opening the in-app reader (reader-mode body tap)', async () => {
+      const user = userEvent.setup();
+      const { source } = renderWithProviders(<ItemRow feedItem={FEED_ITEM} markDoneOnOpen />);
+      // Reader-mode row body links to the in-app reader, not an external tab.
+      expect(screen.getByTestId('item-title')).toHaveAttribute('href', '/item/item-1');
+      await user.click(screen.getByTestId('item-title'));
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+      expect(source.stateStore.get('item-1').done).toBe(false);
+    });
+
+    it('unpins a pinned item when opening marks it done (mutation shield)', async () => {
+      const user = userEvent.setup();
+      const { source } = renderWithProviders(
+        <ItemRow feedItem={FEED_ITEM} openOriginal markDoneOnOpen />,
+      );
+      source.stateStore.set('item-1', 'pinned', true);
+      await user.click(screen.getByTestId('item-title'));
+      expect(source.stateStore.get('item-1').done).toBe(true);
+      expect(source.stateStore.get('item-1').pinned).toBe(false);
+      // Opening the ORIGINAL source is a real completion, not a handoff — its
+      // Done is NOT suppressed and still mirrors.
+      expect(consumeDoneMirrorSuppression('item-1')).toBe(false);
+    });
+  });
+
+  describe('open on newshacker', () => {
+    // A Hacker News feed item: guid is the HN discussion link, url the article.
+    const HN_FEED_ITEM: FeedItem = {
+      item: {
+        ...FEED_ITEM.item,
+        guid: 'https://news.ycombinator.com/item?id=42662903',
+        url: 'https://example.com/the-article',
+      },
+      feed: {
+        ...FEED_ITEM.feed,
+        url: 'https://news.ycombinator.com/rss',
+        siteUrl: 'https://news.ycombinator.com',
+        title: 'Hacker News',
+      },
+    };
+
+    it('links the row body to the newshacker discussion in the same tab (no new-tab hardening)', () => {
+      // newshacker is our own sibling app, so it opens in the same tab (making
+      // Readmo newshacker's back target) without the untrusted-link
+      // noopener/noreferrer that source URLs get.
+      renderWithProviders(<ItemRow feedItem={HN_FEED_ITEM} openNewshacker />);
+      const body = screen.getByTestId('item-title');
+      expect(body).toHaveAttribute('href', 'https://newshacker.app/item/42662903');
+      expect(body).not.toHaveAttribute('target');
+      expect(body).not.toHaveAttribute('rel');
+    });
+
+    it('adds the same Open in reader button as open-original mode', () => {
+      renderWithProviders(<ItemRow feedItem={HN_FEED_ITEM} openNewshacker />);
+      const btn = screen.getByTestId('open-reader-btn');
+      expect(btn).toHaveAttribute('aria-label', 'Open A test headline in reader');
+      expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
+    });
+
+    it('opens the in-app reader from the button while the body still goes to newshacker', async () => {
+      const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+      const user = userEvent.setup();
+      const { source } = renderWithProviders(
+        <>
+          <ItemRow feedItem={HN_FEED_ITEM} openNewshacker />
+          <LocationProbe />
+        </>,
+      );
+      // Row body opens the newshacker discussion in the same tab…
+      expect(screen.getByTestId('item-title')).toHaveAttribute(
+        'href',
+        'https://newshacker.app/item/42662903',
+      );
+      // …but the dedicated button navigates to the in-app reader instead.
+      await user.click(screen.getByTestId('open-reader-btn'));
+      expect(screen.getByTestId('location')).toHaveTextContent('/item/item-1');
+      expect(openSpy).not.toHaveBeenCalled();
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+      expect(source.stateStore.get('item-1').done).toBe(false);
+      openSpy.mockRestore();
+    });
+
+    it('open original wins when both modes are set (a legacy open_original write)', () => {
+      // A current client never sets both (setOpenMode is atomic); the both-true
+      // state only comes from a legacy open_original-only client, so the row
+      // honors that as "open original" rather than letting stale newshacker win.
+      renderWithProviders(
+        <ItemRow feedItem={HN_FEED_ITEM} openOriginal openNewshacker />,
+      );
+      expect(screen.getByTestId('item-title')).toHaveAttribute(
+        'href',
+        'https://example.com/the-article',
+      );
+      // Both external modes resolve to the same single reader-shortcut button.
+      expect(screen.getByTestId('open-reader-btn')).toBeInTheDocument();
+    });
+
+    it('derives the link from the structured commentsUrl when present', () => {
+      // List rows (feed_items RPC) carry comments_url; article link/guid are not
+      // HN, so commentsUrl is the only structured source.
+      const withComments: FeedItem = {
+        item: {
+          ...HN_FEED_ITEM.item,
+          guid: 'https://example.com/the-article',
+          url: 'https://example.com/the-article',
+          commentsUrl: 'https://news.ycombinator.com/item?id=42662903',
+          contentHtml: '<p>No HN link in the body.</p>',
+        },
+        feed: HN_FEED_ITEM.feed,
+      };
+      renderWithProviders(<ItemRow feedItem={withComments} openNewshacker />);
+      expect(screen.getByTestId('item-title')).toHaveAttribute(
+        'href',
+        'https://newshacker.app/item/42662903',
+      );
+      expect(screen.getByTestId('open-reader-btn')).toBeInTheDocument();
+    });
+
+    it('derives the link from the stored description HTML for the official HN feed', () => {
+      // Official news.ycombinator.com/rss shape: link/guid are the article; the
+      // discussion id lives only in the stored description (contentHtml).
+      const officialShape: FeedItem = {
+        item: {
+          ...HN_FEED_ITEM.item,
+          guid: 'https://example.com/the-article',
+          url: 'https://example.com/the-article',
+          contentHtml:
+            '<a href="https://news.ycombinator.com/item?id=44390000">Comments</a>',
+        },
+        feed: HN_FEED_ITEM.feed,
+      };
+      renderWithProviders(<ItemRow feedItem={officialShape} openNewshacker />);
+      expect(screen.getByTestId('item-title')).toHaveAttribute(
+        'href',
+        'https://newshacker.app/item/44390000',
+      );
+      expect(screen.getByTestId('open-reader-btn')).toBeInTheDocument();
+    });
+
+    it('falls back to the in-app reader when the item has no Hacker News id', () => {
+      // A non-HN item (plain guid/url) in newshacker mode can't build a link.
+      renderWithProviders(<ItemRow feedItem={FEED_ITEM} openNewshacker />);
+      const body = screen.getByTestId('item-title');
+      expect(body).toHaveAttribute('href', '/item/item-1');
+      expect(body).not.toHaveAttribute('target');
+      // Body already goes to the reader ⇒ no separate reader button; Pin stays.
+      expect(screen.queryByTestId('open-reader-btn')).not.toBeInTheDocument();
+      expect(screen.getByTestId('pin-btn')).toBeInTheDocument();
+    });
+  });
+
+  it('toggles Pin via the right-side button and reflects aria-pressed', async () => {
+    const user = userEvent.setup();
+    const { source } = renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
+    const pin = screen.getByTestId('pin-btn');
+    expect(pin).toHaveAttribute('aria-pressed', 'false');
+    await user.click(pin);
+    expect(source.stateStore.get('item-1').pinned).toBe(true);
+    expect(screen.getByTestId('pin-btn')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('shields a pinned row: swipe hints read "Pinned" on both edges', () => {
+    const source = new MockDataSource(`test-${Math.random()}`);
+    source.stateStore.set('item-1', 'pinned', true);
+    renderWithProviders(<ItemRow feedItem={FEED_ITEM} />, { source });
+    expect(screen.getByTestId('swipe-hint-pinned-left')).toBeInTheDocument();
+    expect(screen.getByTestId('swipe-hint-pinned-right')).toBeInTheDocument();
+  });
+
+  it('renders a library inverse action instead of the pin button', async () => {
+    const user = userEvent.setup();
+    const { source } = renderWithProviders(
+      <ItemRow
+        feedItem={FEED_ITEM}
+        enableSwipe={false}
+        rightAction={{
+          label: 'Unpin',
+          icon: <PushPinFilled />,
+          testId: 'library-action-pinned',
+          onToggle: () => source.stateStore.set('item-1', 'pinned', false),
+        }}
+      />,
+    );
+    expect(screen.queryByTestId('pin-btn')).not.toBeInTheDocument();
+    const btn = screen.getByTestId('library-action-pinned');
+    expect(btn).toHaveAttribute('aria-label', 'Unpin');
+    await user.click(btn);
+    expect(source.stateStore.get('item-1').pinned).toBe(false);
+  });
+
+  it('opens the row menu and exposes Pin/Hide actions', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
+    const body = screen.getByTestId('item-title');
+    body.focus();
+    await user.keyboard(' '); // Space opens the row menu
+    const menu = await screen.findByTestId('item-row-menu');
+    expect(within(menu).getByTestId('item-row-menu-pin')).toBeInTheDocument();
+    expect(within(menu).getByTestId('item-row-menu-hide')).toBeInTheDocument();
+  });
+
+  describe('Filter… menu', () => {
+    // Each case starts from an empty list — the store is module-level, so a
+    // filter added by one case would otherwise be missing from the next case's
+    // candidates (already-filtered terms aren't offered).
+    beforeEach(() => {
+      window.localStorage.removeItem(TITLE_FILTERS_KEY);
+      resetReadingPrefsCacheForTest();
+    });
+
+    const FILTERABLE: typeof FEED_ITEM = {
+      ...FEED_ITEM,
+      item: { ...FEED_ITEM.item, title: "Trump's tariffs hit soybean farmers" },
+    };
+
+    const openFilterMenu = async (user: ReturnType<typeof userEvent.setup>) => {
+      screen.getByTestId('item-title').focus();
+      await user.keyboard(' ');
+      const menu = await screen.findByTestId('item-row-menu');
+      await user.click(within(menu).getByTestId('item-row-menu-filter'));
+      return menu;
+    };
+
+    it('offers capitalized terms up front and steps into More… for the rest', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ItemRow feedItem={FILTERABLE} />);
+      const menu = await openFilterMenu(user);
+
+      // Tier 1: the name, one tap in.
+      expect(within(menu).getByTestId('item-row-menu-filter-Trump')).toBeInTheDocument();
+      // Tier 2 is behind More…, not cluttering the first level.
+      expect(within(menu).queryByTestId('item-row-menu-filter-tariffs')).toBeNull();
+
+      await user.click(within(menu).getByTestId('item-row-menu-filter-more'));
+      expect(
+        within(menu).getByTestId('item-row-menu-filter-more-tariffs'),
+      ).toBeInTheDocument();
+      // Only the word the headline contains — no stem is derived beside it,
+      // since the matcher has no plural rule for one to pair with.
+      expect(
+        within(menu).queryByTestId('item-row-menu-filter-more-tariff'),
+      ).toBeNull();
+      // Back pops one level rather than closing the menu.
+      await user.click(within(menu).getByTestId('item-row-menu-back'));
+      expect(within(menu).getByTestId('item-row-menu-filter-Trump')).toBeInTheDocument();
+    });
+
+    it('stores a normalized entry when a term is chosen', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ItemRow feedItem={FILTERABLE} />);
+      const menu = await openFilterMenu(user);
+      await user.click(within(menu).getByTestId('item-row-menu-filter-Trump'));
+
+      expect(JSON.parse(window.localStorage.getItem(TITLE_FILTERS_KEY)!)).toEqual(['trump']);
+    });
+
+    it('takes a typed word from Other…', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ItemRow feedItem={FILTERABLE} />);
+      const menu = await openFilterMenu(user);
+      await user.click(within(menu).getByTestId('item-row-menu-filter-other'));
+      await user.type(
+        within(menu).getByTestId('item-row-menu-filter-other-input'),
+        'Elon Musk',
+      );
+      await user.click(within(menu).getByTestId('item-row-menu-filter-other-submit'));
+
+      expect(JSON.parse(window.localStorage.getItem(TITLE_FILTERS_KEY)!)).toEqual([
+        'elon musk',
+      ]);
+    });
+
+    it('does not offer a term already filtered', async () => {
+      window.localStorage.setItem(TITLE_FILTERS_KEY, JSON.stringify(['trump']));
+      resetReadingPrefsCacheForTest();
+      const user = userEvent.setup();
+      renderWithProviders(<ItemRow feedItem={FILTERABLE} />);
+      const menu = await openFilterMenu(user);
+      expect(within(menu).queryByTestId('item-row-menu-filter-Trump')).toBeNull();
+    });
+
+    const WITH_CATEGORY: typeof FEED_ITEM = {
+      ...FILTERABLE,
+      item: { ...FILTERABLE.item, categories: ['Tax and spending'] },
+    };
+
+    it('offers the item\'s own categories first, ahead of title terms', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ItemRow feedItem={WITH_CATEGORY} />);
+      const menu = await openFilterMenu(user);
+      const items = within(menu).getAllByRole('menuitem');
+      const labels = items.map((el) => el.textContent);
+      expect(labels.indexOf('Tax and spending')).toBeLessThan(labels.indexOf('Trump'));
+    });
+
+    it("offers a generic 'News' category behind the specific one", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <ItemRow
+          feedItem={{
+            ...FILTERABLE,
+            item: { ...FILTERABLE.item, categories: ['News', 'Tax and spending'] },
+          }}
+        />,
+      );
+      const menu = await openFilterMenu(user);
+      const labels = within(menu)
+        .getAllByRole('menuitem')
+        .map((el) => el.textContent);
+      expect(labels.indexOf('Tax and spending')).toBeLessThan(labels.indexOf('News'));
+    });
+
+    it('stores a category tap as the same folded entry a typed word would be', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ItemRow feedItem={WITH_CATEGORY} />);
+      const menu = await openFilterMenu(user);
+      await user.click(
+        within(menu).getByTestId('item-row-menu-filter-category-Tax and spending'),
+      );
+      expect(JSON.parse(window.localStorage.getItem(TITLE_FILTERS_KEY)!)).toEqual([
+        'tax and spending',
+      ]);
+    });
+
+    it('does not offer a category already filtered', async () => {
+      window.localStorage.setItem(TITLE_FILTERS_KEY, JSON.stringify(['tax and spending']));
+      resetReadingPrefsCacheForTest();
+      const user = userEvent.setup();
+      renderWithProviders(<ItemRow feedItem={WITH_CATEGORY} />);
+      const menu = await openFilterMenu(user);
+      expect(
+        within(menu).queryByTestId('item-row-menu-filter-category-Tax and spending'),
+      ).toBeNull();
+    });
+
+    it('does not also offer a title-word candidate that reads the same as a category', async () => {
+      // The title's capitalized "Trump" would normally be a primary title-word
+      // candidate — indistinguishable from a category entry of the same text,
+      // and the two add different kinds of filter.
+      const withOverlap: typeof FEED_ITEM = {
+        ...FILTERABLE,
+        item: { ...FILTERABLE.item, categories: ['Trump'] },
+      };
+      const user = userEvent.setup();
+      renderWithProviders(<ItemRow feedItem={withOverlap} />);
+      const menu = await openFilterMenu(user);
+      expect(within(menu).getAllByText('Trump')).toHaveLength(1);
+      expect(within(menu).getByTestId('item-row-menu-filter-category-Trump')).toBeInTheDocument();
+      expect(within(menu).queryByTestId('item-row-menu-filter-Trump')).toBeNull();
+    });
+  });
+
+  it('does not render the wide-viewport Done button on narrow screens', () => {
+    restoreMatchMedia = stubWideViewport(false);
+    renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
+    expect(screen.queryByTestId('done-btn')).not.toBeInTheDocument();
+  });
+
+  it('renders a wide-viewport Done button next to Pin on feed rows', async () => {
+    restoreMatchMedia = stubWideViewport(true);
+    const user = userEvent.setup();
+    const { source } = renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
+    const done = screen.getByTestId('done-btn');
+    expect(done).toHaveAttribute('aria-pressed', 'false');
+    // Sits before the Pin button in DOM order (left of it visually).
+    const buttons = screen.getAllByRole('button');
+    const doneIdx = buttons.indexOf(done);
+    const pinIdx = buttons.indexOf(screen.getByTestId('pin-btn'));
+    expect(doneIdx).toBeGreaterThanOrEqual(0);
+    expect(doneIdx).toBeLessThan(pinIdx);
+
+    await user.click(done);
+    expect(source.stateStore.get('item-1').done).toBe(true);
+    expect(screen.getByTestId('done-btn')).toHaveAttribute('aria-pressed', 'true');
+
+    await user.click(screen.getByTestId('done-btn'));
+    expect(source.stateStore.get('item-1').done).toBe(false);
+  });
+
+  it('hides the wide-viewport Done button on library views (rightAction wins)', () => {
+    restoreMatchMedia = stubWideViewport(true);
+    const source = new MockDataSource(`test-${Math.random()}`);
+    renderWithProviders(
+      <ItemRow
+        feedItem={FEED_ITEM}
+        enableSwipe={false}
+        rightAction={{
+          label: 'Unpin',
+          icon: <PushPinFilled />,
+          testId: 'library-action-pinned',
+          onToggle: () => source.stateStore.set('item-1', 'pinned', false),
+        }}
+      />,
+      { source },
+    );
+    expect(screen.queryByTestId('done-btn')).not.toBeInTheDocument();
+  });
+
+  it('suppresses Done in the menu on a pinned row', async () => {
+    const user = userEvent.setup();
+    const source = new MockDataSource(`test-${Math.random()}`);
+    source.stateStore.set('item-1', 'pinned', true);
+    renderWithProviders(
+      <ItemRow feedItem={FEED_ITEM} enableSwipe={false} onShare={() => {}} />,
+      { source },
+    );
+    const body = screen.getByTestId('item-title');
+    body.focus();
+    await user.keyboard(' ');
+    const menu = await screen.findByTestId('item-row-menu');
+    // Pinned rows show Unpin instead of Pin, and Done is suppressed
+    // (marking done clears pinned, which would silently unpin the item).
+    expect(within(menu).getByTestId('item-row-menu-unpin')).toBeInTheDocument();
+    expect(within(menu).queryByTestId('item-row-menu-hide')).toBeNull();
+    // Share is still available.
+    expect(within(menu).getByTestId('item-row-menu-share')).toBeInTheDocument();
+  });
+
+  describe('swipe-right dismissal', () => {
+    // jsdom ships no real PointerEvent constructor, so Testing Library's
+    // fireEvent.pointerDown drops pointerType from the init dict — and the
+    // swipe hook reads pointerType + clientX/clientY off the event. Build a
+    // plain Event and copy the pointer fields onto it (same shape as the
+    // TooltipButton test's `dispatch` helper).
+    function dispatchPointer(
+      target: Element,
+      type: 'pointerdown' | 'pointermove' | 'pointerup',
+      x: number,
+    ) {
+      const evt = new Event(type, { bubbles: true, cancelable: true });
+      Object.assign(evt, {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: x,
+        clientY: 24,
+        button: 0,
+        isPrimary: true,
+      });
+      target.dispatchEvent(evt);
+    }
+
+    function swipeRight(target: Element) {
+      // SWIPE_RATIO * width must clear SWIPE_MIN_PX (56). jsdom's
+      // getBoundingClientRect reports width 0 by default; stub it on the
+      // pointerdown-recorded element so the threshold is 125px and travel
+      // 200px to clear it. The dx > dy * ANGLE_RATIO (1.2) gate also passes
+      // since dy = 0.
+      Object.defineProperty(target, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => ({
+          width: 500, height: 48, top: 0, left: 0, right: 500, bottom: 48,
+          x: 0, y: 0, toJSON: () => ({}),
+        }),
+      });
+      act(() => {
+        dispatchPointer(target, 'pointerdown', 50);
+        dispatchPointer(target, 'pointermove', 250);
+        dispatchPointer(target, 'pointerup', 250);
+      });
+    }
+
+    it('snaps the row back to rest when the dismissal is rolled back (undo)', async () => {
+      // If the data layer keeps the row mounted after the swipe (refetch
+      // delayed/failed) and the toolbar Undo flips `done` back to false,
+      // the dismissed visual state must clear so the row reappears in
+      // place — otherwise the same component stays invisible.
+      vi.useFakeTimers();
+      try {
+        const source = new MockDataSource(`test-${Math.random()}`);
+        renderWithProviders(<ItemRow feedItem={FEED_ITEM} />, { source });
+        const article = screen.getByTestId('item-row');
+        swipeRight(article);
+        act(() => {
+          vi.advanceTimersByTime(250);
+        });
+        expect(source.stateStore.get(FEED_ITEM.item.id).done).toBe(true);
+        // The row is mid-dismissal — translated off + opacity 0.
+        expect(article.getAttribute('style') ?? '').toMatch(/translate3d/);
+
+        // Undo (the toolbar would call restoreLast on the store; here we
+        // flip the flag directly for unit-test focus).
+        act(() => {
+          source.stateStore.set(FEED_ITEM.item.id, 'done', false);
+        });
+        // After the rollback the effect clears the dismissal state, so
+        // the row no longer carries the off-screen transform.
+        expect(article.getAttribute('style') ?? '').not.toMatch(/translate3d/);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('runs handleHide and marks the item done after the exit animation', async () => {
+      // Regression: a rollback-reset effect that fires too eagerly (before
+      // the hook's 200ms timer commits the swipe) would `reset()` the hook
+      // and clear its pending timer, so `handleHide` would never run and
+      // the row would snap back without mutating state. The fix gates the
+      // reset on having observed a true→false transition of `done`; this
+      // test asserts the normal swipe path still commits.
+      vi.useFakeTimers();
+      try {
+        const source = new MockDataSource(`test-${Math.random()}`);
+        renderWithProviders(<ItemRow feedItem={FEED_ITEM} />, { source });
+        const article = screen.getByTestId('item-row');
+        swipeRight(article);
+        // Past EXIT_DURATION_MS the hook's timer fires handleHide, which
+        // sets done in the store. The parent would now unmount the row;
+        // we just assert commit at the data layer.
+        act(() => {
+          vi.advanceTimersByTime(250);
+        });
+        expect(source.stateStore.get(FEED_ITEM.item.id).done).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('spoiler-free headline', () => {
+    const SPOILER_ITEM: FeedItem = {
+      ...FEED_ITEM,
+      item: {
+        ...FEED_ITEM.item,
+        title: 'Man Utd beat Arsenal 3-1 to go top',
+        spoilerFreeTitle: 'EPL MNU v ARS spoiler',
+      },
+    };
+
+    beforeEach(() => {
+      window.localStorage.clear();
+      resetReadingPrefsCacheForTest();
+      resetRevealedSpoilersCacheForTest();
+    });
+    afterEach(() => {
+      window.localStorage.clear();
+      resetReadingPrefsCacheForTest();
+      resetRevealedSpoilersCacheForTest();
+    });
+
+    it('shows the rewrite and a marker when the setting is on (default) and caller allowed', () => {
+      // Default provider stack: signed-out → default capabilities → allowed;
+      // the setting defaults on.
+      renderWithProviders(<ItemRow feedItem={SPOILER_ITEM} />);
+      expect(screen.getByTestId('item-title')).toHaveTextContent('EPL MNU v ARS spoiler');
+      expect(screen.getByTestId('item-title')).not.toHaveTextContent('3-1');
+      const flag = screen.getByTestId('item-spoiler-flag');
+      expect(flag).toHaveAttribute('title', 'Man Utd beat Arsenal 3-1 to go top');
+      // The marker is not an interactive control (adds no tap zone — guardrail #2).
+      expect(within(flag).queryByRole('button')).toBeNull();
+      expect(within(flag).queryByRole('link')).toBeNull();
+    });
+
+    it('shows the original headline and no marker when the setting is off', () => {
+      window.localStorage.setItem(HIDE_SPORTS_SPOILERS_KEY, '0');
+      resetReadingPrefsCacheForTest();
+      renderWithProviders(<ItemRow feedItem={SPOILER_ITEM} />);
+      expect(screen.getByTestId('item-title')).toHaveTextContent('Man Utd beat Arsenal 3-1 to go top');
+      expect(screen.queryByTestId('item-spoiler-flag')).toBeNull();
+    });
+
+    it('shows the original headline (no marker) when no rewrite is cached', () => {
+      renderWithProviders(<ItemRow feedItem={FEED_ITEM} />);
+      expect(screen.getByTestId('item-title')).toHaveTextContent('A test headline');
+      expect(screen.queryByTestId('item-spoiler-flag')).toBeNull();
+    });
+
+    it('reveals the original when the session spoiler toggle is flipped, then re-hides', async () => {
+      // Drive the same session override the toolbar's eye button writes: the row
+      // shows the rewrite by default (allowed + setting on), flips to the
+      // original on toggle, and back — all without touching the saved preference.
+      function SpoilerToggle() {
+        const { toggle } = useEffectiveHideSpoilers();
+        return (
+          <button type="button" onClick={toggle}>
+            toggle
+          </button>
+        );
+      }
+      renderWithProviders(
+        <>
+          <SpoilerToggle />
+          <ItemRow feedItem={SPOILER_ITEM} />
+        </>,
+      );
+      const title = screen.getByTestId('item-title');
+      expect(title).toHaveTextContent('EPL MNU v ARS spoiler');
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'toggle' }));
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'Man Utd beat Arsenal 3-1 to go top',
+      );
+      expect(screen.queryByTestId('item-spoiler-flag')).toBeNull();
+      // The saved preference is untouched — this is a session-only reveal.
+      expect(window.localStorage.getItem(HIDE_SPORTS_SPOILERS_KEY)).toBeNull();
+
+      await user.click(screen.getByRole('button', { name: 'toggle' }));
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'EPL MNU v ARS spoiler',
+      );
+    });
+
+    // Two taps on a concealed row: the first reveals the real headline in
+    // place, the second opens the article. The row body stays one tap zone
+    // either way (guardrail #2) — the reveal changes what the existing zone
+    // does on its first activation, it doesn't add a control.
+    it('reveals the real headline on the first row-body tap without opening', async () => {
+      const user = userEvent.setup();
+      const { source } = renderWithProviders(
+        <>
+          <ItemRow feedItem={SPOILER_ITEM} />
+          <LocationProbe />
+        </>,
+      );
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'EPL MNU v ARS spoiler',
+      );
+
+      await user.click(screen.getByTestId('item-title'));
+
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'Man Utd beat Arsenal 3-1 to go top',
+      );
+      // Nothing hidden is left, so the marker goes with it.
+      expect(screen.queryByTestId('item-spoiler-flag')).toBeNull();
+      // The reveal is not an open: no navigation, and — the part that would
+      // gray out a row the reader has only just looked at — no Opened.
+      expect(screen.getByTestId('location')).not.toHaveTextContent('/item/item-1');
+      expect(source.stateStore.get('item-1').opened).toBe(false);
+    });
+
+    it('opens the article on the second row-body tap', async () => {
+      const user = userEvent.setup();
+      const { source } = renderWithProviders(
+        <>
+          <ItemRow feedItem={SPOILER_ITEM} />
+          <LocationProbe />
+        </>,
+      );
+      await user.click(screen.getByTestId('item-title'));
+      await user.click(screen.getByTestId('item-title'));
+
+      expect(screen.getByTestId('location')).toHaveTextContent('/item/item-1');
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+    });
+
+    it('opens on the first tap when the row was never concealing anything', async () => {
+      // The guard keys on what the row is currently hiding, not on whether a
+      // rewrite exists: with the setting off there is nothing to reveal, so the
+      // first tap must open exactly as it does on any other row.
+      window.localStorage.setItem(HIDE_SPORTS_SPOILERS_KEY, '0');
+      resetReadingPrefsCacheForTest();
+      const user = userEvent.setup();
+      const { source } = renderWithProviders(
+        <>
+          <ItemRow feedItem={SPOILER_ITEM} />
+          <LocationProbe />
+        </>,
+      );
+      await user.click(screen.getByTestId('item-title'));
+
+      expect(screen.getByTestId('location')).toHaveTextContent('/item/item-1');
+      expect(source.stateStore.get('item-1').opened).toBe(true);
+    });
+
+    it('lets a modified click through to a new tab rather than revealing', async () => {
+      // A ctrl/cmd-click opens in a NEW tab, which reveals the result by showing
+      // the article. Swallowing it for a reveal would break the one gesture
+      // whose point is "not here, over there" — and leave the reader on a list
+      // whose row silently changed instead.
+      const user = userEvent.setup();
+      renderWithProviders(
+        <>
+          <ItemRow feedItem={SPOILER_ITEM} />
+          <LocationProbe />
+        </>,
+      );
+      await user.keyboard('{Control>}');
+      await user.click(screen.getByTestId('item-title'));
+      await user.keyboard('{/Control}');
+
+      // Still concealed here: the new tab is where the result shows up.
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'EPL MNU v ARS spoiler',
+      );
+      expect(screen.getByTestId('item-spoiler-flag')).toBeInTheDocument();
+    });
+
+    // The row owns the reveal, so it also owns which headline a share carries:
+    // ItemRows takes the row's word for it rather than re-deciding, which would
+    // send the rewrite out from under a row the reader had already opened up.
+    // SPEC: a list share sends what the list shows.
+    it('shares the concealed headline, then the revealed one', async () => {
+      const shared: string[] = [];
+      const user = userEvent.setup();
+      renderWithProviders(
+        <ItemRow
+          feedItem={SPOILER_ITEM}
+          enableSwipe={false}
+          onShare={(_item, displayedTitle) => shared.push(displayedTitle)}
+        />,
+      );
+
+      const openShare = async () => {
+        const body = screen.getByTestId('item-title');
+        body.focus();
+        await user.keyboard(' ');
+        const menu = await screen.findByTestId('item-row-menu');
+        await user.click(within(menu).getByTestId('item-row-menu-share'));
+      };
+
+      await openShare();
+      expect(shared).toEqual(['EPL MNU v ARS spoiler']);
+
+      await user.click(screen.getByTestId('item-title'));
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'Man Utd beat Arsenal 3-1 to go top',
+      );
+
+      await openShare();
+      expect(shared).toEqual([
+        'EPL MNU v ARS spoiler',
+        'Man Utd beat Arsenal 3-1 to go top',
+      ]);
+    });
+
+    it('stays revealed across a remount', async () => {
+      // A refresh, a pull-to-refresh, a sort/group re-key and a PWA relaunch all
+      // remount the row. Re-hiding a headline the reader has already read is
+      // friction with nothing behind it — the knowledge doesn't come back with
+      // the concealment.
+      const user = userEvent.setup();
+      const { unmount } = renderWithProviders(<ItemRow feedItem={SPOILER_ITEM} />);
+      await user.click(screen.getByTestId('item-title'));
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'Man Utd beat Arsenal 3-1 to go top',
+      );
+      unmount();
+
+      renderWithProviders(<ItemRow feedItem={SPOILER_ITEM} />);
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'Man Utd beat Arsenal 3-1 to go top',
+      );
+      expect(screen.queryByTestId('item-spoiler-flag')).toBeNull();
+    });
+
+    it('re-hides a tapped row when the session toggle re-hides everything', async () => {
+      // The eye's "re-hide all" has to mean all — a row opened up by its own tap
+      // would otherwise sit there still showing the scoreline.
+      function SpoilerToggle() {
+        const { toggle } = useEffectiveHideSpoilers();
+        return (
+          <button type="button" onClick={toggle}>
+            toggle
+          </button>
+        );
+      }
+      const user = userEvent.setup();
+      renderWithProviders(
+        <>
+          <SpoilerToggle />
+          <ItemRow feedItem={SPOILER_ITEM} />
+        </>,
+      );
+      await user.click(screen.getByTestId('item-title'));
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'Man Utd beat Arsenal 3-1 to go top',
+      );
+
+      // Reveal-all, then re-hide-all.
+      await user.click(screen.getByRole('button', { name: 'toggle' }));
+      await user.click(screen.getByRole('button', { name: 'toggle' }));
+
+      expect(screen.getByTestId('item-title')).toHaveTextContent(
+        'EPL MNU v ARS spoiler',
+      );
+    });
+  });
+
+  describe('article layout variants', () => {
+    afterEach(() => {
+      window.localStorage.clear();
+      resetReadingPrefsCacheForTest();
+    });
+
+    function renderLayout(layout: string, feedItem: FeedItem = FEED_ITEM) {
+      window.localStorage.setItem(LIST_LAYOUT_KEY, layout);
+      resetReadingPrefsCacheForTest();
+      renderWithProviders(<ItemRow feedItem={feedItem} />);
+    }
+
+    const PROXIED_IMG =
+      '/api/img?url=' + encodeURIComponent('https://cdn.example.com/lead.jpg');
+    const withImage: FeedItem = {
+      item: {
+        ...FEED_ITEM.item,
+        contentHtml: `<p>Body text of the article.</p><img src="${PROXIED_IMG}" alt="">`,
+      },
+      feed: FEED_ITEM.feed,
+    };
+    // Same body copy as `withImage` but no image: proves the thumbnail layout
+    // stays title-only rather than surfacing the body text as an excerpt.
+    const withImageless: FeedItem = {
+      item: {
+        ...FEED_ITEM.item,
+        contentHtml: `<p>Body text of the article.</p>`,
+      },
+      feed: FEED_ITEM.feed,
+    };
+
+    it("title-only (default) shows neither an excerpt nor a thumbnail", () => {
+      renderLayout('title', withImage);
+      expect(screen.queryByTestId('item-excerpt')).toBeNull();
+      expect(screen.queryByTestId('item-lead-image')).toBeNull();
+    });
+
+    it('excerpt layout shows a plain-text preview of the feed body', () => {
+      renderLayout('excerpt', withImage);
+      const excerpt = screen.getByTestId('item-excerpt');
+      expect(excerpt).toHaveTextContent('Body text of the article.');
+      // The excerpt layout carries no image.
+      expect(screen.queryByTestId('item-lead-image')).toBeNull();
+    });
+
+    it('excerpt layout hides the preview behind a placeholder when the headline is a spoiler', () => {
+      // Default provider stack: allowed + "Hide sports spoilers" on → the
+      // rewrite is shown, so the body would repeat the hidden result.
+      const spoiler: FeedItem = {
+        item: {
+          ...FEED_ITEM.item,
+          title: 'Man Utd beat Arsenal 3-1 to go top',
+          spoilerFreeTitle: 'EPL MNU v ARS spoiler',
+          contentHtml: '<p>Man Utd beat Arsenal 3-1 at Old Trafford.</p>',
+        },
+        feed: FEED_ITEM.feed,
+      };
+      renderLayout('excerpt', spoiler);
+      const excerpt = screen.getByTestId('item-excerpt');
+      expect(excerpt).toHaveTextContent('Spoilers hidden. Tap to reveal.');
+      // The real body — and the scoreline in it — never renders.
+      expect(excerpt).not.toHaveTextContent('3-1');
+      expect(excerpt).toHaveClass('item-row__excerpt--spoiler');
+    });
+
+    it('excerpt layout shows the real preview when spoiler hiding is off', () => {
+      window.localStorage.setItem(HIDE_SPORTS_SPOILERS_KEY, '0');
+      const spoiler: FeedItem = {
+        item: {
+          ...FEED_ITEM.item,
+          title: 'Man Utd beat Arsenal 3-1 to go top',
+          spoilerFreeTitle: 'EPL MNU v ARS spoiler',
+          contentHtml: '<p>Man Utd beat Arsenal 3-1 at Old Trafford.</p>',
+        },
+        feed: FEED_ITEM.feed,
+      };
+      renderLayout('excerpt', spoiler);
+      const excerpt = screen.getByTestId('item-excerpt');
+      expect(excerpt).toHaveTextContent('Man Utd beat Arsenal 3-1 at Old Trafford.');
+      expect(excerpt).not.toHaveClass('item-row__excerpt--spoiler');
+    });
+
+    it('thumbnail layout renders the content image inside the body link', () => {
+      renderLayout('thumbnail', withImage);
+      const img = screen.getByTestId('item-lead-image');
+      expect(img).toHaveAttribute('src', PROXIED_IMG);
+      // The image lives inside the stretched body link — no new tap zone.
+      expect(screen.getByTestId('item-title')).toContainElement(img);
+      // Thumbnail layout carries no excerpt.
+      expect(screen.queryByTestId('item-excerpt')).toBeNull();
+    });
+
+    it('thumbnail layout shows just the title when the item has no image', () => {
+      renderLayout('thumbnail', withImageless);
+      // No image and no excerpt — the row keeps the thumbnail card but shows
+      // only the title; it does NOT fall back to showing the body excerpt.
+      expect(screen.queryByTestId('item-lead-image')).toBeNull();
+      expect(screen.queryByTestId('item-excerpt')).toBeNull();
+      // Still a normal, tappable row.
+      expect(screen.getByTestId('item-title')).toHaveTextContent('A test headline');
+    });
+
+    const spoilerWithImage: FeedItem = {
+      item: {
+        ...withImage.item,
+        title: 'Man Utd beat Arsenal 3-1 to go top',
+        spoilerFreeTitle: 'EPL MNU v ARS spoiler',
+      },
+      feed: FEED_ITEM.feed,
+    };
+
+    it('thumbnail layout blurs the image and marks it when the headline is a spoiler', () => {
+      // Default provider stack: allowed + "Hide sports spoilers" on → the image
+      // (which could show the scoreboard) is blurred rather than shown.
+      renderLayout('thumbnail', spoilerWithImage);
+      const img = screen.getByTestId('item-lead-image');
+      // Still the same proxied image, still inside the body link (no new tap
+      // zone) — just blurred, with a marker so it reads as deliberate.
+      expect(img).toHaveAttribute('src', PROXIED_IMG);
+      expect(img).toHaveClass('item-row__lead-img--spoiler');
+      expect(screen.getByTestId('item-title')).toContainElement(img);
+      expect(screen.getByTestId('item-lead-spoiler-icon')).toBeInTheDocument();
+    });
+
+    it('thumbnail layout shows the image un-blurred when spoiler hiding is off', () => {
+      window.localStorage.setItem(HIDE_SPORTS_SPOILERS_KEY, '0');
+      renderLayout('thumbnail', spoilerWithImage);
+      const img = screen.getByTestId('item-lead-image');
+      expect(img).not.toHaveClass('item-row__lead-img--spoiler');
+      expect(screen.queryByTestId('item-lead-spoiler-icon')).toBeNull();
+    });
+
+    it('small-thumbnail layout renders the content image inside the body link', () => {
+      renderLayout('thumbnail-small', withImage);
+      const img = screen.getByTestId('item-lead-image');
+      expect(img).toHaveAttribute('src', PROXIED_IMG);
+      // The image lives inside the stretched body link — no new tap zone.
+      expect(screen.getByTestId('item-title')).toContainElement(img);
+      // Like the large thumbnail, it carries no excerpt.
+      expect(screen.queryByTestId('item-excerpt')).toBeNull();
+    });
+
+    it('small-thumbnail layout shows just the title when the item has no image', () => {
+      renderLayout('thumbnail-small', withImageless);
+      expect(screen.queryByTestId('item-lead-image')).toBeNull();
+      expect(screen.queryByTestId('item-excerpt')).toBeNull();
+      expect(screen.getByTestId('item-title')).toHaveTextContent('A test headline');
+    });
+
+    it('the per-feed listLayout prop overrides the app-wide setting', () => {
+      // App-wide setting is title-only, but this feed's override is 'excerpt'.
+      window.localStorage.setItem(LIST_LAYOUT_KEY, 'title');
+      resetReadingPrefsCacheForTest();
+      renderWithProviders(<ItemRow feedItem={withImage} listLayout="excerpt" />);
+      // The override wins: the excerpt renders even though the app default is
+      // title-only.
+      expect(screen.getByTestId('item-excerpt')).toHaveTextContent(
+        'Body text of the article.',
+      );
+    });
+
+    it('falls back to the app-wide setting when no per-feed override is given', () => {
+      window.localStorage.setItem(LIST_LAYOUT_KEY, 'excerpt');
+      resetReadingPrefsCacheForTest();
+      // No listLayout prop → the app-wide 'excerpt' applies.
+      renderWithProviders(<ItemRow feedItem={withImage} />);
+      expect(screen.getByTestId('item-excerpt')).toHaveTextContent(
+        'Body text of the article.',
+      );
+    });
+  });
+});

@@ -1,0 +1,421 @@
+import type {
+  Enclosure,
+  Feed,
+  FeedId,
+  FeedItem,
+  Item,
+  ItemId,
+  ItemState,
+  ListLayout,
+  Subscription,
+} from '../types';
+import type { AiCall, AiCallKind } from './DataSource';
+import type { SyncedSettings } from '../settingsSync';
+import { compileFilters } from '../titleFilter';
+
+// Pure row→domain mappers for the Supabase (PostgREST) shapes. Kept separate
+// from SupabaseDataSource so they can be unit-tested without a client. PostgREST
+// returns snake_case columns and timestamptz as ISO strings; we normalize to the
+// camelCase domain types and epoch-ms timestamps the UI uses.
+
+/** A feed is parked once the poller's circuit breaker has tripped. We derive it
+ * from `error_count` because `feeds` has no explicit `parked` column.
+ * MUST stay in sync with the poller's `CIRCUIT_BREAKER_FAILS`
+ * (supabase/functions/poll/index.ts) — it parks when `error_count >= 8`, so a
+ * lower value here would flag the badge + "retry now" for feeds still in normal
+ * backoff (5–7 failures). Separate runtimes (Deno vs. client) can't share the
+ * constant, so keep these two in lockstep. */
+export const PARKED_ERROR_THRESHOLD = 8;
+
+/** SQLSTATEs a set_item_state write can return that are *permanent* — retrying
+ * the same write won't succeed, so the outbox drops it and re-reconciles:
+ *   - 42501 insufficient_privilege → the caller lost visibility of the item
+ * Everything else (429/5xx server hiccup, missing/unknown code, auth that a
+ * token refresh fixes) is treated as transient so a short outage can't roll back
+ * and lose a user's triage action. (Per-field last-write-wins means a stale
+ * write is silently superseded server-side, not rejected, so there's no
+ * version-conflict code to treat as permanent.) */
+export const PERMANENT_WRITE_CODES = new Set(['42501']);
+
+/** Whether a PostgREST/Supabase RPC error is a permanent write rejection (see
+ * PERMANENT_WRITE_CODES). A thrown/network error never reaches here — the outbox
+ * catches those as transient. */
+export function isPermanentWriteError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && PERMANENT_WRITE_CODES.has(code);
+}
+
+/** SQLSTATE `subscribe_to_feed` raises when the caller is at the per-account
+ * feed cap (configuration_limit_exceeded; see migration 0059). The client maps
+ * it to a typed AddFeedError('feed-limit') so the UI shows the "limit reached"
+ * copy. An older backend predating 0059 never raises it, so the mapping is a
+ * no-op there (guardrail #11). */
+export const FEED_LIMIT_CODE = '53400';
+
+/** Whether a PostgREST error says the backend doesn't serve a table at all —
+ * the feature-detect for a table the manual `make migrate` hasn't created yet
+ * (guardrail #11):
+ *   - PGRST205 — table not in PostgREST's schema cache (the usual signal)
+ *   - 42P01   — undefined_table (cache knows it, the DB doesn't)
+ *   - 42501   — insufficient_privilege (created but not granted — same
+ *               conclusion for the caller: this backend can't serve it)
+ * Everything else is a transient failure the caller may retry. */
+export function isMissingTableError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return (
+    typeof code === 'string' && ['PGRST205', '42P01', '42501'].includes(code)
+  );
+}
+
+/** Whether a PostgREST error says the TABLE is there but a COLUMN this client
+ * named isn't — the finer-grained half of the same guardrail #11 detect:
+ *   - 42703   — undefined_column (raised on a read selecting it)
+ *   - PGRST204 — column not in the schema cache (raised on a write naming it)
+ *
+ * Kept separate from {@link isMissingTableError} because the right response is
+ * different. A missing table means nothing here works. A missing column means
+ * everything EXCEPT that column still works — and since the settings read names
+ * an explicit projection, one un-migrated column would otherwise fail the whole
+ * row and strand every OTHER setting device-local. The caller retries on the
+ * older projection instead, so only the new preference waits for the
+ * migration. */
+export function isMissingColumnError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && ['42703', 'PGRST204'].includes(code);
+}
+
+/** An Error carrying the HTTP `status` + PostgREST `code` of a failed request. */
+export type RequestError = Error & { status?: number; code?: string };
+
+/**
+ * Build a thrown error from a PostgREST/Supabase `{ error, status }` response,
+ * PRESERVING the HTTP status and SQLSTATE/PGRST code. The retry policy
+ * (src/lib/queryRetry.ts) needs them to tell a 4xx/5xx server error (don't
+ * retry) from a transient network blip (retry) — a flat `Error(message)` looks
+ * statusless and would be retried, re-introducing the retry amplification a
+ * runaway client causes.
+ */
+export function toRequestError(res: { error: unknown; status?: number }): RequestError {
+  const e = res.error;
+  const msg =
+    e instanceof Error
+      ? e.message
+      : typeof e === 'object' && e && 'message' in e
+        ? String((e as { message: unknown }).message)
+        : String(e);
+  const err = new Error(msg) as RequestError;
+  if (typeof res.status === 'number') err.status = res.status;
+  const code = (e as { code?: unknown } | null)?.code;
+  if (typeof code === 'string') err.code = code;
+  return err;
+}
+
+/** ISO timestamptz (or null) → epoch ms (or null). */
+export function tsToMs(ts: string | null | undefined): number | null {
+  if (!ts) return null;
+  const ms = Date.parse(ts);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/** A row from the `feeds_public` view. NEVER includes the fetch URLs
+ * (`url`/`secret_url`) — those are server-only (see 0002_rls.sql). */
+export interface FeedPublicRow {
+  id: string;
+  site_url: string | null;
+  title: string | null;
+  /** Null when the feed advertises no icon; optional so a malformed row still
+   * maps (defaults to null in {@link mapFeed}). */
+  favicon_url?: string | null;
+  last_fetched_at: string | null;
+  next_fetch_at: string | null;
+  fetch_interval_s: number | null;
+  error_count: number | null;
+  last_error: string | null;
+  created_at: string | null;
+}
+
+export interface ItemRow {
+  id: string;
+  feed_id: string;
+  guid: string;
+  url: string | null;
+  comments_url?: string | null;
+  title: string | null;
+  /** The spoiler-free rewrite of `title`, or null when the item has none. Rides
+   * both the `feed_items` RPC (list rows) and the ITEM_COLS direct reads;
+   * optional so a malformed row still maps (defaults to null in {@link mapItem}). */
+  spoiler_free_title?: string | null;
+  author: string | null;
+  published_at: string | null;
+  content_html: string | null;
+  summary: string | null;
+  full_content_html?: string | null;
+  /** Optional: the cached AI summary. Rides the `feed_items` RPC (list rows) for
+   * an allowlisted caller (server-gated on `email_is_allowlisted`, 0058) and is
+   * NULLed for everyone else; the ITEM_COLS direct reads (library/search/reader)
+   * omit it (so a direct read never carries it), and it's absent against a
+   * backend predating the column. Defaults to null in {@link mapItem}; the
+   * reader falls back to the `summary` Edge call whenever it's null. */
+  ai_summary?: string | null;
+  enclosures: unknown;
+  /** The item's categories/tags (see types.ts Item.categories). Optional so a
+   * malformed row or a backend predating the column still maps (defaults to
+   * `[]` in {@link mapItem}). */
+  categories?: unknown;
+  content_hash: string | null;
+  created_at: string | null;
+}
+
+export interface ItemStateRow {
+  user_id?: string;
+  item_id: string;
+  pinned: boolean;
+  pinned_at: string | null;
+  favorite: boolean;
+  favorite_at: string | null;
+  done: boolean;
+  done_at: string | null;
+  hidden: boolean;
+  hidden_at: string | null;
+  opened: boolean;
+  opened_at: string | null;
+  /** Server-assigned change clock (0070), the cursor for the incremental
+   * hydrate. Optional: absent from a pre-0070 backend's rows, and from the
+   * projection this client falls back to once it detects that. */
+  updated_at?: string | null;
+}
+
+export interface SubscriptionRow {
+  feed_id: string;
+  folder: string | null;
+  title_override: string | null;
+  muted: boolean;
+  // Optional so a malformed row still maps; each defaults to its neutral value
+  // in {@link mapSubscription}.
+  open_original?: boolean;
+  open_newshacker?: boolean;
+  mark_done_on_open?: boolean;
+  /** A per-feed card-style override; null (or an unrecognized value) maps to null
+   * in {@link mapSubscription} = "use the app-wide setting". */
+  list_layout?: string | null;
+  sort: number;
+}
+
+/** Coerce a stored `list_layout` text value to the {@link ListLayout} union,
+ * dropping anything unrecognized (or null/absent) to null = "use the app-wide
+ * Article layout setting". Keeps a stray/legacy value from reaching the row
+ * renderer. */
+function mapListLayout(raw: string | null | undefined): ListLayout | null {
+  return raw === 'title' ||
+    raw === 'thumbnail-small' ||
+    raw === 'thumbnail' ||
+    raw === 'excerpt'
+    ? raw
+    : null;
+}
+
+/**
+ * `feeds_public` row → `Feed`. The display `url` is sourced from `site_url` —
+ * never a fetch URL, which the view doesn't even expose (a per-user token could
+ * ride in it; see types.ts `Feed.url` and 0002_rls.sql). `faviconUrl` comes
+ * from the view's `favicon_url` (0036); null when the feed advertises no icon.
+ */
+export function mapFeed(row: FeedPublicRow): Feed {
+  return {
+    id: row.id,
+    url: row.site_url ?? '',
+    siteUrl: row.site_url ?? null,
+    title: row.title ?? row.site_url ?? 'Untitled feed',
+    faviconUrl: row.favicon_url ?? null,
+    errorCount: row.error_count ?? 0,
+    lastError: row.last_error ?? null,
+    parked: (row.error_count ?? 0) >= PARKED_ERROR_THRESHOLD,
+  };
+}
+
+function mapCategories(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((c): c is string => typeof c === 'string');
+}
+
+function mapEnclosures(raw: unknown): Enclosure[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Enclosure[] = [];
+  for (const e of raw) {
+    if (e && typeof e === 'object' && typeof (e as { url?: unknown }).url === 'string') {
+      const rec = e as { url: string; type?: unknown; length?: unknown };
+      out.push({
+        url: rec.url,
+        type: typeof rec.type === 'string' ? rec.type : null,
+        length: typeof rec.length === 'number' ? rec.length : null,
+      });
+    }
+  }
+  return out;
+}
+
+/** `items` row → `Item`. `published_at` falls back to `created_at` so an item
+ * missing a publish date still sorts sensibly. */
+export function mapItem(row: ItemRow): Item {
+  return {
+    id: row.id,
+    feedId: row.feed_id,
+    guid: row.guid,
+    url: row.url ?? '',
+    commentsUrl: row.comments_url ?? null,
+    title: row.title ?? '(untitled)',
+    spoilerFreeTitle: row.spoiler_free_title ?? null,
+    author: row.author ?? null,
+    publishedAt: tsToMs(row.published_at) ?? tsToMs(row.created_at) ?? 0,
+    contentHtml: row.content_html ?? '',
+    summary: row.summary ?? null,
+    fullContentHtml: row.full_content_html ?? null,
+    aiSummary: row.ai_summary ?? null,
+    enclosures: mapEnclosures(row.enclosures),
+    categories: mapCategories(row.categories),
+  };
+}
+
+/** One flat row from the `get_shared_item` RPC (0068): the item's ITEM_COLS plus
+ * the feed's display columns, prefixed `feed_` to avoid the id/created_at name
+ * clash. Extends {@link ItemRow} so {@link mapItem} reads it directly; the
+ * `feed_*` fields rebuild a {@link FeedPublicRow} for {@link mapFeed}. */
+export interface SharedItemRow extends ItemRow {
+  feed_site_url: string | null;
+  feed_title: string | null;
+  feed_favicon_url?: string | null;
+  feed_last_fetched_at: string | null;
+  feed_next_fetch_at: string | null;
+  feed_fetch_interval_s: number | null;
+  feed_error_count: number | null;
+  feed_last_error: string | null;
+  feed_created_at: string | null;
+}
+
+/** `get_shared_item` row → `FeedItem`. The RPC already projects display-safe
+ * columns only (never the fetch URLs or the gated full-text/summary columns), so
+ * this reuses the same `mapItem`/`mapFeed` the normal reads use. `feed_id` is the
+ * feed's id (there's no separate feed id column in the flat row). */
+export function mapSharedItem(row: SharedItemRow): FeedItem {
+  const feed = mapFeed({
+    id: row.feed_id,
+    site_url: row.feed_site_url,
+    title: row.feed_title,
+    favicon_url: row.feed_favicon_url,
+    last_fetched_at: row.feed_last_fetched_at,
+    next_fetch_at: row.feed_next_fetch_at,
+    fetch_interval_s: row.feed_fetch_interval_s,
+    error_count: row.feed_error_count,
+    last_error: row.feed_last_error,
+    created_at: row.feed_created_at,
+  });
+  // `shared: true` marks this as a capability read (a public feed the caller
+  // may not subscribe to), so the reader renders it read-only — item_state
+  // writes would be RLS-rejected for a non-subscriber.
+  return { item: mapItem(row), feed, shared: true };
+}
+
+/** `item_state` row → domain `ItemState` (drops the user/item key columns). */
+export function mapItemState(row: ItemStateRow): ItemState {
+  return {
+    pinned: row.pinned,
+    pinnedAt: tsToMs(row.pinned_at),
+    favorite: row.favorite,
+    favoriteAt: tsToMs(row.favorite_at),
+    done: row.done,
+    doneAt: tsToMs(row.done_at),
+    hidden: row.hidden,
+    hiddenAt: tsToMs(row.hidden_at),
+    opened: row.opened,
+    openedAt: tsToMs(row.opened_at),
+  };
+}
+
+export function mapSubscription(row: SubscriptionRow): Subscription {
+  return {
+    feedId: row.feed_id,
+    folder: row.folder,
+    titleOverride: row.title_override,
+    muted: row.muted,
+    openOriginal: row.open_original ?? false,
+    openNewshacker: row.open_newshacker ?? false,
+    markDoneOnOpen: row.mark_done_on_open ?? false,
+    listLayout: mapListLayout(row.list_layout),
+    sort: row.sort,
+  };
+}
+
+export interface UserSettingsRow {
+  item_sort?: string | null;
+  group_by_feed?: boolean | null;
+  hide_on_scroll?: boolean | null;
+  hide_on_scroll_remove?: boolean | null;
+  show_row_favicon?: boolean | null;
+  show_group_favicon?: boolean | null;
+  hide_sports_spoilers?: boolean | null;
+  auto_summarize_pinned?: boolean | null;
+  title_filters?: string[] | null;
+}
+
+/** `user_settings` row → the synced-settings patch (0064). A null/absent
+ * column means "not set" — the key is omitted so the client default applies —
+ * and an unrecognized `item_sort` value is dropped the same way, keeping a
+ * stray/newer-client value from reaching the stores. */
+export function mapUserSettings(row: UserSettingsRow): Partial<SyncedSettings> {
+  const out: Partial<SyncedSettings> = {};
+  if (row.item_sort === 'newest' || row.item_sort === 'oldest') {
+    out.itemSort = row.item_sort;
+  }
+  if (typeof row.group_by_feed === 'boolean') out.groupByFeed = row.group_by_feed;
+  if (typeof row.hide_on_scroll === 'boolean') out.hideOnScroll = row.hide_on_scroll;
+  if (typeof row.hide_on_scroll_remove === 'boolean')
+    out.hideOnScrollRemove = row.hide_on_scroll_remove;
+  if (typeof row.show_row_favicon === 'boolean') out.showRowFavicon = row.show_row_favicon;
+  if (typeof row.show_group_favicon === 'boolean') out.showGroupFavicon = row.show_group_favicon;
+  if (typeof row.hide_sports_spoilers === 'boolean') out.hideSportsSpoilers = row.hide_sports_spoilers;
+  if (typeof row.auto_summarize_pinned === 'boolean') out.autoSummarizePinned = row.auto_summarize_pinned;
+  // Normalized (and deduped) on the way in, not just filtered for strings. The
+  // store's invariant is that entries ARE normalized — the Settings list keys
+  // its remove button on that — so letting a raw `Trump` through from a
+  // hand-edited row would render a chip whose Remove does nothing and let
+  // `trump` be added again beside it. Non-string members are dropped rather
+  // than failing the whole list, so one bad element can't cost the reader every
+  // filter they set.
+  if (Array.isArray(row.title_filters)) {
+    out.titleFilters = compileFilters(
+      row.title_filters.filter((e): e is string => typeof e === 'string'),
+    );
+  }
+  return out;
+}
+
+/** One `admin_ai_call_log` row (0067). */
+export interface AiCallRow {
+  kind?: string | null;
+  status?: string | null;
+  http_status?: number | null;
+  item_id?: string | null;
+  item_title?: string | null;
+  error?: string | null;
+  created_at?: string | null;
+}
+
+/** `admin_ai_call_log` row → {@link AiCall}. An unrecognized `kind` (a
+ * newer-server value) falls back to `summary` so a stray row still renders
+ * rather than being dropped. */
+export function mapAiCall(row: AiCallRow): AiCall {
+  const kind: AiCallKind = row.kind === 'spoiler' ? 'spoiler' : 'summary';
+  return {
+    kind,
+    status: row.status ?? '',
+    httpStatus: typeof row.http_status === 'number' ? row.http_status : null,
+    itemId: row.item_id ?? null,
+    itemTitle: row.item_title ?? null,
+    error: row.error ?? null,
+    createdAt: row.created_at ?? '',
+  };
+}
+
+/** A library/feed item id paired with its already-mapped state, for callers
+ * that hydrate the state store from server rows. */
+export type { FeedId, ItemId };

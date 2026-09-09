@@ -1,0 +1,202 @@
+.signin {
+  min-height: calc(100vh - var(--rm-header-h));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+/* ── Hero mockup ───────────────────────────────────────────── */
+.signin__hero {
+  position: relative;
+  width: 100%;
+  max-width: 720px;
+  background: var(--rm-bg-card);
+  border-bottom: 1px solid var(--rm-border);
+  overflow: hidden;
+  /* shrink on short viewports (e.g. iPhone SE) so the sign-in card stays above the fold */
+  max-height: min(340px, 35vh);
+  flex-shrink: 0;
+}
+
+.signin__mock-feed {
+  list-style: none;
+  margin: 0;
+  /* small top inset so the first row isn't flush against the hero's top edge */
+  padding: 8px 0 0;
+}
+
+/* gradient fade at the bottom of the hero — must sit above item rows
+   (which have z-index: 1) so the fade isn't painted over on short viewports.
+   Kept short (44px) so it only softens the bottom edge: at the compact row
+   height it would otherwise wash out the whole last preview row. r/popular is
+   deliberately not the last row so its source stays clear of the fade. */
+.signin__mock-fade {
+  position: absolute;
+  z-index: 2;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 44px;
+  background: linear-gradient(to bottom, transparent, var(--rm-bg-card));
+  pointer-events: none;
+}
+
+/* ── Sign-in card ──────────────────────────────────────────── */
+.signin__card {
+  width: 100%;
+  max-width: 380px;
+  text-align: center;
+  padding: 32px 24px 40px;
+}
+
+.signin__brand {
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--rm-text);
+}
+
+.signin__tagline {
+  color: var(--rm-meta);
+  margin: 12px 0 24px;
+  line-height: 1.5;
+}
+
+.signin__buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.signin__btn {
+  width: 100%;
+  padding: 14px;
+  min-height: var(--rm-tap);
+  border: 1px solid var(--rm-border-strong);
+  border-radius: var(--rm-radius);
+  background: var(--rm-bg-card);
+  color: var(--rm-text);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .signin__btn:hover {
+    border-color: var(--rm-text);
+  }
+}
+
+/* Pressed feedback for touch — hover/disabled aren't enough on a tap
+   (guardrail: pressed-state on every zone). Covers the OAuth, email-submit, and
+   "Use a different email" buttons alike. */
+html:not(.rm-suppress-press) .signin__btn:active {
+  background: color-mix(in srgb, var(--rm-text) 8%, var(--rm-bg-card));
+}
+
+.signin__btn--primary {
+  background: var(--rm-accent);
+  color: var(--rm-accent-contrast);
+  border-color: var(--rm-accent);
+  margin-top: 4px;
+}
+
+@media (hover: hover) {
+  .signin__btn--primary:hover {
+    background: var(--rm-accent-strong);
+    border-color: var(--rm-accent-strong);
+  }
+}
+
+html:not(.rm-suppress-press) .signin__btn--primary:active {
+  background: var(--rm-accent-strong);
+  border-color: var(--rm-accent-strong);
+}
+
+.signin__btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* ── "or" divider between OAuth and email sign-in ──────────── */
+.signin__divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0;
+  color: var(--rm-meta);
+  font-size: 0.85rem;
+}
+
+.signin__divider::before,
+.signin__divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--rm-border);
+}
+
+/* ── Email (magic-link) form ───────────────────────────────── */
+.signin__email-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+
+.signin__email-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--rm-text);
+}
+
+.signin__email-input {
+  width: 100%;
+  padding: 12px 14px;
+  min-height: var(--rm-tap);
+  border: 1px solid var(--rm-border-strong);
+  border-radius: var(--rm-radius);
+  background: var(--rm-bg);
+  color: var(--rm-text);
+  font-size: 1rem;
+}
+
+.signin__email-input:focus-visible {
+  outline: none;
+  border-color: var(--rm-accent);
+}
+
+.signin__error {
+  color: var(--rm-danger);
+  font-size: 0.85rem;
+  margin: 2px 0 0;
+  line-height: 1.4;
+}
+
+/* ── "Check your email" confirmation ───────────────────────── */
+.signin__sent {
+  text-align: center;
+  padding: 8px 0 4px;
+}
+
+.signin__sent-lead {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--rm-text);
+  margin: 20px 0 8px;
+}
+
+.signin__sent-detail {
+  color: var(--rm-meta);
+  line-height: 1.5;
+  margin: 0 0 24px;
+  word-break: break-word;
+}
+
+.signin__privacy {
+  font-size: 0.78rem;
+  color: var(--rm-meta);
+  margin-top: 20px;
+  line-height: 1.5;
+}

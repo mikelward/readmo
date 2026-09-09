@@ -1,0 +1,166 @@
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  height: var(--rm-header-h);
+  background: var(--rm-bg);
+  border-bottom: 1px solid var(--rm-border);
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Edge controls (drawer toggle on the left, account chip on the right) hug
+ * the viewport edges so they're reachable on wide screens without forcing
+ * the brand row to widen with them. Safe-area insets keep them clear of
+ * notches on landscape iPhones. */
+.app-header__edge {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.app-header__edge--left {
+  margin-left: max(8px, env(safe-area-inset-left));
+}
+
+.app-header__edge--right {
+  margin-right: max(8px, env(safe-area-inset-right));
+}
+
+.app-header__inner {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  /* 8px gap satisfies the >=8px-between-tap-zones guardrail for the
+   * Search/Settings pair (and any future action added here). */
+  gap: 8px;
+  height: var(--rm-header-h);
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 8px;
+  min-width: 0;
+}
+
+/* Wide viewport: pull the edge controls out of flow and let the inner
+ * center on the viewport via `justify-content`. Below this breakpoint the
+ * default flex layout above keeps the inner snugly between the
+ * variable-width edge buttons; above it we have room for the full centered
+ * column (720px, widening to 860px at 960px — see below) plus comfortable
+ * edge insets, and `margin: 0 auto` would otherwise drift the inner
+ * off-center (left) whenever the right-side account chip is wider than the
+ * left-side drawer toggle, putting the brand and right-side actions out of
+ * alignment with the article/hero column directly below. */
+@media (min-width: 880px) {
+  .app-header {
+    justify-content: center;
+  }
+  .app-header__edge {
+    position: absolute;
+    top: env(safe-area-inset-top);
+    bottom: 0;
+  }
+  .app-header__edge--left {
+    left: max(8px, env(safe-area-inset-left));
+    margin-left: 0;
+  }
+  .app-header__edge--right {
+    right: max(8px, env(safe-area-inset-right));
+    margin-right: 0;
+  }
+  .app-header__inner {
+    flex: 0 1 auto;
+    width: 100%;
+    margin: 0;
+  }
+}
+
+/* Track the content column's desktop widen: `.app-main` grows 720→860 at
+ * 960px (see global.css), so the header inner grows with it to keep the
+ * brand/actions aligned with the list/article column directly below. Unlike
+ * `.app-main`, the inner shares the row with the absolutely-positioned edge
+ * controls (drawer toggle on the left, account chip on the right), so it
+ * can't take the full 860px until the viewport is wide enough to clear them:
+ * a centered 860px inner leaves only (960 - 860) / 2 = 50px of side gutter,
+ * but the signed-out "Sign in" chip is wider than that and would overlap the
+ * Settings tap target. Reserve ~100px per side so the inner only reaches the
+ * full 860px (column-aligned) once the viewport clears ~1060px, and stays
+ * narrower-but-non-overlapping below that. */
+@media (min-width: 960px) {
+  .app-header__inner {
+    max-width: min(860px, calc(100vw - 200px));
+  }
+}
+
+.app-header__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Don't let flex compression squeeze the icon below its 44px tap floor on
+   * narrow phones — the brand row shrinks (via the wordmark media query
+   * below) before the action targets do. */
+  flex: 0 0 var(--rm-tap);
+  width: var(--rm-tap);
+  height: var(--rm-tap);
+  border: none;
+  background: none;
+  color: var(--rm-text);
+  border-radius: 999px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+@media (hover: hover) {
+  .app-header__icon-btn:hover {
+    background: var(--rm-bg);
+  }
+}
+
+.app-header__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--rm-accent);
+  text-decoration: none;
+  padding: 0 6px;
+}
+
+.app-header__brand-mark {
+  display: block;
+  flex: 0 0 auto;
+}
+
+.app-header__brand-text {
+  display: inline-block;
+}
+
+/* On sub-390px phones (iPhone SE 1/2/3 / Mini / 320–375 CSS px) the inner
+ * can't fit the brand mark + wordmark alongside both icon actions and the
+ * right-side account chip — the wordmark drops out so the brand mark stays
+ * as a home affordance and the two 44px tap targets keep their floor. The
+ * breakpoint sits just below 390 (iPhone 12/13/14/15) so modern phones
+ * keep the wordmark. */
+@media (max-width: 389px) {
+  .app-header__brand-text {
+    display: none;
+  }
+}
+
+.app-header__spacer {
+  flex: 1 1 auto;
+}
+
+.app-header__offline-pill {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--rm-bg);
+  background: var(--rm-text);
+  border-radius: 999px;
+  padding: 4px 10px;
+  text-decoration: none;
+  margin-right: 4px;
+}

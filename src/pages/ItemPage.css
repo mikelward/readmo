@@ -1,0 +1,398 @@
+.reader {
+  display: flex;
+  flex-direction: column;
+  background: var(--rm-bg-card);
+}
+
+.reader__state {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--rm-meta);
+}
+
+.reader__state-tip {
+  margin-top: 12px;
+  font-size: 0.85rem;
+}
+
+.reader__state-tip-icon {
+  width: 1.1em;
+  height: 1.1em;
+  vertical-align: -0.2em;
+}
+
+.reader__topbar,
+.reader__bottombar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--rm-bg);
+  border-bottom: 1px solid var(--rm-border);
+  padding: 6px 8px;
+}
+
+/* Only the top bar is pinned. The bottom bar is a relative end-of-article
+   footer (you scroll to it), matching newshacker — the top bar already carries
+   every action while reading, so a floating bottom copy would just overlay the
+   last lines of text. */
+.reader__topbar {
+  position: sticky;
+  top: var(--rm-header-h);
+  z-index: 10;
+}
+
+.reader__bottombar {
+  border-top: 1px solid var(--rm-border);
+  border-bottom: none;
+  padding-bottom: max(6px, env(safe-area-inset-bottom));
+}
+
+.reader__back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--rm-tap);
+  height: var(--rm-tap);
+  border: none;
+  background: none;
+  color: var(--rm-text);
+  border-radius: 999px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+/* Feed name beside the leading button, linking back to the feed. Grows to fill
+   the space between that button and the action cluster. Full --rm-tap height so
+   the link clears the 44px touch floor like the adjacent toolbar buttons (the
+   text alone would be a thin strip); the inner span carries the truncation
+   (text-overflow doesn't apply to the flex container itself). */
+.reader__feedname {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: var(--rm-tap);
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--rm-accent);
+  text-decoration: none;
+}
+
+/* Feed favicon ahead of the name. flex: 0 0 auto keeps it from shrinking when
+   the name is long; the name's inner span takes the truncation. Matches the
+   16px per-row icon (.item-row__favicon). */
+.reader__feedname-favicon {
+  border-radius: 3px;
+  object-fit: contain;
+}
+
+.reader__feedname-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Pressed-state on this tap zone (guardrail #2). `:active` stays OUTSIDE the
+   hover media query so the accent-tint confirmation fires on touch before the
+   route changes; the neutral `:hover` sits inside it to avoid the sticky-hover
+   smear on touch devices (same shape as `.reader__action`). */
+html:not(.rm-suppress-press) .reader__feedname:active {
+  background: color-mix(in srgb, var(--rm-accent) 14%, transparent);
+}
+
+@media (hover: hover) {
+  .reader__feedname:hover {
+    background: var(--rm-bg);
+  }
+}
+
+.reader__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+.reader__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: var(--rm-tap);
+  height: var(--rm-tap);
+  padding: 0 10px;
+  border: none;
+  background: none;
+  color: var(--rm-meta);
+  border-radius: 999px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+@media (pointer: fine) {
+  .reader__action {
+    height: 36px;
+  }
+}
+
+/* Primary action (Open original): the reader's main escape hatch to the
+   source. Emphasized with an accent-tinted pill rather than a solid fill so it
+   reads as primary without dominating the bar; icon-only to stay in step with
+   the other action buttons (the tooltip + aria-label carry the name). */
+.reader__action--primary {
+  color: var(--rm-accent);
+  background: color-mix(in srgb, var(--rm-accent) 14%, transparent);
+}
+
+.reader__action--active {
+  color: var(--rm-accent);
+}
+
+.reader__more {
+  position: relative;
+}
+
+/* The overflow menu itself is the shared ItemRowMenu (anchored popover,
+   portaled to <body>); its styling lives in ItemRowMenu.css. */
+
+@media (hover: hover) {
+  .reader__action:hover {
+    background: var(--rm-bg);
+  }
+
+  /* Keep the primary's accent tint on hover (deepen it) instead of flattening
+     it to the neutral hover background the rule above would apply. */
+  .reader__action--primary:hover {
+    background: color-mix(in srgb, var(--rm-accent) 22%, transparent);
+  }
+}
+
+.reader__header {
+  padding: 20px 16px 8px;
+}
+
+/* Provenance tag shown in the meta line when the reading body came from the
+   bot-block fallback fetch. Muted so it reads as a quiet aside. */
+.reader__via-fallback {
+  font-weight: 400;
+  color: var(--rm-read);
+}
+
+.reader__domain {
+  color: var(--rm-meta);
+}
+
+.reader__title {
+  font-size: 1.25rem;
+  line-height: 1.25;
+  margin: 8px 0;
+}
+
+.reader__title a {
+  color: var(--rm-text);
+}
+
+.reader__byline {
+  font-size: 0.85rem;
+  color: var(--rm-meta);
+}
+
+/* Publisher categories/tags, first few only (ItemPage.tsx's MAX_READER_TAGS).
+   Display-only labels, not controls — no tap target needed, unlike the
+   removable filter chips in Settings. */
+.reader__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reader__tag {
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  color: var(--rm-meta);
+  background: var(--rm-bg-card);
+  border: 1px solid var(--rm-border);
+  border-radius: var(--rm-radius);
+  /* A publisher category can be one long unbroken token (up to the parser's
+     100-char cap) — without this a flex item's default min-content width
+     lets it overflow the header and force horizontal page scroll. */
+  max-width: 100%;
+  overflow-wrap: break-word;
+}
+
+/* Reading-mode bar: sits between the header and the body, carrying the
+   reading-view/feed-version toggle, the loading hint, or a fallback note. */
+.reader__modebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--rm-tap);
+  padding: 0 16px;
+}
+
+.reader__modebar:empty {
+  display: none;
+}
+
+.reader__mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--rm-tap);
+  padding: 6px 12px;
+  border: 1px solid var(--rm-border);
+  background: var(--rm-bg-card);
+  color: var(--rm-accent);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .reader__mode-toggle:hover {
+    background: var(--rm-bg);
+  }
+}
+
+.reader__mode-note {
+  font-size: 0.85rem;
+  color: var(--rm-meta);
+}
+
+.reader__body {
+  padding: 8px 16px 32px;
+  /* `rem`, not px, so the article body tracks the "Text size" choice.
+     0.95rem matches .article-summary__body so the AI summary and the article
+     read as one continuous piece. */
+  font-size: 0.95rem;
+  line-height: 1.4;
+  overflow-wrap: break-word;
+}
+
+/* Inline images (inside <p>, <li>, etc.) keep natural sizing. */
+.reader__body img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+/* Direct-child images/pictures and figure-wrapped images are standalone block
+   media — break out of the 16px body padding for full feed-area width
+   (edge-to-edge on mobile, up to the reading column width on desktop —
+   720px, 860px at ≥960px).
+
+   Mobile-first these force a full-bleed `width` so a standalone image *fills*
+   the column even when its source is narrower (e.g. a Reddit preview thumbnail
+   served small): on a phone the column IS the viewport, so a tiny inline-size
+   image reads as broken — full-bleed is what you want. The intrinsic-size cap
+   (`width: auto`, no upscaling) is reapplied only on the desktop wide layout
+   below, where the column is framed by whitespace and stretching a sub-column
+   source to full-bleed looks worst.
+
+   The breakout itself stays an explicit negative margin (NOT `margin: auto`):
+   the containing block here is the padded `.reader__body` content box, so a
+   column-or-wider image is *wider* than its containing block — and per CSS
+   2.1 §10.3.3 auto margins are then treated as 0, which would drop the left
+   breakout and overflow the image to the right. The fixed `-16px` left margin
+   reaches the feed edge. */
+.reader__body > img {
+  display: block;
+  width: calc(100% + 32px);
+  height: auto;
+  max-width: calc(100% + 32px);
+  margin-left: -16px;
+  border-radius: 0;
+}
+
+.reader__body > figure,
+.reader__body > picture {
+  display: block;
+  margin: 0 -16px;
+}
+
+/* `<figure>`/`<picture>` already carry the -16px breakout, so the image's
+   containing block IS the full feed band: `width: 100%` fills it full-bleed on
+   mobile. The desktop block below swaps this to `width: auto` (intrinsic cap),
+   where `max-width: 100%` plus auto side margins centers a sub-band image. */
+.reader__body > figure img,
+.reader__body > picture img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  border-radius: 0;
+}
+
+.reader__body figcaption {
+  padding: 6px 16px;
+  font-size: 0.85rem;
+  color: var(--rm-meta);
+}
+
+/* Reddit and similar feeds wrap content in a layout <table> (image in first
+   cell, text summary in second). Reflow it to a block stack so the image
+   goes full-bleed above the text instead of beside it as a thumbnail. */
+.reader__body > table,
+.reader__body > table tbody,
+.reader__body > table tr,
+.reader__body > table td,
+.reader__body > table th {
+  display: block;
+  width: 100%;
+}
+
+.reader__body > table img {
+  display: block;
+  width: calc(100% + 32px);
+  max-width: calc(100% + 32px);
+  margin-left: -16px;
+  height: auto;
+  border-radius: 0;
+}
+
+/* Desktop wide layout (≥960px, matching `.app-main`'s widen / `useWideViewport`):
+   the reading column is centered with whitespace on either side, so upscaling a
+   sub-column source to full-bleed reads as blurry here in a way it doesn't on a
+   phone. Cap each standalone image at its *intrinsic* resolution — a small image
+   renders at natural size (direct/table images left-aligned at the feed edge via
+   the inherited -16px margin; figure/picture images centered via auto margins),
+   while a column-or-wider one still resolves to full-bleed. */
+@media (min-width: 960px) {
+  .reader__body > img,
+  .reader__body > figure img,
+  .reader__body > picture img,
+  .reader__body > table img {
+    width: auto;
+  }
+}
+
+.reader__body pre {
+  overflow-x: auto;
+  background: var(--rm-bg);
+  padding: 12px;
+  border-radius: 8px;
+}
+
+.reader__body a {
+  color: var(--rm-accent);
+  text-decoration: underline;
+}
+
+/* Belt-and-suspenders for <small>. The sanitizer now strips <small> at storage
+   time (it's presentational, not semantic — e.g. The Economist's small-caps
+   lede), but items stored before that change still carry the tag until they're
+   re-polled. Pin its size to the body copy so those words don't render at the
+   UA's shrunken default mid-paragraph. */
+.reader__body small {
+  font-size: inherit;
+}

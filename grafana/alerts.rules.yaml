@@ -1,0 +1,280 @@
+# Readmo — database performance alert rules (Supabase Metrics API → Grafana Cloud).
+#
+# Source of truth for the alert PromQL. These are layer 1 (out-of-band detection)
+# from OBSERVABILITY.md: Grafana scrapes the Metrics API and pages on saturation /
+# DB-down; when one fires, hit the `db-perf` endpoint for the offending query.
+#
+# Apply (Grafana Cloud / Mimir):
+#   mimirtool rules load grafana/alerts.rules.yaml \
+#     --address "$GRAFANA_CLOUD_PROM_URL" --id "$GRAFANA_CLOUD_TENANT" --key "$GRAFANA_CLOUD_TOKEN"
+# Or recreate these expressions as Grafana-managed alert rules in the UI.
+# See grafana/README.md.
+#
+# ⚠️ VERIFY BEFORE TRUSTING. The Metrics API is beta; metric names, label values
+# (e.g. `service_type`, `mountpoint`), and histogram bucket UNITS can differ on
+# your project. README.md has a one-line curl to dump your live names. Metric
+# names here are taken from supabase/supabase-grafana docs/metrics.md.
+#
+# The `job` label assumes the scrape job in README.md (job="supabase-metrics");
+# adjust the matchers if you name it differently.
+
+groups:
+  - name: readmo-db-perf
+    rules:
+      # --- DB unreachable (the one an in-DB monitor can't send) -------------
+      - alert: ReadmoDBUnreachable
+        expr: up{job="supabase-metrics"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: readmo-db
+        annotations:
+          summary: "Supabase metrics scrape failing — DB may be down/unreachable"
+          description: >-
+            The Metrics API scrape for {{ $labels.instance }} has failed for >2m.
+            If this isn't a scrape/credential issue, the database is unreachable.
+          runbook: >-
+            Try the db-perf endpoint (OBSERVABILITY.md §Layer 2). If it also
+            errors/times out, treat as DB-down and check the Supabase dashboard.
+
+      # --- CPU pinned: something is starving the host CPU ------------------
+      - alert: ReadmoDBCpuHigh
+        expr: >-
+          100 * (1 - avg by (supabase_project_ref) (
+            rate(node_cpu_seconds_total{mode="idle",service_type="db"}[5m])
+          )) > 85
+        for: 10m
+        labels:
+          severity: warning
+          service: readmo-db
+        annotations:
+          summary: "DB CPU >85% for 10m"
+          description: >-
+            Database host CPU is ~{{ $value | printf "%.0f" }}% busy (5m avg).
+            A query or query group is likely starving CPU.
+          runbook: >-
+            Hit db-perf to see which queryid dominates; index/rewrite it or bump
+            the compute tier (SCALING.md → Database compute tier).
+
+      # --- Memory pressure -------------------------------------------------
+      - alert: ReadmoDBMemoryHigh
+        expr: >-
+          (1 - node_memory_MemAvailable_bytes{service_type="db"}
+             / node_memory_MemTotal_bytes{service_type="db"}) * 100 > 90
+        for: 10m
+        labels:
+          severity: warning
+          service: readmo-db
+        annotations:
+          summary: "DB memory >90% used for 10m"
+          description: "Available memory on the database host is under 10%."
+          runbook: >-
+            Hit db-perf for the queries holding memory; sustained pressure on the
+            free/Micro tier is the compute-tier trigger (SCALING.md → Database
+            compute tier).
+
+      # --- Disk pressure ---------------------------------------------------
+      # Watch the Postgres DATA volume (`/data`), not the OS root (`/`). On
+      # hosted Supabase the data volume mounts at `/data`; `/` is a packed root
+      # image that idles near-full, so alerting on `/` pages constantly while
+      # the volume that actually fills as the DB grows goes unwatched. Verified
+      # against this project's live metrics (README §0): `/data` and `/` are
+      # distinct `mountpoint`s on `node_filesystem_*`.
+      - alert: ReadmoDBDiskHigh
+        expr: >-
+          (1 - node_filesystem_avail_bytes{service_type="db",mountpoint="/data"}
+             / node_filesystem_size_bytes{service_type="db",mountpoint="/data"}) * 100 > 85
+        for: 15m
+        labels:
+          severity: warning
+          service: readmo-db
+        annotations:
+          summary: "DB disk >85% full"
+          description: >-
+            The Postgres data volume (`/data`) on the database host is over 85%
+            full. Verify the `mountpoint` label matches your project (README.md).
+          runbook: >-
+            Find the growth: table/index sizes, then the retention passes that
+            bound them (the poller's prune_ai_call_log, item retention). Disk is
+            the one that does not recover on its own.
+
+      # --- Connection-pool starvation: clients WAITING for a connection ----
+      # This project exposes NO supavisor_* metrics (verified against the live
+      # Metrics API, README §0); its pooler is PgBouncer and PostgREST keeps its
+      # own DB pool. readmo's request path is client → PostgREST → Postgres, so a
+      # PostgREST pool TIMEOUT is a user-facing connection starvation: a request
+      # gave up waiting for a DB connection. (Lower-level pooler view, if you
+      # prefer it: pgbouncer_pools_client_maxwait_seconds — longest current wait.)
+      - alert: ReadmoDBConnectionPoolStarved
+        expr: rate(pgrst_db_pool_timeouts_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: readmo-db
+        annotations:
+          summary: "PostgREST DB-pool timeouts — requests can't get a connection"
+          description: >-
+            PostgREST requests have been timing out acquiring a database
+            connection for 5m: the pool is exhausted and requests are failing.
+          runbook: "Hit db-perf for the long-running pids holding connections."
+
+      # --- Slow queries: queries running longer than they should -----------
+      # MEAN query time DB-WIDE via pg_stat_statements (total time / total
+      # queries; units seconds). Crucially this covers ALL backends — including
+      # the PostgREST path readmo actually uses, which keeps its OWN pool straight
+      # to Postgres and never traverses PgBouncer, so a pgbouncer_stats_* signal
+      # would miss the main production workload. No query-duration HISTOGRAM is
+      # exposed for general traffic (the only one, db_sql_latency_milliseconds, is
+      # the auth server's own queries), so this is a mean, not p95. The `> 1`
+      # guard avoids a divide-by-zero spike when idle. CAVEAT: pg_stat_statements
+      # can evict/reset under churn (conservative — undercounts, won't false-fire);
+      # db-perf is the per-query truth.
+      - alert: ReadmoDBSlowQueries
+        expr: >-
+          sum(rate(pg_stat_statements_total_time_seconds[5m]))
+          / sum(rate(pg_stat_statements_total_queries[5m])) > 0.05
+          and
+          sum(rate(pg_stat_statements_total_queries[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: readmo-db
+        annotations:
+          summary: "Mean query time high — queries slower than they should be"
+          description: >-
+            DB-wide mean query duration (pg_stat_statements) has exceeded 50ms for
+            5m (mean, not p95; all backends incl. PostgREST). Tune the threshold to
+            your workload; use db-perf for the full per-query picture.
+          runbook: "Hit db-perf for the offending pid (active) / queryid (group)."
+
+      # --- Query storm: way more requests/queries than expected ------------
+      # Total API request rate spiking vs. its own recent baseline. Fires only
+      # when BOTH absolutely high (>50/s) AND >3x the last hour, so it stays
+      # quiet at low/normal volume. Absolute floor needs tuning to your traffic.
+      # http_status_codes_total counts ALL API responses (incl. 4xx), so a flood
+      # of rate-limited 429s still trips it.
+      - alert: ReadmoApiRequestStorm
+        expr: >-
+          sum(rate(http_status_codes_total[5m])) > 50
+          and
+          sum(rate(http_status_codes_total[5m]))
+            > 3 * sum(rate(http_status_codes_total[1h]))
+        for: 5m
+        labels:
+          severity: warning
+          service: readmo-db
+        annotations:
+          summary: "API request storm — request rate >3x the last hour (and >50/s)"
+          description: >-
+            Inbound API request rate is well above its recent baseline. Could be
+            a refetch loop / runaway client (SCALING.md → Shedding an abusive or
+            runaway client) or a genuine traffic spike.
+          runbook: >-
+            Per-CLIENT attribution (which IP/token) is NOT in this metric — check
+            the Cloudflare gateway analytics / Supabase API logs. Per-FUNCTION
+            attribution (which queryid is being hammered) comes from db-perf.
+
+      # --- DB query storm: way more queries than expected ------------------
+      # DB-wide query rate spiking vs. its own recent baseline — complements the
+      # gateway-level ReadmoApiRequestStorm above: this catches query fan-out /
+      # N+1 / a loop hammering Postgres that needn't show as extra API requests.
+      # Uses pg_stat_statements_total_queries so it covers ALL backends incl. the
+      # PostgREST path (which keeps its own pool and bypasses PgBouncer — a
+      # pgbouncer_stats_* signal would miss readmo's real workload). Fires only
+      # when BOTH >100/s AND >3x the last hour, so it stays quiet at normal
+      # volume; tune the absolute floor to your traffic. CAVEAT: per-CLIENT
+      # attribution is not in the Metrics API (readmo's PostgREST traffic shares
+      # one role) — use db-perf for the hot queryid; pg_stat_statements can evict
+      # under churn.
+      - alert: ReadmoDBQueryStorm
+        expr: >-
+          sum(rate(pg_stat_statements_total_queries[5m])) > 100
+          and
+          sum(rate(pg_stat_statements_total_queries[5m]))
+            > 3 * sum(rate(pg_stat_statements_total_queries[1h]))
+        for: 5m
+        labels:
+          severity: warning
+          service: readmo-db
+        annotations:
+          summary: "DB query storm — query rate >3x the last hour (and >100/s)"
+          description: "Postgres is fielding far more queries than its recent baseline."
+          runbook: "Hit db-perf; pg_stat_statements `calls` shows which queryid is hot."
+
+      # --- API erroring: the request path is broken, the DB is not ----------
+      # THE GAP THIS FILLS. Every other rule here watches Postgres, and Postgres
+      # can be perfectly healthy while nobody can reach it: Kong answers, the
+      # connection to PostgREST is refused, and every authenticated read returns
+      # 503 with an upstream-connect error. In that state CPU is low, the query
+      # rate is low, pg_stat_statements is frozen, and the metrics scrape keeps
+      # succeeding — so ReadmoDBUnreachable stays quiet and so does everything
+      # below it. The only thing that moves is the share of API responses that
+      # are 5xx, which is what this watches.
+      # Ratio, not rate: readmo's normal volume is a few thousand requests a day,
+      # far too low for an absolute error rate to mean anything. The small floor
+      # keeps an idle project (where one stray 5xx is 100% of two requests) quiet.
+      # VERIFY the status-code label name against your project before trusting
+      # this one — see the header note; `code` is the common spelling but the
+      # Metrics API is beta and README.md has the curl to dump your live labels.
+      - alert: ReadmoApiErrorsHigh
+        expr: >-
+          sum(rate(http_status_codes_total{code=~"5.."}[5m]))
+          / clamp_min(sum(rate(http_status_codes_total[5m])), 0.001) > 0.5
+          and
+          sum(rate(http_status_codes_total[5m])) > 0.02
+        for: 5m
+        labels:
+          severity: critical
+          # `readmo-db`, not `readmo-api`, even though this watches the API. The
+          # label is a ROUTING key here, not a description: the recommended
+          # Grafana-managed policy (README §2) and alertmanager.yaml's inhibit
+          # rule both match `service=readmo-db`, so a new value would silently
+          # reach no contact point — the exact never-fires failure this rule
+          # exists to catch. It also makes the inhibit rule work in our favor: a
+          # DB-unreachable page correctly mutes this one as its downstream
+          # symptom, rather than paging twice for one incident.
+          service: readmo-db
+        annotations:
+          summary: "API mostly 5xx — the request path is failing"
+          description: >-
+            Over half of API responses have been 5xx for 5m. If DB CPU/query
+            rate are normal, the database is fine and the layer in front of it
+            (PostgREST) is not serving — check status.supabase.com first.
+          runbook: >-
+            Read a 503 body: a PGRST00x code means PostgREST answered (schema
+            cache / DB connection); "upstream connect error … connect error: 111"
+            means nothing was listening and it is Supabase's to fix.
+
+      # --- Transaction aborts: transactions started and thrown away ---------
+      # pg_stat_database counts every transaction that ended in ROLLBACK,
+      # including ones no query error explains — a client disconnecting
+      # mid-transaction, or a request that opens a transaction and abandons it
+      # before issuing a statement. A healthy readmo commits nearly everything it
+      # starts (poller upserts, outbox writes, ordinary reads).
+      # WHY NOTHING ELSE CATCHES THIS. A statement that dies before it is
+      # assigned a queryid is never recorded by pg_stat_statements, so the query
+      # rate and mean-duration rules stay flat while the abort count climbs; the
+      # work is cheap per transaction, so CPU stays low too. Ratio + absolute
+      # floor so an idle database's handful of background rollbacks can't fire it.
+      - alert: ReadmoDBTransactionAbortStorm
+        expr: >-
+          sum(rate(pg_stat_database_xact_rollback[5m]))
+          / clamp_min(
+              sum(rate(pg_stat_database_xact_rollback[5m]))
+              + sum(rate(pg_stat_database_xact_commit[5m])), 0.001
+            ) > 0.5
+          and
+          sum(rate(pg_stat_database_xact_rollback[5m])) > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: readmo-db
+        annotations:
+          summary: "Most transactions are aborting, not committing"
+          description: >-
+            Over half of transactions have rolled back for 10m at >5/s. Something
+            is opening transactions and abandoning them; pg_stat_statements will
+            not show the statement if it died before parse-analysis.
+          runbook: >-
+            Snapshot pg_stat_activity WHILE IT RUNS (state, wait_event, query) —
+            the counters are cumulative and tell you nothing once it stops.

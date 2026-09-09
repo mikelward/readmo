@@ -1,0 +1,754 @@
+// A minimal in-memory stand-in for the supabase-js client, just enough to drive
+// SupabaseDataSource's read/write surface in tests: the PostgREST query-builder
+// chain used by the data source (select/in/not/eq/ilike/order/range/limit/
+// maybeSingle, plus update/upsert/delete) and functions.invoke. NOT a faithful
+// PostgREST emulation — it applies the same filters the data source issues so we
+// can assert mapping, ordering, filtering, pagination, and dispatch.
+
+import { TTL_MS } from '../types';
+
+type Row = Record<string, unknown>;
+
+interface OrderSpec {
+  col: string;
+  ascending: boolean;
+  nullsFirst: boolean;
+}
+
+export interface FakeTables {
+  [table: string]: Row[];
+}
+
+export interface InvokeCall {
+  name: string;
+  body: unknown;
+  /** Present only when the caller passed a non-default HTTP method (e.g. the
+   * newshacker-sync reverse pull uses GET). Omitted for the common POST path so
+   * existing `toContainEqual({ name, body })` assertions still match. */
+  method?: string;
+}
+
+function parseInList(value: string): Set<string> {
+  // value looks like "(a,b,c)"
+  const inner = value.replace(/^\(/, '').replace(/\)$/, '');
+  return new Set(inner.length ? inner.split(',') : []);
+}
+
+function likeToContains(pattern: string): string {
+  // "%foo%" → "foo"; unescape the \%, \_, \\ the data source adds.
+  return pattern
+    .replace(/^%/, '')
+    .replace(/%$/, '')
+    .replace(/\\([\\%_])/g, '$1')
+    .toLowerCase();
+}
+
+class FakeQuery implements PromiseLike<{ data: unknown; count: number | null; error: unknown }> {
+  private rows: Row[];
+  private filters: Array<(r: Row) => boolean> = [];
+  private orders: OrderSpec[] = [];
+  private rangeBounds: [number, number] | null = null;
+  private limitN: number | null = null;
+  private single = false;
+  private wantCount = false;
+
+  // write modes
+  private mode: 'select' | 'update' | 'upsert' | 'delete' = 'select';
+  private patch: Row | null = null;
+  private onConflictCol: string | null = null;
+  /** The projection this query asked for, for namedMissingColumn. */
+  private selectedCols: string | undefined;
+
+  constructor(
+    private readonly table: string,
+    private readonly store: FakeTables,
+    private readonly control: {
+      /** Tables whose next select() should error once. The mapped value is the
+       * error object to surface (e.g. `{ code: '42703' }` to model an
+       * undefined-column / pre-migration backend); `undefined` → a default
+       * `{ message }` error. */
+      failSelectOnce: Map<string, unknown>;
+      /** Tables whose next update() should error once. Same shape as
+       * failSelectOnce — used to model an undefined-column write against a
+       * pre-migration backend. */
+      failUpdateOnce: Map<string, unknown>;
+      /** Columns a table does NOT have, modeling a backend that hasn't run a
+       * migration yet. Unlike failSelectOnce this is PERMANENT and
+       * content-aware: every select naming one errors 42703 and every write
+       * carrying one errors PGRST204, exactly as PostgREST does — which is what
+       * a client that probes DOWN a projection ladder needs, since a one-shot
+       * error would let its second probe "succeed" on a projection the real
+       * backend would also reject. */
+      missingColumns: Map<string, Set<string>>;
+      ignoreNotIn: boolean;
+      selectCounts: Map<string, number>;
+      /** Last `select(cols)` projection string requested per table (lets tests
+       * assert which columns a read asks PostgREST for). */
+      selectCols: Map<string, string | undefined>;
+      /** Per-table server-side row cap, modeling PostgREST's max-rows ceiling.
+       * Applied after range/limit so a `.range()`-paged read still sees each
+       * page truncated to the cap, exactly like the real server. */
+      maxRows: Map<string, number>;
+    },
+  ) {
+    this.rows = store[table] ?? [];
+  }
+
+  select(cols?: string, opts?: { count?: string }): this {
+    this.mode = 'select';
+    this.selectedCols = cols;
+    this.control.selectCols.set(this.table, cols);
+    if (opts?.count) this.wantCount = true;
+    return this;
+  }
+
+  update(patch: Row): this {
+    this.mode = 'update';
+    this.patch = patch;
+    return this;
+  }
+
+  upsert(row: Row, opts?: { onConflict?: string }): this {
+    this.mode = 'upsert';
+    this.patch = row;
+    this.onConflictCol = opts?.onConflict ?? null;
+    return this;
+  }
+
+  delete(): this {
+    this.mode = 'delete';
+    return this;
+  }
+
+  in(col: string, vals: unknown[]): this {
+    const set = new Set(vals);
+    this.filters.push((r) => set.has(r[col]));
+    return this;
+  }
+
+  not(col: string, op: string, value: string): this {
+    // Simulate the server skipping the `not in` filter (e.g. exclusion set over
+    // the cap), so the data source's client-side floor can be exercised.
+    if (this.control.ignoreNotIn) return this;
+    if (op === 'in') {
+      const set = parseInList(value);
+      this.filters.push((r) => !set.has(String(r[col])));
+    }
+    return this;
+  }
+
+  /** PostgREST `or=(a,b,c)` — a disjunction of `col.op.value` terms, matching
+   * ANY of them. Only the operators the app actually sends are implemented, and
+   * an unrecognized one THROWS rather than being ignored: a silently-skipped
+   * term would turn a filtered read into an unfiltered one, and every test
+   * asserting the filter would keep passing while the real query changed
+   * meaning. */
+  or(spec: string): this {
+    const terms = spec.split(',').map((term) => {
+      // Split into exactly three parts — an ISO timestamp value contains its own
+      // ':' and '-' but no ',', so only the first two dots are separators.
+      const first = term.indexOf('.');
+      const second = term.indexOf('.', first + 1);
+      if (first === -1 || second === -1) {
+        throw new Error(`fake supabase: unparsable or() term "${term}"`);
+      }
+      const col = term.slice(0, first);
+      const op = term.slice(first + 1, second);
+      const value = term.slice(second + 1);
+      if (op === 'is') {
+        const want = value === 'true' ? true : value === 'false' ? false : null;
+        return (r: Row) => r[col] === want;
+      }
+      if (op === 'gte') {
+        const bound = Date.parse(value);
+        return (r: Row) => {
+          const v = r[col];
+          // A NULL clock is not >= anything, exactly as in SQL.
+          if (v === null || v === undefined) return false;
+          return Date.parse(String(v)) >= bound;
+        };
+      }
+      throw new Error(`fake supabase: unsupported or() operator "${op}"`);
+    });
+    this.filters.push((r) => terms.some((t) => t(r)));
+    return this;
+  }
+
+  eq(col: string, val: unknown): this {
+    this.filters.push((r) => r[col] === val);
+    return this;
+  }
+
+  /** `>=` on a timestamptz column — the incremental hydrate's cursor filter.
+   * Date-compared (not string-compared) so a fixture written with a different
+   * ISO precision than the code produces still orders correctly. A NULL is not
+   * `>=` anything, as in SQL. */
+  gte(col: string, val: unknown): this {
+    const bound = Date.parse(String(val));
+    this.filters.push((r) => {
+      const v = r[col];
+      if (v === null || v === undefined) return false;
+      return Date.parse(String(v)) >= bound;
+    });
+    return this;
+  }
+
+  gt(col: string, val: unknown): this {
+    // String comparison matches how uuid/text columns order in the real DB for
+    // the canonical ids these tests use — consistent with `order(col)` below, so
+    // keyset pagination (`.gt(lastId).order(id).limit(n)`) pages correctly.
+    this.filters.push((r) => String(r[col]) > String(val));
+    return this;
+  }
+
+  ilike(col: string, pattern: string): this {
+    const needle = likeToContains(pattern);
+    this.filters.push((r) => String(r[col] ?? '').toLowerCase().includes(needle));
+    return this;
+  }
+
+  order(col: string, opts?: { ascending?: boolean; nullsFirst?: boolean }): this {
+    this.orders.push({
+      col,
+      ascending: opts?.ascending ?? true,
+      nullsFirst: opts?.nullsFirst ?? false,
+    });
+    return this;
+  }
+
+  range(from: number, to: number): this {
+    this.rangeBounds = [from, to];
+    return this;
+  }
+
+  limit(n: number): this {
+    this.limitN = n;
+    return this;
+  }
+
+  maybeSingle(): this {
+    this.single = true;
+    return this;
+  }
+
+  private filtered(): Row[] {
+    return this.rows.filter((r) => this.filters.every((f) => f(r)));
+  }
+
+  // Emulates the `sort_at` generated column (coalesce(published_at, created_at)).
+  private valueOf(row: Row, col: string): unknown {
+    if (col === 'sort_at') return row.published_at ?? row.created_at;
+    return row[col];
+  }
+
+  private sorted(rows: Row[]): Row[] {
+    if (this.orders.length === 0) return rows;
+    return [...rows].sort((a, b) => {
+      for (const { col, ascending, nullsFirst } of this.orders) {
+        const av = this.valueOf(a, col);
+        const bv = this.valueOf(b, col);
+        const aNull = av === null || av === undefined;
+        const bNull = bv === null || bv === undefined;
+        if (aNull || bNull) {
+          if (aNull && bNull) continue;
+          return (aNull ? -1 : 1) * (nullsFirst ? 1 : -1) * 1;
+        }
+        let c: number;
+        if (col.endsWith('_at') || col === 'published_at') {
+          c = Date.parse(String(av)) - Date.parse(String(bv));
+        } else if (typeof av === 'number' && typeof bv === 'number') {
+          c = av - bv;
+        } else {
+          c = String(av) < String(bv) ? -1 : String(av) > String(bv) ? 1 : 0;
+        }
+        if (c !== 0) return ascending ? c : -c;
+      }
+      return 0;
+    });
+  }
+
+  then<R1 = { data: unknown; count: number | null; error: unknown }, R2 = never>(
+    onfulfilled?: ((v: { data: unknown; count: number | null; error: unknown }) => R1 | PromiseLike<R1>) | null,
+    onrejected?: ((reason: unknown) => R2 | PromiseLike<R2>) | null,
+  ): PromiseLike<R1 | R2> {
+    return Promise.resolve(this.run()).then(onfulfilled, onrejected);
+  }
+
+  /** The first column this request touches that the table doesn't have, or
+   * null. Reads are checked against the requested projection, writes against
+   * the payload's own keys — a write only fails on a column it actually
+   * carries, which is what lets an older setting still sync (guardrail #11). */
+  private namedMissingColumn(): string | null {
+    const absent = this.control.missingColumns.get(this.table);
+    if (!absent || absent.size === 0) return null;
+    if (this.mode === 'select') {
+      const cols = this.selectedCols;
+      if (!cols || cols.trim() === '*') return null;
+      const named = new Set(cols.split(',').map((c) => c.trim()));
+      for (const col of absent) if (named.has(col)) return col;
+      return null;
+    }
+    const payload = this.patch;
+    if (!payload) return null;
+    const rows = Array.isArray(payload) ? payload : [payload];
+    for (const row of rows) {
+      for (const col of absent) {
+        if (Object.prototype.hasOwnProperty.call(row as object, col)) return col;
+      }
+    }
+    return null;
+  }
+
+  private run(): { data: unknown; count: number | null; error: unknown } {
+    if (this.mode === 'delete') {
+      const survivors = this.rows.filter((r) => !this.filters.every((f) => f(r)));
+      this.store[this.table] = survivors;
+      return { data: null, count: null, error: null };
+    }
+    if (this.mode === 'update') {
+      if (this.control.failUpdateOnce.has(this.table)) {
+        const injected = this.control.failUpdateOnce.get(this.table);
+        this.control.failUpdateOnce.delete(this.table);
+        return {
+          data: null,
+          count: null,
+          error: injected ?? { message: `injected update error for ${this.table}` },
+        };
+      }
+      const absentWrite = this.namedMissingColumn();
+      if (absentWrite) {
+        return {
+          data: null,
+          count: null,
+          error: {
+            code: 'PGRST204',
+            message: `Could not find the '${absentWrite}' column of '${this.table}' in the schema cache`,
+          },
+        };
+      }
+      for (const r of this.filtered()) Object.assign(r, this.patch);
+      return { data: null, count: null, error: null };
+    }
+    if (this.mode === 'upsert') {
+      // Shares failUpdateOnce so a test can model a failed/pre-migration write.
+      if (this.control.failUpdateOnce.has(this.table)) {
+        const injected = this.control.failUpdateOnce.get(this.table);
+        this.control.failUpdateOnce.delete(this.table);
+        return {
+          data: null,
+          count: null,
+          error: injected ?? { message: `injected upsert error for ${this.table}` },
+        };
+      }
+      const absentUpsert = this.namedMissingColumn();
+      if (absentUpsert) {
+        return {
+          data: null,
+          count: null,
+          error: {
+            code: 'PGRST204',
+            message: `Could not find the '${absentUpsert}' column of '${this.table}' in the schema cache`,
+          },
+        };
+      }
+      const rows = (this.store[this.table] ??= []);
+      // Merge semantics (Prefer: resolution=merge-duplicates). When the payload
+      // omits the conflict column — the DB fills it via a column default, e.g.
+      // user_settings.user_id defaulting to auth.uid() — the fake models the
+      // resulting one-row-per-caller shape by merging into the sole existing row.
+      const key = this.onConflictCol ? this.patch![this.onConflictCol] : undefined;
+      const match =
+        key !== undefined
+          ? rows.find((r) => r[this.onConflictCol!] === key)
+          : rows[0];
+      if (match) Object.assign(match, this.patch);
+      else rows.push({ ...this.patch });
+      return { data: null, count: null, error: null };
+    }
+    // Count select requests per table (lets tests prove `in (…)` chunking).
+    this.control.selectCounts.set(
+      this.table,
+      (this.control.selectCounts.get(this.table) ?? 0) + 1,
+    );
+    // One-shot injected failure for the next select on this table.
+    if (this.control.failSelectOnce.has(this.table)) {
+      const injected = this.control.failSelectOnce.get(this.table);
+      this.control.failSelectOnce.delete(this.table);
+      return {
+        data: null,
+        count: null,
+        error: injected ?? { message: `injected error for ${this.table}` },
+      };
+    }
+    // A column the table doesn't have fails the WHOLE row, as PostgREST does —
+    // an explicit projection naming it is a hard 42703, however many other
+    // columns it asks for.
+    const absentRead = this.namedMissingColumn();
+    if (absentRead) {
+      return {
+        data: null,
+        count: null,
+        error: {
+          code: '42703',
+          message: `column ${this.table}.${absentRead} does not exist`,
+        },
+      };
+    }
+    const matched = this.filtered();
+    const count = this.wantCount ? matched.length : null;
+    let out = this.sorted(matched);
+    if (this.rangeBounds) {
+      const [from, to] = this.rangeBounds;
+      out = out.slice(from, to + 1);
+    } else if (this.limitN !== null) {
+      out = out.slice(0, this.limitN);
+    }
+    // PostgREST caps a response at its configured max-rows ceiling — applied
+    // last, so even a `.range()`-paged read gets each page truncated to the cap.
+    const cap = this.control.maxRows.get(this.table);
+    if (cap !== undefined && out.length > cap) out = out.slice(0, cap);
+    if (this.single) {
+      return { data: out[0] ?? null, count, error: null };
+    }
+    return { data: out, count, error: null };
+  }
+}
+
+/** Emulate the RPCs (0006_feed_rpcs.sql + set_item_state) against the seeded
+ * tables: drive from subscriptions, LEFT JOIN item_state, build the combined
+ * Pinned-then-body sequence ordered like the SQL, and page it. set_item_state
+ * upserts store.item_state so a write-through is visible to later reads. */
+function runRpc(
+  store: FakeTables,
+  rpcCalls: Array<{ name: string; params: Record<string, unknown> }>,
+  name: string,
+  params: Record<string, unknown>,
+): { data: unknown; error: unknown } {
+  rpcCalls.push({ name, params });
+  const items = store.items ?? [];
+  const subs = (store.subscriptions ??= []);
+  const states = (store.item_state ??= []);
+  const subByFeed = new Map(subs.map((s) => [s.feed_id, s]));
+  const stateByItem = new Map(states.map((s) => [s.item_id, s]));
+
+  if (name === 'set_item_state') {
+    const itemId = params.p_item_id as string;
+    const fields = ['pinned', 'favorite', 'done', 'hidden', 'opened'] as const;
+    let row = stateByItem.get(itemId);
+    if (!row) {
+      row = {
+        item_id: itemId,
+        pinned: false, pinned_at: null,
+        favorite: false, favorite_at: null,
+        done: false, done_at: null,
+        hidden: false, hidden_at: null,
+        opened: false, opened_at: null,
+        updated_at: null,
+      };
+      states.push(row);
+    }
+    // Per-field last-write-wins (mirrors the set_item_state migration): apply a
+    // field only when its incoming action time `p_<f>_at` is at least the stored
+    // one, and record that time as the field's last-change clock (kept even when
+    // the field goes false so a later stale write still loses). The client always
+    // sends an exclusivity-closed diff, so this lands on a consistent state with
+    // no server-side pin/done/hidden re-derivation.
+    for (const f of fields) {
+      const v = params[`p_${f}`];
+      if (typeof v !== 'boolean') continue;
+      const atIso = params[`p_${f}_at`] as string | undefined;
+      const at = atIso ? Date.parse(atIso) : Date.now();
+      const curIso = row[`${f}_at`] as string | null | undefined;
+      const curAt = curIso ? Date.parse(curIso) : null;
+      if (curAt !== null && at < curAt) continue; // stale write loses
+      row[f] = v;
+      row[`${f}_at`] = atIso ?? new Date(at).toISOString();
+      // Mirror 0070's BEFORE trigger: any write stamps the server-side change
+      // clock, so an incremental hydrate can see this row past its cursor.
+      row.updated_at = new Date().toISOString();
+    }
+    return { data: row, error: null };
+  }
+
+  if (name === 'reorder_subscriptions') {
+    // Atomic reorder (0017): set each named subscription's sort to its position.
+    const feedIds = (params.p_feed_ids ?? []) as string[];
+    feedIds.forEach((feedId, i) => {
+      const s = subByFeed.get(feedId);
+      if (s) s.sort = i;
+    });
+    return { data: null, error: null };
+  }
+
+  if (name === 'subscribe_to_feed') {
+    // Find-or-create by the public address (the fake matches on site_url), then
+    // subscribe; returns the feeds_public row (setof → array).
+    const url = String(params.p_url ?? '');
+    const folder = (params.p_folder ?? null) as string | null;
+    const feedsPublic = (store.feeds_public ??= []);
+    let row = feedsPublic.find((r) => r.site_url === url);
+    if (!row) {
+      let id = 'feed-new';
+      for (let n = 2; feedsPublic.some((r) => r.id === id); n++) id = `feed-new-${n}`;
+      row = {
+        id, site_url: url, title: url, error_count: 0, last_error: null,
+        last_fetched_at: null, next_fetch_at: null, fetch_interval_s: 1800, created_at: null,
+      };
+      feedsPublic.push(row);
+    }
+    if (!subs.some((s) => s.feed_id === row!.id)) {
+      const sort = subs.reduce((m, s) => Math.max(m, Number(s.sort ?? 0)), -1) + 1;
+      subs.push({ feed_id: row.id, folder, title_override: null, muted: false, sort });
+    }
+    return { data: [row], error: null };
+  }
+
+  if (name === 'feed_unread_counts') {
+    // Per-feed unread count: subscribed-feed items that are not Done, active
+    // Hidden, or active Opened (each TTL'd at 30 days). Like this fake's
+    // feed_items, it omits the window/floor bound — valid for the small seeds
+    // tests use (every item is within the per-feed floor), and consistent with
+    // the mock's count for those seeds.
+    const wanted = new Set((params.p_feed_ids ?? []) as string[]);
+    // Same NULL semantics as feed_items' doneActive/hiddenActive: a flagged
+    // row with no timestamp makes the SQL count-filter condition NULL, which
+    // excludes the item from the unread count — mirror that here.
+    const activeFlag = (st: Row | undefined, flag: string, at: string) =>
+      Boolean(st?.[flag]) &&
+      (typeof st?.[at] !== 'string' ||
+        Date.now() - Date.parse(st[at] as string) <= TTL_MS);
+    const counts = new Map<string, number>();
+    for (const id of wanted) counts.set(id, 0);
+    for (const it of items) {
+      const fid = it.feed_id as string;
+      if (!wanted.has(fid) || !subByFeed.has(fid)) continue;
+      const st = stateByItem.get(it.id as string);
+      // A pinned item always counts (a pin is a to-do, read or not); other
+      // items drop out once Done, active Hidden, or active Opened.
+      if (
+        activeFlag(st, 'done', 'done_at') ||
+        activeFlag(st, 'hidden', 'hidden_at') ||
+        (!st?.pinned && activeFlag(st, 'opened', 'opened_at'))
+      ) {
+        continue;
+      }
+      counts.set(fid, (counts.get(fid) ?? 0) + 1);
+    }
+    return {
+      data: [...counts].map(([feed_id, n]) => ({ feed_id, n })),
+      error: null,
+    };
+  }
+
+  const scope = params.p_scope as string;
+  const folder = (params.p_folder ?? null) as string | null;
+  const feedId = (params.p_feed_id ?? null) as string | null;
+  const inScope = (feed_id: unknown): boolean => {
+    const s = subByFeed.get(feed_id as string);
+    if (!s) return false;
+    if (scope === 'home') return !s.muted;
+    if (scope === 'folder') return !s.muted && (s.folder ?? null) === folder;
+    if (scope === 'feed') return feed_id === feedId;
+    return false;
+  };
+  const sortMs = (it: Row) =>
+    Date.parse(String(it.published_at ?? it.created_at ?? '')) || 0;
+  const pinMs = (it: Row) => {
+    const st = stateByItem.get(it.id as string);
+    return st?.pinned_at ? Date.parse(String(st.pinned_at)) : Infinity;
+  };
+  const idDesc = (a: Row, b: Row) => (String(a.id) < String(b.id) ? 1 : String(a.id) > String(b.id) ? -1 : 0);
+
+  if (name === 'feed_items') {
+    const limit = Math.max(Number(params.p_limit ?? 30), 0);
+    const offset = Math.max(Number(params.p_offset ?? 0), 0);
+    // Mirror 0016_feed_items_sort_group.sql: p_sort flips the body order;
+    // p_group_by_feed sections by the subscription `sort` with each feed's
+    // pinned items at the top of its section (flat keeps a global pinned top).
+    const sortAsc = params.p_sort === 'oldest';
+    const groupByFeed = Boolean(params.p_group_by_feed);
+    // Grouping only: cap each feed's section to its newest this-many rows (0021).
+    const perFeedLimit =
+      groupByFeed && params.p_per_feed_limit != null
+        ? Math.max(Number(params.p_per_feed_limit), 0)
+        : null;
+    // Done/Hidden expire after the 30-day TTL — an expired flag re-enters the
+    // body, exactly like the real RPC (`flag_at > now() - interval '30 days'`).
+    // A flagged row with NO timestamp stays filtered: in SQL the conjunction
+    // `coalesce(flag,false) and flag_at > …` is NULL, and the body's
+    // `not is_done and not is_hidden` drops a NULL — so a timestamp-less
+    // fixture row must not surface here either.
+    const hiddenActive = (st: Row | undefined) =>
+      Boolean(st?.hidden) &&
+      (typeof st?.hidden_at !== 'string' ||
+        Date.now() - Date.parse(st.hidden_at) <= TTL_MS);
+    const doneActive = (st: Row | undefined) =>
+      Boolean(st?.done) &&
+      (typeof st?.done_at !== 'string' ||
+        Date.now() - Date.parse(st.done_at) <= TTL_MS);
+    const isPinned = (it: Row) => Boolean(stateByItem.get(it.id as string)?.pinned);
+    const feedSort = (it: Row) =>
+      Number(subByFeed.get(it.feed_id as string)?.sort ?? Number.POSITIVE_INFINITY);
+    const combined = items
+      .filter((it) => inScope(it.feed_id))
+      .filter((it) => {
+        // Pinned rows are kept regardless; the body drops active-Done/Hidden.
+        if (isPinned(it)) return true;
+        const st = stateByItem.get(it.id as string);
+        return !(st && (doneActive(st) || hiddenActive(st)));
+      })
+      .sort((a, b) => {
+        if (groupByFeed) {
+          const fa = feedSort(a);
+          const fb = feedSort(b);
+          if (fa !== fb) return fa - fb;
+          // Tie on the sort ordinal → keep each feed's rows contiguous by id
+          // (mirrors 0021's feed_id tiebreak in the final ORDER BY), so a section
+          // never splits into interleaved runs.
+          if (a.feed_id !== b.feed_id) {
+            return String(a.feed_id) < String(b.feed_id) ? -1 : 1;
+          }
+        }
+        const pa = isPinned(a);
+        const pb = isPinned(b);
+        if (pa !== pb) return pa ? -1 : 1;
+        if (pa) return pinMs(a) - pinMs(b) || idDesc(a, b); // oldest pin first
+        const d = sortMs(a) - sortMs(b);
+        return (sortAsc ? d : -d) || idDesc(a, b);
+      });
+    // Per-feed window: combined is already sectioned by feed (contiguous), so
+    // keep each feed run's first `perFeedLimit` BODY rows. Pinned rows are
+    // exempt from the window — a section is its full pinned block plus the
+    // body window. Mirrors 0052's row_number partition-by-(feed, pin_rank) cap.
+    const windowed =
+      perFeedLimit != null
+        ? (() => {
+            const seen = new Map<string, number>();
+            const out: Row[] = [];
+            for (const it of combined) {
+              if (isPinned(it)) {
+                out.push(it);
+                continue;
+              }
+              const fid = it.feed_id as string;
+              const n = seen.get(fid) ?? 0;
+              if (n >= perFeedLimit) continue;
+              seen.set(fid, n + 1);
+              out.push(it);
+            }
+            return out;
+          })()
+        : combined;
+    return {
+      data: windowed.slice(offset, offset + limit),
+      error: null,
+    };
+  }
+  // PostgREST reports a call to a function that doesn't exist as PGRST202 — the
+  // code SupabaseDataSource.getCapabilities feature-detects an old backend on.
+  return { data: null, error: { code: 'PGRST202', message: `unknown rpc ${name}` } };
+}
+
+export function makeFakeSupabase(tables: FakeTables): {
+  client: {
+    from: (table: string) => FakeQuery;
+    rpc: (name: string, params?: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }>;
+    functions: { invoke: (name: string, opts?: { body?: unknown; method?: string }) => Promise<{ data: unknown; error: unknown }> };
+  };
+  store: FakeTables;
+  invokeCalls: InvokeCall[];
+  invokeResult: { current: { data: unknown; error: unknown } };
+  /** A queue of results returned by successive `functions.invoke` calls, ahead of
+   * `invokeResult.current`. Push one entry per expected call to model a retry
+   * (first call fails transiently, second succeeds); once drained, invoke falls
+   * back to `invokeResult.current`. Empty by default. */
+  invokeResultQueue: Array<{ data: unknown; error: unknown }>;
+  /** Make the next `select` on `table` return an error once (transient-failure
+   * simulation). Pass `error` to control what's surfaced — e.g.
+   * `{ code: '42703' }` to model an undefined-column / pre-migration backend. */
+  failSelectOnce: (table: string, error?: unknown) => void;
+  /** Make the next `update` on `table` return an error once. Pass `error` to
+   * control what's surfaced (e.g. `{ code: '42703' }` for a missing column). */
+  failUpdateOnce: (table: string, error?: unknown) => void;
+  /** Model a pre-migration backend: `table` permanently lacks `columns`, so any
+   * select naming one fails 42703 and any write carrying one fails PGRST204. */
+  missingColumns: (table: string, columns: string[]) => void;
+  /** The operator running `make migrate` mid-session: `table` gains `columns`
+   * back, so a client whose memo has expired can re-probe and find them. */
+  addColumns: (table: string, columns: string[]) => void;
+  /** Make `.not('…','in',…)` a no-op, simulating the server-side exclusion filter
+   * being skipped (exclusion set over the cap). */
+  ignoreNotInFilter: () => void;
+  /** Cap every `select` on `table` to `n` rows, modeling PostgREST's max-rows
+   * response ceiling (so a paged read must `.range()` past it to see everything). */
+  capRows: (table: string, n: number) => void;
+  /** Number of `select` requests issued against `table` (proves `in (…)`
+   * chunking — N batches => N requests). */
+  selectCount: (table: string) => number;
+  /** The column projection string from the last `select()` on `table` (proves a
+   * read excludes a sensitive column like `full_content_html`). */
+  lastSelectCols: (table: string) => string | undefined;
+  /** Every `.rpc(name, params)` call, in order (for asserting write-through). */
+  rpcCalls: Array<{ name: string; params: Record<string, unknown> }>;
+} {
+  const store: FakeTables = {};
+  for (const [k, v] of Object.entries(tables)) store[k] = v.map((r) => ({ ...r }));
+  const invokeCalls: InvokeCall[] = [];
+  const rpcCalls: Array<{ name: string; params: Record<string, unknown> }> = [];
+  const invokeResult = { current: { data: null as unknown, error: null as unknown } };
+  const invokeResultQueue: Array<{ data: unknown; error: unknown }> = [];
+  const control = {
+    failSelectOnce: new Map<string, unknown>(),
+    failUpdateOnce: new Map<string, unknown>(),
+    missingColumns: new Map<string, Set<string>>(),
+    ignoreNotIn: false,
+    selectCounts: new Map<string, number>(),
+    selectCols: new Map<string, string | undefined>(),
+    maxRows: new Map<string, number>(),
+  };
+
+  return {
+    store,
+    invokeCalls,
+    rpcCalls,
+    invokeResult,
+    invokeResultQueue,
+    failSelectOnce: (table: string, error?: unknown) =>
+      control.failSelectOnce.set(table, error),
+    failUpdateOnce: (table: string, error?: unknown) =>
+      control.failUpdateOnce.set(table, error),
+    missingColumns: (table: string, columns: string[]) => {
+      const set = control.missingColumns.get(table) ?? new Set<string>();
+      for (const c of columns) set.add(c);
+      control.missingColumns.set(table, set);
+    },
+    addColumns: (table: string, columns: string[]) => {
+      const set = control.missingColumns.get(table);
+      if (!set) return;
+      for (const c of columns) set.delete(c);
+    },
+    ignoreNotInFilter: () => {
+      control.ignoreNotIn = true;
+    },
+    capRows: (table: string, n: number) => control.maxRows.set(table, n),
+    selectCount: (table: string) => control.selectCounts.get(table) ?? 0,
+    lastSelectCols: (table: string) => control.selectCols.get(table),
+    client: {
+      from: (table: string) => new FakeQuery(table, store, control),
+      rpc: (name: string, params?: Record<string, unknown>) => ({
+        then: <R1, R2>(
+          onF?: ((v: { data: unknown; error: unknown }) => R1 | PromiseLike<R1>) | null,
+          onR?: ((reason: unknown) => R2 | PromiseLike<R2>) | null,
+        ) => Promise.resolve(runRpc(store, rpcCalls, name, params ?? {})).then(onF, onR),
+      }),
+      functions: {
+        invoke: async (name: string, opts?: { body?: unknown; method?: string }) => {
+          const call: InvokeCall = { name, body: opts?.body };
+          if (opts?.method !== undefined) call.method = opts.method;
+          invokeCalls.push(call);
+          return invokeResultQueue.length ? invokeResultQueue.shift()! : invokeResult.current;
+        },
+      },
+    },
+  };
+}

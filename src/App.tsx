@@ -1,0 +1,186 @@
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { lazy, Suspense, type ReactNode } from 'react';
+import { AppHeader } from './components/AppHeader';
+import { AppUpdateWatcher } from './components/AppUpdateWatcher';
+import { ScrollToTop } from './components/ScrollToTop';
+import { ListScrollRestore } from './components/ListScrollRestore';
+import { KeyboardShortcutsOverlay } from './components/KeyboardShortcutsOverlay';
+import { FeedBarProvider } from './components/FeedBarContext';
+import { useAuth } from './hooks/useAuth';
+import { useUserCacheScope } from './hooks/useUserCacheScope';
+import { useOfflineCacheLock } from './hooks/useOfflineCacheLock';
+import { useSummaryPrewarm } from './hooks/useSummaryPrewarm';
+import { useSavedSummarySeed } from './hooks/useSavedSummarySeed';
+import { useFeedInvalidation } from './hooks/useFeedInvalidation';
+import { useStateSync } from './hooks/useStateSync';
+import { useSettingsSync } from './hooks/useSettingsSync';
+import { useNewshackerSync } from './hooks/useNewshackerSync';
+import { useOpenModeSnapshotSync } from './hooks/useOpenModeSnapshotSync';
+import { useScrollDiag } from './hooks/useScrollDiag';
+import { usePinchFontSize } from './hooks/usePinchFontSize';
+import { useDebugScrollJumps } from './hooks/useReadingPrefs';
+import { HomePage, FolderPage, FeedPage } from './pages/FeedPages';
+import {
+  PinnedPage,
+  FavoritesPage,
+  DonePage,
+  OpenedPage,
+} from './pages/LibraryPages';
+import { ItemPage } from './pages/ItemPage';
+import { SearchPage } from './pages/SearchPage';
+import { OfflinePage } from './pages/OfflinePage';
+import { SignInPage } from './pages/SignInPage';
+import { SettingsPage } from './pages/SettingsPage';
+import { AdminPage } from './pages/AdminPage';
+import { AdminUsersPage } from './pages/AdminUsersPage';
+import { AdminFeedsPage } from './pages/AdminFeedsPage';
+import { AiCallsPage } from './pages/AiCallsPage';
+import {
+  AdminFeedUsersPage,
+  AdminUserFeedsPage,
+} from './pages/AdminDrilldownPages';
+import { AboutPage } from './pages/AboutPage';
+import { LegalPage } from './pages/LegalPage';
+import { DebugPage } from './pages/DebugPage';
+import { ScrollDiagPage } from './pages/ScrollDiagPage';
+import { NotFoundPage } from './pages/NotFoundPage';
+import { LazyRouteBoundary } from './components/LazyRouteBoundary';
+
+/** The Feeds page carries the curated popular-feeds catalog (the app's largest
+ * static data blob) and is visited rarely, so it's split into its own chunk
+ * loaded on navigation rather than baked into the initial bundle. The service
+ * worker precaches the chunk, so it stays available offline after the first
+ * load. */
+const FeedsPage = lazy(() =>
+  import('./pages/FeedsPage').then((m) => ({ default: m.FeedsPage })),
+);
+
+/** Signed-in gate. First launch with no session routes to /signin; deep links
+ * round-trip through sign-in and then land on the target (SPEC.md *Auth*). */
+function RequireAuth({ children }: { children: ReactNode }) {
+  const { user, initializing } = useAuth();
+  const location = useLocation();
+  if (!user) {
+    // A configured Supabase session may still be settling (e.g. a fresh OAuth
+    // callback whose token is in the URL hash). Hold rather than bounce to
+    // /signin, which would drop the callback and strand the user there.
+    if (initializing) return null;
+    return <Navigate to="/signin" replace state={{ from: location }} />;
+  }
+  return <>{children}</>;
+}
+
+export default function App() {
+  // Keep pinned/favorited items' reader queries cached for offline (lock while
+  // bucketed, evict when neither). Mounted once here so it tracks state app-wide.
+  useOfflineCacheLock();
+  // Pre-warm the AI summary for every pinned item — pinned here, synced from
+  // another device, or restored on boot — the summary sibling of the offline
+  // lock above (which warms the reader body + full text). Cheap cross-device
+  // because the summary is cached server-side; generates at most once per item.
+  useSummaryPrewarm();
+  // Eagerly retain SAVED items' summaries offline — seeds ['summary', id] from
+  // the cached feed row for pinned AND favorited items (the prewarm above only
+  // covers pins), so a favorite never opened online keeps its gist offline.
+  // Cache-only, never a generation.
+  useSavedSummarySeed();
+  // Invalidate feed caches on any state change, even while the feed list is
+  // unmounted (e.g. user marks Done on the reader page then navigates back).
+  useFeedInvalidation();
+  // Re-pull item state when the tab regains focus/visibility or comes back
+  // online, so pins/favorites/done changed on another device sync in.
+  useStateSync();
+  // Same treatment for the synced reading-behavior settings: hydrate on boot,
+  // re-pull on focus/online, push local pref flips (SPEC.md *Settings* scope).
+  useSettingsSync();
+  // Mirror Hacker News dismissals (Done) and pins to newshacker's matching lists
+  // when the account has linked a newshacker token (no-op otherwise). SPEC.md
+  // *Mirror dismissals and pins to newshacker*.
+  useNewshackerSync();
+  // Remember each feed's open mode as the subscriptions read lands, so a row's
+  // first (tappable) frame opens where the reader set it to rather than falling
+  // back to the in-app reader while that read is still in flight. App-wide
+  // because the Feeds page — where the setting is changed — mounts no rows.
+  useOpenModeSnapshotSync();
+  // Scroll-jump diagnostics (off unless the /debug switch is on): record scroll
+  // positions + Done flips and raise a "Done — Report bug" toast on dismiss, so
+  // a jump-to-top can be inspected at /debug/scroll. A no-op while disabled.
+  const { debugScrollJumps } = useDebugScrollJumps();
+  useScrollDiag(debugScrollJumps);
+  // Two-finger pinch anywhere in the app steps the "Text size" ladder, and
+  // holds the mobile viewport lock the meta tag can't hold on iOS. Mounted here
+  // rather than on the reader alone: text size is one app-wide setting, so the
+  // gesture that changes it works on every screen, sign-in included.
+  usePinchFontSize();
+  // Gate rendering across an auth transition: while the previous user's caches
+  // are being purged and the app reloads, paint nothing so the next user can't
+  // briefly see the previous user's cached content (guardrail #8).
+  if (useUserCacheScope()) return null;
+  return (
+    <FeedBarProvider>
+      <AppUpdateWatcher />
+      <ScrollToTop />
+      <ListScrollRestore />
+      <AppHeader />
+      <main className="app-main">
+        <Suspense fallback={null}>
+          <Routes>
+            <Route path="/signin" element={<SignInPage />} />
+            {/* Open to everyone (no auth gate) — informational, no user data. */}
+            <Route path="/about" element={<AboutPage />} />
+            {/* Open to everyone (no auth gate) — policy text only, no user data. */}
+            <Route path="/legal" element={<LegalPage />} />
+            {/* Open to everyone (no auth gate) — diagnostics only, no secrets. */}
+            <Route path="/debug" element={<DebugPage />} />
+            {/* Open to everyone (no auth gate) — scroll-jump timeline, no secrets. */}
+            <Route path="/debug/scroll" element={<ScrollDiagPage />} />
+            <Route
+              path="/*"
+              element={
+                <RequireAuth>
+                  <Routes>
+                    <Route path="/" element={<HomePage />} />
+                    <Route path="/folder/:name" element={<FolderPage />} />
+                    <Route path="/feed/:feedId" element={<FeedPage />} />
+                    <Route path="/pinned" element={<PinnedPage />} />
+                    <Route path="/favorites" element={<FavoritesPage />} />
+                    <Route path="/done" element={<DonePage />} />
+                    <Route path="/opened" element={<OpenedPage />} />
+                    <Route path="/offline" element={<OfflinePage />} />
+                    <Route path="/item/:id" element={<ItemPage />} />
+                    <Route path="/search" element={<SearchPage />} />
+                    <Route path="/settings" element={<SettingsPage />} />
+                    {/* Signed-in routes; the pages gate on the `admin`
+                        capability and the server enforces every read/write. */}
+                    <Route path="/admin" element={<AdminPage />} />
+                    <Route path="/admin/users" element={<AdminUsersPage />} />
+                    <Route
+                      path="/admin/users/:email/feeds"
+                      element={<AdminUserFeedsPage />}
+                    />
+                    <Route path="/admin/feeds" element={<AdminFeedsPage />} />
+                    <Route path="/admin/ai" element={<AiCallsPage />} />
+                    <Route
+                      path="/admin/feeds/:feedId/users"
+                      element={<AdminFeedUsersPage />}
+                    />
+                    <Route
+                      path="/feeds"
+                      element={
+                        <LazyRouteBoundary>
+                          <FeedsPage />
+                        </LazyRouteBoundary>
+                      }
+                    />
+                    <Route path="*" element={<NotFoundPage />} />
+                  </Routes>
+                </RequireAuth>
+              }
+            />
+          </Routes>
+        </Suspense>
+      </main>
+      <KeyboardShortcutsOverlay />
+    </FeedBarProvider>
+  );
+}

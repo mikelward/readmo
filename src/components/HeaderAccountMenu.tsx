@@ -1,0 +1,111 @@
+import { useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../hooks/useAuth';
+import { useCapabilities } from '../hooks/useCapabilities';
+import { usePopoverDismiss } from '../hooks/usePopoverDismiss';
+import { UserAvatar } from './UserAvatar';
+import { TooltipButton } from './TooltipButton';
+import './HeaderAccountMenu.css';
+
+/** Header account chip (far right, every page). Signed out → a "Sign in"
+ * link; signed in → a 32px avatar that opens a small popover with the
+ * display name, Feeds / Settings / About links, and Sign out (SPEC.md
+ * *Auth → Account UI*). */
+export function HeaderAccountMenu() {
+  const { user, signOut } = useAuth();
+  const { family, admin } = useCapabilities();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const navigate = useNavigate();
+
+  // Shared dropdown dismissal: Escape, outside-press, and the first-press-only
+  // swallow — see usePopoverDismiss.
+  usePopoverDismiss({
+    open,
+    onDismiss: () => setOpen(false),
+    isInside: (target) => !!rootRef.current?.contains(target),
+  });
+
+  if (!user) {
+    return (
+      <Link to="/signin" className="account-chip account-chip--signin">
+        Sign in
+      </Link>
+    );
+  }
+
+  return (
+    <div className="account-menu" ref={rootRef}>
+      <TooltipButton
+        type="button"
+        className="account-chip"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        tooltip="Account"
+        aria-label="Account"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <UserAvatar name={user.name} avatarUrl={user.avatarUrl} />
+      </TooltipButton>
+      {open ? (
+        <div className="account-menu__popover" role="menu">
+          <div className="account-menu__identity">
+            <div className="account-menu__name">
+              {user.name}
+              {family ? (
+                <span className="account-menu__badge">FAMILY</span>
+              ) : null}
+            </div>
+            <div className="account-menu__email">{user.email}</div>
+          </div>
+          {admin ? (
+            <Link
+              to="/admin"
+              role="menuitem"
+              className="account-menu__item"
+              onClick={() => setOpen(false)}
+            >
+              Admin
+            </Link>
+          ) : null}
+          <Link
+            to="/feeds"
+            role="menuitem"
+            className="account-menu__item"
+            onClick={() => setOpen(false)}
+          >
+            Feeds
+          </Link>
+          <Link
+            to="/settings"
+            role="menuitem"
+            className="account-menu__item"
+            onClick={() => setOpen(false)}
+          >
+            Settings
+          </Link>
+          <Link
+            to="/about"
+            role="menuitem"
+            className="account-menu__item"
+            onClick={() => setOpen(false)}
+          >
+            About
+          </Link>
+          <button
+            type="button"
+            role="menuitem"
+            className="account-menu__item"
+            onClick={() => {
+              setOpen(false);
+              signOut();
+              navigate('/signin');
+            }}
+          >
+            Sign out
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}

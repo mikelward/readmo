@@ -1,0 +1,345 @@
+-- Access-control regression test for 0004_access_rpcs.sql.
+--
+-- Proves the access-by-UUID escalation (0002_rls.sql TODO(P1)) is closed and
+-- that the SECURITY DEFINER write RPCs grant legitimate access. Plain SQL (no
+-- pgTAP): each check raises NOTICE 'PASS …' on success and raises an EXCEPTION
+-- on failure, so running under psql with ON_ERROR_STOP=1 makes it a hard gate.
+--
+-- Run against a database that already has the Supabase `auth` schema + the
+-- anon/authenticated roles (e.g. local `supabase start` / `supabase db reset`,
+-- then this file). The seed runs as the migration/superuser role, standing in
+-- for the service-role poller that populates shared feeds/items.
+--
+--   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/access_rpcs.sql
+--
+-- Validated locally against PostgreSQL 16 with minimal auth/role shims.
+
+\set ATT  '11111111-1111-1111-1111-111111111111'
+
+-- --- Fresh fixtures (cascades clean up any prior run) -----------------------
+delete from auth.users where id in (
+  '11111111-1111-1111-1111-111111111111',
+  '22222222-2222-2222-2222-222222222222');
+delete from public.feeds where id in (
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'dddddddd-dddd-dddd-dddd-dddddddddddd',
+  'ffffffff-ffff-ffff-ffff-ffffffffffff');
+
+insert into auth.users (id) values
+  ('11111111-1111-1111-1111-111111111111'),  -- attacker
+  ('22222222-2222-2222-2222-222222222222');  -- victim
+-- Private/tokenized feed the attacker must NOT reach without its URL.
+insert into public.feeds (id, url, site_url, title) values
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+   'https://secret.example/token123/feed.xml', 'https://secret.example', 'Private Feed');
+insert into public.items (id, feed_id, guid, title) values
+  ('cccccccc-cccc-cccc-cccc-cccccccccccc',
+   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'guid-1', 'Secret Article');
+-- Public feed + item the attacker WILL reach by pasting its URL.
+insert into public.feeds (id, url, site_url, title) values
+  ('dddddddd-dddd-dddd-dddd-dddddddddddd',
+   'https://public.example/feed.xml', 'https://public.example', 'Public Feed');
+insert into public.items (id, feed_id, guid, title) values
+  ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+   'dddddddd-dddd-dddd-dddd-dddddddddddd', 'guid-2', 'Public Article');
+-- Secret-backed feed: PUBLIC url + a tokenized secret_url that the poller fetches.
+insert into public.feeds (id, url, secret_url, site_url, title) values
+  ('ffffffff-ffff-ffff-ffff-ffffffffffff',
+   'https://news.example/feed', 'https://news.example/feed?token=XYZ',
+   'https://news.example', 'Tokenized Feed');
+insert into public.items (id, feed_id, guid, title) values
+  ('99999999-9999-9999-9999-999999999999',
+   'ffffffff-ffff-ffff-ffff-ffffffffffff', 'guid-3', 'Token-only Article');
+
+-- ===== Test 1: direct INSERT escalation by UUID is BLOCKED (grant revoked) ==
+do $$
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  begin
+    insert into public.subscriptions(user_id, feed_id)
+      values (auth.uid(), 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+    raise exception 'FAIL T1a: direct subscription INSERT succeeded';
+  exception when insufficient_privilege then
+    raise notice 'PASS T1a: direct subscription INSERT denied';
+  end;
+  begin
+    insert into public.item_state(user_id, item_id, pinned)
+      values (auth.uid(), 'cccccccc-cccc-cccc-cccc-cccccccccccc', true);
+    raise exception 'FAIL T1b: direct item_state INSERT succeeded';
+  exception when insufficient_privilege then
+    raise notice 'PASS T1b: direct item_state INSERT denied';
+  end;
+end $$;
+
+-- ===== Test 2: attacker cannot SEE the private feed/item via RLS ============
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  select count(*) into n from public.items where id='cccccccc-cccc-cccc-cccc-cccccccccccc';
+  if n <> 0 then raise exception 'FAIL T2: attacker sees % secret items', n; end if;
+  select count(*) into n from public.feeds where id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  if n <> 0 then raise exception 'FAIL T2: attacker sees % secret feeds', n; end if;
+  raise notice 'PASS T2: private feed/item invisible to attacker';
+end $$;
+
+-- ===== Test 3: set_item_state visibility gate rejects the bootstrap ========
+do $$
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  begin
+    perform public.set_item_state('cccccccc-cccc-cccc-cccc-cccccccccccc', p_pinned => true);
+    raise exception 'FAIL T3: set_item_state pinned a non-visible item';
+  exception when insufficient_privilege then
+    raise notice 'PASS T3: set_item_state rejected non-visible item';
+  end;
+end $$;
+
+-- ===== Test 4: subscribe_to_feed by URL works; the item becomes visible =====
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  perform public.subscribe_to_feed('https://public.example/feed.xml');
+  select count(*) into n from public.subscriptions where user_id=auth.uid();
+  if n <> 1 then raise exception 'FAIL T4a: expected 1 subscription, got %', n; end if;
+  select count(*) into n from public.items where id='eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  if n <> 1 then raise exception 'FAIL T4b: public item not visible after subscribe'; end if;
+  raise notice 'PASS T4: subscribe-by-URL grants access to the public feed/item';
+end $$;
+
+-- ===== Test 5: pin while subscribed; retain access after unsubscribe ========
+-- The client sends exclusivity-closed diffs (a Done diff carries pinned=false),
+-- so per-field LWW lands on a consistent state without server-side re-derivation.
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  perform public.set_item_state(
+    'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+    p_pinned => true, p_pinned_at => now()
+  );
+  select count(*) into n from public.item_state
+    where item_id='eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee' and pinned;
+  if n <> 1 then raise exception 'FAIL T5a: pin not applied'; end if;
+  delete from public.subscriptions where user_id=auth.uid();        -- unsubscribe
+  select count(*) into n from public.items where id='eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  if n <> 1 then raise exception 'FAIL T5b: kept item orphaned after unsubscribe'; end if;
+  -- Closed Done diff: marks Done AND clears Pin in one write (as the client does).
+  perform public.set_item_state(
+    'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+    p_done => true, p_done_at => now(),
+    p_pinned => false, p_pinned_at => now()
+  );
+  select count(*) into n from public.item_state
+    where item_id='eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee' and done and not pinned;
+  if n <> 1 then raise exception 'FAIL T5c: Done not applied / Pin not cleared'; end if;
+  raise notice 'PASS T5: permanent state retained post-unsubscribe via LWW';
+end $$;
+
+-- ===== Test 6: repointing subscriptions.feed_id via direct UPDATE is denied =
+-- (Revoking INSERT alone is not enough — a legit row's access-granting key must
+-- not be mutable to a private UUID. See 0004 update lock-down.)
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  perform public.subscribe_to_feed('https://public.example/feed.xml');   -- legit row
+  begin
+    update public.subscriptions set feed_id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+      where user_id=auth.uid();
+    raise exception 'FAIL T6: subscriptions.feed_id UPDATE succeeded';
+  exception when insufficient_privilege then
+    raise notice 'PASS T6: subscriptions.feed_id UPDATE denied';
+  end;
+  select count(*) into n from public.items where id='cccccccc-cccc-cccc-cccc-cccccccccccc';
+  if n <> 0 then raise exception 'FAIL T6b: private item visible via UPDATE (n=%)', n; end if;
+  raise notice 'PASS T6b: private item still invisible';
+end $$;
+
+-- ===== Test 7: legit display/ordering updates on subscriptions still work ===
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  update public.subscriptions set muted=true, folder='News', sort=3 where user_id=auth.uid();
+  select count(*) into n from public.subscriptions
+    where user_id=auth.uid() and muted and folder='News' and sort=3;
+  if n <> 1 then raise exception 'FAIL T7: legit subscription update blocked'; end if;
+  raise notice 'PASS T7: mute/folder/sort updates still allowed';
+end $$;
+
+-- ===== Test 8: direct UPDATE on item_state is fully revoked (no key repoint) =
+do $$
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  -- attacker holds a permanent row on the public item (from T5).
+  begin
+    update public.item_state set item_id='cccccccc-cccc-cccc-cccc-cccccccccccc'
+      where user_id=auth.uid();
+    raise exception 'FAIL T8: item_state direct UPDATE succeeded';
+  exception when insufficient_privilege then
+    raise notice 'PASS T8: item_state direct UPDATE denied';
+  end;
+end $$;
+
+-- ===== Test 9: set_item_state still performs flag writes (RPC is the path) ===
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  perform public.set_item_state(
+    'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+    p_favorite => true, p_favorite_at => now()
+  );
+  select count(*) into n from public.item_state
+    where item_id='eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee' and favorite;
+  if n <> 1 then raise exception 'FAIL T9: RPC flag update broken'; end if;
+  raise notice 'PASS T9: set_item_state still performs flag writes';
+end $$;
+
+-- ===== Test 10: subscribing with only the PUBLIC url of a secret-backed feed
+-- is refused (the content is fetched with someone else's token). =============
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  begin
+    perform public.subscribe_to_feed('https://news.example/feed');   -- public url only
+    raise exception 'FAIL T10: subscribe accepted the public url of a secret-backed feed';
+  exception when insufficient_privilege then
+    raise notice 'PASS T10: subscribe refused without the tokenized URL';
+  end;
+  select count(*) into n from public.items where id='99999999-9999-9999-9999-999999999999';
+  if n <> 0 then raise exception 'FAIL T10b: token-only item visible without the token'; end if;
+  raise notice 'PASS T10b: token-only item still invisible';
+end $$;
+
+-- ===== Test 11: presenting the tokenized fetch URL DOES grant access ========
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','22222222-2222-2222-2222-222222222222', true);  -- victim/token holder
+  set local role authenticated;
+  perform public.subscribe_to_feed('https://news.example/feed?token=XYZ');  -- the secret
+  select count(*) into n from public.items where id='99999999-9999-9999-9999-999999999999';
+  if n <> 1 then raise exception 'FAIL T11: token holder cannot see the feed'; end if;
+  raise notice 'PASS T11: presenting the tokenized URL grants access';
+end $$;
+
+-- ===== Test 12: a flag written with no per-field timestamp applies and stamps now() ==
+-- The write path defaults a missing p_<f>_at to now(), so a flag arriving without
+-- its timestamp still lands (and gets a non-null LWW clock) instead of storing a
+-- null pinned_at that would break future LWW comparisons.
+do $$
+declare n int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  -- User 1 still holds permanent state on item E (from T5/T9), so it's visible.
+  perform public.set_item_state(
+    'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+    p_pinned => true   -- flag only, no p_pinned_at
+  );
+  select count(*) into n from public.item_state
+    where item_id='eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
+      and pinned and pinned_at is not null;   -- applied AND stamped now(), not null
+  if n <> 1 then raise exception 'FAIL T12: no-*_at write did not apply / stamp now()'; end if;
+  raise notice 'PASS T12: a flag with no *_at applies and stamps now()';
+end $$;
+
+-- ===== Test 13: feed_items scrubs ai_summary from list payloads (0035) =======
+-- A cached AI summary on a shared item must NOT ride along in the list RPC, or
+-- an off-allowlist co-subscriber would read it through the normal list API — the
+-- gate lives in the allowlist-gated `summary` Edge Function, not the row.
+-- Mirrors the full-text scrub (0026). Seed a summary + a subscription as the
+-- superuser, then read the list as the subscriber and assert the gated column
+-- comes back null while the row itself is real (so the test isn't vacuous).
+update public.items
+  set ai_summary = 'SECRET GIST', ai_summary_generated_at = now()
+  where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+insert into public.subscriptions(user_id, feed_id)
+  values ('11111111-1111-1111-1111-111111111111',
+          'dddddddd-dddd-dddd-dddd-dddddddddddd')
+  on conflict do nothing;
+do $$
+declare n_total int; n_leaked int;
+begin
+  perform set_config('request.jwt.claim.sub','11111111-1111-1111-1111-111111111111', true);
+  set local role authenticated;
+  -- feed_items returns TABLE(item public.items): with a single composite OUT
+  -- column PostgreSQL discards the column name and the function returns
+  -- SETOF items, so the alias IS the items row (`fi.id`, not `(fi.item).id`).
+  -- User 1 holds a pin on item E (T12), so it's returned regardless of window.
+  select count(*) into n_total
+    from public.feed_items('feed', null, 'dddddddd-dddd-dddd-dddd-dddddddddddd') fi
+    where fi.id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  if n_total <> 1 then
+    raise exception 'FAIL T13: public item not returned by feed_items (test vacuous)';
+  end if;
+  select count(*) into n_leaked
+    from public.feed_items('feed', null, 'dddddddd-dddd-dddd-dddd-dddddddddddd') fi
+    where fi.id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
+      and fi.ai_summary is not null;
+  if n_leaked <> 0 then
+    raise exception 'FAIL T13: feed_items leaked ai_summary in a list payload';
+  end if;
+  raise notice 'PASS T13: feed_items nulls ai_summary in list payloads';
+end $$;
+
+-- ===== Test 14: upsert_feed_items invalidates ai_summary on content change (0035)
+-- A re-published item with an edited body must drop its cached summary (else the
+-- summary function serves a gist of the OLD content via a cache hit); an
+-- identical re-poll must KEEP the cache. Crucially, `content_hash` is held at the
+-- guid in BOTH re-polls (matching the live poller's `content_hash: it.guid`), so
+-- this proves the invalidation keys off content_html/title — not the stable hash.
+-- Runs as the superuser/service role (the poller path), calling the RPC directly.
+do $$
+declare summary_after_same text; summary_after_change text;
+begin
+  -- Seed item E (guid 'guid-2', feed D) with a known body/title + cached summary.
+  update public.items
+    set content_html = '<p>v1</p>', title = 'Public Article',
+        ai_summary = 'GIST V1', ai_summary_generated_at = now()
+    where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+
+  -- Re-poll with the SAME body+title (content_hash=guid, unchanged) → preserved.
+  perform public.upsert_feed_items(
+    'dddddddd-dddd-dddd-dddd-dddddddddddd',
+    jsonb_build_array(jsonb_build_object(
+      'guid', 'guid-2', 'url', 'https://public.example/article-e',
+      'title', 'Public Article', 'content_html', '<p>v1</p>',
+      'content_hash', 'guid-2'))
+  );
+  select ai_summary into summary_after_same from public.items
+    where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  if summary_after_same is distinct from 'GIST V1' then
+    raise exception 'FAIL T14: ai_summary dropped on an unchanged re-poll (same body/title)';
+  end if;
+
+  -- Re-poll with an EDITED body, SAME guid and SAME content_hash=guid → cleared.
+  -- (This is exactly the case a content_hash comparison would have missed.)
+  perform public.upsert_feed_items(
+    'dddddddd-dddd-dddd-dddd-dddddddddddd',
+    jsonb_build_array(jsonb_build_object(
+      'guid', 'guid-2', 'url', 'https://public.example/article-e',
+      'title', 'Public Article', 'content_html', '<p>v2 EDITED</p>',
+      'content_hash', 'guid-2'))
+  );
+  select ai_summary into summary_after_change from public.items
+    where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  if summary_after_change is not null then
+    raise exception 'FAIL T14: ai_summary not cleared after a content_html edit (same guid/hash)';
+  end if;
+  raise notice 'PASS T14: upsert_feed_items clears ai_summary on a content_html/title change, not content_hash';
+end $$;

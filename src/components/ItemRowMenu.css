@@ -1,0 +1,168 @@
+.item-menu {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+
+.item-menu--popover {
+  inset: auto;
+}
+
+.item-menu__backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.item-menu__sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--rm-bg-elevated);
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  padding: 8px 0 max(8px, env(safe-area-inset-bottom));
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.25);
+  max-width: 720px;
+  margin: 0 auto;
+  /* A level can be long — the candidate submenu caps at ten entries plus Other
+     and Back — and the sheet grows UPWARD from the bottom, so without a cap its
+     first choices climb off the top of a short or landscape viewport with no way
+     to reach them. Scroll the list instead of shrinking the 44px targets. */
+  max-height: 85dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.item-menu__sheet--popover {
+  position: fixed;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  min-width: 180px;
+  max-width: 280px;
+  border-radius: var(--rm-radius);
+  border: 1px solid var(--rm-border);
+  padding: 4px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2);
+  /* Same cap for the anchored popover — a long candidate list overflows a short
+     window too, and the placement effect measures the capped height. */
+  max-height: min(70vh, 480px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.item-menu__title {
+  font-size: 0.8rem;
+  color: var(--rm-meta);
+  padding: 8px 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.item-menu__sheet--popover .item-menu__title {
+  padding: 6px 12px;
+}
+
+.item-menu__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.item-menu__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 14px 16px;
+  font-size: 1rem;
+  color: var(--rm-text);
+  cursor: pointer;
+  min-height: var(--rm-tap);
+}
+
+.item-menu__sheet--popover .item-menu__item {
+  padding: 10px 12px;
+  border-radius: 6px;
+  min-height: 36px;
+}
+
+@media (hover: hover) {
+  .item-menu__item:hover {
+    background: var(--rm-bg);
+  }
+}
+
+html:not(.rm-suppress-press) .item-menu__item:active {
+  background: var(--rm-border);
+}
+
+.item-menu__cancel {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 8px 8px 0;
+  padding: 14px;
+  border: 1px solid var(--rm-border);
+  border-radius: var(--rm-radius);
+  background: var(--rm-bg-card);
+  color: var(--rm-text);
+  font-size: 1rem;
+  cursor: pointer;
+  min-height: var(--rm-tap);
+}
+
+/* Back sits under the level's own items, separated so it reads as leaving the
+   level rather than as one more choice within it. */
+.item-menu__item--back {
+  border-top: 1px solid var(--rm-border);
+  color: var(--rm-meta);
+}
+
+/* Inline free-text entry ("Other…"), rendered in place of its menu row. */
+.item-menu__prompt {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px;
+  align-items: center;
+}
+
+.item-menu__sheet--popover .item-menu__prompt {
+  padding: 6px 12px;
+}
+
+.item-menu__prompt-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: var(--rm-tap);
+  padding: 0 10px;
+  font-size: 1rem;
+  color: var(--rm-text);
+  background: var(--rm-bg);
+  border: 1px solid var(--rm-border);
+  border-radius: var(--rm-radius);
+}
+
+.item-menu__prompt-submit {
+  flex: 0 0 auto;
+  min-height: var(--rm-tap);
+  padding: 0 14px;
+  font-size: 1rem;
+  color: var(--rm-accent-contrast);
+  background: var(--rm-accent);
+  border: none;
+  border-radius: var(--rm-radius);
+  cursor: pointer;
+}
+
+html:not(.rm-suppress-press) .item-menu__prompt-submit:active {
+  background: var(--rm-accent-strong);
+}
+
+.item-menu__prompt-submit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

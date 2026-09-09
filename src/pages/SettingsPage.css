@@ -1,0 +1,629 @@
+.settings {
+  padding-bottom: 32px;
+}
+
+/* No dividers between sections on either page that uses this sheet (Settings
+   and the /feeds manager) — the vertical padding alone sets them apart, so it's
+   a touch larger to keep the groups legible. */
+.settings__section {
+  padding: 16px;
+}
+
+.settings__heading {
+  font-size: 1.1rem;
+  margin: 0 0 12px;
+}
+
+/* Sub-label for an individual control within a grouped section (e.g. the
+   Color theme / Dark-light / Text size / Font controls under Appearance).
+   Lighter than the section heading; the top margin separates it from the
+   preceding control, the bottom margin sets the same label-to-control gap the
+   section heading uses. */
+.settings__subheading {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--rm-text);
+  margin: 24px 0 12px;
+}
+
+/* The first sub-label sits right under the section heading, so it doesn't need
+   the full separating gap. */
+.settings__heading + .settings__subheading {
+  margin-top: 0;
+}
+
+.settings__add,
+.settings__opml,
+.settings__theme {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings__add-wrap {
+  position: relative;
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.settings__add-wrap .search-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.settings__suggestions {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 100;
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  background: var(--rm-bg-elevated);
+  border: 1px solid var(--rm-border-strong);
+  border-radius: var(--rm-radius);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  overflow-y: auto;
+  max-height: 280px;
+}
+
+.settings__suggestion {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  min-height: var(--rm-tap);
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings__suggestion:hover,
+.settings__suggestion.is-active {
+  background: color-mix(in srgb, var(--rm-accent) 8%, transparent);
+}
+
+.settings__suggestion-name {
+  font-size: 0.9rem;
+  color: var(--rm-text);
+  font-weight: 500;
+}
+
+.settings__suggestion-cat {
+  font-size: 0.75rem;
+  color: var(--rm-meta);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* Multi-feed picker: shown when discovery returns more than one feed
+   (e.g. a site's per-section feeds — Sport, World news — plus its main feed). */
+.settings__picker {
+  margin-top: 12px;
+  border: 1px solid var(--rm-border-strong);
+  border-radius: var(--rm-radius);
+  background: var(--rm-bg-elevated);
+  padding: 10px 12px;
+}
+
+.settings__picker-hint {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  color: var(--rm-meta);
+}
+
+.settings__picker-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+}
+
+.settings__picker-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 6px;
+  min-height: var(--rm-tap);
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings__picker-check {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  /* Keep the box visually aligned with the first line of the label text. */
+  margin-top: 2px;
+  accent-color: var(--rm-accent);
+}
+
+.settings__picker-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings__picker-title {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--rm-text);
+}
+
+.settings__picker-samples {
+  font-size: 0.78rem;
+  color: var(--rm-meta);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings__picker-url {
+  font-size: 0.72rem;
+  color: var(--rm-meta);
+  word-break: break-all;
+}
+
+.settings__picker-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings__btn,
+.settings__theme-btn {
+  padding: 10px 16px;
+  min-height: var(--rm-tap);
+  /* Both axes, not just the height: the horizontal padding (32px) plus borders
+     leaves a one- or two-character label short of the 44px floor — the article
+     size pickers' "5" is the narrowest label in the app. Guardrail 2 is 44×44
+     for every interactive control, so state the width too rather than let it
+     depend on glyph metrics and the reader's text size. */
+  min-width: var(--rm-tap);
+  border: 1px solid var(--rm-border-strong);
+  border-radius: var(--rm-radius);
+  background: var(--rm-bg-card);
+  color: var(--rm-text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings__theme-btn.is-active {
+  border-color: var(--rm-accent);
+  color: var(--rm-accent);
+  background: color-mix(in srgb, var(--rm-accent) 10%, transparent);
+}
+
+/* Pressed state (guardrail 2), following the app-wide convention — see
+   ColorThemeControl.css / ListToolbar.css. Without it these chips gave no
+   pointer-down feedback at all: the only visual change was the selection
+   landing after the click, and re-picking the current value changed nothing.
+   Tints on top of `.is-active` too, so a press registers on the selected chip. */
+html:not(.rm-suppress-press) .settings__btn:active,
+html:not(.rm-suppress-press) .settings__theme-btn:active {
+  background: color-mix(in srgb, var(--rm-accent) 20%, transparent);
+}
+
+.settings__toggles,
+.settings__subs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+
+.settings__toggle-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  min-height: var(--rm-tap);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Strip the outer padding of a list's first/last rows so the toggle list lines
+   up with its heading (and the section edge) exactly like the button groups do
+   — the inner padding still separates adjacent rows. The 44px min-height keeps
+   every row a valid tap target regardless. */
+.settings__toggle:first-child .settings__toggle-label {
+  padding-top: 0;
+}
+
+.settings__toggle:last-child .settings__toggle-label {
+  padding-bottom: 0;
+}
+
+.settings__toggle-check {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  /* Keep the box aligned with the first line of the label text. */
+  margin-top: 2px;
+  accent-color: var(--rm-accent);
+}
+
+.settings__toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings__toggle-title {
+  font-weight: 600;
+  color: var(--rm-text);
+}
+
+.settings__toggle-desc {
+  font-size: 0.8rem;
+  color: var(--rm-meta);
+}
+
+/* A toggle that qualifies the one above it (auto-hide's remove-vs-strike
+   choice). Indented by the checkbox column + gap so its text lines up under the
+   parent's text, reading as a continuation rather than a peer. The row keeps
+   the full 44px tap target; only the leading edge moves. */
+.settings__toggle--sub .settings__toggle-label {
+  padding-left: 34px;
+}
+
+.settings__subs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.settings__hint {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  color: var(--rm-meta);
+}
+
+/* Helper text under the Add-a-feed form: nudge users to paste a site URL or
+   type to see suggestions. Sits below the input row, not above a list. */
+.settings__add-hint {
+  margin: 8px 0 0;
+}
+
+.settings__sub,
+.settings__account {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+/* Sections are divider-free, but the Subscriptions list on the /feeds page
+   keeps its per-row dividers — it's a dense, reorderable list where the lines
+   aid scanning (unlike the sparse settings groups). */
+.settings__sub {
+  border-bottom: 1px solid var(--rm-border);
+}
+
+.settings__sub.is-dragging {
+  background: var(--rm-bg-card);
+  opacity: 0.9;
+}
+
+/* Deep-link highlight: when the single feed page's settings pencil lands the
+   user here (`?feed=<id>`), the target row flashes an accent ring + tint, then
+   fades back via the transition as the class is removed. An inset ring rather
+   than a heavy fill so it reads in both themes (the accent is near-ink in light
+   mode). The component removes `.is-highlighted` after ~2s; the longer fade-out
+   transition makes the release gentle. Honored only where motion is allowed. */
+.settings__sub {
+  border-radius: var(--rm-radius);
+  transition: background-color 0.6s ease, box-shadow 0.6s ease;
+}
+
+.settings__sub.is-highlighted {
+  background: color-mix(in srgb, var(--rm-accent) 12%, var(--rm-bg-card));
+  box-shadow: inset 0 0 0 2px var(--rm-accent);
+  transition: background-color 0.1s ease, box-shadow 0.1s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings__sub {
+    transition: none;
+  }
+}
+
+/* Drag handle: a 44×44 touch target (guardrail #2). `touch-action: none` lets
+   the pointer drag work on touch without the page scrolling under the finger. */
+.settings__sub-drag {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--rm-tap);
+  height: var(--rm-tap);
+  margin-left: -10px;
+  border: none;
+  background: none;
+  color: var(--rm-meta);
+  cursor: grab;
+  touch-action: none;
+}
+
+html:not(.rm-suppress-press) .settings__sub-drag:active {
+  cursor: grabbing;
+}
+
+.settings__sub.is-dragging .settings__sub-drag {
+  color: var(--rm-text);
+}
+
+.settings__sub:last-child {
+  border-bottom: none;
+}
+
+.settings__sub-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings__sub-title {
+  font-weight: 600;
+}
+
+.settings__sub-rename {
+  display: block;
+  width: 100%;
+  padding: 4px 6px;
+  margin: 0;
+  border: 1px solid var(--rm-border);
+  border-radius: 4px;
+  background: var(--rm-bg);
+  color: var(--rm-text);
+  font: inherit;
+  font-weight: 600;
+  min-height: var(--rm-tap);
+  box-sizing: border-box;
+}
+
+.settings__sub-rename:focus-visible {
+  outline: 2px solid var(--rm-accent);
+  outline-offset: 0;
+}
+
+.settings__sub-url {
+  font-size: 0.8rem;
+  color: var(--rm-meta);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Right-side overflow control: a single 44×44 button that opens a per-row
+   menu with Rename / Mute / Unsubscribe. Keeps the row at 3 tap zones
+   (drag handle + non-interactive row body + overflow), per guardrail #2. */
+.settings__sub-actions {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.settings__sub-overflow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--rm-tap);
+  height: var(--rm-tap);
+  border: none;
+  background: none;
+  color: var(--rm-meta);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.settings__sub-overflow:hover,
+.settings__sub-overflow:focus-visible,
+.settings__sub-overflow[aria-expanded='true'] {
+  color: var(--rm-text);
+  outline: none;
+}
+
+.settings__sub-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 10;
+  min-width: 160px;
+  margin-top: 4px;
+  padding: 4px 0;
+  background: var(--rm-bg);
+  border: 1px solid var(--rm-border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Flipped variant: when a row sits near the bottom of the viewport, opening
+   the menu downward would run it off-screen, so it's anchored above the
+   trigger instead (placement decided in ReorderableSubscriptions). */
+.settings__sub-menu--above {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 4px;
+}
+
+.settings__sub-menuitem {
+  appearance: none;
+  border: none;
+  background: none;
+  text-align: left;
+  font: inherit;
+  color: var(--rm-text);
+  padding: 10px 14px;
+  min-height: var(--rm-tap);
+  cursor: pointer;
+}
+
+.settings__sub-menuitem:hover,
+.settings__sub-menuitem:focus-visible {
+  background: var(--rm-bg-card);
+  outline: none;
+}
+
+.settings__sub-menuitem--danger {
+  color: var(--rm-danger);
+  font-weight: 600;
+}
+
+/* Checkbox-style menu item (Open original): the label sits flush-left like every
+   other menu item, with the check pinned to the trailing edge so it never shifts
+   the label whether or not it's set. */
+.settings__sub-menuitem--check {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings__sub-check {
+  display: inline-block;
+  width: 1em;
+  flex: 0 0 auto;
+  text-align: center;
+  color: var(--rm-accent);
+}
+
+/* Trailing "›" on the "Open on…" drill row (and leading "‹" on the submenu's
+   back row): a quiet affordance that the row leads to another level. */
+.settings__sub-chevron {
+  display: inline-block;
+  flex: 0 0 auto;
+  color: var(--rm-meta);
+}
+
+/* The submenu's back row: the "‹" sits left of the label, so the row lays out
+   left-aligned (not space-between like a checkbox row) with a small gap. */
+.settings__sub-menuitem--back {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Used by the Account → Sign out button. Matches the prior subscription-row
+   unsubscribe styling (a min-tap-target danger button) so the sign-out tap
+   target stays within guardrail #2's 44×44 floor. */
+.settings__unsub {
+  border: none;
+  background: none;
+  color: var(--rm-danger);
+  font-weight: 600;
+  cursor: pointer;
+  min-height: var(--rm-tap);
+  padding: 0 8px;
+}
+
+.settings__account {
+  justify-content: space-between;
+  /* Sits flush under its heading like every other section's first control (the
+     Sign out button holds the 44px tap height). */
+  padding: 0;
+}
+
+/* A row holding one or more link/button actions under a section heading (Feeds,
+   About). Flex so the link sits as a block under the heading with consistent
+   spacing instead of collapsing as a bare inline <a>. */
+.settings__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Filtered words: an add field, then the current list as removable chips.
+   One tap zone per chip (the ×) — the word itself is a label, not a control. */
+.settings__filter-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.settings__filter-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: var(--rm-tap);
+  padding: 0 12px;
+  font-size: 1rem;
+  color: var(--rm-text);
+  background: var(--rm-bg-card);
+  border: 1px solid var(--rm-border);
+  border-radius: var(--rm-radius);
+}
+
+.settings__filter-submit {
+  flex: 0 0 auto;
+  min-height: var(--rm-tap);
+  padding: 0 16px;
+  font-size: 1rem;
+  color: var(--rm-accent-contrast);
+  background: var(--rm-accent);
+  border: none;
+  border-radius: var(--rm-radius);
+  cursor: pointer;
+}
+
+html:not(.rm-suppress-press) .settings__filter-submit:active {
+  background: var(--rm-accent-strong);
+}
+
+.settings__filter-submit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.settings__filter-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.settings__filter-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 12px;
+  /* The input takes any length, and a long unbroken entry would otherwise hold
+     the chip open at its intrinsic width — pushing Remove, the feature's only
+     undo, off the side of a phone. */
+  max-width: 100%;
+  min-width: 0;
+  background: var(--rm-bg-card);
+  border: 1px solid var(--rm-border);
+  border-radius: var(--rm-radius);
+}
+
+.settings__filter-word {
+  font-size: 0.95rem;
+  color: var(--rm-text);
+}
+
+.settings__filter-word {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings__filter-remove {
+  /* Never shrink: the tap target is the floor, so the word wraps instead. */
+  flex: 0 0 auto;
+  min-width: var(--rm-tap);
+  min-height: var(--rm-tap);
+  padding: 0;
+  font-size: 1.25rem;
+  line-height: 1;
+  color: var(--rm-meta);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+html:not(.rm-suppress-press) .settings__filter-remove:active {
+  color: var(--rm-text);
+}

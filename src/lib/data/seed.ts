@@ -1,0 +1,228 @@
+import type { Feed, Item, Subscription } from '../types';
+
+// Seed content for the mock data source so the full UX is exercisable with
+// no network (SPEC.md PR1 plan). Bodies are small, already-sanitized HTML.
+
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
+
+export const SEED_FEEDS: Feed[] = [
+  {
+    id: 'feed-verge',
+    url: 'https://www.theverge.com/rss/index.xml',
+    siteUrl: 'https://www.theverge.com',
+    title: 'The Verge',
+    faviconUrl: 'https://www.theverge.com/favicon.ico',
+    errorCount: 0,
+    lastError: null,
+    parked: false,
+  },
+  {
+    id: 'feed-nasa',
+    url: 'https://www.nasa.gov/feed/',
+    siteUrl: 'https://www.nasa.gov',
+    title: 'NASA Breaking News',
+    faviconUrl: 'https://www.nasa.gov/favicon.ico',
+    errorCount: 0,
+    lastError: null,
+    parked: false,
+  },
+  {
+    id: 'feed-css',
+    url: 'https://css-tricks.com/feed/',
+    siteUrl: 'https://css-tricks.com',
+    title: 'CSS-Tricks',
+    faviconUrl: 'https://css-tricks.com/favicon.ico',
+    errorCount: 0,
+    lastError: null,
+    parked: false,
+  },
+  {
+    id: 'feed-reddit-prog',
+    url: 'https://www.reddit.com/r/programming/.rss',
+    siteUrl: 'https://www.reddit.com/r/programming',
+    title: 'r/programming',
+    faviconUrl: 'https://www.reddit.com/favicon.ico',
+    errorCount: 0,
+    lastError: null,
+    parked: false,
+  },
+  {
+    id: 'feed-park',
+    url: 'https://example.com/flaky/feed.xml',
+    siteUrl: 'https://example.com',
+    title: 'Occasionally Down Blog',
+    faviconUrl: null,
+    errorCount: 7,
+    lastError: 'HTTP 503 after 7 attempts',
+    parked: true,
+  },
+  {
+    id: 'feed-bbc',
+    url: 'https://feeds.bbci.co.uk/news/rss.xml',
+    siteUrl: 'https://www.bbc.co.uk/news',
+    title: 'BBC News',
+    faviconUrl: 'https://www.bbc.co.uk/favicon.ico',
+    errorCount: 0,
+    lastError: null,
+    parked: false,
+  },
+];
+
+interface SeedSpec {
+  feedId: string;
+  title: string;
+  author: string | null;
+  agoHours: number;
+  body: string;
+  /** External link target, for aggregator-style posts that point off-site.
+   * Omitted items default to a link on their own feed's site. */
+  url?: string;
+  /** The server-generated spoiler-free headline (as the poller's Gemini pass
+   * would cache on the shared item), for sports-result fixtures. Omitted = the
+   * headline isn't a sports-result spoiler, so `spoilerFreeTitle` stays null. */
+  spoilerFreeTitle?: string;
+  /** Publisher-supplied categories/tags, publisher order. Omitted = the feed
+   * carried none, so `categories` stays `[]` (no meta-row category shown). */
+  categories?: string[];
+}
+
+const SPECS: SeedSpec[] = [
+  {
+    feedId: 'feed-verge',
+    title: 'A foldable phone that actually folds flat, finally',
+    author: 'Jane Doe',
+    agoHours: 2,
+    body: '<p>After years of visible creases, the latest hinge design promises a display that lies genuinely flat. We went hands-on.</p><p>The improvement is immediately obvious in direct light, where previous models showed a distracting valley down the middle.</p>',
+    categories: ['Gadgets'],
+  },
+  {
+    feedId: 'feed-nasa',
+    title: 'Webb telescope captures a galaxy cluster bending light',
+    author: null,
+    agoHours: 5,
+    body: '<p>The image reveals gravitational lensing on a dramatic scale, with background galaxies smeared into arcs.</p><figure><img src="https://www.nasa.gov/example.jpg" alt="Galaxy cluster" /><figcaption>A deep-field exposure.</figcaption></figure>',
+  },
+  {
+    feedId: 'feed-css',
+    title: 'Container queries are finally everywhere',
+    author: 'Chris Coyier',
+    agoHours: 9,
+    body: '<p>With the last holdout browser shipping support, you can now lean on <code>@container</code> in production without a polyfill.</p><pre><code>.card { container-type: inline-size; }</code></pre>',
+    // Multiple categories, to exercise "first is shown" in the meta row.
+    categories: ['CSS', 'Browsers'],
+  },
+  {
+    feedId: 'feed-reddit-prog',
+    title: 'Ask: what is your team’s policy on rewriting legacy services?',
+    author: 'u/devthrowaway',
+    agoHours: 11,
+    body: '<p>We have a 12-year-old monolith. Half the team wants a rewrite, half wants to strangle-fig it. What has worked for you?</p>',
+  },
+  {
+    feedId: 'feed-verge',
+    title: 'The best laptops you can buy right now',
+    author: 'Sam Smith',
+    agoHours: 26,
+    body: '<p>Our updated picks across budgets, with notes on battery life and keyboard feel.</p>',
+  },
+  {
+    feedId: 'feed-css',
+    title: 'A modern reset, revisited for 2026',
+    author: 'Chris Coyier',
+    agoHours: 30,
+    body: '<p>Browser defaults have improved enough that a good reset is now shorter than ever. Here is what is still worth keeping.</p>',
+  },
+  {
+    feedId: 'feed-nasa',
+    title: 'Crew returns after a record stay aboard the station',
+    author: null,
+    agoHours: 50,
+    body: '<p>The mission set a new duration record and ran more than two hundred experiments.</p>',
+  },
+  {
+    feedId: 'feed-reddit-prog',
+    title: 'Show: I built a tiny RSS reader PWA over the weekend',
+    author: 'u/weekendhacker',
+    agoHours: 73,
+    body: '<p>Offline-first, syncs across devices, no tracking. Feedback welcome.</p>',
+    url: 'https://github.com/weekendhacker/tiny-rss-reader',
+  },
+  {
+    feedId: 'feed-verge',
+    title: 'Why your next monitor should be matte again',
+    author: 'Jane Doe',
+    agoHours: 100,
+    body: '<p>Glossy panels lost the plot. New matte coatings preserve contrast while killing reflections.</p>',
+  },
+  {
+    feedId: 'feed-css',
+    title: 'Scroll-driven animations without JavaScript',
+    author: 'Geri Coady',
+    agoHours: 140,
+    body: '<p>The new CSS scroll timelines let you tie keyframes to scroll position natively. A few practical recipes.</p>',
+  },
+  // A general-news feed (BBC News) that intermingles world news with sport. The
+  // World Cup final result is a spoiler; the poller's Gemini pass would cache a
+  // spoiler-free rewrite on `spoilerFreeTitle`, so an allowlisted reader with
+  // "Hide sports spoilers" on sees "World Cup ESP v ARG spoiler" in the row —
+  // and, with a fresh timestamp, at the top of the feed — while the surrounding
+  // non-sport headline shows untouched. The body keeps the full result (SPEC:
+  // the article is unchanged; only the headline is rewritten). Appended last so
+  // the earlier items keep their index-derived `item-N` ids.
+  {
+    feedId: 'feed-bbc',
+    title: 'Spain crowned world champions after beating Argentina in the final',
+    author: null,
+    agoHours: 0,
+    body: '<p>Spain lifted the World Cup for the first time, edging Argentina in a final that went to a penalty shootout after a 1-1 draw.</p><p>The result caps a remarkable tournament run and denies Argentina back-to-back titles.</p>',
+    spoilerFreeTitle: 'World Cup ESP v ARG spoiler',
+    categories: ['Sport'],
+  },
+  {
+    feedId: 'feed-bbc',
+    title: 'Central bank holds interest rates steady amid cooling inflation',
+    author: null,
+    agoHours: 4,
+    body: '<p>Policymakers kept the benchmark rate unchanged, citing signs that price growth is easing back toward target.</p>',
+  },
+];
+
+const SITE_BY_FEED = new Map(SEED_FEEDS.map((f) => [f.id, f.siteUrl]));
+
+export const SEED_ITEMS: Item[] = SPECS.map((spec, i) => ({
+  id: `item-${i + 1}`,
+  feedId: spec.feedId,
+  guid: `guid-${i + 1}`,
+  // Default each item to a link on its own feed's site, so single-source blogs
+  // show no domain badge; aggregator-style posts set `url` to an off-site link
+  // (e.g. the Reddit "Show" post → github.com) to exercise the source domain.
+  url: spec.url ?? `${SITE_BY_FEED.get(spec.feedId) ?? 'https://example.com'}/article/${i + 1}`,
+  commentsUrl: null,
+  title: spec.title,
+  spoilerFreeTitle: spec.spoilerFreeTitle ?? null,
+  author: spec.author,
+  publishedAt: Date.now() - spec.agoHours * HOUR,
+  contentHtml: spec.body,
+  summary: null,
+  fullContentHtml: null,
+  aiSummary: null,
+  enclosures: [],
+  categories: spec.categories ?? [],
+}));
+
+export const SEED_SUBSCRIPTIONS: Subscription[] = [
+  { feedId: 'feed-verge', folder: 'News', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, listLayout: null, sort: 0 },
+  { feedId: 'feed-nasa', folder: 'News', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, listLayout: null, sort: 1 },
+  { feedId: 'feed-css', folder: 'Dev', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, listLayout: null, sort: 2 },
+  { feedId: 'feed-reddit-prog', folder: 'Dev', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, listLayout: null, sort: 3 },
+  { feedId: 'feed-park', folder: null, titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, listLayout: null, sort: 4 },
+  { feedId: 'feed-bbc', folder: 'News', titleOverride: null, muted: false, openOriginal: false, openNewshacker: false, markDoneOnOpen: false, listLayout: null, sort: 5 },
+];
+
+export const SEED_FOLDERS = [
+  { name: 'News', sort: 0 },
+  { name: 'Dev', sort: 1 },
+];
+
+export { DAY, HOUR };

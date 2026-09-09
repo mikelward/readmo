@@ -1,0 +1,119 @@
+// Combined bottom of the chrome that's sticky-pinned to the top of
+// the viewport: the <AppHeader> (always present) and the
+// <ListToolbar> (present on every list view; see SPEC.md § List
+// toolbar / Sticky pinned just below the header).
+//
+// `StoryList`'s sweep IntersectionObserver shrinks the root's top by
+// this value so that a row visually hidden behind the sticky chrome —
+// or, in group-by-feed, behind the pinned section header below it (see
+// the group-header note where it's added) — is not counted as "fully
+// visible". When both chrome elements are
+// stuck at the top, the toolbar's bottom is what matters — it's
+// lower in the viewport than the header. When the toolbar is still
+// in normal flow near scroll=0, its natural bottom is also the right
+// inset, because no story row sits above it anyway. Taking the
+// max of the bottoms is correct in both states; a header-only inset
+// caused Sweep to swallow rows hidden behind the toolbar after the
+// toolbar became sticky (Codex on PR #299).
+//
+// Round the inset *down*: shrinking the root by more than the chrome
+// truly intrudes pushes the visibility boundary into the adjacent row,
+// clipping a flush row by up to ~1px. Combined with the strict 0.999
+// ratio cutoff in `useInViewIds`, that sub-pixel clip drops a fully
+// visible row below the cutoff — Sweep then sees zero sweepable rows
+// and grays out even though the reader can see an unpinned row. Floor
+// never over-shrinks, so a flush row stays fully visible; the <1px of
+// slack it leaves (a row up to a pixel behind the chrome counting as
+// visible) is imperceptible.
+export function measureStickyInset(): number {
+  if (typeof document === 'undefined') return 0;
+  let bottom = 0;
+  for (const selector of ['.app-header', '.list-toolbar']) {
+    const el = document.querySelector(selector);
+    if (!el) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.bottom > bottom) bottom = rect.bottom;
+  }
+  // Group-by-feed pins a section header (`.item-list__group-header`,
+  // `position: sticky`) in the band directly below the chrome; its opaque
+  // background paints over each row as it scrolls up behind it. So a row is
+  // *visually gone* a header-height before its top clears the toolbar. Extend
+  // the inset by that header's height so the visibility boundary — and thus
+  // auto-hide-on-scroll's top-exit trigger — lands at the header's bottom edge,
+  // where the row actually disappears, rather than a header-height higher at the
+  // toolbar. Every header is a fixed height (single-line title, one 44px tap row
+  // — see ItemList.css), so we read ONE header's height with a single
+  // getBoundingClientRect (O(1)); we do NOT scan for the specific pinned one, and
+  // the constant applies to every section's top-exit alike. Absent (ungrouped) →
+  // the chrome-only inset, unchanged.
+  const groupHeader = document.querySelector('.item-list__group-header');
+  if (groupHeader) bottom += groupHeader.getBoundingClientRect().height;
+  return Math.max(0, Math.floor(bottom));
+}
+
+// Combined height of the chrome that pins to the *top* of the viewport — the
+// <AppHeader> plus the top <ListToolbar> (`.list-toolbar--top`). Unlike
+// `measureStickyInset`, which reports the chrome's *current* on-screen bottom
+// (and so collapses to the header alone once the top toolbar has scrolled out
+// of view), this sums the elements' layout heights regardless of scroll
+// position. The "More" pager uses it to land the first row of a freshly loaded
+// page just below the chrome that will re-stick once we scroll up to it — if we
+// used the current inset while scrolled to the foot, the offset would omit the
+// toolbar and tuck that row behind it (ItemList *More pager*).
+export function measureTopChromeHeight(): number {
+  if (typeof document === 'undefined') return 0;
+  let height = 0;
+  for (const selector of ['.app-header', '.list-toolbar--top']) {
+    const el = document.querySelector(selector);
+    if (el instanceof HTMLElement) height += el.offsetHeight;
+  }
+  return height;
+}
+
+// How far the sticky *bottom* list toolbar (`.list-toolbar--bottom`, pinned at
+// `bottom: 0` — see ListToolbar.css) intrudes up from the bottom of the
+// viewport. Unlike newshacker — whose feed footer is `position: relative` and
+// never overlaps rows — readmo pins the bottom toolbar to the viewport foot, so
+// a row tucked behind it is *not* fully visible. The sweep IntersectionObserver
+// shrinks its root's bottom edge by this value so such a row isn't swept.
+//
+// When the toolbar is pinned, its top sits at `viewportHeight - height`, so the
+// intrusion is its height. When it's still in normal flow below the fold its
+// top is past the viewport bottom, yielding a negative intrusion that clamps to
+// 0 — nothing to exclude. (Codex P2 on PR #44.)
+//
+// Round *down* for the same reason as `measureStickyInset`: ceiling the
+// intrusion shrinks the root's bottom edge by up to ~1px more than the toolbar
+// actually covers, clipping the last unpinned row that sits flush above the
+// toolbar below the 0.999 ratio cutoff — Sweep then grays out on a row the
+// reader can plainly see. Floor never over-shrinks, so the flush row stays
+// sweepable.
+//
+// Clamp the intrusion to the toolbar's own height: a `bottom: 0` sticky strip
+// can occlude at most its height. During a reflow that briefly makes the content
+// shorter than the viewport — toggling group-by-feed, a "More" page, the initial
+// paint, or *pinning rows* (which lifts them out of a feed section and momentarily
+// shrinks it) — the toolbar drops into normal flow mid-screen, so `rect.top` jumps
+// up and `innerHeight - rect.top` balloons far past the toolbar. That oversized
+// inset shrinks the sweep observer's root so rows the reader can plainly see count
+// as hidden: their feed's header broom grays out and a group Sweep skips them,
+// leaving an unpinned row behind, until an unrelated scroll re-measures. The
+// toolbar never covers more than its height, so capping there keeps the inset
+// truthful through the transient regardless of when it's sampled (the
+// `useStickyInset` re-measure observers are then just belt-and-suspenders).
+export function measureStickyBottomInset(): number {
+  if (typeof document === 'undefined' || typeof window === 'undefined') return 0;
+  const el = document.querySelector('.list-toolbar--bottom');
+  if (!el) return 0;
+  // The default `list` position is an in-flow footer that never overlaps a row,
+  // whether it sits below the fold or — on a list too short to fill the screen —
+  // at the viewport foot with the slack above it (ListToolbar.css). Read the
+  // class rather than inferring "below the fold" from its rect: the auto margin
+  // that stops it hanging mid-page also puts it exactly ON the fold, where a
+  // geometry-only reading would report a full toolbar of intrusion and shrink
+  // the sweep observer's root past rows the reader can plainly see.
+  if (el.classList.contains('list-toolbar--relative')) return 0;
+  const rect = el.getBoundingClientRect();
+  const intrusion = window.innerHeight - rect.top;
+  return Math.max(0, Math.min(Math.floor(intrusion), Math.floor(rect.height)));
+}

@@ -1,0 +1,189 @@
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
+import { QueryClient } from '@tanstack/react-query';
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
+import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
+import App from './App';
+import { ToastProvider } from './components/Toast';
+import { DataSourceProvider } from './lib/data/context';
+import { MockDataSource } from './lib/data/MockDataSource';
+import { SupabaseDataSource } from './lib/data/SupabaseDataSource';
+import { isSupabaseConfigured } from './lib/supabase/client';
+import { retryDelayMs, shouldRetryQuery } from './lib/queryRetry';
+import {
+  configureFeedFreshness,
+  rematerializeFeedsOnBoot,
+} from './lib/feedFreshness';
+import {
+  applyFont,
+  applyFontSize,
+  applyPalette,
+  applyTheme,
+  getStoredFont,
+  getStoredFontSize,
+  getStoredPalette,
+  getStoredTheme,
+} from './lib/theme';
+// Self-hosted typefaces for the Settings "Font" picker (Fontsource). Each
+// @font-face only triggers a network fetch when text in that family is actually
+// rendered, so a normal page loads just the active font; the Settings picker,
+// which previews every option in its own face, is the only place all of them
+// load. Variable (wght axis) where available; Fira Sans ships static weights.
+import '@fontsource-variable/roboto/wght.css';
+import '@fontsource-variable/inter/wght.css';
+import '@fontsource-variable/public-sans/wght.css';
+import '@fontsource-variable/work-sans/wght.css';
+import '@fontsource/fira-sans/latin-400.css';
+import '@fontsource/fira-sans/latin-500.css';
+import '@fontsource/fira-sans/latin-600.css';
+import '@fontsource/fira-sans/latin-700.css';
+import '@fontsource/fira-sans/latin-800.css';
+import { getActiveUid } from './hooks/useAuth';
+import { idbStorage } from './lib/idbStorage';
+import {
+  itemStateKey,
+  reconcileUserCachesOnBoot,
+  rqCacheKey,
+} from './lib/userCache';
+import { announceUidToServiceWorker } from './lib/swScope';
+import {
+  clearEntryReloadGuard,
+  installGlobalChunkReloadGuard,
+} from './lib/chunkReload';
+import './styles/global.css';
+
+// Reaching this line proves the entry chunk evaluated, so any stale-entry
+// failure the inline boot guard (index.html) reloaded to recover from is
+// resolved — clear its one-shot budget so a *second* stale entry later in the
+// same session (a tab left open across two deploys) auto-reloads again instead
+// of blanking. Loop-safe: a permanently-broken entry never boots, so this never
+// runs to clear a budget the guard still needs. This is the ENTRY budget only;
+// the post-boot CHUNK budget is deliberately left alone (see chunkReload.ts).
+clearEntryReloadGuard();
+
+// Recover from a stale-chunk failure that surfaces after boot (a dynamic import
+// or module preload that 404s during a deploy). The entry script failing before
+// this code runs is handled by the inline boot guard in index.html; a lazy
+// route chunk failing during render is handled by LazyRouteBoundary. These
+// post-boot failures share the readmo:chunk-reload budget, cleared only when a
+// lazy route mounts successfully — not on boot, which would loop the reload for
+// a still-failing lazy chunk.
+installGlobalChunkReloadGuard();
+
+// Bump to invalidate the persisted query cache on a breaking shape change.
+const CACHE_BUSTER = '1';
+// Pinned/Favorited content must survive arbitrarily long offline gaps, so the
+// persister never discards the blob by age. The blob lives in IndexedDB (see
+// idbStorage): localStorage's ~5 MB cap overflowed on real article bodies and
+// the failed write left nothing persisted, so a reload-while-offline showed an
+// empty `/offline`. IndexedDB's quota is far larger and async.
+const PERSIST_MAX_AGE = Number.POSITIVE_INFINITY;
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5 * 60 * 1000,
+      gcTime: 60 * 60 * 1000,
+      // Retry only transient (statusless) network blips, bounded, with capped
+      // exponential backoff — never a 4xx/5xx/timeout. A 401/403 retried in a
+      // hot loop is what pinned the DB; see src/lib/queryRetry.ts.
+      retry: shouldRetryQuery,
+      retryDelay: retryDelayMs,
+      refetchOnWindowFocus: false,
+      // The service worker answers from the Cache API when it can, so run the
+      // fetch even when the browser reports offline; a true miss surfaces as
+      // an error the offline UI can render (newshacker's rationale).
+      networkMode: 'offlineFirst',
+    },
+    // Writes are NOT auto-retried by React Query: the itemStateOutbox owns write
+    // durability + optimistic-concurrency backoff, and a blind mutation retry
+    // could double-apply or re-flood. (No-op for queries.)
+    mutations: {
+      retry: false,
+    },
+  },
+});
+
+// Freeze the feed's article set to a 6h refresh cadence (feed queries only).
+// The 5-min global staleTime above still governs every other read; feed views
+// hold their published set stable between reads so it never re-materializes
+// under the reader — see feedFreshness.ts and SPEC.md *Feed views → A stable
+// set of articles*.
+configureFeedFreshness(queryClient);
+
+// Per-user cache scoping (AGENTS guardrail #8). The persisted query cache and
+// item-state store are keyed by the signed-in user so a second user on a shared
+// device can't hydrate the previous user's content. The boot uid is read
+// synchronously (like the theme below) so these singletons are scoped correctly
+// before first paint. On any auth transition App (useUserCacheScope) purges the
+// departing user's caches and reloads, which re-runs this boot keying for the
+// new user — so signing in from a signed-out boot is re-keyed too, not left on
+// the unscoped base store. Seamless re-keying without a reload, and per-user
+// prefixing of the Workbox runtime caches, land with real multi-user auth in PR2.
+const bootUid = getActiveUid();
+
+// Tell the service worker whose runtime-cache buckets the uncredentialed
+// proxy requests (/api/img, /api/favicon) belong to (guardrail #8 — the
+// runtime caches are partitioned per user; Supabase data reads bucket by
+// their own JWT instead). Best-effort and fire-and-forget.
+announceUidToServiceWorker(bootUid);
+
+// Re-apply the stored appearance axes. The inline boot script in index.html
+// already seeded them before first paint (this module runs long after that
+// paint); re-applying hands ownership to the theme lib and covers dev/test
+// entry paths that render without the real index.html.
+applyTheme(getStoredTheme());
+applyPalette(getStoredPalette());
+applyFontSize(getStoredFontSize());
+applyFont(getStoredFont());
+
+// Reconcile on-device caches for this user BEFORE building the persister/data
+// source or painting: migrate legacy global stores into the user's scope, and
+// purge a previous user's caches if this boot is a different user (e.g. an
+// account switch via full-page redirect, where no in-tab transition fired). The
+// persister + data source read localStorage on construction, so they must be
+// created only after the reconcile so they see the migrated, correctly-scoped
+// data. Same-user boots skip the purge and hydrate their own cache.
+void reconcileUserCachesOnBoot(bootUid).finally(() => {
+  const persister = createAsyncStoragePersister({
+    storage: idbStorage,
+    key: rqCacheKey(bootUid),
+    throttleTime: 1000,
+  });
+  // Live Supabase source when configured (real RLS-scoped subscriptions + item
+  // state, written through to the server); otherwise the mock seed for
+  // backend-less local/demo dev. Both key their item-state store by the boot uid.
+  const dataSource = isSupabaseConfigured()
+    ? new SupabaseDataSource(itemStateKey(bootUid))
+    : new MockDataSource(itemStateKey(bootUid));
+
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <PersistQueryClientProvider
+        client={queryClient}
+        persistOptions={{
+          persister,
+          maxAge: PERSIST_MAX_AGE,
+          buster: CACHE_BUSTER,
+        }}
+        // Every boot re-materializes the feed views once the persisted cache
+        // has hydrated: opening the app IS the reader asking for the news, so
+        // it always fetches — the cached set paints immediately underneath and
+        // survives a failed fetch untouched. The freshness TTL still gates the
+        // in-session paths (remount/focus/warm-on-open) so the set never
+        // re-materializes under the reader. See SPEC.md *Feed views → A stable
+        // set of articles*.
+        onSuccess={() => rematerializeFeedsOnBoot(queryClient)}
+      >
+        <DataSourceProvider source={dataSource}>
+          <ToastProvider>
+            <BrowserRouter>
+              <App />
+            </BrowserRouter>
+          </ToastProvider>
+        </DataSourceProvider>
+      </PersistQueryClientProvider>
+    </StrictMode>,
+  );
+});

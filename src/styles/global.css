@@ -1,0 +1,520 @@
+/*
+ * Readmo design tokens — "ink on paper" (default) plus an opt-in "grape"
+ * (a vivid violet) palette.
+ *
+ * Two orthogonal axes:
+ *   - Mode (light/dark/system)               → the `data-theme` attribute on <html>.
+ *   - Palette (ink/grape)                    → the `data-palette` attribute on <html>.
+ * Ink is the default palette, so it owns the bare `:root` / `[data-theme]`
+ * blocks (no `data-palette`). The grape palette overrides them under
+ * `:root[data-palette='grape']`. Each palette ships a light and a dark
+ * variant, plus a `prefers-color-scheme: dark` block for system mode.
+ *
+ * The ink accent (#363636 light / #ececec dark) and the grape accent (#6d2c91
+ * light / #cba6ed dark) both clear 4.5:1 on their backgrounds — verify any
+ * change with a contrast checker (SPEC.md *Visual design* / *Accessibility*).
+ */
+
+:root {
+  /* Paper / monochrome ink. Links, focus rings, active library icons, and the
+     brand wordmark are near-black "ink"; the primary "Open original" button is
+     a solid ink fill with paper-white text. */
+  --rm-accent: #363636;
+  --rm-accent-strong: #1c1c1c;
+  --rm-accent-contrast: #faf9f5;
+
+  /* Toast action button — always readable on the toast's hardcoded dark
+     (#222) surface, so uses the dark-mode accent rather than --rm-accent-strong
+     which is near-black in ink light mode. */
+  --rm-toast-action: #ececec;
+  /* Foreground for elements that use --rm-danger as their background (badges,
+     health dot). White works in light mode (~4.7:1 on #c0392b); dark modes
+     flip to page background because --rm-danger is a bright/light red there. */
+  --rm-danger-fg: #ffffff;
+
+  --rm-bg: #faf9f5;
+  --rm-bg-card: #ffffff;
+  --rm-bg-elevated: #ffffff;
+  --rm-border: #e6e4dd;
+  --rm-border-strong: #d4d1c8;
+
+  --rm-text: #1a1a1a;
+  /* opened/read titles: mid-tone below unopened, above meta */
+  --rm-read: #4a4a4a;
+  --rm-meta: #6b6b6b;
+
+  --rm-danger: #c0392b;
+  --rm-success: #2e7d46;
+
+  /* swipe action edges */
+  --rm-hide-bg: #8a8378;
+  --rm-pin-bg: var(--rm-accent);
+
+  /* brand mark: rounded-square tile + paper-white "R"/pill (BrandMark) */
+  --rm-brand-tile: #1a1a1a;
+  --rm-brand-fg: #faf9f5;
+
+  --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+
+  --rm-radius: 10px;
+
+  /* The tap target does NOT scale with the text, and that is the considered
+     answer rather than an oversight. 44px is an accessibility floor (guardrail
+     #2), not a design value, and the thing inside these controls is a fixed
+     24px icon — so a wider button displays nothing more while costing the
+     rows it sits in. Every fixed-width row in the app is sized against this:
+     the reader's action bar puts five controls across 320px, and the settings
+     text-size picker puts six across a 375px phone. Scaling it broke both. */
+  --rm-tap: 44px;
+
+  /* The header DOES scale, because unlike the tap target it has rem-sized
+     content: the brand is 1.25rem, so a fixed 56px bar clips it once the root
+     outgrows the bar — which is what capped the text-size ladder at 24px.
+     `3.5rem` grows the bar with the reading text like every other surface;
+     `max()` keeps it from shrinking below the 56px it has always been, which
+     binds at every rung at or below the 16px default (3.5rem is exactly 56px
+     there). That coincidence is the default's value, not the rule: the rule is
+     that the bar grows to fit its own contents, and it held at the 17px default
+     too, where the rem half won and the bar was 59.5px.
+     Spacing stays on the fixed 4dp grid for the same reason as the tap target:
+     at large text a reader wants more of the *article* on screen, not a bigger
+     logo, so the chrome grows to fit its own contents and no further. (Simmo's
+     rule too — it scales only `Density.fontScale`, leaving paddings, icons and
+     touch targets on the grid they were designed for.) */
+  --rm-header-h: max(56px, 3.5rem);
+
+  /* Base body text size. The settings "Text size" picker overrides this via the
+     `data-font-size` attribute on <html>; 16px is the default (no attribute). */
+  --rm-font-size: 16px;
+
+  /* Body typeface. The settings "Font" picker overrides this via the
+     `data-font` attribute on <html>; Roboto is the default (no attribute).
+     Every option lists the self-hosted (Fontsource) family ahead of the native
+     system stack, so a failed webfont load degrades to native rendering. The
+     shipped fonts all carry a real 500 (Medium) face, so the unread (500) /
+     read (400) title weight step holds on every platform — including Linux
+     system fonts (DejaVu/Liberation) that ship only 400/700. */
+  --rm-font-fallback: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+  --rm-font: 'Roboto Variable', var(--rm-font-fallback);
+
+  /* Monospace for URLs, build ids, error details, and keyboard shortcuts. */
+  --rm-font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  color-scheme: light;
+}
+
+/* Text-size scale (settings "Text size" picker). Orthogonal to mode/palette, so
+   it lives in its own attribute and only overrides the one token. */
+:root[data-font-size='14'] {
+  --rm-font-size: 14px;
+}
+
+:root[data-font-size='15'] {
+  --rm-font-size: 15px;
+}
+
+:root[data-font-size='17'] {
+  --rm-font-size: 17px;
+}
+
+:root[data-font-size='18'] {
+  --rm-font-size: 18px;
+}
+
+:root[data-font-size='19'] {
+  --rm-font-size: 19px;
+}
+
+:root[data-font-size='20'] {
+  --rm-font-size: 20px;
+}
+
+:root[data-font-size='22'] {
+  --rm-font-size: 22px;
+}
+
+:root[data-font-size='24'] {
+  --rm-font-size: 24px;
+}
+
+:root[data-font-size='26'] {
+  --rm-font-size: 26px;
+}
+
+:root[data-font-size='28'] {
+  --rm-font-size: 28px;
+}
+
+:root[data-font-size='30'] {
+  --rm-font-size: 30px;
+}
+
+:root[data-font-size='32'] {
+  --rm-font-size: 32px;
+}
+
+:root[data-font-size='34'] {
+  --rm-font-size: 34px;
+}
+
+/* Typeface (settings "Font" picker). Orthogonal to mode/palette/size, so it
+   lives in its own attribute and only overrides the font token. Roboto is the
+   default and owns the bare :root above (no attribute); "System" drops the
+   webfont and uses the native stack. */
+:root[data-font='inter'] {
+  --rm-font: 'Inter Variable', var(--rm-font-fallback);
+}
+
+:root[data-font='public-sans'] {
+  --rm-font: 'Public Sans Variable', var(--rm-font-fallback);
+}
+
+:root[data-font='work-sans'] {
+  --rm-font: 'Work Sans Variable', var(--rm-font-fallback);
+}
+
+:root[data-font='fira-sans'] {
+  --rm-font: 'Fira Sans', var(--rm-font-fallback);
+}
+
+:root[data-font='system'] {
+  --rm-font: var(--rm-font-fallback);
+}
+
+:root[data-theme='dark'] {
+  --rm-accent: #ececec;
+  --rm-accent-strong: #ffffff;
+  --rm-accent-contrast: #14161c;
+  --rm-danger-fg: var(--rm-bg);
+
+  --rm-bg: #14161c;
+  --rm-bg-card: #1d2027;
+  --rm-bg-elevated: #242832;
+  --rm-border: #2c3038;
+  --rm-border-strong: #3a3f4a;
+
+  /* Softened from #ececec: near-white on a near-black card blooms, and the
+     unread title carries it worst (500 weight, the largest contrast on the
+     row), reading as bold and blurry rather than crisp when the panel is dim.
+     The fix for halation is less peak luminance, not more — raising contrast
+     here makes it worse. 11:1 on the card, still far past AAA's 7:1. */
+  --rm-text: #d4d4d4;
+  --rm-read: #a8a8a8;
+  --rm-meta: #8b8b8b;
+
+  --rm-danger: #ff6b5e;
+  --rm-success: #6bd08a;
+
+  --rm-hide-bg: #4a4640;
+  --rm-pin-bg: #5b5b5b;
+
+  --rm-brand-tile: #1a1a1a;
+  --rm-brand-fg: #faf9f5;
+
+  --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+
+  color-scheme: dark;
+}
+
+/* System mode: no explicit data-theme attribute → follow the OS. The
+ * useTheme hook sets data-theme='light'|'dark' for explicit choices and
+ * removes it for 'system', so this only applies in system mode. Mirrors the
+ * explicit [data-theme='dark'] block exactly. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']):not([data-theme='dark']) {
+    --rm-accent: #ececec;
+    --rm-accent-strong: #ffffff;
+    --rm-accent-contrast: #14161c;
+
+    --rm-bg: #14161c;
+    --rm-bg-card: #1d2027;
+    --rm-bg-elevated: #242832;
+    --rm-border: #2c3038;
+    --rm-border-strong: #3a3f4a;
+
+    --rm-text: #d4d4d4;
+    --rm-read: #a8a8a8;
+    --rm-meta: #8b8b8b;
+
+    --rm-danger: #ff6b5e;
+    --rm-success: #6bd08a;
+
+    --rm-hide-bg: #4a4640;
+    --rm-pin-bg: #5b5b5b;
+
+    --rm-brand-tile: #1a1a1a;
+    --rm-brand-fg: #faf9f5;
+
+    --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --rm-danger-fg: var(--rm-bg);
+
+    color-scheme: dark;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Grape palette — a vivid violet on faintly grape-tinted
+ * paper. Opt-in via data-palette. Higher specificity than the bare ink :root,
+ * so it wins when applied; the dark variant ([data-palette][data-theme='dark'])
+ * and the system-dark media block below it both out-specify the grape-light
+ * block.
+ *
+ * Built from a single violet in two values — a deep grape (#6d2c91) and its
+ * light form (#cba6ed) — used for links, the "Open original" button, the brand
+ * tile, and the swipe pin, to keep it calm and uncluttered. Both accents clear
+ * 4.5:1 on their backgrounds; the brand tile is frozen to the deep grape
+ * across modes for recognizability.
+ * ------------------------------------------------------------------------- */
+:root[data-palette='grape'] {
+  --rm-accent: #6d2c91;
+  --rm-accent-strong: #561f74;
+  --rm-accent-contrast: #ffffff;
+  --rm-toast-action: #cba6ed;
+
+  --rm-bg: #f7f3fb;
+  --rm-bg-card: #ffffff;
+  --rm-bg-elevated: #ffffff;
+  --rm-border: #e8def2;
+  --rm-border-strong: #d8c6ec;
+
+  --rm-text: #211a2b;
+  --rm-read: #524860;
+  --rm-meta: #6f6483;
+
+  --rm-danger: #c0392b;
+  --rm-success: #2e7d46;
+
+  /* Muted grape-gray dark enough for the hard-coded white swipe label
+     (.item-row__swipe-hint): ~5.5:1 on #fff. */
+  --rm-hide-bg: #6f6480;
+  --rm-pin-bg: var(--rm-accent);
+
+  --rm-brand-tile: #6d2c91;
+  --rm-brand-fg: #f7f3fb;
+
+  --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+
+  color-scheme: light;
+}
+
+:root[data-palette='grape'][data-theme='dark'] {
+  --rm-accent: #cba6ed;
+  --rm-accent-strong: #ddc6f4;
+  --rm-accent-contrast: #1f1228;
+
+  --rm-bg: #1a141f;
+  --rm-bg-card: #241a2c;
+  --rm-bg-elevated: #2c2136;
+  --rm-border: #352a40;
+  --rm-border-strong: #453953;
+
+  /* Softened from #ece4f3, matching Ink's luminance step — same halation, same
+     fix. See the note on Ink's dark --rm-text. */
+  --rm-text: #d9cfe2;
+  --rm-read: #b4a6c2;
+  --rm-meta: #978aa6;
+
+  --rm-danger: #ff6b5e;
+  --rm-success: #6bd08a;
+
+  --rm-hide-bg: #443650;
+  /* Deep grape (the light-mode accent) so the swipe hint's white label stays
+     legible — the dark accent #cba6ed is near-white. ~8:1 on #fff. */
+  --rm-pin-bg: #6d2c91;
+
+  /* Keep the brand tile a constant deep grape across modes for recognizability. */
+  --rm-brand-tile: #6d2c91;
+  --rm-brand-fg: #f7f3fb;
+
+  --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --rm-danger-fg: var(--rm-bg);
+
+  color-scheme: dark;
+}
+
+/* Grape + system mode + OS dark. Out-specifies the ink system-dark block
+ * (extra [data-palette] attribute) and the grape-light block. */
+@media (prefers-color-scheme: dark) {
+  :root[data-palette='grape']:not([data-theme='light']):not(
+      [data-theme='dark']
+    ) {
+    --rm-accent: #cba6ed;
+    --rm-accent-strong: #ddc6f4;
+    --rm-accent-contrast: #1f1228;
+
+    --rm-bg: #1a141f;
+    --rm-bg-card: #241a2c;
+    --rm-bg-elevated: #2c2136;
+    --rm-border: #352a40;
+    --rm-border-strong: #453953;
+
+    --rm-text: #d9cfe2;
+    --rm-read: #b4a6c2;
+    --rm-meta: #978aa6;
+
+    --rm-danger: #ff6b5e;
+    --rm-success: #6bd08a;
+
+    --rm-hide-bg: #443650;
+    /* See the explicit dark-grape block: keep the pin hint dark enough for the
+       white swipe label. */
+    --rm-pin-bg: #6d2c91;
+
+    --rm-brand-tile: #6d2c91;
+    --rm-brand-fg: #f7f3fb;
+
+    --rm-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --rm-danger-fg: var(--rm-bg);
+
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+/* Anchor `rem` to the chosen text size: most of the UI sizes type in `rem`,
+   which resolves against the root element, so the "Text size" setting has to
+   move the root font-size (not just body) for that type to scale. */
+html {
+  font-size: var(--rm-font-size);
+  /* Reserve the vertical scrollbar gutter so the viewport width doesn't jump
+     between short pages (no scrollbar) and long pages (scrollbar present). */
+  scrollbar-gutter: stable;
+}
+
+body {
+  background: var(--rm-bg);
+  color: var(--rm-text);
+  font-family: var(--rm-font);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  /* Stop the whole page rubber-banding so pull-to-refresh owns the gesture. */
+  overscroll-behavior-y: none;
+}
+
+a {
+  color: var(--rm-accent);
+  text-decoration: none;
+}
+
+@media (hover: hover) {
+  a:hover {
+    text-decoration: underline;
+  }
+}
+
+:focus-visible {
+  outline: 2px solid var(--rm-accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+/* A column that always reaches the foot of the screen, so a `.list-toolbar-host`
+   child can claim whatever is left over below any page header above it and put
+   its bottom toolbar at the bottom of the viewport rather than mid-page (see
+   ListToolbar.css). The floor subtracts the sticky header only: its
+   `height: var(--rm-header-h)` is a border box that swallows its own
+   safe-area-inset-top padding, and this element's own safe-area-inset-bottom
+   padding is inside the min-height for the same reason — so header + main comes
+   to exactly one viewport and a short page still has nothing to scroll.
+   `.signin` already floors itself the same way. dvh tracks the mobile
+   dynamic-toolbar viewport; vh is the fallback. */
+.app-main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 0 env(safe-area-inset-bottom);
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - var(--rm-header-h));
+  min-height: calc(100dvh - var(--rm-header-h));
+}
+
+/* Desktop/large-tablet: give the reading column a little more room so a
+   1440+ monitor doesn't leave the layout feeling like a phone-stretched-wide.
+   720→860 is ~20% wider; still a readable measure at 16px body text
+   (~120 characters per line is the upper end of comfortable). Same cap for
+   the feed and the reader — the feed at 860 is a modest density improvement
+   and the reader benefits from the wider column. The 960px threshold keeps
+   iPad portrait (768) on the original 720 layout and only kicks in at
+   landscape tablets + laptops; it matches `useWideViewport`'s query and the
+   header inner's matching widen below. Mirrors newshacker's `.app-main`. */
+@media (min-width: 960px) {
+  .app-main {
+    max-width: 860px;
+  }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Dark-monochrome publisher favicons (e.g. vox.com) are black-on-transparent
+   marks that vanish on the dark page background. Invert them to white in dark
+   mode; light mode leaves them untouched. Inversion is opt-in per domain —
+   see faviconInvert.ts, which tags these <img>s with .favicon--invert-dark.
+   Mirrors the dark-mode selectors above: explicit dark theme, plus system
+   mode (no data-theme) under prefers-color-scheme: dark. Palette-agnostic. */
+:root[data-theme='dark'] .favicon--invert-dark {
+  filter: invert(1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']):not([data-theme='dark']) .favicon--invert-dark {
+    filter: invert(1);
+  }
+}
+
+/* Fallback icon drawn by FeedFavicon when a feed's favicon is missing or fails
+   to load: the feed's initials centered on a deterministic color (feedInitials.ts
+   / avatarColorForString), same idea as the account UserAvatar disc. Box size +
+   background + font-size come inline from the component; this owns the badge
+   look. It also carries the favicon slot's surface class for margins/alignment,
+   so it lines up with real icons. Palette-agnostic; deliberately NOT inverted in
+   dark mode — the colors carry their own white-text contrast. */
+.favicon--initials {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  color: #fff;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}

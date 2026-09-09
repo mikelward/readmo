@@ -1,0 +1,135 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ReactNode } from 'react';
+import { act, renderHook, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useAuth } from './useAuth';
+import { useUserCacheScope } from './useUserCacheScope';
+import { itemStateKey, rqCacheKey } from '../lib/userCache';
+import { reloadApp } from '../lib/reload';
+
+// Mock the reload wrapper so we don't have to touch jsdom's non-configurable
+// window.location.
+vi.mock('../lib/reload', () => ({ reloadApp: vi.fn() }));
+
+const DEMO_UID = 'mock:demo@readmo.app';
+
+describe('useUserCacheScope', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    // Start signed-in so prevUid initializes to DEMO_UID and transitioning
+    // begins false (reloadApp is mocked so a real reload never resets it).
+    window.localStorage.setItem('readmo:mock-signed-in', '1');
+    vi.stubGlobal('caches', { delete: vi.fn().mockResolvedValue(true) });
+    vi.mocked(reloadApp).mockClear();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('gates rendering, purges the departing user, and reloads on sign-out', async () => {
+    const queryClient = new QueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(
+      () => ({ transitioning: useUserCacheScope(), auth: useAuth() }),
+      { wrapper },
+    );
+
+    // Signed-in baseline: no transition in flight.
+    expect(result.current.transitioning).toBe(false);
+
+    // Seed the departing user's in-memory + persisted state.
+    queryClient.setQueryData(['feed'], { secret: 1 });
+    window.localStorage.setItem(rqCacheKey(DEMO_UID), 'blob');
+    window.localStorage.setItem(itemStateKey(DEMO_UID), 'state');
+
+    act(() => result.current.auth.signOut());
+
+    // Gate flips on so the caller renders nothing during the transition.
+    expect(result.current.transitioning).toBe(true);
+    // In-memory cache emptied so nothing paints for the next user.
+    expect(queryClient.getQueryData(['feed'])).toBeUndefined();
+    // The departing user's persisted stores are purged.
+    expect(window.localStorage.getItem(rqCacheKey(DEMO_UID))).toBeNull();
+    expect(window.localStorage.getItem(itemStateKey(DEMO_UID))).toBeNull();
+    // Named Workbox runtime caches are dropped.
+    expect(caches.delete).toHaveBeenCalledWith('readmo-data');
+    expect(caches.delete).toHaveBeenCalledWith('readmo-images');
+    expect(caches.delete).toHaveBeenCalledWith('readmo-favicons');
+    // ...then the app reloads to re-key the data source/persister.
+    await waitFor(() => expect(reloadApp).toHaveBeenCalledTimes(1));
+  });
+
+  it('keeps the persisted stores when the session drops WITHOUT an explicit sign-out', async () => {
+    // supabase-js clears the session when a token refresh fails — routine
+    // while offline. That transition must not purge the user's persisted
+    // stores: their /offline cache and pins live there, and the same account
+    // signs right back in. (The in-memory cache still empties and the app
+    // still reloads, so nothing of theirs paints while signed out.)
+    const queryClient = new QueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () => ({ transitioning: useUserCacheScope(), auth: useAuth() }),
+      { wrapper },
+    );
+    expect(result.current.transitioning).toBe(false);
+
+    queryClient.setQueryData(['feed'], { secret: 1 });
+    window.localStorage.setItem(rqCacheKey(DEMO_UID), 'blob');
+    window.localStorage.setItem(itemStateKey(DEMO_UID), 'state');
+
+    // Simulate the session dropping on its own: flip the persisted auth state
+    // and notify, WITHOUT going through auth.signOut() (which marks the
+    // sign-out explicit).
+    act(() => {
+      window.localStorage.removeItem('readmo:mock-signed-in');
+      window.dispatchEvent(new Event('readmo:auth-changed'));
+    });
+
+    expect(result.current.transitioning).toBe(true);
+    // In-memory cache still empties (nothing paints while signed out)…
+    expect(queryClient.getQueryData(['feed'])).toBeUndefined();
+    // …but the persisted stores survive for the next sign-in.
+    expect(window.localStorage.getItem(rqCacheKey(DEMO_UID))).toBe('blob');
+    expect(window.localStorage.getItem(itemStateKey(DEMO_UID))).toBe('state');
+    expect(caches.delete).not.toHaveBeenCalled();
+    await waitFor(() => expect(reloadApp).toHaveBeenCalledTimes(1));
+  });
+
+  it('does not purge the anonymous scope on sign-in (preserves legacy stores)', async () => {
+    const queryClient = new QueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () => ({ transitioning: useUserCacheScope(), auth: useAuth() }),
+      { wrapper },
+    );
+
+    // Sign out to reach the signed-out starting point, let that transition
+    // fully settle (purge + reload), then clear mocks so we measure only the
+    // sign-in that follows.
+    act(() => result.current.auth.signOut());
+    await waitFor(() => expect(reloadApp).toHaveBeenCalled());
+    vi.mocked(reloadApp).mockClear();
+    (caches.delete as ReturnType<typeof vi.fn>).mockClear();
+
+    // Legacy unscoped stores present at the base keys (upgrade-while-signed-out).
+    window.localStorage.setItem(rqCacheKey(null), 'legacy-rq');
+    window.localStorage.setItem(itemStateKey(null), 'legacy-state');
+
+    act(() => result.current.auth.signIn());
+
+    // The anonymous scope is NOT purged — the boot reconcile migrates it.
+    expect(window.localStorage.getItem(rqCacheKey(null))).toBe('legacy-rq');
+    expect(window.localStorage.getItem(itemStateKey(null))).toBe('legacy-state');
+    expect(caches.delete).not.toHaveBeenCalled();
+    // Still reloads so the boot path re-keys + migrates.
+    await waitFor(() => expect(reloadApp).toHaveBeenCalledTimes(1));
+  });
+});

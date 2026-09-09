@@ -1,0 +1,1054 @@
+# TODO
+
+Deferred work, tracked here so it isn't lost. Each item links to where the
+constraint is documented in more detail.
+
+## Decisions needing review
+
+Calls that haven't been settled — guesses autopilot made without asking, and
+decisions deliberately postponed — recorded so they don't silently become
+permanent by default. Each is cheap to change.
+
+- **OPEN: does passing the title into the article-summary prompt pull the gist
+  toward the headline?** (Claude, 2026-09-06, PR #706.) That PR removed the
+  prompt's "leave out supporting detail" ask, which was making summaries vague
+  and often no more than a restatement of the title. Passing the title in as
+  context is the other plausible cause of the headline-tracking half, but only
+  in combination with the ask now removed, so it was left in place and the two
+  were not changed together — one variable at a time, so the next look at a
+  summary card says which one did the work. **To settle it:** read a few
+  summary cards generated after the deploy; if the gist still tracks the title,
+  drop the title clause from `buildSummaryPrompt` (newshacker passes a title
+  only on its self-post path). Reversible either way — one prompt line, and no
+  cached row changes with it.
+
+- **RAISED, NOT FIXED: one reveal-persistence edge case under a storage that
+  starts refusing writes** (Claude, 2026-08-30, PR #676; item 2 closed
+  2026-09-05 by PR #700). Codex's fourth consecutive
+  round on `src/hooks/useRevealedSpoilers.ts` — each round opened by the
+  previous round's fix — flagged two more, both verified real and both left in
+  place rather than patched, because the findings on that seam stopped
+  converging:
+  1. **The combined snapshot isn't capped.** `effectiveRevealed()` unions the
+     persisted set and the session fallback without re-capping. If storage
+     already holds `MAX_REVEALED` entries and *then* starts refusing writes,
+     each new reveal can't evict a persisted entry and lands in the
+     independently-capped session set, so the active snapshot can reach 2 ×
+     `MAX_REVEALED` and the oldest rows stay revealed until a reload.
+  2. ~~**`clearRevealedSpoilers` depends on a successful `setItem`.**~~ **Closed
+     by PR #700**: `createPersistentStore.set()` no longer swallows a refused
+     write — it holds the value in memory and `get()` returns it — so the clear
+     now holds for the session on a device that cannot persist. Every consumer of
+     that store gets the same, which is why it went there rather than into the
+     one module that noticed.
+  **Alternative** for what is left: cap the union in `effectiveRevealed()`.
+  **Not taken now** — it needs storage to transition from working to refusing
+  *within one session*, it self-corrects on the next reload, and four rounds of
+  fixes on this seam each introduced the next finding, so a fifth is more likely
+  to add a new case than close this one. **Reversible** — the whole seam is one
+  module and one hook; nothing outside it knows how the union is built.
+
+- **RAISED, NOT FIXED: a read that is not the server's current answer can revert
+  a just-changed open mode** (Claude, 2026-09-05, Codex P2 + P1 on PR #700).
+  Two ways in, one shape. **(1) A second tab.** The remembered
+  row-open snapshot lives in localStorage and is therefore shared by every tab,
+  while each tab's `['subscriptions']` query is its own. So if tab A changes a
+  feed's open mode while tab B has a pre-change read already in flight, tab B's
+  read completes and replaces the snapshot with the older flags — for both tabs.
+  It self-corrects on the next completed read anywhere (the server has the new
+  value), but with `refetchOnWindowFocus` off and a 5-minute `staleTime` that
+  can be minutes away, and meanwhile a tap opens in the reader on a feed set to
+  open elsewhere. **Alternatives:** (a) order reads against mutations, which is
+  the wall-clock design this PR exists to delete — rejected by the maintainer;
+  (b) `settingsSync`'s dirty-marker shape — record the feed as locally-owned
+  when a mutation settles and let a read skip it until the read confirms it,
+  which needs no clock; (c) broadcast the invalidation across tabs
+  (`broadcastQueryClient`), which is new machinery. **Not taken now** — it needs
+  two tabs, one of them mid-read, the window is bounded by the next read, and
+  (b) reintroduces per-feed reconcile state into a store whose whole point is
+  that it has none. **Reversible:** (b) is additive and local to
+  `openModeSnapshot` plus its two writers.
+
+  **(2) A service-worker cache fallback.** `sw.ts`'s `NetworkFirst` serves the
+  cached subscriptions response when the device is offline or the read outruns
+  its 6 s window, stamped `cache-error` / `cache-timeout`. That reaches React
+  Query as an ordinary success, so `isCompletedRead` counts it — and if a mode
+  change settled after the last successful network GET, the cached body still
+  holds the old flags and reverts it. Only one device and a flaky network, so
+  this is the more reachable of the two. **Alternatives:** the same (b) covers
+  it; or propagate the SW source through the data layer so a cache-served read
+  isn't treated as a read, which fixes this instance and not the tab one.
+
+  Both are the same class — a read that isn't the server's current answer
+  overwriting a settled local change — which is why they belong in one decision
+  rather than two patches. **If it is taken, it copies `lib/settingsSync`**
+  (maintainer, 2026-09-05): a per-feed acked snapshot of the last values the
+  server confirmed, plus a dirty-marker set for the flip that ends back on the
+  acked value; a read applies only to feeds with nothing pending, and the ack
+  advances when the write lands rather than when a read happens to agree.
+
+- **RAISED, NOT FIXED: a zero-row UPDATE reads as a successful mode change**
+  (Claude, 2026-09-05, Codex P2 on PR #700). `setOpenMode` /
+  `setMarkDoneOnOpen` (and `setSubscriptionListLayout`) check only `error`, so
+  a PATCH matching no row — the feed was unsubscribed on another device —
+  resolves, and the snapshot then remembers a mode that was never written.
+  Saved articles from that feed keep opening on it until the next completed
+  read drops the whole entry. **Alternative:** `.select()` the affected rows and
+  refuse to remember when none came back. **Not taken now** — it changes the
+  `DataSource` contract for three methods and adds a throw on a page path whose
+  error handling would need checking, for a case that self-corrects on the next
+  read. **Reversible:** additive, in `SupabaseDataSource` plus the handlers.
+
+  Same symptom by a second route (Codex P2 on #700): the row stays enabled while
+  a mode change is in flight, so reopening the menu and unsubscribing the feed
+  can settle first, and the late mode handler then re-adds the flags the
+  unsubscribe removed. **Alternative:** serialize per-feed mutations, or ignore a
+  completion a later action superseded. Same reasoning for not taking it now, and
+  the same self-correction on the next read.
+
+- **DEFERRED: nothing flushes the OTHER stores' held writes when storage
+  recovers** (Claude, 2026-09-05, maintainer's call on ordering). A write
+  `createPersistentStore` cannot persist is held in memory and retried by
+  whatever writes that store next, and the shared storage-health flag now
+  collapses the repeat attempts across stores into one probe per cooldown. What
+  it does not do is act on the probe's answer for anybody else: when one store's
+  write finally lands, every other store still holding a value goes on holding it
+  until something writes to it, which for a preference nobody touches again is
+  the rest of the session. **Alternative:** a registry of live stores, so a
+  successful write flushes every held value once — probe once, flush many.
+  **Not taken now** — the maintainer asked for the correctness fix and the
+  cooldown first, and the gap only costs durability on a device that was out of
+  storage and then got some back mid-session, with reads correct throughout
+  either way. **Reversible:** additive, entirely inside `persistentStore.ts`.
+
+- **`grafana/README.md` and `infra/cf-gateway/README.md` are now code, not
+  docs** (autopilot, 2026-08-30). Narrowing `.github/lanes.conf` from
+  `docs **/*.md` to `docs *.md` + `docs docs/**/*.md` — the standard
+  mikelward/lanes' README states — moves the two markdown files that are
+  neither at the root nor under `docs/` onto the code lane. **Alternative:**
+  add `docs grafana/*.md` and `docs infra/**/*.md` to keep them on the docs
+  lane. **Not taken**, because a per-path exception list is exactly what
+  lanes' README warns decays silently, and both directories hold
+  configuration *and* tests — a README edit there sits beside things CI
+  validates, which is the case the narrowing exists for. The cost is a full
+  CI run on a prose-only edit to either file. **Reversible** by adding those
+  two lines if that turns out to happen often enough to matter.
+
+- **DEFERRED: US-spelling enforcement (owner call, 2026-08-18).** gedmap
+  enforces its US-English rule with a dictionary-difference test
+  (usSpelling.test.js: an offense is a word valid in en-GB AND invalid in
+  en-US, so names and jargon are unreachable false positives); porting it here
+  was prepared and then set aside — "we can worry about that later." The
+  prepared scan found ~50 British-only spellings — the doubled-l forms of
+  canceled/canceling (in the ShareResult literal, settings-sync, hooks, and
+  /debug copy) and mislabeled/labeled, plus the British forms of license,
+  neighbors, traveled, and acknowledgment in fixtures and prose — all
+  mechanical and suite-green when applied. Reviving it: add
+  nspell + dictionary-en + dictionary-en-gb devDependencies, port the test
+  with ALLOW = prev, oversized (US words dictionary-en lacks), land the
+  renames, and reword guardrail 3 so the rule stops quoting the British forms
+  it forbids.
+
+- **UNDECIDED: whether to hold a remotely-adopted filter list until the list
+  rematerializes** (Codex P2 on #623). A filter list adopted from another device
+  currently applies to the list already on screen, removing rows under a reader
+  who did nothing — against the stable-set invariant. A *local* add must stay
+  immediate (the reader just tapped Filter… and SPEC promises the article
+  vanishes), so only the remote case would defer, and telling them apart means
+  threading provenance from the settings store into `visibleItems`, which already
+  carries two overlays with their own retention rules (`struckIdsRef`,
+  `localDismissedIdsRef`). **The decision is postponed, not made** — shipped as-is
+  for now because it needs a cross-device edit against a still-open tab to
+  trigger and the effect is the feature applying early rather than data loss.
+  Worth noting the premise is arguable: a filter set on one device taking effect
+  on another reads as sync working, not as a violation — the invariant is about
+  content moving under a reader's thumb, and a list that quietly loses rows the
+  reader has already filtered elsewhere may be exactly what they want. **Narrowed
+  by 0072's client half (#625):** a remotely-adopted list now also triggers a
+  feed REFETCH, not just an overlay re-run, because the rows the server excluded
+  aren't in the cache to restore. So the remote case is now a full
+  re-materialization — more reflow, not less — and it arrived for correctness
+  rather than as an answer to this question. What's left open is only whether
+  that re-materialization should be deferred to the next natural one (return
+  past the TTL, pull-to-refresh, More) instead of happening on focus; the
+  alternative is to accept it and say so in SPEC.
+- **`title_filters` is a `text[]` on `user_settings`, not its own table**
+  (0071). Consequence: two devices editing the list before either syncs resolve
+  last-write-wins over the **whole list**, not per word. Judged fine for a list
+  edited a few times a year, and it rides the existing sync engine with no new
+  read path. Reversible: a `title_filters` child table is the fix if it bites.
+- **A short all-caps acronym folds onto its lowercase homograph** — filtering
+  `US` also matches the pronoun "us". Recorded in a test rather than fixed; the
+  menu never offers it (`us` is a stopword), so it takes typing `US` by hand,
+  and removing the entry undoes it. The fix is case-preserving storage plus
+  case-sensitive matching for all-caps entries, which is its own change.
+- **Filtered words is its own Settings section**, between Reading and
+  Appearance, rather than a subsection of Reading. Purely presentational;
+  reversible in one edit.
+
+## Offline / PWA
+
+- **Background Sync API.** Writes queued in the outbox while offline are
+  flushed on the next page open / focus-return. The
+  [Background Sync API](https://developer.mozilla.org/en-US/docs/Web/API/Background_Synchronization_API)
+  would let the service worker flush the outbox in the background — even when
+  the tab is closed — on browsers that support it (Chrome/Android, not Safari).
+  The outbox already delivers reliably (per-field LWW makes a crash/lost-ack
+  replay idempotent — see SPEC.md §Sync), so this is gated only on browser
+  support and priority.
+
+## Storage / dedup
+
+- **Cross-feed item dedup.** Same-feed dupes (a publisher re-issuing the same
+  URL under a new `<guid>`) are now collapsed by the `(feed_id, url)` partial
+  unique index and the `upsert_feed_items` RPC (migration `0013`), with the URL
+  first canonicalized (fragment + tracking params stripped) so cosmetic
+  re-issues collapse too (migration `0048`, parser `canonicalizeItemUrl`). The
+  remaining case is when the SAME article URL shows up in two DIFFERENT feed
+  subscriptions — e.g. a user subscribed to both "BBC News - Home" and "BBC
+  News - Top Stories", which carry overlapping articles. Today those land as
+  separate `items` rows (one per `feed_id`) and the user sees two rows for the
+  same story. Options to consider, with tradeoffs:
+  - **De-dup at read time in `feed_items`** (`distinct on (lower(url))`,
+    keep the newest): cheapest, reversible, but hides the duplication rather
+    than fixing storage; needs care with the section/order_by to avoid losing
+    the Pinned-first guarantee.
+  - **Share `items` rows across feeds**: lift the `feed_id` off `items` into a
+    join table; biggest schema change, but the cleanest. Costs a migration on
+    the hottest table and the `feed_items` RPC.
+  - **Subscription-level dedup hint**: let the user pick a "primary" feed when
+    two of their subscriptions share articles. Lowest impact, requires UI.
+  See SPEC.md §Data → De-dup.
+
+## Feed discovery
+
+- **Support sites that don't publish a feed (e.g. inews.co.uk).** Today
+  discovery fails on sites with no `<link rel="alternate">` and no
+  well-known `/feed`/`/rss` path. Two paths considered:
+
+  - **[RSSHub](https://docs.rsshub.app/) (community-maintained scraper that
+    emits RSS).** Open-source Node service with ~1,500 per-site routes
+    (Twitter, YouTube channels, lots of news sites, …). Two consumption
+    modes:
+    - *Public instance* (`rsshub.app`): free, no infra to run, but
+      rate-limited and frequently IP-blocked by upstream publishers; the
+      single shared IP gets hammered, so reliability is poor. Fine for
+      hobby use, not for a reader users depend on.
+    - *Self-hosted*: long-running container with in-process cache. The
+      existing stack doesn't fit well — Supabase Edge Functions are Deno
+      (RSSHub is Node-only); Vercel serverless technically works via
+      RSSHub's "Vercel mode" but the project itself flags it as
+      not-recommended (cold starts kill the cache, ~250 MB bundle bumps
+      against Vercel limits, every poll re-scrapes upstream → faster
+      blocks). The right shape is a $5/mo container on Fly.io / Railway /
+      Render plus Upstash Redis (free tier) for cache/dedup state. Adds
+      one more service to monitor; upstream routes break when sites
+      redesign, but the *community* wears that maintenance, not us.
+    Either way the integration on our side is trivial — RSSHub URLs are
+    just RSS, so the existing poller handles them unchanged. Decision is
+    "is the operational cost worth the coverage."
+
+  - **DIY user-supplied selector.** Per-feed CSS selector
+    (e.g. `article h2 a`) stored on the `feeds` row; the poller fetches
+    via the SSRF-hardened helper and emits one item per match (title +
+    absolute href, no body — tap opens the publisher externally, same
+    path as today's "open original"). Zero extra infra, but fragile:
+    every site redesign silently breaks the feed, and the user has to
+    re-author the selector. Would need a per-feed "last successful
+    parse" health signal and a graceful empty-state in the UI. Lower
+    coverage than RSSHub (one site at a time, by hand), but no third
+    party in the loop.
+
+  Not mutually exclusive — RSSHub for the long tail of popular sites,
+  selector feeds as the always-available fallback. Revisit when a user
+  asks for a no-feed site we care about.
+
+## Fetching / robots.txt
+
+- **Consider honoring robots.txt on the poller and/or discovery fetches.**
+  Today only the full-text reading-mode fetch consults robots.txt
+  (`supabase/functions/_shared/robots.ts`, wired into `fulltext/index.ts`; see
+  SPEC.md §"Full-text reading mode" and PR #271). The poller and `/discover`
+  were deliberately left ungated — a subscribed feed URL is published *for*
+  syndication, and discovery is a one-time, explicitly user-pasted URL — but
+  whether to extend robots honoring to them is worth revisiting. Open
+  questions / tradeoffs:
+  - **Poller:** the recurring automated crawl is the most "crawler-like" path,
+    so it's the strongest candidate for politeness. Risk: a publisher blanket
+    `Disallow: /` (common for unknown bots) would park a feed the user
+    explicitly subscribed to — arguably the wrong call for an opt-in feed
+    reader. Would also want robots cached per-origin (a robots fetch per feed
+    poll is wasteful) and a clear feed-health surface when a feed is parked for
+    robots rather than an error.
+  - **Discover:** user-initiated and one-shot; gating it could block a feed the
+    user is actively trying to add, which is a worse UX than the politeness win.
+  - **Shared seam:** if we do gate either, the clean home is a per-hop
+    authorization hook in `safeFetch` (the shared SSRF funnel) rather than a
+    per-caller re-check — that also closes the redirect-target gap the
+    full-text path accepts as a residual today (one GET to a redirected
+    disallowed URL before discarding; see the open thread on PR #271). Cons of
+    the hook: it touches the shared security module every consumer routes
+    through, must avoid re-entrancy (the robots fetch itself goes through
+    `safeFetch`), and adds a robots fetch per hop without an origin cache.
+  Revisit if a publisher complains, or when we next touch the poller's
+  politeness logic (it already honors `Retry-After`/`ttl`).
+
+## Server RPCs
+
+- **DONE (0073): the SQL transcription of the title matcher is gone.** Recorded
+  because it reverses a decision this file made, and the reversal is the useful
+  part.
+
+  0072 transcribed `src/lib/titleFilter.ts` into SQL so the badge counts and the
+  per-feed floor could honor the reader's filters. Its weak seam was
+  `title_fold`: JS says `\p{M}`, Postgres has no property classes, so the
+  combining-mark ranges were enumerated by hand. Review found FOUR defects in
+  that one regex, and the fourth reversed the safety property the first three
+  were argued under — a mark the list failed to strip survived into
+  `title_tokens`, which split the word at it, so a filter entry equal to one of
+  the fragments matched server-side while the client kept the word whole and
+  `feed_items` withheld a row the reader would otherwise see. Not confined to
+  non-Latin scripts either: a mark can sit between two Latin letters, and
+  publisher titles are untrusted.
+
+  0073 stops folding in SQL. `items.title_normalized` holds the folded,
+  tokenized, space-wrapped title, computed in Deno by
+  `_shared/titleFilterCore.ts` — a byte-identical copy of the client module,
+  enforced by a test — and SQL does nothing but ASCII-delimited `strpos`. The
+  over-filtering direction closes by construction: there is no tokenizer left to
+  split a word at a character it doesn't recognize.
+
+  *Why this was previously rejected, and what changed.* An earlier entry costed
+  this design and turned it down: a materialized column, a version, a converging
+  backfill, an index, a compare-and-swap, a SECOND backlog with its own epoch to
+  repair non-canonical stored filter entries, a compatibility window for
+  service-worker-cached clients, and a server-to-client signal that doesn't
+  exist. That costing was accurate and almost all of it was MIGRATION cost —
+  machinery to protect live users and live data. The feature had no users yet, so
+  the owner set that constraint aside and the cost collapsed to the column, the
+  version, one bounded pass and one CAS. Worth keeping as a pattern: most of what
+  made that design expensive was compatibility, not design, and "is anyone
+  actually on this yet" was the question that resolved it.
+
+  *What survives.* `normalize()` and the `\p{M}` tables come from each runtime's
+  own Unicode data, so a Deno upgrade or an old browser engine can still fold
+  differently with no source change — the byte-identity test pins the SOURCE, not
+  the behavior. `title_normalized_version` exists for that: bump the constant and
+  the poller's pass re-derives every row. Closing the residue entirely needs
+  pinned Unicode on both sides, which isn't worth it. Note a compatibility
+  window would NOT close it — a window sheds old app code, and the disagreement
+  is in the engine beneath it.
+
+  *A limitation now asserted rather than assumed.* Whole-word matching needs word
+  boundaries, so in a script written without spaces a filter only matches a
+  headline it spans entirely. 0072's SQL corpus claimed otherwise (`がく` matching
+  `がくの話`); that file needs a live `psql` and CI never runs it, so the claim was
+  never executed. It was wrong on both sides and always had been —
+  `titleFilterCore.test.ts` now pins the real behavior.
+
+- **Server-side subscription-scoped feed RPC for very large libraries.** Home/
+  folder reads use `.in('feed_id', feedIds)`; a user with hundreds of
+  subscriptions could exceed request-line limits. The scalable fix is the
+  server-side subscription-scoped feed join (the `feed_items` RPC already covers
+  the paged path). See `SupabaseDataSource.feedView` and SPEC.md §Data.
+
+- **`feed_unread_ids` RPC for exact section badges.** The per-feed unread badge
+  reads `getFeedUnreadCounts` (a server-only *count*), so it lags local triage by
+  a sync round-trip. The client reconciles this with `UnreadDecrementLedger`
+  (`src/lib/unreadAdjust.ts`): a dismissal's decrement applies immediately and
+  holds until a count response that provably reflects the synced write lands, so
+  the flicker at sync-completion (the badge bouncing to the stale count between
+  outbox drain and count refetch — Codex P2 threads on PR #194) is gone. What
+  remains approximate: a pinned-then-read row later marked Done lags until its
+  write syncs (the conservative predicate can't tell it was server-counted); an
+  Undo *after* the dismissal synced under-counts for one round-trip in the other
+  direction; and a count fetch that starts pre-drain but is evaluated post-commit
+  server-side double-discounts its item (badge one low) until the drain-triggered
+  refetch lands — a bare count can't reveal whether it includes a given write. The exact fix is a `feed_unread_ids` RPC returning the
+  per-feed unread **ID list** (~tens of KB; the listable set is already capped
+  under the PostgREST row limit): the client holds the unread set and mutates it
+  atomically with triage, so the badge is exact with no approximation at all.
+  Backend migration + manual `make migrate`/`make deploy`; keep the client
+  tolerant of the count-only backend until it lands. See SPEC.md §"Per-feed
+  unread count" and PR #194.
+
+## newshacker mirror
+
+- **Event-driven newshacker → Readmo push (webhook + Realtime).** Deliberately
+  deferred (2026-07): with newshacker's flush-on-hide upload and the cheap
+  set-based reverse pull on every focus/PTR, pull-on-focus covers the
+  single-device flow — staleness is only observable when the user looks at
+  Readmo, which is exactly what triggers the pull. The two gaps pull can't
+  close, and what each half buys if they ever matter: (1) *the handoff race*
+  (return-focus pull vs newshacker's just-flushed upload) — mitigated by the
+  PR #496 retry ladder; fully removed only by a webhook from newshacker's
+  `/api/sync` POST handler to a new Readmo Edge Function (auth: the same
+  linked bearer token; best-effort, the pull stays the reconciler);
+  (2) *two screens visible at once* (Readmo already open + focused while
+  triaging on newshacker elsewhere — no focus event ever fires) — needs
+  Supabase Realtime on `item_state` (free tier: 200 concurrent connections,
+  2M messages/mo — family-scale is nothing), which also gives
+  Readmo↔Readmo cross-device instant updates on its own and is the half to
+  build first. Rejected shape: a long-poll/pubsub endpoint on newshacker —
+  Readmo's client can't hold the newshacker token (server-only by design),
+  and Supabase Realtime already is the pubsub.
+
+## Server / batch query limits
+
+- **Decide whether `service_role` (poll / refresh / import batch) needs an
+  explicit query ceiling.** `0013_user_query_statement_timeout.sql` caps
+  `statement_timeout` for *user-initiated* queries (`authenticated` 5 s, `anon`
+  3 s) but does not change `service_role`. That does **not** leave batch work
+  unbounded: an unset `service_role` timeout inherits the `authenticator`
+  default (8 s per Supabase's
+  [timeouts docs](https://supabase.com/docs/guides/database/postgres/timeouts)),
+  so a batch statement running past ~8 s is already canceled — possibly aborting
+  a legitimately long feed sync mid-batch. So the real decision is whether 8 s is
+  the right batch ceiling, or whether to set `service_role` explicitly (to `0`
+  for no limit, or a generous value like 30–60 s) and reload PostgREST. Options
+  to weigh:
+    - A *generous* `service_role` statement_timeout (e.g. 30–60 s) as a safety
+      net for truly-stuck queries, set well above any healthy batch.
+    - Per-operation `SET LOCAL statement_timeout` inside the function around the
+      known-heavy statements (the item upserts), leaving the role default unset.
+    - Rely on the bounds that already exist: the poller chunks ~25 feeds/run,
+      `safeFetch` caps each upstream fetch at 10 s, and Edge Functions have a
+      platform wall-clock limit — so total batch time is already loosely bounded.
+  Not urgent: batch volume is small today and the fetch timeout covers the common
+  stall. Revisit if a stuck batch query is ever seen pinning a connection. See
+  `0013_user_query_statement_timeout.sql` and SCALING.md.
+
+## UI / layout
+
+
+- **Check whether Settings rows and the dropdown menus want to scale with the
+  text size** (maintainer, during PR #693). They read as too small — the
+  question is whether that is about the text setting at all or just about 44px
+  being a tight base for a menu row. Both `ItemRowMenu` and `HeaderAccountMenu`
+  set `min-height: var(--rm-tap)`, which is now a fixed 44px again, but their
+  content is `rem` text, so a row already grows past it once the type is taller
+  — meaning the complaint may be at the default size rather than at the large
+  ones. Measure before changing anything. Note what PR #693 learned the hard
+  way: scaling `--rm-tap` itself breaks every fixed-width row sized against it
+  (the reader's 320px action bar, the six-across text-size picker), so if these
+  do want to grow it has to be per-surface, not by moving the token.
+
+- **Decide whether a revealed spoiler should sync across devices.** Shipped
+  per-device (`readmo:revealed-spoilers`, `useRevealedSpoilers`) — enough for
+  the ask, which was surviving a refresh. Syncing is defensible: `opened`
+  already syncs, and once you have read a result, hiding it on your other
+  device is theatre. What it costs is the reason it isn't done: a column on
+  `item_state` (a migration plus a manual `make deploy`, guardrail 11's two
+  clocks) and a server write per headline merely glanced at, on a table whose
+  rows otherwise mean something durable — pinned, favorite, done, opened.
+  Cheap to add later: the client already keeps a set of item ids, so the change
+  is additive on both halves. Decide when there's a second device in play often
+  enough to notice.
+- **With auto-hide-on-scroll on, the relative bottom bar still sits directly
+  under a short list rather than at the foot of the screen.** Codex P2 on PR
+  #674. The one-viewport `.item-list__scroll-space` renders *after* the
+  relative bar (SPEC *Bottom action bar* — "It sits below the relative bottom
+  bar"), so the page column has no free space for the bar's `margin-top: auto`
+  to absorb, and a three-row list puts the bar mid-screen above a viewport of
+  blank — the symptom #674 exists to remove, in the one configuration it
+  doesn't reach. Two SPEC decisions are in tension and neither fix is free:
+  moving the tail above the bar (as the pinned position already does) makes
+  the bar the last flow element, but then Back-to-top and More are a blank
+  viewport away from the last row; taking the tail out of flow
+  (`position: absolute; top: 100%` on a positioned host) keeps the order and
+  the slack, but abspos scrollable overflow, scroll anchoring, and the sweep
+  observer all want a device check that the sandbox can't give. Deferred
+  rather than guessed because auto-hide defaults **off**, so this needs both a
+  non-default setting and a list shorter than the screen. Decide the trade-off,
+  then fix and record it in SPEC.
+- **`ItemRowMenu`'s popover items are 36px tall, below the 44px touch floor
+  guardrail 2 requires — app-wide, not just one call site.** Found via Codex
+  on PR #660 (reader Filter…), but verified pre-existing: `popover = open &&
+  !!anchorEl` is the component's only sheet/popover switch
+  (`ItemRowMenu.tsx`), and every current caller — `ItemRow.tsx`'s own
+  long-press/context-menu `openMenu` (`setMenuAnchor(articleRef.current)`,
+  twice), the reader's More button, both admin pages — always passes a
+  non-null anchor, so `.item-menu__sheet--popover .item-menu__item`
+  (`min-height: 36px`, `ItemRowMenu.css:88-91`) is what every row/reader menu
+  item actually renders at today, list rows included. The component's own
+  header comment ("popover on pointer devices, bottom-sheet fallback on
+  touch") describes intent nothing currently wires up — `usePointerDevice()`
+  exists and is imported in `ItemRow.tsx`, but nothing feeds it into
+  `anchorEl` selection anywhere. Fix: at each call site, pass `null` on touch
+  (→ sheet, 44px) and the real anchor on a pointer device (→ compact
+  popover), rather than patching one call site and leaving the rest
+  inconsistent.
+
+- **Reader tags (PR #657) should filter out generic categories like "News"/
+  "news".** A publisher category that's just the section name of the whole
+  feed ("News") carries no real information and clutters the first-few-tags
+  row under the byline. Needs a small stoplist (case-insensitive) applied in
+  `ItemPage.tsx` before slicing to `MAX_READER_TAGS` — deliberately not done
+  in #657, which only added the display.
+
+- **Filter candidates: a single Han character (CJK) is never offered, even
+  though it's routinely a complete word.** Found while scoping PR #656's
+  single-ASCII-character suppression (`isSingleAsciiChar` in
+  `lib/titleFilter.ts`) — that fix is deliberately ASCII-only and doesn't
+  touch this. The actual blocker is different and pre-existing: a Han
+  character (e.g. "水" = water) never matches `\p{Lu}` (no case distinction in
+  that script), so it never reaches the capitalized-run tier 1 at all, and
+  falls to tier 2 where `MIN_CANDIDATE_LENGTH = 3` drops it for being too
+  short — a floor sized for Latin-script abbreviations, not CJK, where most
+  words are 1-2 characters. Net effect: the row-menu Filter… candidate list is
+  close to useless for a CJK-language headline today. Needs a real fix
+  (script-aware minimum length, or a different candidate-extraction strategy
+  entirely for scripts without word-breaking spaces) rather than another
+  special case bolted onto the Latin-oriented heuristics here.
+
+- **Category filters are unified with title filters — one list, not two.**
+  Shipped: an article's own `categories[]` feed the SAME filter list as typed
+  title words (`lib/titleFilter.ts`'s `titleIsFiltered` + the new
+  `categoriesAreFiltered`, `useTitleFilters().addTitleFilter`) — tapping a
+  category in a row's Filter… menu (offered first, ahead of title-word
+  candidates) folds it exactly the way a typed word is folded and adds it to
+  `title_filters`. There is deliberately no second stored list, no second
+  Settings chip kind, and no way to tell a category-added entry apart from a
+  typed one once it's in the list — an earlier version of this feature did
+  ship a separate `category_filters` column (migration 0076) with exact-string
+  category matching, but it was replaced with this unified design before that
+  migration was ever deployed (see PR #655's history if the "why not both"
+  question comes up again).
+  - **Punctuation-preserving matching: done.** `titleFilterCore.ts`'s
+    `tokenize()` keeps `.`, `+` and `#` as word characters instead of
+    stripping them (`.NET`, `C++`, `C#` now match as themselves, not the
+    over-broad "net"/"c"/"c"); `.` still ends a word normally when nothing but
+    whitespace or the string's end follows it, so an ordinary sentence-ending
+    period is unaffected. Bumped `TITLE_NORMALIZED_VERSION` to 2 — the
+    poller's backfill re-normalizes existing rows over a few polls, no
+    migration needed. `filterCandidates` (`lib/titleFilter.ts`) offers a
+    punctuated title term as its own candidate the same way, and a bare
+    single-character candidate ("C" alone) is no longer offered — never a
+    useful filter on its own. Apostrophe handling is untouched: `Trump's` →
+    `Trump` still works exactly as before, via the unrelated existing
+    display-stripping in `titleWords()`.
+  - **Still missing: server-side enforcement for a category-only match.** A
+    title-word match is already enforced server-side (the RPC reads
+    `title_filters` against `items.title_normalized`); an article that matches
+    only via its category (not literally in the title) is filtered client-side
+    only — it still counts toward a feed's unread badge and can still occupy a
+    per-feed floor slot. Needs the server-side matcher extended to also check
+    `items.categories` against `title_filters`, not just the title.
+  - **Per-feed scope — open question, may not be needed.** Filters (both
+    title- and category-sourced) are account-wide across every feed. Raised
+    as a possible follow-up but not clearly worth the complexity — revisit
+    only if global scope turns out to be too broad in practice.
+
+- **Filter by author, too.** The meta row's fallback slot is domain, else
+  category, else author (`formatItemMetaTail` — see `lib/itemMeta.ts`), so the
+  author still surfaces on a row with neither. An eventual author-based filter
+  (parallel to the existing title filters) was raised alongside the category
+  work but not designed or scoped.
+
+- **Try omitting the feed name from list rows in group-by-feed view.** The
+  section header already names the feed once per group, so the row's own
+  `source` segment (`ItemRow`'s `showSource` prop, already built and tested)
+  is arguably redundant there — the same reasoning `showRowFavicon` already
+  acts on (off in grouped view, on in non-grouped). Tried and reverted once
+  (kept for now, per feedback) because it wasn't clear the row read well with
+  nothing before the domain/category/author fallback slot in a bare case
+  (`4h` alone). `ItemRows.tsx` has the wiring commented at the `showRowFavicon`
+  computation — flip it back to `showSource={!groupHeaders}` to retry.
+
+- **Show more than the first category on the reader (article) view.** The list
+  row shows only `item.categories[0]` (row space is tight — guardrail #2), but
+  the reader header has room for more; the request was to show the first 5-6,
+  possibly as its own meta row rather than folded into the existing author ·
+  date · domain line. Deliberately deferred to a separate PR from the initial
+  category-storage/list-row work (migration 0075).
+
+- **A library view still claims to be empty before the first item-state
+  hydrate.** The remaining finding from the loading-placeholder audit that shut
+  down the persisted-cache restore flash. `useStateBucket` reads the item-state
+  store, which loads from localStorage *synchronously*, so on a device that has
+  synced before the buckets are right at first paint. On a device that hasn't —
+  a new browser, a cleared profile, a fresh sign-in — they're empty until the
+  server hydrate lands, and `/pinned` says "Your reading list is empty. Pin
+  items to read later." to a reader whose list is full. Same lie as the feed's
+  caught-up flash, but a different mechanism: it's the item-state store, not
+  React Query, so `useIsRestoring` doesn't see it and the fix isn't the same
+  one. Two things need deciding before it can be written: the store exposes
+  `subscribeHydrated` (which fires per map-changing hydrate and has no consumer
+  today) but no *first-hydrate-done* flag, and whatever flag replaces it has to
+  settle for the cases where a hydrate never comes at all — mock mode, a signed-
+  out reader, a failed read — or the empty label just becomes a permanent
+  spinner, which is the worse lie. See SPEC *No view answers for a read it
+  hasn't done*.
+
+- **Consider upping the tap targets and/or the min row height to match
+  newshacker's density.** readmo currently keys the list row body's `min-height`
+  to the bare `--rm-tap: 44px` touch floor (`ItemRow.css`), so a non-wrapping
+  row is `44 + 12px` padding = **56px** (see the hard-coded skeleton height in
+  `ItemList.css`). newshacker instead sets story rows to **48px** above the same
+  44px touch floor (`--tap-min: 48px`), making its rows `48 + 12` = **60px**.
+  Net effect: on the same viewport readmo packs ~7% more rows (~18.3 vs ~17),
+  which reads as more cramped — counter to guardrail #9 ("match newshacker's UX
+  by default"). Two ways to close the gap: (a) give `.item-row__body` its own
+  `min-height: 48px` (and bump the `56px` skeleton to `60px`) while keeping
+  `--rm-tap: 44px` as the genuine touch floor for buttons — targeted, doesn't
+  inflate other controls; or (b) raise `--rm-tap` to 48px, which also enlarges
+  every pin button / control keyed off it. Lean toward (a). Update `SPEC.md`'s
+  story-row layout section in the same commit.
+
+- **Promote a locally-pinned row the refreshed grouped read dropped
+  entirely.** In the group-by-feed windowed view, PR #418 makes `mergedRaw`
+  fill each section pinned-first over the whole *base run* (`items[]`), so a
+  pin sitting outside the sticky window still renders. That covers the common
+  case (the pin is in the read but past the window). It does **not** cover the
+  live-path edge Codex flagged (#418 review, `discussion_r3539240069`): a row
+  pinned **this session, before the outbox syncs the pin**, in a **busy** feed
+  (≥ `PER_FEED_WINDOW+1` newer non-dismissed rows). There, the server
+  `feed_items` read caps each feed to its newest N by date and — because the
+  pin isn't server-side yet, so the "pinned, any age" branch (`0031` branch c)
+  doesn't rescue it — the pinned older row is absent from `items[]` altogether;
+  `SupabaseDataSource` overlays local *state* onto returned rows but can't
+  re-insert an absent one. The pinned-first pass scans only `baseRun`, never
+  `rowCacheRef`, so the row (still pinned in the local store, and cached from
+  before the refresh) is dropped and its section can collapse to a phantom
+  "More" until the next focus/resync re-pulls with the pin synced. Not the
+  reported bug (that feed was sparse, so the pin was in the read). Fix options
+  weighed: (a) **flush the outbox and await pending pins before PTR refetches**
+  so the server returns the pin via branch c — cleanest, but adds PTR latency
+  and changes the refresh contract (risk when offline); (b) **promote
+  locally-pinned rows from `rowCacheRef` that the server dropped** — client-
+  only, no latency, but carries a resurrection tradeoff (a pin genuinely
+  removed on another device could linger until sync) and is more invasive to
+  the windowing. Lean toward (a). See the code comment on the pinned-first pass
+  in `ItemList.tsx`.
+
+- **Consider scrolling the feed in an inner container to retire the
+  dynamic-toolbar scroll-jump machinery.** The feed currently scrolls the
+  *window*, so the reader's max scroll depends on `window.innerHeight` — the
+  exact value Chromium's mobile dynamic toolbar momentarily doubles, which
+  clamps `scrollY` and produces the bottom-of-list "scroll jump." A large
+  subsystem in `ItemList.tsx` exists only to survive that: the min-height
+  freeze, spike detection (`viewportIsHonest`/`layoutViewportHeight`), the
+  spike-safe deferred hold + `deviceSpikesRef` latch, and the reactive restore
+  (settle watch). If the feed instead scrolled inside its own
+  `overflow-y: auto` region sized off a *stable* height (not the buggy viewport
+  metric), the `innerHeight` spike wouldn't reach it and most of that code
+  could be deleted. Cost: it loses native mobile URL-bar auto-hide and diverges
+  from newshacker's window-scroll (guardrail #9), so it needs a real
+  spike/experiment and a UX call, not a drive-by change. Raised while hardening
+  the window-scroll path (PRs #405/#406). Weigh against option of just keeping
+  the current, now-well-tested mechanism.
+
+## Infrastructure / hosting
+
+- **Consider consolidating the frontend onto Cloudflare (Vercel → CF Pages).**
+  Once the Cloudflare gateway (`infra/cf-gateway/`) is in the picture, we
+  considered moving the rest of the front end off Vercel too — the SPA bundle to
+  **Cloudflare Pages** and the one Vercel function (`api/img.ts`) to a Worker —
+  to drop a platform and the Vercel Pro (~$20/mo). The move would be *small*
+  because Vercel does very little here: it serves the static SPA, runs the single
+  `api/img.ts` image shim, and supplies the `VERCEL_*` build-env vars; the
+  lock-in is minimal. **Decided against it for now** — the **GitHub PR preview
+  DX** (the `vercel[bot]` preview deployments + inspector) is valued, and CF
+  Pages' previews, while real, are less polished. The blocker is DX preference,
+  not feasibility.
+
+  If revisited, the move is roughly: SPA → CF Pages (the `vercel.json` SPA
+  rewrite becomes a `_redirects` / `_routes.json` rule); `api/img.ts` → a Worker
+  or Pages Function (or fold it into the gateway Worker, which already proxies
+  `/functions/`); and `vite.config.ts` must accept CF Pages' build-env vars
+  (`CF_PAGES`, `CF_PAGES_COMMIT_SHA`, `CF_PAGES_BRANCH`) in place of `VERCEL_*`
+  **and re-gate the production poison-pill guard** (currently
+  `VERCEL_ENV === 'production'`) on CF Pages' "is production" signal, or it would
+  silently never fire. Revisit if the Vercel preview DX stops mattering, if CF
+  Pages previews improve, or to cut the Vercel Pro cost. (Moving the *backend* —
+  Postgres / Auth / RLS / Edge Functions — off Supabase is a separate, much
+  larger re-platforming and is **not** what this is about.)
+
+## Allowlist / gating
+
+- **Close the direct-RPC Google News bypass.** `discover` is the authoritative
+  Google News gate (real `new URL()` — see `_shared/googleNews.ts`), and it
+  covers every normal subscribe path (Add-a-feed, OPML, curated catalog). The
+  one remaining bypass is a *hand-crafted* direct `subscribe_to_feed(...)` RPC
+  call with a Google News URL by a non-allowlisted caller while the allowlist is
+  armed. An earlier attempt gated this **in SQL** inside `subscribe_to_feed`, but
+  matching "is this Google News" requires real WHATWG/IDNA URL canonicalization
+  (percent-encoding, control/space stripping, slash/backslash, Unicode dots, …)
+  which a Postgres regex can't faithfully replicate — it turned into an unbounded
+  series of normalization edge cases, so the SQL gate was removed. The correct
+  fix is to do the canonical check in an **Edge layer** (where `new URL()`
+  exists): e.g. route subscribes through a thin Edge function that canonicalizes
+  + checks the allowlist before calling the RPC, or have the poller refuse to
+  fetch a Google News feed for a feed with no allowlisted subscriber. Low
+  priority — `discover` already covers the UI, and an empty allowlist is open to
+  all. See `supabase/migrations/0028_allowlist_admin.sql` and SPEC *Feed
+  discovery*.
+
+
+## Merge gates
+
+- [ ] **Enable auto-merge and arm it on the weekly dependency PR.** The
+  repository setting is off (Settings → General → Pull Requests → Allow
+  auto-merge), and unlike gedmap the weekly `npm-update.yml` never
+  runs `gh pr merge --auto --rebase` after opening its PR. The ruleset
+  already does the reviewing — CI, the `codex` status, conversation
+  resolution — so arming can only remove toil: a green weekly batch
+  currently waits for a manual merge that the gates have already earned.
+  One constraint gedmap's arming block does not carry: this repository
+  excludes pre-1.0 (`0.x`) packages from auto-merge — SemVer permits
+  breaking changes in a 0.x minor — so the arming step must first classify
+  the batch's direct moves (the publish job's deps-summary.md already
+  names them) and skip arming when any moved package is pre-1.0, leaving
+  that batch for review. Add the workflow-test assertion alongside, and
+  keep the arming deliberately non-fatal like gedmap's.
+- Add an AGPL license gate to `ci.yml`: fail if a dependency declares an AGPL
+  license, catching one added by hand in a normal PR, not just ones the
+  weekly bot bumps. Likely `license-checker-rseidelsohn`. GPL/LGPL undecided,
+  matching typelauncher#632. Independent of `npm-update`. Covers the Node
+  app only — `edge`'s Deno functions have no `package.json`/lockfile for an
+  npm tool to read, needs its own answer, not investigated. Work out
+  placement and gate/lanes wiring when actually building this.
+- [x] ~~**Make `zizmor` a required check, not just advisory.**~~ Done in
+  this repo, 2026-08-30; the sub-items below record how, and what the
+  sibling repos still owe. #651 retired
+  the hand-rolled "no expression is spliced into a run: script" test in
+  `npm-update.test.ts` in favor of zizmor's `template-injection` audit —
+  correctly, since the regex missed real cases across six separate rounds
+  and zizmor catches them natively — leaving a regression of that shape
+  visible only in a non-blocking job. The ruleset now requires `zizmor`
+  (2026-08-30), which closes that gap and opens the one below: the check is
+  required before anything can produce it on a `GITHUB_TOKEN`-authored PR.
+  Same sequencing flagged by Codex on the identical change in
+  newshacker#532.
+  - [x] ~~First, widen the trigger.~~ Done — `zizmor.yml`'s `paths:
+        ['.github/**']` filter is gone from both triggers (it blocked making
+        the check required: GitHub leaves a required check pending, not
+        passing, when its workflow is skipped by a path filter, so any PR
+        touching `src/`, `supabase/`, or anything outside `.github/` would
+        have become permanently unmergeable), and `pull_request` now lists
+        its types explicitly, `edited` included. Same fix still needed in
+        newshacker, homepage, gedmap, and web's identical copies.
+  - [x] ~~Then: `repo-rules mikelward/readmo` (now defaults to `lanes codex
+        zizmor`)~~ Done by the maintainer, 2026-08-30 — the ruleset now
+        requires `lanes` + `zizmor` and no longer requires `gate`.
+  - [x] ~~A dispatch route for the weekly dependency PR.~~ Done — the flip
+        landed ahead of this prerequisite, which made it live breakage
+        rather than sequencing (Codex caught it on #677), so both halves
+        were built: `zizmor.yml` now carries `workflow_dispatch`, and
+        mikelward/npm-update grew a `dispatch-workflows` input that this
+        repo's caller sets to `zizmor.yml`. The batch PR is authored with
+        `GITHUB_TOKEN`, whose events start no workflows, so without it the
+        Saturday batch would have opened and sat pending forever on a
+        required check nothing could produce. readmo was the single pilot
+        consumer, per that repo's conventions; the other consumers need the
+        same declaration only if their own rulesets start requiring
+        `zizmor`. `zizmor.yml`'s header no longer claims nothing requires
+        it, and its cost note now says a PyPI outage blocks a merge.
+
+## Billing, entitlements, and cost ceilings
+
+Readmo is the only product in the portfolio with a subscription's shape — daily
+habit, accumulating state, real ongoing poll cost. The business-model reasoning
+(what is in the paid tier, what is deliberately *not*, pricing, Stripe vs. a
+merchant of record) lives in `MONETIZATION.md`; this section is the engineering.
+
+**Nothing here paywalls anything.** The first version writes a row for every
+existing user on the current tier and changes no behavior — the gates simply
+read a table instead of a constant. That gets the whole mechanism in place with
+zero user-visible change and no risk of a takeaway, which is also the honest
+framing given the current user count: this is a learning artifact first.
+
+### Entitlements (generalize the allowlist — don't build a parallel system)
+
+- [x] `entitlements` table: `user_id`, `tier`, `status`, `current_period_end`,
+      `feed_cap`, `stripe_customer_id`, `stripe_subscription_id`. RLS lets a
+      user `select` their own row and grants **no** insert or update at all —
+      only `service_role` writes (guardrail 7). **Landed in 0077**, with the
+      backfill, a signup trigger provisioning a free row, and
+      `get_entitlement()` for display. Needs a manual `make migrate`.
+- [x] `loadEntitlement` in `_shared/entitlement.ts`, mirroring
+      `loadAllowlistFromDb` — **landed**, with fail-closed reads, the grace
+      window, and an unknown tier degrading to free. Kept separate from the
+      allowlist on purpose: legal gate vs commercial gate, so a surface
+      needing both consults both.
+- [ ] **Nothing calls it yet, and that is the next step.** The helper must be
+      invoked **inside the Edge Function, before the expensive work** — that
+      position is the whole security property, and a spine nothing reads
+      provides none of it. Start with `subscribe_to_feed`'s cap, which is the
+      one surface where the entitlement stands alone: it has no allowlist to
+      preserve, and `feed_cap` is already on the row waiting to replace 0059's
+      hard-coded `v_cap constant int := 100`.
+- [ ] **Add** the entitlement check to `summary` — do **not** swap out
+      `loadAllowlistFromDb`. `summary` fetches the full article through Jina,
+      so its allowlist gate is a legal one; replacing it with a paid check
+      would sell the full-text access `MONETIZATION.md` says must not be sold.
+      Entitlement **AND** allowlist.
+- [ ] **Do not gate the pin trigger as a whole** (0053/0054, retried by 0066).
+      One `summary` call launches both the AI summary *and* the full-text
+      download — 0066's header says so — so an entitlement gate on the trigger
+      would switch off the server-side full-text prewarm `SPEC.md` promises for
+      pinned items, for an allowlisted user who just hasn't paid. Gate the
+      summary leg only, or split the legs so full text keeps its own check.
+- [ ] **Enforce the EFFECTIVE cap in `subscribe_to_feed`, not the stored
+      one** — replacing 0059's `v_cap constant int := 100` with a bare read of
+      `entitlements.feed_cap` reintroduces exactly the split `get_entitlement()`
+      exists to close. `subscribe_to_feed` is plpgsql (`0059_feed_cap.sql:32-45`)
+      and cannot call `resolveEntitlement`, so a paid row with `feed_cap = 500`
+      that is past its grace window would keep admitting feeds up to 500 while
+      the display RPC has already resolved that account to free/100 — enforcement
+      more generous than the tier it shows, which is the direction that costs
+      money rather than trust. **Factor the expiry/grace resolution into one SQL
+      function and have both `get_entitlement()` and `subscribe_to_feed` call
+      it**, rather than writing the rule a third time: the Deno/SQL pair is
+      unavoidable (nothing spans both runtimes), a third copy is not, and this
+      finding is what a third copy looks like before it ships. Cover an expired
+      paid row in the feed-cap SQL test — the case has no coverage today, in
+      either language. The per-user advisory lock (`0059:66`) already serializes
+      the count-then-insert, so nothing about the locking changes. (No allowlist
+      to preserve on this one.)
+- [ ] **Gate cached summary DELIVERY, not just generation.** `feed_items`
+      returns `ai_summary` on the row gated only on `email_is_allowlisted()`
+      (0073), and `useSummary` renders that ride-along with no Edge call —
+      instantly, and offline. So gating the `summary` function alone stops a
+      free user generating a summary and not reading one someone else
+      generated. The allowlist is the family, so as written the paid tier
+      would gate nothing for exactly the people being asked to pay. Gate the
+      row projection and the display path too, keeping the allowlist alongside.
+- [ ] **The spoiler path needs its own gate, in three places the above
+      misses — and DELIVERY is the one that actually leaks.** Two are about a
+      paid user not getting what they bought: the poller selects work through
+      `feeds_with_allowlisted_subscriber` (0045, service-role only), and the
+      client hides the controls behind the full-text capability. The third runs
+      the other way. `feed_items` NULLs `ai_summary` for an off-list caller and
+      says so in its header, but passes `spoiler_free_title` through untouched
+      (`0073_title_normalized_column.sql:543-552`), and the direct-item read
+      names it in `ITEM_COLS` unconditionally (`SupabaseDataSource.ts:83-94`).
+      The rewrite caches on the **shared** item, so one entitled subscriber
+      generating it hands it to every co-subscriber of that feed, cached on
+      device — the UI gate then hides a value the client already holds, which
+      is a display preference, not an entitlement. Gate it in the row
+      projection **server-side**, the way `ai_summary` already is; dropping the
+      column from the client's select list is not a gate, and that file's own
+      comment explains why it would also be dangerous (PostgREST rejects the
+      whole explicit column list with 42703/PGRST204 when a named column is
+      missing, so a projection change has to survive the deploy gap in both
+      directions). Entitlement **OR** allowlist here, not AND: the rewrite
+      reads the headline and the already-stored feed body only, so it carries
+      none of `summary`'s full-text exposure. The client capability stays
+      server-derived.
+- [ ] **An absent TABLE means current behavior; an absent ROW does not.**
+      Guardrail 11's "tolerate the old backend" is about the *table* — the two
+      halves deploy on different clocks, so a client in front of a backend
+      without entitlements keeps working, and existing users are grandfathered
+      by rows written *for* them rather than by a gate flipping shut. Once the
+      table is live and backfilled, a missing row is a **new signup**, not an
+      old backend, and reading it as "current behavior" hands every future free
+      user the legacy uncapped feed permanently. Table absent → legacy; table
+      present, row absent → free tier. Provision a free row on signup so the
+      second case is rare rather than load-bearing.
+- [ ] **Fail closed when the entitlement read fails** — guardrail 7, and what
+      `loadAllowlistFromDb` already does. Unknown status treated as paid hands
+      out the feed cap and uncontrolled Gemini/Jina work exactly while the
+      backend is degraded. Retryable error, not a silent downgrade.
+- [ ] **Grace window is the separate case**: a row read *successfully* whose
+      `current_period_end` has just lapsed keeps access, so a dropped webhook
+      or failed renewal doesn't lock out someone who paid. "Couldn't check"
+      and "checked, recently expired" must not share a code path.
+- [ ] Client displays tier and never decides it — the FAMILY chip in the
+      account menu is the pattern. Feature-detect so a client in front of a
+      backend without the table still works.
+
+### Stripe
+
+- [ ] `stripe-webhook` Edge Function: public (no JWT), verifies the Stripe
+      signature, handles `checkout.session.completed`,
+      `checkout.session.async_payment_succeeded`,
+      `checkout.session.async_payment_failed`,
+      `customer.subscription.updated`, `customer.subscription.deleted`,
+      `invoice.payment_failed`. **The webhook is the source of truth — never
+      the checkout success redirect**, which lies. Register all six in Stripe,
+      not just the ones the happy path uses — an unregistered event is
+      delivered to nobody and reports nothing.
+- [ ] Idempotency by event id (store processed ids). Stripe retries, and a
+      double-applied upgrade or a double-applied cancel are both bad.
+- [ ] **Never activate on `checkout.session.completed` alone.** With a
+      delayed-notification payment method it fires before the money settles,
+      so activating there grants access unpaid — and an account that settles
+      later is never activated, since `checkout.session.async_payment_succeeded`
+      isn't in the handled set. Restrict Checkout to card (removes the case),
+      **and** handle `async_payment_succeeded` / `async_payment_failed` and
+      gate activation on an authoritative paid/active state anyway — the
+      restriction is configuration someone can widen later without reading
+      this.
+- [ ] **Carry the user id on the subscription, not just the session.**
+      `client_reference_id` exists only on `checkout.session.completed`; the
+      three subscription/invoice events identify a customer and a subscription
+      and nothing that maps to `auth.uid()`. Looking the row up by
+      `stripe_customer_id` works only once a row exists, which is exactly what
+      the out-of-order case above says can't be assumed. Stamp
+      `subscription_data.metadata.user_id` at session creation as well —
+      Stripe copies it onto the subscription and every later event about it —
+      and test a subscription event arriving *before* its checkout event.
+- [ ] **Monotonic writes per subscription — idempotency does not cover this.**
+      Event-id dedup stops the same event applying twice; it does nothing about
+      two *different* events arriving out of order. A late
+      `subscription.updated` after a `deleted` restores access to a cancelled
+      sub; a stale `payment_failed` revokes access that has since renewed.
+      **Not by event timestamp** — Stripe's `created` has second resolution,
+      so an update and a deletion raised in the same second are unorderable:
+      accepting equal timestamps restores deleted access, rejecting them
+      discards the newer event. Re-fetch current state from Stripe and write
+      that — but re-fetching alone isn't monotonic, since two concurrent
+      handlers can both read and the slower one lands its stale read on top of
+      the newer write. **Serialize with a versioned compare-and-swap, not an
+      advisory lock.** The lock `subscribe_to_feed` uses works there because
+      count-then-insert is one SQL function and therefore one transaction; this
+      handler has to call Stripe *between* its read and its write, and
+      `_shared/coalesce.ts` already records why a lock cannot span that — a
+      pooled PostgREST connection drops a session- or transaction-scoped
+      advisory lock the moment the claiming statement commits, long before a
+      Deno-side `await` finishes. So carry a per-row version, read it before
+      the Stripe fetch, and write conditionally on it (`… where user_id = $1
+      and version = $2`, bumping it); zero rows updated means someone else
+      wrote first, so re-fetch from Stripe and retry, bounded. That is
+      monotonic without mutual exclusion — the last write to land is always the
+      one whose Stripe read came after every earlier write — and it is the
+      pattern `item_state` already uses for concurrent devices (0007/0023).
+      Test reverse-order delivery *and* two interleaved handlers.
+- [ ] **Ordering is not ownership — reject events from a superseded
+      subscription.** The compare-and-swap above decides which write lands
+      last; it says nothing about *which subscription the row is currently
+      about*, and re-fetching from Stripe does not help, because it returns
+      that subscription's authoritative state rather than the account's. So a
+      customer who cancels and later resubscribes has two: a delayed
+      `subscription.deleted` for the old one re-fetches its genuinely canceled
+      state, wins a perfectly valid CAS against the row's newest version, and
+      **cancels the subscription they are currently paying for** — with the
+      unique index meaning it also overwrites the new `stripe_subscription_id`.
+      Every guard so far passes it: the event is not a duplicate, not out of
+      order by version, and its state is not stale.
+      The row therefore has to record which subscription owns it, and an event
+      naming a different one applies only as a **handoff** — an activation
+      replacing the owner — never as a downgrade. Concretely: an event whose
+      subscription id matches the row's applies as now; one that doesn't is
+      dropped unless it activates, in which case it takes ownership. That is
+      correct in both delivery orders — a cancel arriving before the
+      replacement activates still finds itself the owner and applies; one
+      arriving after finds it is not and is dropped — and an account with no
+      subscription id yet takes any activation. Test an old-subscription event
+      arriving after a replacement activates, in both orders.
+- [ ] Stripe Checkout + Customer Portal, both hosted. No billing UI, no card
+      data near the database.
+- [ ] **Two authenticated endpoints of our own, before the webhook is useful.**
+      (a) Create the Checkout session server-side for the signed-in caller and
+      stamp `client_reference_id` with `auth.uid()` — the webhook has no other
+      trustworthy way to pick a `user_id`, and matching on checkout email is
+      wrong (buyer-supplied, mutable, need not be the account's). (b) Create
+      the Portal session from the caller's *own* stored `stripe_customer_id`,
+      never a client-supplied one, or anyone can open anyone's billing page.
+      Cross-account tests for both.
+- [ ] **Make Checkout session creation idempotent — with a persisted attempt
+      row, not a time window.** A retry, a double tap, or two tabs mints two
+      sessions; two completed sessions mean two live subscriptions against a
+      one-row-per-user model, so the second is a charge nothing points at. A
+      clock-derived `Idempotency-Key` fails on requests straddling a window
+      boundary (different keys, two sessions), and neither the open-session nor
+      the active-entitlement check sees anything in the gap between Checkout
+      completing and its webhook landing. Persist an attempt row keyed by user
+      with a unique constraint, derive the idempotency key from its stable id,
+      reuse its live session, and refuse when an active entitlement exists —
+      the Portal is where changing a subscription belongs. Test two concurrent
+      creates and a create inside the post-checkout gap.
+- [ ] **Register all three functions in the `Makefile` first.** `deploy`
+      enumerates every function by name, so an unregistered one is never
+      deployed and Checkout/Portal 404 after a rollout that looked complete.
+      The webhook's target takes `--no-verify-jwt` (like `deploy-poll`): it is
+      public and verifies Stripe's signature itself. Code, not configuration —
+      it belongs in the PR.
+- [ ] **Manual setup is more than the two deploys** — see
+      `MONETIZATION.md` §"Rolling this out". Beyond `make migrate` /
+      `make deploy` (called out in the PR, guardrail 11): the Stripe API key
+      and webhook signing secret set as Supabase secrets, the webhook endpoint
+      registered in Stripe against **all six** events listed above (nothing is
+      delivered until it is, an unregistered webhook is indistinguishable from
+      a broken one, and the two `checkout.session.async_payment_*` ones are the
+      easy omission — leave one off and a delayed settlement is never activated
+      or cleared, silently), and the price created with its id configured. **Order matters and
+      is not the obvious one**: registering the endpoint is what *generates*
+      the signing secret, so deploy, register, then set secrets — not secrets
+      first. Test mode end to end first; none of it is in this repository, so
+      CI can't catch a missed step.
+- [ ] **Record Stripe's cost and reliability envelope** (guardrail 5) — done in
+      `MONETIZATION.md` §"Rolling this out"; re-check the figures against
+      current Stripe pricing before the first real charge, and confirm the
+      claimed failure shape by testing it: a session endpoint that fails
+      visibly, and an unprocessed webhook that returns 5xx so Stripe's
+      three-day retry actually fires rather than being swallowed by a 2xx.
+- [ ] **Measure Checkout/Portal session-creation latency on the real API.**
+      Hosting the resulting pages at Stripe does not take Stripe off the click:
+      both endpoints call it synchronously before they can redirect. Give the
+      call an explicit timeout and the button a pending state, then replace the
+      estimate in `MONETIZATION.md` with a measured number.
+- [ ] Test the failure paths, not just the happy one: a webhook that arrives
+      late, one that never arrives, a card that fails on renewal, a
+      cancellation mid-period.
+
+### Cost ceilings and overload
+
+- [ ] **Write down what a 10× user day costs.** Gemini, Jina, and Supabase
+      compute are the metered lines. The architecture is favorable — poll cost
+      scales with distinct feeds not users, summaries and spoiler rewrites are
+      cached on the shared item — so the number should be small. Confirm that
+      rather than assuming it.
+- [ ] **Set a provider-side spend ceiling** on Gemini and Jina. An in-code
+      guard can be bypassed by a bug; a provider cap can't.
+- [ ] **Audit that every metered path degrades visibly.** A summary that
+      silently never appears is the same failure gedmap had with geocoding: it
+      reads as a broken app rather than a temporary limit. The `unavailable` /
+      `unreachable` split already exists for summaries — confirm the reader
+      actually sees the difference, and check the poller's spoiler pass and the
+      Jina fetch for the same property.
+- [ ] Decide what happens to the poller when Supabase is at its compute
+      ceiling — degrade poll frequency, or let reads win? `SCALING.md` names
+      the tier as the first thing to fall over.
+
+### Alerting (observability exists; alerting is thin)
+
+`OBSERVABILITY.md` and the Grafana Cloud scrape of the Supabase Metrics API are
+the best instrumentation in the portfolio. The gap is what actually pages.
+
+- [ ] Confirm the DB-performance alert rules are live and routed somewhere that
+      reaches a phone, not just a dashboard.
+- [ ] Add alerts for the things a paying customer would notice first: the
+      poller not running, auth failing, the error rate on `feed_items`.
+- [ ] Once anyone pays, a silent outage stops being a private annoyance. Decide
+      the response expectation *before* selling anything, not after.
+
+### Product analytics (the denominator)
+
+Signups and `list_users()` say who exists, not whether anyone stayed. Every
+conversion or pricing question is unanswerable without retention.
+
+- [ ] Weekly actives and 30-day retention are the two numbers worth having.
+      **`item_state.updated_at` is not an activity signal, and using it as one
+      distorts both.** It records when the *server received a write*, so it
+      misses a reader who browses feeds without pinning, marking done, or
+      favoriting anything — which is most reading — and, because the live
+      source drains its outbox asynchronously, it stamps an offline action at
+      sync time rather than action time, moving activity into the wrong period.
+      Either define a real activity event (a cheap authenticated ping on
+      session start, aggregated) or derive the metric from action timestamps
+      and state its coverage limits wherever the number is shown. What is not
+      acceptable is a number on `/admin` that reads as "weekly actives" and
+      silently means "people who wrote item state this week".
+- [ ] Surface them on `/admin` alongside the existing user list.
+- [ ] Privacy floor unchanged: aggregates only, and none of it leaves the
+      machine (guardrail 12 — operator data stays behind `/admin`).
+
+### Before charging anyone
+
+See `MONETIZATION.md` §"Before charging anyone" — terms of service, refund
+policy, an accurate privacy policy, a monitored support address, account
+deletion and export (confirm 0061 `export_subscriptions` covers what a
+departing customer is owed), and a decision about what happens to paid features
+if the service is ever shut down. None of it is code, all of it is required.

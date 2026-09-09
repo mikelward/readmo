@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Readmo mark. Ink rounded-square tile, a paper-white uppercase "R"
+     centered slightly above the midline, and a paper-white home-indicator
+     pill near the bottom edge (the iOS home indicator / Android gesture
+     bar — a mobile-first cue readers see daily, inherited from
+     newshacker). The pill survives as a horizontal stroke at favicon
+     scale and is plainly visible at 192/512. Rasterized into
+     public/icon-*.png by scripts/generate-icons.mjs. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="96" fill="#1a1a1a"/>
+  <text x="256" y="240"
+        text-anchor="middle"
+        dominant-baseline="central"
+        font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
+        font-weight="700"
+        font-size="320"
+        fill="#faf9f5">R</text>
+  <rect x="176" y="400" width="160" height="12" rx="6" fill="#faf9f5"/>
+</svg>

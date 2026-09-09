@@ -1,0 +1,312 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { renderWithProviders } from '../test/renderWithProviders';
+import { ListToolbar } from './ListToolbar';
+import {
+  BOTTOM_BAR_KEY,
+  resetReadingPrefsCacheForTest,
+} from '../hooks/useReadingPrefs';
+
+describe('ListToolbar bottom position', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+
+  it('defaults the bottom bar to the relative end-of-list footer', () => {
+    const { container } = renderWithProviders(
+      <ListToolbar placement="bottom" />,
+    );
+    expect(
+      container.querySelector('.list-toolbar--bottom'),
+    ).toHaveClass('list-toolbar--relative');
+  });
+
+  it("pins the bottom bar to the viewport when set to 'screen'", () => {
+    window.localStorage.setItem(BOTTOM_BAR_KEY, 'screen');
+    resetReadingPrefsCacheForTest();
+    const { container } = renderWithProviders(
+      <ListToolbar placement="bottom" />,
+    );
+    expect(
+      container.querySelector('.list-toolbar--bottom'),
+    ).not.toHaveClass('list-toolbar--relative');
+  });
+
+  it('never makes the top bar relative', () => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+    const { container } = renderWithProviders(<ListToolbar placement="top" />);
+    expect(
+      container.querySelector('.list-toolbar--top'),
+    ).not.toHaveClass('list-toolbar--relative');
+  });
+});
+
+describe('ListToolbar collapse controls', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+
+  it('renders no collapse buttons without the collapse prop', () => {
+    renderWithProviders(<ListToolbar />);
+    expect(screen.queryByTestId('collapse-all-btn')).toBeNull();
+    expect(screen.queryByTestId('expand-all-btn')).toBeNull();
+  });
+
+  it('renders Collapse all / Expand all as icon-only buttons with accessible names', () => {
+    renderWithProviders(
+      <ListToolbar
+        collapse={{
+          onCollapseAll: vi.fn(),
+          onExpandAll: vi.fn(),
+          allCollapsed: false,
+          anyCollapsed: true,
+        }}
+      />,
+    );
+    const collapseAll = screen.getByTestId('collapse-all-btn');
+    const expandAll = screen.getByTestId('expand-all-btn');
+    // Icon-only: the accessible name comes from aria-label, not visible text.
+    expect(collapseAll).toHaveAccessibleName('Collapse all');
+    expect(expandAll).toHaveAccessibleName('Expand all');
+    expect(collapseAll).toHaveTextContent('');
+    expect(expandAll).toHaveTextContent('');
+    expect(collapseAll.querySelector('svg')).not.toBeNull();
+    expect(expandAll.querySelector('svg')).not.toBeNull();
+  });
+
+  it('wires Collapse all / Expand all and disables them per state', async () => {
+    const onCollapseAll = vi.fn();
+    const onExpandAll = vi.fn();
+    renderWithProviders(
+      <ListToolbar
+        collapse={{
+          onCollapseAll,
+          onExpandAll,
+          allCollapsed: false,
+          anyCollapsed: true,
+        }}
+      />,
+    );
+    const collapseAll = screen.getByTestId('collapse-all-btn');
+    const expandAll = screen.getByTestId('expand-all-btn');
+    // Enabled controls are not soft-disabled (TooltipButton uses aria-disabled,
+    // never the native `disabled` attribute, so the tooltip still surfaces).
+    expect(collapseAll).not.toHaveAttribute('aria-disabled');
+    expect(expandAll).not.toHaveAttribute('aria-disabled');
+    const user = userEvent.setup();
+    await user.click(collapseAll);
+    await user.click(expandAll);
+    expect(onCollapseAll).toHaveBeenCalledTimes(1);
+    expect(onExpandAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('soft-disables Collapse all when everything is already collapsed', async () => {
+    const onCollapseAll = vi.fn();
+    renderWithProviders(
+      <ListToolbar
+        collapse={{
+          onCollapseAll,
+          onExpandAll: vi.fn(),
+          allCollapsed: true,
+          anyCollapsed: true,
+        }}
+      />,
+    );
+    const collapseAll = screen.getByTestId('collapse-all-btn');
+    expect(collapseAll).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByTestId('expand-all-btn')).not.toHaveAttribute(
+      'aria-disabled',
+    );
+    // Soft-disabled: still in the DOM (so its tooltip works) but inert on click.
+    await userEvent.setup().click(collapseAll);
+    expect(onCollapseAll).not.toHaveBeenCalled();
+  });
+
+  it('soft-disables Expand all when nothing is collapsed', () => {
+    renderWithProviders(
+      <ListToolbar
+        collapse={{
+          onCollapseAll: vi.fn(),
+          onExpandAll: vi.fn(),
+          allCollapsed: false,
+          anyCollapsed: false,
+        }}
+      />,
+    );
+    expect(screen.getByTestId('expand-all-btn')).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+    expect(screen.getByTestId('collapse-all-btn')).not.toHaveAttribute(
+      'aria-disabled',
+    );
+  });
+});
+
+describe('ListToolbar group-by-feed toggle', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+
+  it('renders no group toggle without the group prop', () => {
+    renderWithProviders(<ListToolbar />);
+    expect(screen.queryByTestId('group-by-feed-btn')).toBeNull();
+  });
+
+  it('renders an icon-only toggle with an accessible name', () => {
+    renderWithProviders(
+      <ListToolbar group={{ groupByFeed: false, onToggle: vi.fn() }} />,
+    );
+    const btn = screen.getByTestId('group-by-feed-btn');
+    // Icon-only: the accessible name comes from aria-label, not visible text.
+    expect(btn).toHaveAccessibleName('Group by feed');
+    expect(btn).toHaveTextContent('');
+    expect(btn.querySelector('svg')).not.toBeNull();
+  });
+
+  it('reflects the off state via aria-pressed', () => {
+    renderWithProviders(
+      <ListToolbar group={{ groupByFeed: false, onToggle: vi.fn() }} />,
+    );
+    const btn = screen.getByTestId('group-by-feed-btn');
+    expect(btn).toHaveAttribute('aria-pressed', 'false');
+    expect(btn).not.toHaveClass('list-toolbar__button--active');
+  });
+
+  it('reflects the on state via aria-pressed and the active class', () => {
+    renderWithProviders(
+      <ListToolbar group={{ groupByFeed: true, onToggle: vi.fn() }} />,
+    );
+    const btn = screen.getByTestId('group-by-feed-btn');
+    expect(btn).toHaveAttribute('aria-pressed', 'true');
+    expect(btn).toHaveClass('list-toolbar__button--active');
+  });
+
+  it('calls onToggle when tapped', async () => {
+    const onToggle = vi.fn();
+    renderWithProviders(
+      <ListToolbar group={{ groupByFeed: false, onToggle }} />,
+    );
+    await userEvent.setup().click(screen.getByTestId('group-by-feed-btn'));
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ListToolbar sort-order toggle', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+
+  it('renders no sort toggle without the sort prop', () => {
+    renderWithProviders(<ListToolbar />);
+    expect(screen.queryByTestId('sort-order-btn')).toBeNull();
+  });
+
+  it('names the current order (newest first) as an icon-only button', () => {
+    renderWithProviders(
+      <ListToolbar sort={{ itemSort: 'newest', onToggle: vi.fn() }} />,
+    );
+    const btn = screen.getByTestId('sort-order-btn');
+    expect(btn).toHaveAccessibleName('Newest first');
+    // The glyph carries digit text (9/0) but it lives in an aria-hidden svg, so
+    // the button stays label-free to the accessibility tree.
+    const svg = btn.querySelector('svg');
+    expect(svg).not.toBeNull();
+    expect(svg!.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('names the current order (oldest first) when flipped', () => {
+    renderWithProviders(
+      <ListToolbar sort={{ itemSort: 'oldest', onToggle: vi.fn() }} />,
+    );
+    expect(screen.getByTestId('sort-order-btn')).toHaveAccessibleName(
+      'Oldest first',
+    );
+  });
+
+  it('calls onToggle when tapped', async () => {
+    const onToggle = vi.fn();
+    renderWithProviders(
+      <ListToolbar sort={{ itemSort: 'newest', onToggle }} />,
+    );
+    await userEvent.setup().click(screen.getByTestId('sort-order-btn'));
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ListToolbar spoiler toggle', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+    resetReadingPrefsCacheForTest();
+  });
+
+  it('renders no spoiler toggle without the spoiler prop', () => {
+    renderWithProviders(<ListToolbar />);
+    expect(screen.queryByTestId('spoiler-toggle-btn')).toBeNull();
+  });
+
+  it('renders an icon-only toggle with a stable accessible name', () => {
+    renderWithProviders(
+      <ListToolbar spoiler={{ hideSpoilers: true, onToggle: vi.fn() }} />,
+    );
+    const btn = screen.getByTestId('spoiler-toggle-btn');
+    // Icon-only: the accessible name comes from aria-label, not visible text.
+    expect(btn).toHaveAccessibleName('Hide spoilers');
+    expect(btn).toHaveTextContent('');
+    expect(btn.querySelector('svg')).not.toBeNull();
+  });
+
+  it('reflects the hiding (pressed) state via aria-pressed and the active class', () => {
+    renderWithProviders(
+      <ListToolbar spoiler={{ hideSpoilers: true, onToggle: vi.fn() }} />,
+    );
+    const btn = screen.getByTestId('spoiler-toggle-btn');
+    expect(btn).toHaveAttribute('aria-pressed', 'true');
+    expect(btn).toHaveClass('list-toolbar__button--active');
+  });
+
+  it('reflects the revealed (unpressed) state via aria-pressed', () => {
+    renderWithProviders(
+      <ListToolbar spoiler={{ hideSpoilers: false, onToggle: vi.fn() }} />,
+    );
+    const btn = screen.getByTestId('spoiler-toggle-btn');
+    expect(btn).toHaveAttribute('aria-pressed', 'false');
+    expect(btn).not.toHaveClass('list-toolbar__button--active');
+  });
+
+  it('calls onToggle when tapped', async () => {
+    const onToggle = vi.fn();
+    renderWithProviders(
+      <ListToolbar spoiler={{ hideSpoilers: true, onToggle }} />,
+    );
+    await userEvent.setup().click(screen.getByTestId('spoiler-toggle-btn'));
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+});

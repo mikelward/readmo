@@ -1,0 +1,71 @@
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 12px 8px;
+}
+
+.page-header__title {
+  font-size: 1.4rem;
+  margin: 0;
+}
+
+/* Feed favicon ahead of the title text on a single feed's page. Sized up a
+   touch from the 16px row/reader icon to sit with the 1.4rem heading; inline
+   with a slight baseline nudge so it centers on the text. Matches the row icon
+   otherwise (rounded, contained). */
+.page-header__favicon {
+  border-radius: 3px;
+  object-fit: contain;
+  vertical-align: -0.15em;
+  margin-right: 8px;
+}
+
+.search-input {
+  flex: 1 1 auto;
+  width: 100%;
+  font-size: 1rem;
+  padding: 12px 14px;
+  min-height: var(--rm-tap);
+  border: 1px solid var(--rm-border-strong);
+  border-radius: var(--rm-radius);
+  background: var(--rm-bg-card);
+  color: var(--rm-text);
+}
+
+.page-header__badge {
+  margin-left: auto;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--rm-danger-fg);
+  background: var(--rm-danger);
+  border: none;
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+  min-height: 32px;
+}
+
+/* Pencil link to the feed-management page (rename / mute / unsubscribe). Sits
+   immediately after the title; the parked badge's own margin-left:auto floats
+   it to the far right, past the pencil. The 44px box keeps the tap floor even
+   though the glyph is 20px; the negative margin pulls it snug to the title past
+   the page-header's 12px flex gap and the box's own internal centering. */
+.page-header__edit {
+  margin-left: -6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 var(--rm-tap);
+  width: var(--rm-tap);
+  height: var(--rm-tap);
+  color: var(--rm-text);
+  border-radius: 999px;
+  text-decoration: none;
+}
+
+@media (hover: hover) {
+  .page-header__edit:hover {
+    background: var(--rm-bg);
+  }
+}

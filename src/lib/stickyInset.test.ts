@@ -1,0 +1,221 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  measureStickyBottomInset,
+  measureStickyInset,
+  measureTopChromeHeight,
+} from './stickyInset';
+
+// Regression for the Codex review on PR #299: with the list toolbar
+// sticky-pinned just below the header, the sweep IntersectionObserver's
+// rootMargin must subtract *both* heights — not the header's alone —
+// or rows partially hidden behind the toolbar still count as "fully
+// visible" and get swept without the reader seeing them.
+
+function makeStickyEl(className: string, bottom: number): HTMLElement {
+  const el = document.createElement('div');
+  el.className = className;
+  Object.defineProperty(el, 'getBoundingClientRect', {
+    value: () =>
+      ({
+        top: bottom - 48,
+        right: 0,
+        bottom,
+        left: 0,
+        width: 0,
+        height: 48,
+        x: 0,
+        y: bottom - 48,
+        toJSON() {
+          return {};
+        },
+      }) as DOMRect,
+    configurable: true,
+  });
+  document.body.appendChild(el);
+  return el;
+}
+
+function makeEl(className: string, offsetHeight: number): HTMLElement {
+  const el = document.createElement('div');
+  el.className = className;
+  Object.defineProperty(el, 'offsetHeight', {
+    value: offsetHeight,
+    configurable: true,
+  });
+  document.body.appendChild(el);
+  return el;
+}
+
+describe('measureTopChromeHeight', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('returns 0 when no top chrome is mounted', () => {
+    expect(measureTopChromeHeight()).toBe(0);
+  });
+
+  it('sums the header and top toolbar layout heights', () => {
+    makeEl('app-header', 56);
+    makeEl('list-toolbar list-toolbar--top', 44);
+    expect(measureTopChromeHeight()).toBe(100);
+  });
+
+  it('ignores the bottom toolbar — only the top one pins below the header', () => {
+    makeEl('app-header', 56);
+    makeEl('list-toolbar list-toolbar--top', 44);
+    makeEl('list-toolbar list-toolbar--bottom', 44);
+    expect(measureTopChromeHeight()).toBe(100);
+  });
+
+  it('reports the full height regardless of scroll position', () => {
+    // offsetHeight is layout height, not on-screen position, so the toolbar
+    // still counts even when scrolled out of view at the foot of the list.
+    makeEl('app-header', 56);
+    makeEl('list-toolbar list-toolbar--top', 44);
+    expect(measureTopChromeHeight()).toBe(100);
+  });
+});
+
+describe('measureStickyInset', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('returns 0 when neither sticky element is in the DOM', () => {
+    expect(measureStickyInset()).toBe(0);
+  });
+
+  it('returns the header bottom when only the header is mounted', () => {
+    makeStickyEl('app-header', 56);
+    expect(measureStickyInset()).toBe(56);
+  });
+
+  it('returns the toolbar bottom when both are stacked sticky', () => {
+    makeStickyEl('app-header', 56);
+    makeStickyEl('list-toolbar', 104);
+    expect(measureStickyInset()).toBe(104);
+  });
+
+  it('takes the max bottom regardless of DOM order', () => {
+    // If the toolbar were measured before the header for some reason,
+    // the result must still reflect whichever sticky strip sits
+    // lower in the viewport.
+    makeStickyEl('list-toolbar', 104);
+    makeStickyEl('app-header', 56);
+    expect(measureStickyInset()).toBe(104);
+  });
+
+  it('floors a sub-pixel bottom so a flush row is not clipped', () => {
+    // Rounding the inset up would shrink the sweep root past where the chrome
+    // actually ends, clipping a row sitting flush below it and dropping it
+    // under the 0.999 visibility cutoff — the grayed-out-Sweep regression.
+    makeStickyEl('app-header', 56.4);
+    makeStickyEl('list-toolbar', 104.2);
+    expect(measureStickyInset()).toBe(104);
+  });
+
+  it('clamps a negative bottom (scrolled-off element) to 0', () => {
+    makeStickyEl('app-header', -10);
+    expect(measureStickyInset()).toBe(0);
+  });
+
+  // The pinned group-by-feed section header sits in the band below the chrome
+  // and paints over rows scrolling up behind it, so a row is visually gone at the
+  // header's bottom edge. The inset extends by the header's height so the
+  // visibility boundary (and auto-hide-on-scroll's top exit) lands there, not a
+  // header-height higher at the toolbar.
+  it('extends the inset by a pinned group-by-feed section header height', () => {
+    makeStickyEl('app-header', 56);
+    makeStickyEl('list-toolbar', 104); // chrome bottom 104
+    makeStickyEl('item-list__group-header', 152); // makeStickyEl height is 48
+    expect(measureStickyInset()).toBe(152); // 104 + 48
+  });
+
+  // The extension is by the header's *height* (a fixed constant), not its
+  // on-screen bottom — so a header scrolled up out of view (negative bottom)
+  // still contributes its full height, keeping the boundary at the pinned
+  // header's bottom regardless of scroll position.
+  it('adds the header height, not its scroll position', () => {
+    makeStickyEl('app-header', 56);
+    makeStickyEl('list-toolbar', 104);
+    makeStickyEl('item-list__group-header', -100); // scrolled off; height still 48
+    expect(measureStickyInset()).toBe(152); // 104 + 48, not 104 + (-100)
+  });
+});
+
+// Codex P2 on PR #44: readmo's bottom toolbar is `position: sticky; bottom: 0`,
+// so it overlays the last rows — unlike newshacker's relative footer. Sweep
+// must also subtract its height, or a row tucked behind it counts as fully
+// visible and gets swept unseen.
+describe('measureStickyBottomInset', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  // makeStickyEl sets the element's top to `bottom - 48`; the bottom inset is
+  // `innerHeight - top`, so with innerHeight 768 a top at 720 intrudes 48px.
+  function setInnerHeight(value: number) {
+    Object.defineProperty(window, 'innerHeight', { value, configurable: true });
+  }
+
+  it('returns 0 when the bottom toolbar is absent', () => {
+    setInnerHeight(768);
+    expect(measureStickyBottomInset()).toBe(0);
+  });
+
+  it('returns the toolbar height when pinned at the viewport foot', () => {
+    setInnerHeight(768);
+    makeStickyEl('list-toolbar list-toolbar--bottom', 768); // top = 720
+    expect(measureStickyBottomInset()).toBe(48);
+  });
+
+  // The default `list` bottom bar is an in-flow footer that never overlaps a
+  // row. Its host grows to the foot of the page column (ListToolbar.css), so on
+  // a list too short to fill the screen the auto margin seats it exactly ON the
+  // fold rather than letting it hang mid-page — geometry indistinguishable from
+  // a pinned bar. Reading the class keeps the inset at 0 there, so the sweep
+  // observer doesn't shrink its root past a row sitting flush above a bar that
+  // covers nothing.
+  it('returns 0 for the relative bar seated at the fold', () => {
+    setInnerHeight(768);
+    makeStickyEl(
+      'list-toolbar list-toolbar--bottom list-toolbar--relative',
+      768,
+    ); // top = 720, same rect as the pinned case above
+    expect(measureStickyBottomInset()).toBe(0);
+  });
+
+  it('clamps to 0 when the toolbar sits below the fold (normal flow)', () => {
+    setInnerHeight(500);
+    // top = 760, well past the 500px viewport bottom → negative intrusion.
+    makeStickyEl('list-toolbar list-toolbar--bottom', 808);
+    expect(measureStickyBottomInset()).toBe(0);
+  });
+
+  it('floors a sub-pixel intrusion so the flush last row stays sweepable', () => {
+    // The last unpinned row sits flush above the bottom toolbar. Ceiling the
+    // intrusion would shrink the root's bottom edge ~1px into that row, pushing
+    // its visibility ratio below 0.999 so Sweep counts zero sweepable rows and
+    // grays out — exactly the reported bug. Floor leaves the flush row intact.
+    setInnerHeight(768);
+    makeStickyEl('list-toolbar list-toolbar--bottom', 767.6); // top = 719.6
+    expect(measureStickyBottomInset()).toBe(Math.floor(768 - 719.6));
+  });
+
+  it('clamps the intrusion to the toolbar height when it floats mid-viewport mid-reflow', () => {
+    // Regression: a reflow that briefly shrinks the content below the viewport
+    // height (toggling group-by-feed, a "More" page, the initial paint, or
+    // *pinning rows* — which lifts them out of a feed section and momentarily
+    // shrinks it) drops the `bottom: 0` toolbar into normal flow mid-screen. Its
+    // `top` jumps up, so `innerHeight - top` balloons far past the toolbar's real
+    // 48px height. The raw intrusion (768 - 300 = 468) would shrink the sweep
+    // root so far that rows the reader can plainly see count as hidden — the
+    // feed's broom grays out and the group Sweep leaves an unpinned row behind.
+    // Clamping to the toolbar height keeps the inset truthful through the
+    // transient.
+    setInnerHeight(768);
+    makeStickyEl('list-toolbar list-toolbar--bottom', 348); // top = 300, height 48
+    expect(measureStickyBottomInset()).toBe(48);
+  });
+});

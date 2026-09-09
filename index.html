@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- Deliberately NOT `user-scalable=no`. A two-finger pinch steps the in-app
+         "Text size" ladder instead of scaling the page (usePinchFontSize), but
+         that hook suppresses the browser's zoom per gesture, by canceling the
+         events it claims. Locking the viewport here as well would add nothing
+         it doesn't already do, and would take away the two things that make the
+         override safe: browser zoom still works where our replacement can't
+         help (an article's images, which reflowing text does not magnify), and
+         it still works everywhere if the script fails to load. A blanket
+         `user-scalable=no` is also the shape that fails WCAG 1.4.4. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- Matches the in-app header bg (`--rm-bg` in global.css) so the mobile
+         browser URL-bar tint and the sticky app header paint the same color.
+         The content is seeded by the theme boot script below and kept in sync
+         by `applyThemeColorMeta` in src/lib/theme.ts. We can't use
+         `media="(prefers-color-scheme: …)"` because the app supports an
+         explicit light/dark override that must take precedence over the OS
+         preference. `content` starts at the Ink-light value so the pre-JS
+         paint is correct for the majority case. -->
+    <meta name="theme-color" content="#faf9f5" />
+    <meta name="description" content="A mobile-friendly, installable reader for your RSS, Atom, and JSON feeds." />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="readmo" />
+    <title>readmo</title>
+    <script>
+      // Boot guard: recover from a blank first load after a deploy. The service
+      // worker can briefly hand a stale index.html that references the previous
+      // build's content-hashed entry (/assets/index-<oldhash>.js); that file is
+      // gone from the current deployment, so the module fails to load and the
+      // page paints empty until a manual refresh. Reload once (one-shot, guarded
+      // against a loop) to fetch the current index.html + hashes. Must run before
+      // the entry <script> so it can catch that entry failing — which is why this
+      // is inline here rather than in a module. Uses its own one-shot budget
+      // (readmo:entry-reload, mirrors ENTRY_RELOAD_GUARD_KEY in
+      // src/lib/chunkReload.ts) which main.tsx clears on a successful boot, so a
+      // second stale entry later in the session auto-reloads again.
+      //
+      // Once the app has booted (window.__readmoBooted, set by main.tsx when it
+      // clears the entry budget) this guard stands down: post-boot /assets/
+      // failures (a lazy route's chunk or CSS 404ing) belong to the CHUNK budget
+      // in chunkReload.ts, which fails closed. Without this check a persistently
+      // failing post-boot asset would loop forever — every boot clears the entry
+      // budget, so every failure would spend it again and reload.
+      (function () {
+        var KEY = 'readmo:entry-reload';
+        window.addEventListener(
+          'error',
+          function (event) {
+            if (window.__readmoBooted) return;
+            var el = event && event.target;
+            if (!el || (el.tagName !== 'SCRIPT' && el.tagName !== 'LINK')) return;
+            if (!/\/assets\//.test(el.src || el.href || '')) return;
+            try {
+              if (sessionStorage.getItem(KEY) !== null) return;
+              sessionStorage.setItem(KEY, '1');
+            } catch (e) {
+              return;
+            }
+            location.reload();
+          },
+          true,
+        );
+      })();
+    </script>
+    <!-- Theme boot: apply the stored appearance axes before first paint. The
+         entry module runs long after the HTML + CSS paint, so without this a
+         user on Dark, Grape, a non-default font, or a non-16px size gets a
+         flash of the default look (and a wrong URL-bar tint) on every cold
+         load. Mirrors the getStored*/apply* pairs in src/lib/theme.ts, which
+         own the attributes once React mounts. Whitelists are explicit (not
+         regexes) so a corrupt stored value falls back to the default rather
+         than activating a `:root[data-*]` override with no matching tokens.
+         Defaults (system mode, Ink palette, Roboto, 16px) own the bare
+         `:root` block and need no attribute. -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('readmo:theme');
+          var theme = t === 'dark' || t === 'light' ? t : 'system';
+          if (theme !== 'system') {
+            document.documentElement.setAttribute('data-theme', theme);
+          }
+          var p = localStorage.getItem('readmo:palette');
+          if (p === 'grape') {
+            document.documentElement.setAttribute('data-palette', p);
+          }
+          var f = localStorage.getItem('readmo:font');
+          if (
+            f === 'inter' ||
+            f === 'public-sans' ||
+            f === 'work-sans' ||
+            f === 'fira-sans' ||
+            f === 'system'
+          ) {
+            document.documentElement.setAttribute('data-font', f);
+          }
+          // Mirrors FONT_SIZES + nearestFontSize in src/lib/theme.ts. Snapping
+          // (not a whitelist) because the ladder has changed shape before: a
+          // reader stored on a retired step resolves to a neighbor in the app,
+          // so this has to resolve to the same one or every load paints the
+          // default and then jumps. Ties round up, as they do there.
+          var sizes = [14, 15, 16, 17, 18, 19, 20, 22, 24, 26, 28, 30, 32, 34];
+          var fs = Number(localStorage.getItem('readmo:fontSize'));
+          if (isFinite(fs) && fs > 0) {
+            var best = sizes[0];
+            var bestDistance = Infinity;
+            for (var i = 0; i < sizes.length; i++) {
+              var distance = Math.abs(sizes[i] - fs);
+              if (distance <= bestDistance) {
+                bestDistance = distance;
+                best = sizes[i];
+              }
+            }
+            if (best !== 16) {
+              document.documentElement.setAttribute('data-font-size', String(best));
+            }
+          }
+          // Seed <meta name="theme-color"> from the resolved mode + palette so
+          // the browser-chrome tint matches the header on the very first
+          // paint. Values mirror META_THEME_COLORS in src/lib/theme.ts.
+          var resolved = theme;
+          if (resolved === 'system') {
+            resolved =
+              window.matchMedia &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light';
+          }
+          var colors =
+            p === 'grape'
+              ? { light: '#f7f3fb', dark: '#1a141f' }
+              : { light: '#faf9f5', dark: '#14161c' };
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.content = colors[resolved];
+        } catch (e) {
+          /* ignore */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

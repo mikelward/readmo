@@ -1,0 +1,32 @@
+-- Readmo full-text fallback provenance.
+--
+-- The `fulltext` Edge Function normally fetches an article's page directly. When
+-- the publisher bot-blocks that fetch (401/403) it retries through the r.jina.ai
+-- fallback. This column records, per shared item, whether the cached
+-- `full_content_html` was obtained via that fallback path rather than a direct
+-- fetch, so the reader can label it ("via fallback") and so the gate can keep
+-- fallback-sourced content to allowlisted callers.
+--
+-- Like `full_content_html` (0010), this sits on the SHARED `items` row and is
+-- written server-only (client item writes were revoked in 0002; the function
+-- writes as the service role). The reader is meant to learn it only through the
+-- allowlist-gated `fulltext` function: it is NOT in any client read (ITEM_COLS
+-- in SupabaseDataSource.ts) and is scrubbed from feed_items list payloads (0026,
+-- alongside full_content_html).
+--
+-- Caveat — same as `full_content_html`: 0008 still grants table-level `select on
+-- items`, and items_select RLS gates ROWS not COLUMNS, so a hand-crafted
+-- PostgREST read of this column by any subscriber who can see the row is NOT yet
+-- blocked at the DB. The column-level REVOKE that closes that hole is the same
+-- deferred "DB-backed allowlist follow-up" already noted for full_content_html
+-- (SPEC *Full-text reading mode*; SupabaseDataSource ITEM_COLS comment) — it must
+-- cover this column too. This bit is strictly LESS sensitive than the body it
+-- describes (a single boolean vs. the article HTML in the same row, identical
+-- exposure), so it widens nothing beyond that already-tracked gap.
+--
+-- `false` covers both "never cached" and "cached from a direct fetch"; only a
+-- fallback extraction sets it true. Pre-existing cached rows default to false
+-- (we can't tell retroactively, and under-claiming is the safe default).
+
+alter table public.items
+  add column if not exists full_content_via_fallback boolean not null default false;

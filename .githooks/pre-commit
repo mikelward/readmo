@@ -1,0 +1,15 @@
+#!/bin/bash
+# Pre-commit guard: reject a commit that introduces a duplicate (or malformed)
+# supabase migration id. Two files sharing a `<NNNN>_` prefix can't both be
+# applied — `supabase db push` records the version in schema_migrations, whose
+# primary key is that version, so the second one dies with
+# `duplicate key value violates unique constraint "schema_migrations_pkey"`.
+#
+# Wired via `git config core.hooksPath .githooks` (the SessionStart hook sets
+# this automatically in the web sandbox; run it once yourself locally). The same
+# check runs in CI through checkMigrationIds.test.ts — this hook just catches it
+# before the commit instead of at PR time.
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+node "$repo_root/scripts/checkMigrationIds.mjs"

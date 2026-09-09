@@ -1,0 +1,45 @@
+/* newshacker connect control in Settings. 44px touch floor on the input and
+ * button; colors from the --rm-* design tokens. */
+
+.nh-connect__label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+  color: var(--rm-meta);
+}
+
+.nh-connect__row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.nh-connect__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--rm-border);
+  border-radius: 8px;
+  background: var(--rm-bg);
+  color: var(--rm-text);
+  font-family: var(--rm-font-mono);
+  font-size: 15px;
+}
+
+.nh-connect__input:focus-visible {
+  outline: 2px solid var(--rm-accent);
+  outline-offset: 1px;
+}
+
+.nh-connect__hint {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--rm-meta);
+}
+
+.nh-connect__error {
+  margin: 8px 0 0;
+  color: var(--rm-danger);
+  font-size: 14px;
+}

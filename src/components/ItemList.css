@@ -1,0 +1,425 @@
+/* The list's own column layout (and the growth that keeps its bottom bar at the
+   foot of the screen rather than the middle of the page) comes from
+   `.list-toolbar-host`, which every host of a bottom bar carries — see
+   ListToolbar.css. */
+
+.item-list__rows,
+.item-list__section-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* Group-by-feed wraps each feed's header + rows in its own section <li>. That
+   container is the sticky header's containing block, so the header is bounded
+   to its own section: only the current feed's header is ever pinned, and the
+   section's end pushes it out as the next one arrives (rather than every earlier
+   header staying stuck behind the visible one). A plain block — no overflow or
+   transform, which would break the descendant sticky. */
+.item-list__section {
+  list-style: none;
+}
+
+.item-list__row {
+  position: relative;
+}
+
+/* A cross-device dismiss caught in place (SPEC.md "A stable set of articles"):
+   the row dims and its title strikes through — it was read/dismissed on another
+   device — until a compaction (a pull-to-refresh, or a nav that remounts the
+   list). Only the row body dims; the right-side Undo button stays crisp so the
+   restore reads as actionable. */
+.item-list__row--dismissed .item-row__body {
+  opacity: 0.55;
+}
+
+.item-list__row--dismissed .item-row__title-text {
+  text-decoration: line-through;
+}
+
+/* Sweep animation: every unpinned, fully-visible row slides + fades out
+   together when the broom fires (matches the single-gesture verb — sweep is
+   one motion, not a staggered cascade). Duration and direction match
+   `useSwipeToDismiss` so the sweep feels like every row swiped itself away
+   at once. JS holds the actual `hideMany` until the animation ends
+   (item-list__sweep-out) or a 2× fallback timer fires, so the row slides
+   in place rather than popping. Reduced-motion readers skip the animation
+   in CSS and the delay in JS. */
+@keyframes item-list__sweep-out {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(100%, 0, 0);
+  }
+}
+
+.item-list__row--sweeping {
+  animation: item-list__sweep-out 200ms ease-out forwards;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .item-list__row--sweeping {
+    animation: none;
+  }
+}
+
+/* Group-by-feed section header: a quiet label introducing each feed's run of
+   rows. In feed views it's a collapse/expand toggle for the whole section; in
+   non-collapsible contexts it's a static label.
+
+   Pinned (position: sticky) just below the top chrome so a feed's header stays
+   on screen while scrolling through a section taller than the viewport, instead
+   of scrolling off with its first rows. The offset is the combined height of
+   the app header + top toolbar, measured into `--rm-group-sticky-top` by
+   ItemList because the toolbar can wrap to two rows on ultra-narrow phones; the
+   fallback (single-row toolbar: header + one 44px tap row) covers first paint
+   and any non-grouped view. z-index sits below the toolbar (10) and app header
+   (20) so a pinned header tucks under them, but above the item rows (auto) it
+   scrolls over. The header's opaque `--rm-bg` background hides those rows as
+   they pass behind it.
+
+   The `- 1px` pulls the pin up a pixel so it overlaps the chrome's bottom edge
+   instead of butting against it. `--rm-group-sticky-top` is summed from the
+   chrome strips' `offsetHeight`s (each rounded to a whole pixel), so on
+   fractional-DPI viewports the offset can land up to ~1px *below* the toolbar's
+   true rendered bottom — exposing a 1px sliver of white rows between the pinned
+   header and the static toolbar as you scroll. The overlap closes that gap and
+   is invisible: the header tucks under the higher-z chrome, which simply paints
+   over the overlapped pixel.
+
+   The matching `padding-top: 1px` keeps that overlapped pixel non-interactive:
+   without it, the `- 1px` would drag the toggle and action buttons (only
+   `--rm-tap` = 44px tall) a pixel under the toolbar that paints and hit-tests
+   above them, shaving their touchable area to 43px and breaking guardrail #2's
+   44px floor. The padding absorbs the overlap, so the controls themselves start
+   below the toolbar's edge and still expose the full 44px. */
+.item-list__group-header {
+  position: sticky;
+  top: calc(
+    var(--rm-group-sticky-top, calc(var(--rm-header-h) + var(--rm-tap))) - 1px
+  );
+  padding-top: 1px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  /* Real gap between adjacent tap zones — the feed-name link, the collapse
+     toggle beside it, and the Sweep/Undo actions — so they don't touch,
+     honoring guardrail #2's ≥8px between interactive controls. */
+  gap: 8px;
+  background: var(--rm-bg);
+  border-bottom: 1px solid var(--rm-border);
+}
+
+.item-list__group-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--rm-meta);
+  /* Keep the name to a single line (truncate, don't wrap) so a pinned header
+     stays compact — a wrapped two-line feed name would make the sticky band
+     jump in height as you scrolled between sections. The full name stays in the
+     toggle's aria-label and on the feed's rows. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* Per-feed unread/to-do count next to the feed name. Tabular figures + its own
+   casing (the title is uppercase) so the number reads as a count, not a word. */
+.item-list__group-count {
+  flex: 0 0 auto;
+  margin-left: 2px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--rm-accent);
+  font-variant-numeric: tabular-nums;
+  /* Optical nudge: the label baseline-aligns the title and count (see below),
+     but because the count is a smaller font its caps stop just short of the
+     title's cap height, so a strictly baseline-aligned count reads as sitting a
+     hair low. Lift it by ~half the cap-height difference — measured at ≈0.5px,
+     i.e. ~0.04em of the count — to center its caps on the title's. Visual only
+     (transform), so it doesn't shift the title's baseline or the row layout. */
+  transform: translateY(-0.04em);
+}
+
+/* Wraps the title and (optional) count and aligns them on a shared baseline so
+   the count tracks the feed name's text baseline (the count then gets a small
+   optical lift — see .item-list__group-count). min-width: 0 lets the title
+   ellipsize within the link's available width. */
+.item-list__group-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Static (non-interactive) header label keeps the original padding and lays
+   the (optional) favicon out beside the name. */
+.item-list__group-static {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0.5rem 1rem 0.25rem;
+}
+
+/* Site favicon to the left of the feed name. Decorative (alt=""), so it never
+   adds a tap zone — it sits inside the toggle button / static label. The box
+   size (shared with the reserved placeholder) is owned by the FeedFavicon
+   component so they can't drift; this only styles the surface. Hidden via
+   inline style on load error (a derived /favicon.ico that 404s). */
+.item-list__group-favicon {
+  border-radius: 3px;
+  object-fit: contain;
+}
+
+/* Collapse control, far left: a fixed 44px chevron button. It's the keyboard-
+   focusable toggle for the section; the count + empty space to the right of the
+   name is a second, pointer-only collapse region (group-collapse-rest below).
+   The chevron points right when collapsed, down when expanded. */
+.item-list__group-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: var(--rm-tap);
+  min-height: var(--rm-tap);
+  padding: 0.25rem 0.25rem 0.25rem 0.75rem;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+html:not(.rm-suppress-press) .item-list__group-toggle:active {
+  background: var(--rm-bg-card);
+}
+
+/* Middle tap zone: site icon + feed name, linking to that feed's own view.
+   Sized to its content (shrinking so a long name ellipsizes) rather than
+   filling the row, so the space beside it stays a collapse region. */
+.item-list__group-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  /* 44px floor on both axes: height via min-height, and this holds the tap
+     width at the touch floor even for a short-title, favicon-less feed (a
+     longer name still ellipsizes, since the title inside sets min-width: 0). */
+  min-width: var(--rm-tap);
+  min-height: var(--rm-tap);
+  padding: 0.25rem 0;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .item-list__group-link:hover .item-list__group-title {
+    color: var(--rm-text);
+  }
+}
+
+html:not(.rm-suppress-press) .item-list__group-link:active {
+  background: var(--rm-bg-card);
+}
+
+/* Right-of-name collapse region: the flexed empty space up to the Undo/Sweep
+   actions. Redundant with the chevron button (both toggle the section), so it's
+   aria-hidden and out of the tab order — a pointer-only affordance that lets
+   tapping the blank space beside the name collapse too. The guaranteed 44px
+   collapse tap target is the chevron, so this may shrink to nothing beside a
+   long title without stranding the control. */
+.item-list__group-collapse-rest {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  min-height: var(--rm-tap);
+  padding: 0.25rem 0.5rem;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+html:not(.rm-suppress-press) .item-list__group-collapse-rest:active {
+  background: var(--rm-bg-card);
+}
+
+/* Right-side per-feed controls: Sweep (mark visible done) + Undo. 44px touch
+   targets, ≥8px apart; the toggle's 1rem right padding separates them from the
+   name/count. */
+.item-list__group-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding-right: 0.5rem;
+}
+
+.item-list__group-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--rm-tap);
+  height: var(--rm-tap);
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--rm-meta);
+  cursor: pointer;
+}
+
+/* These are TooltipButtons that go inert via aria-disabled (not the native
+   `disabled` attribute) so their tooltip still shows on hover/long-press. */
+.item-list__group-action[aria-disabled='true'] {
+  opacity: 0.35;
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .item-list__group-action:not([aria-disabled='true']):hover {
+    color: var(--rm-text);
+    background: var(--rm-bg-card);
+  }
+}
+
+html:not(.rm-suppress-press) .item-list__group-action:not([aria-disabled='true']):active {
+  background: var(--rm-bg-card);
+}
+
+/* Per-section "More" (group-by-feed): a full-width control at the foot of a
+   feed section that appends that feed's next page inline. Distinct from the
+   global bottom-toolbar More (which is suppressed in this view). */
+.item-list__group-more {
+  list-style: none;
+  border-bottom: 1px solid var(--rm-border);
+}
+
+.item-list__group-more-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: var(--rm-tap);
+  padding: 0.5rem 1rem;
+  border: none;
+  background: none;
+  color: var(--rm-accent);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.item-list__group-more-btn:disabled {
+  color: var(--rm-meta);
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .item-list__group-more-btn:not(:disabled):hover {
+    background: var(--rm-bg-card);
+  }
+}
+
+html:not(.rm-suppress-press) .item-list__group-more-btn:not(:disabled):active {
+  background: var(--rm-bg-card);
+}
+
+.item-list__group-chevron {
+  flex: 0 0 auto;
+  color: var(--rm-meta);
+  transform: rotate(90deg); /* expanded: pointing down */
+  transition: transform 0.15s ease;
+}
+
+.item-list__group-header--collapsed .item-list__group-chevron {
+  transform: rotate(0deg); /* collapsed: pointing right */
+}
+
+html:not(.rm-suppress-press) .item-list__group-toggle:active {
+  background: var(--rm-bg-card);
+}
+
+.item-list__state {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--rm-meta);
+}
+
+.item-list__state button {
+  margin-top: 12px;
+  padding: 10px 20px;
+  min-height: var(--rm-tap);
+  border: 1px solid var(--rm-border-strong);
+  border-radius: var(--rm-radius);
+  background: var(--rm-bg-card);
+  color: var(--rm-accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.item-list__refresh {
+  padding: 12px;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--rm-meta);
+}
+
+.item-list__refresh--error {
+  color: var(--rm-danger);
+}
+
+.item-list__refresh button {
+  background: none;
+  border: none;
+  color: var(--rm-accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* Refreshing overlay: covers the on-screen list while a fresh-list fetch could
+   reorder it, so the reader can't tap an about-to-move row. Anchored below the
+   top chrome (the `top` inset is set inline from the measured chrome height) so
+   the header + toolbar stay usable; the opaque paper background hides the stale
+   rows underneath, which stay mounted so the scroll/height machinery is
+   undisturbed. */
+.item-list__refreshing {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--rm-bg);
+}
+
+/* Blank scroll-space at the true end of a feed, rendered only when auto-hide-on-
+   scroll is on (see ItemList). Auto-hide marks a row Done as it scrolls off the
+   TOP, but the last screenful can never leave the top edge — nothing sits below
+   it to scroll into — so those rows are stranded unmarkable-by-scroll. One
+   viewport of empty tail gives them the room to be pushed up past the top
+   chrome, in either bottom-bar position: below the in-flow relative bar, or
+   above the sticky pinned bar (which stays put). The overshoot beyond the exact
+   need is unreachable blank the reader scrolls back out of, not a visible gap.
+   dvh tracks the mobile dynamic-toolbar viewport; vh is the fallback. */
+.item-list__scroll-space {
+  min-height: 100vh;
+  min-height: 100dvh;
+}

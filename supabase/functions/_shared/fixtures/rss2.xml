@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Example RSS 2.0 Feed</title>
+    <link>https://example.com/</link>
+    <description>An example feed</description>
+    <item>
+      <title>First Post</title>
+      <link>https://example.com/posts/first</link>
+      <guid isPermaLink="false">tag:example.com,2024:first</guid>
+      <pubDate>Wed, 02 Oct 2024 13:00:00 GMT</pubDate>
+      <dc:creator>Jane Doe</dc:creator>
+      <description>A short summary.</description>
+      <content:encoded><![CDATA[<p>Full body with a <a href="/relative-link">relative link</a>.</p>]]></content:encoded>
+      <enclosure url="https://cdn.example.com/audio/first.mp3" type="audio/mpeg" length="12345"/>
+    </item>
+    <item>
+      <title>Second Post</title>
+      <link>https://example.com/posts/second</link>
+      <guid>https://example.com/posts/second</guid>
+      <pubDate>Thu, 03 Oct 2024 09:30:00 GMT</pubDate>
+      <description>Just a description, no content:encoded.</description>
+    </item>
+  </channel>
+</rss>
