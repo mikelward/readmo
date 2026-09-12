@@ -753,9 +753,9 @@ build/routing/deploy.
 ## Codex reviews
 
 **Codex is the automated reviewer on this repo** — not Copilot. Its reviews
-are triggered automatically; you don't request them, except when nothing has
-come back five minutes after a push — that means it never picked the push
-up — or to confirm a rebutted false positive.
+are triggered automatically; you don't request them, except to confirm a
+rebutted false positive, or where *Read the Codex verdict* below says the
+`codex` status is still pending.
 
 - **Address Codex comments automatically — don't wait to be asked.** When a Codex review lands, treat each comment like a real review note: read it, decide whether it's a real issue or a false positive, and if it's real, fix it in the same PR — the one exception being a real finding that's genuinely out of scope for this PR, which you defer instead (see *Deferring a finding* below). Fold the fix into the commit it belongs to (rebase / `--fixup`) rather than tacking on an "address review" commit, per the *one commit per logical surviving change* rule. Group several small fixes into one commit when they share a topic.
 - **Reply to (and resolve) every addressed Codex comment** via `mcp__github__add_reply_to_pull_request_comment`, then `mcp__github__resolve_review_thread`. Do this for each addressed comment, not in bulk.
@@ -771,8 +771,9 @@ up — or to confirm a rebutted false positive.
   clean, and Codex revokes it on push — so a visible one belongs to the
   visible head, and `+1` with green CI is a merge. The count names no
   author, so leave PR-body reactions to Codex: nobody else's is revoked, and
-  a review naming that commit with no findings is the same verdict, in the
-  attributable form. Findings arrive as review comments, as a top-level
+  a review naming that commit with no findings is the same verdict in
+  attributable form, though the reaction is what reliably clears the
+  status. Findings arrive as review comments, as a top-level
   comment, or as a review — read `get_review_comments`, `get_comments` and
   `get_reviews` to the last page, since all three page oldest first — and
   they block the merge until fixed, rebutted, or deferred (see *Deferring a
