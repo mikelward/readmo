@@ -779,7 +779,7 @@ rebutted false positive, or where *Read the Codex verdict* below says the
   they block the merge until fixed, rebutted, or deferred (see *Deferring a
   finding* below); an acknowledgement is not an answer. A pending `codex`
   status is one of three things. Findings to address — address them. A
-  review that landed but left no reaction, or a rebuttal it hasn't answered
+  clean review that left no reaction, or a rebuttal it hasn't answered
   — poke `@codex review` once, now. Nothing back at all — poke once, five
   minutes after the push. Escalate five minutes after the poke rather than
   poking a second time.
