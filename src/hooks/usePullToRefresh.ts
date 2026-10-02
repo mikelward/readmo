@@ -260,7 +260,12 @@ export function usePullToRefresh({
       const start = startRef.current;
       if (!start || start.pointerId !== e.pointerId) return;
       startRef.current = null;
-      if (phaseRef.current === 'pulling') {
+      // Ask `armed` too, for the same reason as the gesture-cancel handler
+      // above: a cancel landing right after the move that armed the pull reads
+      // a `phaseRef` still at `idle`, and skipping the reset would leave the
+      // surface stuck at its partial translate — which pins every sticky group
+      // header inside it that far below the top toolbar.
+      if (phaseRef.current === 'pulling' || start.armed) {
         setPhase('settling');
         setPull(0);
         settleTimerRef.current = window.setTimeout(() => {
