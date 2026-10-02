@@ -502,7 +502,13 @@ export function ItemRows({
     const showFeedMore =
       !!onFeedMore && !collapsed && (feedsWithMore?.has(feedId) ?? false);
     return (
-      <li className="item-list__section" key={`feed:${feedId}`}>
+      // `data-feed-section` lets ItemList find a section by feed, to scroll its
+      // header back into place after a collapse shrinks the list.
+      <li
+        className="item-list__section"
+        key={`feed:${feedId}`}
+        data-feed-section={feedId}
+      >
         {section.header
           ? renderHeader(
               feedId,
@@ -530,7 +536,11 @@ export function ItemRows({
   }): ReactNode => {
     const collapsed = collapsedFeeds?.has(p.feedId) ?? false;
     return (
-      <li className="item-list__section" key={`empty-more:${p.feedId}`}>
+      <li
+        className="item-list__section"
+        key={`empty-more:${p.feedId}`}
+        data-feed-section={p.feedId}
+      >
         {renderHeader(
           p.feedId,
           p.title,

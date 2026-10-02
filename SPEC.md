@@ -1759,7 +1759,12 @@ negligible and off every critical path. See the External services table in
        matching the toolbar's Undo / Sweep icon buttons; each soft-disables
        (`aria-disabled`, so its tooltip still shows) when it would be a no-op
        (all already collapsed / nothing collapsed). A collapsed feed's hidden
-       rows aren't navigable or swept.
+       rows aren't navigable or swept. **Collapsing keeps the reader's place:**
+       Collapse all, or collapsing a section from its own header, leaves the
+       section the reader was in on screen with its header where it was (never
+       tucked under the top chrome), and never strands the screen in the blank
+       auto-hide tail below the list — near the foot, the view pulls up just far
+       enough to end on the last header.
      - **Per-section More + per-feed window** (group-by-feed only). Each section
        opens showing **all of its pinned rows** plus its newest **Articles per
        feed section** listable body rows, so a busy feed doesn't
