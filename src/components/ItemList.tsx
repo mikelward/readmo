@@ -953,6 +953,84 @@ export function ItemList({
   const collapsedRef = useRef<Set<FeedId>>(new Set());
   collapsedRef.current = collapsed;
 
+  // Keep the reader's section on screen across a collapse (Collapse all, or a
+  // section header's own toggle). Collapsing drops rows out of the document, and
+  // nothing else holds the view: the browser's scroll anchoring has nothing left
+  // to anchor to (the rows on screen just unmounted), so window.scrollY stays put
+  // — landing on whichever section now sits at that offset — or clamps to the
+  // far shorter document. With auto-hide-on-scroll on, the clamp lands inside
+  // the one-viewport blank tail below the list: a completely empty screen.
+  // So the tap records which section the reader is in and where its header sits
+  // (never above the top chrome), and the layout effect below scrolls that header
+  // back to the same spot before paint — pulling up just enough, near the foot
+  // of the list, that the blank tail doesn't show below the last header.
+  const collapseAnchorRef = useRef<{ feedId: FeedId; top: number } | null>(null);
+  const captureCollapseAnchor = useCallback(
+    (feedId?: FeedId) => {
+      const list = listRef.current;
+      if (!list) return;
+      const chrome = measureTopChromeHeight();
+      let section: HTMLElement | null = null;
+      for (const el of Array.from(list.children)) {
+        if (!(el instanceof HTMLElement) || !el.dataset.feedSection) continue;
+        if (feedId !== undefined) {
+          if (el.dataset.feedSection === feedId) {
+            section = el;
+            break;
+          }
+          continue;
+        }
+        // The reader's section is the first one still reaching below the top
+        // chrome — the one whose header is pinned there (or, near the top of
+        // the list, the first on screen). Scrolled past them all, into the
+        // blank tail, the last section stands in.
+        section = el;
+        if (el.getBoundingClientRect().bottom > chrome) break;
+      }
+      if (!section) return;
+      const header = section.querySelector('.item-list__group-header');
+      const top = (header ?? section).getBoundingClientRect().top;
+      collapseAnchorRef.current = {
+        feedId: section.dataset.feedSection!,
+        top: Math.max(top, chrome),
+      };
+    },
+    [listRef],
+  );
+  useLayoutEffect(() => {
+    const anchor = collapseAnchorRef.current;
+    if (!anchor) return;
+    collapseAnchorRef.current = null;
+    const section = Array.from(listRef.current?.children ?? []).find(
+      (el): el is HTMLElement =>
+        el instanceof HTMLElement && el.dataset.feedSection === anchor.feedId,
+    );
+    if (!section) return;
+    // Collapsed, the section is just its header, so its top is the header's.
+    // getBoundingClientRect forces the layout first, so whatever the browser
+    // already did to scrollY (anchoring, clamping) is folded into the read.
+    let delta = section.getBoundingClientRect().top - anchor.top;
+    const tail = scrollSpaceRef.current;
+    if (tail) {
+      // Where the blank tail would start once the header is back in place; if
+      // that's above the bottom bar, scroll up by the gap so the screen ends on
+      // list content. The header stays on screen: it sits above the tail.
+      const bottomEdge = window.innerHeight - measureStickyBottomInset();
+      const gap = bottomEdge - (tail.getBoundingClientRect().top - delta);
+      if (gap > 0) delta -= gap;
+    }
+    const target = Math.max(0, window.scrollY + delta);
+    if (Math.abs(target - window.scrollY) >= 1) window.scrollTo(0, target);
+  }, [collapsed, listRef]);
+  const handleToggleCollapse = useCallback(
+    (feedId: FeedId) => {
+      // Only a collapse shrinks the list; expanding grows it below the header.
+      if (!collapsedRef.current.has(feedId)) captureCollapseAnchor(feedId);
+      toggle(feedId);
+    },
+    [captureCollapseAnchor, toggle],
+  );
+
   // Anchors the fetch-and-scroll path: the id of the last row before a tap that
   // triggers a fetch (ids are stable across a plain page fetch — no state change
   // reorders them), so the effect below can scroll the page's first row up once
@@ -2958,7 +3036,10 @@ export function ItemList({
   const collapseControls =
     groupByFeed && feedIdsInView.length > 0
       ? {
-          onCollapseAll: () => collapseAll(feedIdsInView),
+          onCollapseAll: () => {
+            captureCollapseAnchor();
+            collapseAll(feedIdsInView);
+          },
           onExpandAll: () => expand(feedIdsInView),
           allCollapsed: feedIdsInView.every((id) => collapsed.has(id)),
           anyCollapsed: feedIdsInView.some((id) => collapsed.has(id)),
@@ -3531,7 +3612,7 @@ export function ItemList({
               onUndo={groupByFeed ? handleUndo : undefined}
               canUndo={groupByFeed ? canUndo : undefined}
               collapsedFeeds={groupByFeed ? collapsed : undefined}
-              onToggleCollapse={groupByFeed ? toggle : undefined}
+              onToggleCollapse={groupByFeed ? handleToggleCollapse : undefined}
               feedsWithMore={perGroupMore ? feedsWithMore : undefined}
               loadingFeeds={perGroupMore ? loadingFeeds : undefined}
               onFeedMore={perGroupMore ? handleFeedMore : undefined}

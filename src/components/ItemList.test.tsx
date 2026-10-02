@@ -735,6 +735,148 @@ describe('ItemList', () => {
     expect(container.querySelectorAll('[data-item-id]')).toHaveLength(total);
   });
 
+  describe("keeping the reader's section on screen across a collapse", () => {
+    const HEADER = 44;
+    const ROW = 80;
+    const CHROME = 50;
+    // Short, so the five collapsed headers (220px) still overflow it and the
+    // header can be put back exactly where it was.
+    const VIEWPORT = 200;
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    // jsdom has no layout, so model just enough of the grouped list: sections
+    // stack below the top chrome, each a header plus a ROW per rendered row; a
+    // section's header is sticky under the chrome while its section spans it;
+    // auto-hide-on-scroll's blank tail (one viewport) sits right below the list;
+    // and scrollY is clamped to the document like a real browser's — which is
+    // what strands the reader once a collapse shrinks the document.
+    function installGroupedLayout() {
+      let raw = 0;
+      const sections = () =>
+        Array.from(document.querySelectorAll<HTMLElement>('li[data-feed-section]'));
+      const heightOf = (s: Element) =>
+        HEADER + s.querySelectorAll('[data-item-id]').length * ROW;
+      const listHeight = () => sections().reduce((h, s) => h + heightOf(s), 0);
+      const tailHeight = () =>
+        document.querySelector('.item-list__scroll-space') ? VIEWPORT : 0;
+      const maxScroll = () =>
+        Math.max(0, CHROME + listHeight() + tailHeight() - VIEWPORT);
+      const scrollY = () => Math.min(Math.max(0, raw), maxScroll());
+      const docTopOf = (s: Element) => {
+        let y = CHROME;
+        for (const other of sections()) {
+          if (other === s) break;
+          y += heightOf(other);
+        }
+        return y;
+      };
+      const rect = (top: number, height: number) =>
+        ({ top, bottom: top + height, left: 0, right: 0, width: 0, height, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+      vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(
+        function (this: Element) {
+          const y = scrollY();
+          if (this instanceof HTMLElement && this.dataset.feedSection) {
+            return rect(docTopOf(this) - y, heightOf(this));
+          }
+          if (this.classList.contains('item-list__group-header')) {
+            const section = this.closest('li[data-feed-section]')!;
+            const top = docTopOf(section) - y;
+            const stuck = Math.max(top, CHROME);
+            return rect(Math.min(stuck, top + heightOf(section) - HEADER), HEADER);
+          }
+          if (this.classList.contains('item-list__scroll-space')) {
+            return rect(CHROME + listHeight() - y, tailHeight());
+          }
+          return rect(0, 0);
+        },
+      );
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: VIEWPORT });
+      Object.defineProperty(window, 'scrollY', { configurable: true, get: scrollY });
+      vi.stubGlobal('scrollTo', (_x: number, y: number) => {
+        raw = y;
+      });
+      // measureTopChromeHeight reads the top toolbar's height.
+      Object.defineProperty(document.querySelector('.list-toolbar--top')!, 'offsetHeight', {
+        configurable: true,
+        value: CHROME,
+      });
+      const header = (s: Element) =>
+        s.querySelector('.item-list__group-header')!.getBoundingClientRect();
+      return {
+        sections,
+        header,
+        // Scroll so `px` of the section sits under the chrome (its header pinned).
+        scrollInto: (s: Element, px: number) => {
+          raw = docTopOf(s) - CHROME + px;
+        },
+        tail: () =>
+          document.querySelector('.item-list__scroll-space')!.getBoundingClientRect(),
+      };
+    }
+
+    it('Collapse all leaves the section the reader was in pinned under the chrome', async () => {
+      const user = userEvent.setup();
+      const source = new MockDataSource(`test-${Math.random()}`);
+      renderGrouped(source);
+      await screen.findAllByTestId('item-row');
+      const layout = installGroupedLayout();
+      const second = layout.sections()[1];
+      layout.scrollInto(second, 60);
+      expect(layout.header(second).top).toBe(CHROME); // pinned, mid-section
+
+      await user.click(screen.getByTestId('collapse-all-btn'));
+
+      expect(screen.queryAllByTestId('item-row')).toHaveLength(0);
+      // Without the hold, the shrunk document clamps scrollY to 70 and this
+      // header slides up behind the chrome (top 24).
+      expect(layout.header(second).top).toBe(CHROME);
+    });
+
+    it('Collapse all near the foot never lands on the blank auto-hide tail', async () => {
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      const user = userEvent.setup();
+      const source = new MockDataSource(`test-${Math.random()}`);
+      renderGrouped(source);
+      await screen.findAllByTestId('item-row');
+      const layout = installGroupedLayout();
+      const last = layout.sections().at(-1)!;
+      layout.scrollInto(last, 60);
+
+      await user.click(screen.getByTestId('collapse-all-btn'));
+
+      // Without the hold the clamp lands inside the one-viewport blank tail:
+      // its top at 0, an entirely empty screen. Now the screen ends on the
+      // list, and the reader's section is still in view.
+      expect(layout.tail().top).toBeGreaterThanOrEqual(VIEWPORT);
+      expect(layout.header(last).top).toBeGreaterThanOrEqual(CHROME);
+      expect(layout.header(last).bottom).toBeLessThanOrEqual(VIEWPORT);
+    });
+
+    it("collapsing a pinned section from its own header keeps it on screen", async () => {
+      window.localStorage.setItem(HIDE_ON_SCROLL_KEY, '1');
+      const user = userEvent.setup();
+      const source = new MockDataSource(`test-${Math.random()}`);
+      renderGrouped(source);
+      await screen.findAllByTestId('item-row');
+      const layout = installGroupedLayout();
+      const last = layout.sections().at(-1)!;
+      layout.scrollInto(last, 60);
+
+      await user.click(within(last).getByTestId('group-toggle'));
+
+      expect(within(last).getByTestId('group-toggle')).toHaveAttribute(
+        'aria-expanded',
+        'false',
+      );
+      expect(layout.tail().top).toBeGreaterThanOrEqual(VIEWPORT);
+      expect(layout.header(last).top).toBeGreaterThanOrEqual(CHROME);
+      expect(layout.header(last).bottom).toBeLessThanOrEqual(VIEWPORT);
+    });
+  });
+
   it('auto-skips collapsed-only pages when tapping More until visible rows appear', async () => {
     const user = userEvent.setup();
     const source = new MockDataSource(`test-${Math.random()}`);
