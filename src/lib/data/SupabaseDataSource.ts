@@ -53,6 +53,7 @@ import {
   type AddFeedErrorKind,
 } from './DataSource';
 import { PAGE_SIZE } from './MockDataSource';
+import { recordSync } from '../syncDiagnostics';
 import {
   type FeedPublicRow,
   type ItemRow,
@@ -195,6 +196,18 @@ function liveItemStateFilter(now: number = Date.now()): string {
     `hidden_at.gte.${cutoff}`,
     `opened_at.gte.${cutoff}`,
   ].join(',');
+}
+
+/** Describe a `newshacker-sync` soft failure (a 200 with `ok:false`) from the
+ * additive `stage`/`status`/`code` fields the function reports ("fetch HTTP
+ * 503", "apply 57014"), or a generic note from an older function that sends
+ * none. */
+function edgeFailure(d: Record<string, unknown>): string {
+  const parts: string[] = [];
+  if (typeof d.stage === 'string') parts.push(d.stage);
+  if (typeof d.status === 'number') parts.push(`HTTP ${d.status}`);
+  if (typeof d.code === 'string' && d.code) parts.push(d.code);
+  return parts.length ? parts.join(' ') : 'failed (no detail from server)';
 }
 
 /** How far BEFORE the stored cursor an incremental hydrate re-reads.
@@ -553,7 +566,15 @@ export class SupabaseDataSource implements DataSource {
           params[`p_${f}`] = c.value;
           params[`p_${f}_at`] = new Date(c.at).toISOString();
         }
-        const { data, error } = await this.sb.rpc('set_item_state', params);
+        let data: unknown;
+        let error: unknown;
+        try {
+          ({ data, error } = await this.sb.rpc('set_item_state', params));
+        } catch (err) {
+          recordSync('write', false, err);
+          throw err;
+        }
+        recordSync('write', !error, error);
         // LWW: the RPC returns the post-write server row. If a field we sent did
         // NOT land — an older offline write that lost to a newer server value —
         // the optimistic local value is now wrong, and because a stale write is
@@ -820,6 +841,12 @@ export class SupabaseDataSource implements DataSource {
     this.hydrationChain = run.then(
       () => {},
       () => {},
+    );
+    // `/debug`'s Sync section: every hydrate, first read or resync alike, is a
+    // refresh of server truth.
+    run.then(
+      () => recordSync('refresh', true),
+      (err: unknown) => recordSync('refresh', false, err),
     );
     return run;
   }
@@ -1309,6 +1336,10 @@ export class SupabaseDataSource implements DataSource {
     return this.lastSyncedAt;
   }
 
+  getPendingWriteCount(): number {
+    return this.outbox.pendingIds().length;
+  }
+
   // --- newshacker dismissal mirror ------------------------------------------
 
   /** Whether this account has a newshacker link, and whether the backend even
@@ -1359,11 +1390,19 @@ export class SupabaseDataSource implements DataSource {
   async syncNewshackerState(payload: MirrorPayload): Promise<void> {
     if (payload.done.length === 0 && payload.pinned.length === 0) return;
     try {
-      await this.sb.functions.invoke('newshacker-sync', {
+      const { data, error } = await this.sb.functions.invoke('newshacker-sync', {
         body: { entries: payload.done, pinned: payload.pinned },
       });
-    } catch {
-      // best-effort; nothing to surface.
+      // Best-effort, so nothing reaches the reader — but record the outcome
+      // for `/debug`. An unlinked account (`linked:false`, `ok:true`) isn't a
+      // failure; `ok:false` always is, even with no `linked` (the function
+      // couldn't read the link at all).
+      const d = (data ?? {}) as Record<string, unknown>;
+      if (error) recordSync('newshackerPush', false, error);
+      else if (d.ok === false) recordSync('newshackerPush', false, edgeFailure(d));
+      else if (d.linked === true) recordSync('newshackerPush', true);
+    } catch (err) {
+      recordSync('newshackerPush', false, err);
     }
   }
 
@@ -1391,12 +1430,20 @@ export class SupabaseDataSource implements DataSource {
       const { data, error } = await this.sb.functions.invoke('newshacker-sync', {
         method: 'GET',
       });
-      if (error) return { linked: false, applied: 0, ok: false };
-      const d = (data ?? {}) as { linked?: unknown; applied?: unknown; ok?: unknown };
+      if (error) {
+        recordSync('newshackerPull', false, error);
+        return { linked: false, applied: 0, ok: false };
+      }
+      const d = (data ?? {}) as Record<string, unknown>;
       linked = d.linked === true;
       applied = typeof d.applied === 'number' && d.applied > 0 ? d.applied : 0;
       if (typeof d.ok === 'boolean') ok = d.ok;
-    } catch {
+      // As for the push: `ok:false` is a failure even without `linked` (the
+      // link read itself failed); an unlinked account records nothing.
+      if (ok === false) recordSync('newshackerPull', false, edgeFailure(d));
+      else if (linked) recordSync('newshackerPull', true);
+    } catch (err) {
+      recordSync('newshackerPull', false, err);
       return { linked: false, applied: 0, ok: false };
     }
     if (applied > 0) {

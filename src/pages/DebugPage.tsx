@@ -12,6 +12,12 @@ import { useDataSource } from '../lib/data/context';
 import { buildInfo, buildInfoRows, summarizeBuild } from '../lib/buildInfo';
 import { formatLastSync } from '../lib/lastSync';
 import { formatLastFeedFetch, getLastFeedFetch } from '../lib/lastFetch';
+import {
+  formatSyncChannel,
+  getSyncStats,
+  isSyncChannelFailing,
+  type SyncChannel,
+} from '../lib/syncDiagnostics';
 import { isSupabaseConfigured, supabaseHealthUrl } from '../lib/supabase/client';
 import {
   describeSupabase,
@@ -77,6 +83,53 @@ function configRows(): Row[] {
   // status row (badge + reachable/unreachable/not-configured), so it isn't
   // duplicated here.
   return [{ label: 'Mode', value: import.meta.env.MODE }];
+}
+
+const SYNC_CHANNELS: ReadonlyArray<{ channel: SyncChannel; label: string }> = [
+  { channel: 'write', label: 'Writes' },
+  { channel: 'refresh', label: 'Refresh' },
+  { channel: 'newshackerPush', label: 'newshacker push' },
+  { channel: 'newshackerPull', label: 'newshacker pull' },
+];
+
+/** `/debug`'s Sync section rows: per channel, when it last worked and the last
+ * failure with its error code (lib/syncDiagnostics), plus the outbox's
+ * pending-write count when the source has one. */
+function syncRows(pendingWrites: number | null, now: number = Date.now()): Row[] {
+  const rows: Row[] = [];
+  if (pendingWrites !== null) {
+    rows.push({
+      label: 'Pending writes',
+      value: String(pendingWrites),
+      state: pendingWrites === 0 ? 'ok' : 'idle',
+    });
+  }
+  for (const { channel, label } of SYNC_CHANNELS) {
+    const stats = getSyncStats(channel);
+    rows.push({
+      label,
+      value: formatSyncChannel(stats, now),
+      state: isSyncChannelFailing(stats)
+        ? 'down'
+        : stats.lastOkAt !== null
+          ? 'ok'
+          : undefined,
+    });
+  }
+  return rows;
+}
+
+/** How often the Sync section re-reads the session log, so a failure that
+ * lands while `/debug` is open shows up without leaving the page. */
+const SYNC_REFRESH_MS = 2000;
+
+function SyncSection({ pendingWrites }: { pendingWrites: () => number | null }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), SYNC_REFRESH_MS);
+    return () => clearInterval(id);
+  }, []);
+  return <DebugSection title="Sync" rows={syncRows(pendingWrites())} />;
 }
 
 function DebugSection({ title, rows }: { title: string; rows: Row[] }) {
@@ -198,6 +251,9 @@ export function DebugPage() {
 
       <DebugSection title="Build" rows={buildInfoRows(buildInfo)} />
       <DebugSection title="Runtime" rows={runtime} />
+      <SyncSection
+        pendingWrites={() => dataSource.getPendingWriteCount?.() ?? null}
+      />
       <DebugSection title="Configuration" rows={configRows()} />
       <DebugSection title="Account" rows={accountRows} />
 
