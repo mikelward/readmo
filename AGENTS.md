@@ -382,7 +382,9 @@ build/routing/deploy.
   harness snapshots the environment before hooks run, so an rc edit lands a
   session late while looking like it worked. So the fallback changes what the
   NAME resolves to instead: symlinks for `node`/`npm`/`npx` (and `deno`) in
-  the first PATH directory **under `$HOME`**, which wins the lookup whatever a
+  the first PATH directory **under `$HOME`** that
+  exists — it creates only `~/.local/bin`, never another tool's missing
+  directory such as `~/.nix-profile/bin` — which wins the lookup whatever a
   later shell sources. Three refusals keep that from being a lie: it links
   nothing if any tool is missing from the source, nothing if any *earlier*
   PATH entry still supplies one of the names (node and npm need not come from
