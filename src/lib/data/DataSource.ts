@@ -411,6 +411,11 @@ export interface DataSource {
    * on `/debug` as "Last sync". Optional: sources with no server to reconcile
    * against (the in-memory mock) omit it, and `/debug` then shows it as N/A. */
   getLastSyncedAt?(): number | null;
+  /** How many items have item-state writes queued in the outbox and not yet
+   * confirmed by the server — `/debug`'s "Pending writes". A count that stays
+   * above zero while online means writes aren't landing. Optional, like
+   * {@link getLastSyncedAt}. */
+  getPendingWriteCount?(): number;
   /** The account's synced reading-behavior settings (`user_settings`, 0064) —
    * only the columns the user has set; `{}` when the row doesn't exist yet;
    * `null` when the backend can't serve them (a backend predating the table —

@@ -5,6 +5,7 @@ import { FunctionsHttpError } from '@supabase/supabase-js';
 import { SupabaseDataSource } from './SupabaseDataSource';
 import { _resetNetworkStatusForTests, setConnectivityProbeUrl } from '../networkStatus';
 import { makeFakeSupabase, type FakeTables } from './fakeSupabaseClient';
+import { _resetSyncDiagnosticsForTests, getSyncStats } from '../syncDiagnostics';
 
 // 5 days ago — always inside the 30-day Done/Hidden TTL. A fixed calendar
 // date would silently expire as the wall clock advances and flip every
@@ -1674,6 +1675,95 @@ describe('SupabaseDataSource dispatch + writes', () => {
     env.fake.invokeResult.current = { data: { linked: true, applied: 0 }, error: null };
     const res = await env.ds.pullNewshackerState();
     expect(res.ok).toBeUndefined();
+  });
+
+  describe('sync diagnostics (/debug Sync section)', () => {
+    beforeEach(() => _resetSyncDiagnosticsForTests());
+
+    // Every microtask queued by the write/pull chain drains before a macrotask,
+    // so one zero-delay tick is a deterministic "the async chain has settled".
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+
+    it('records a soft-failed pull with the stage and code the function reports', async () => {
+      const env = setup();
+      env.fake.invokeResult.current = {
+        data: { linked: true, applied: 0, ok: false, stage: 'apply', code: '57014' },
+        error: null,
+      };
+      await env.ds.pullNewshackerState();
+      const s = getSyncStats('newshackerPull');
+      expect(s.failures).toBe(1);
+      expect(s.lastFailure?.detail).toBe('apply 57014');
+    });
+
+    it('records a pull that failed at the function itself', async () => {
+      const env = setup();
+      env.fake.invokeResult.current = {
+        data: null,
+        error: { name: 'FunctionsHttpError', message: 'non-2xx', context: { status: 503 } },
+      };
+      await env.ds.pullNewshackerState();
+      expect(getSyncStats('newshackerPull').lastFailure?.detail).toBe('HTTP 503: non-2xx');
+    });
+
+    it('records a successful pull, and nothing at all for an unlinked account', async () => {
+      const env = setup();
+      env.fake.invokeResult.current = { data: { linked: false, applied: 0, ok: true }, error: null };
+      await env.ds.pullNewshackerState();
+      expect(getSyncStats('newshackerPull')).toEqual({ lastOkAt: null, lastFailure: null, failures: 0 });
+      env.fake.invokeResult.current = { data: { linked: true, applied: 0, ok: true }, error: null };
+      await env.ds.pullNewshackerState();
+      expect(getSyncStats('newshackerPull').lastOkAt).not.toBeNull();
+    });
+
+    it('records a failure to read the link itself, which reports no linked flag', async () => {
+      const env = setup();
+      env.fake.invokeResult.current = {
+        data: { linked: null, ok: false, stage: 'link', code: '57014' },
+        error: null,
+      };
+      await env.ds.pullNewshackerState();
+      expect(getSyncStats('newshackerPull').lastFailure?.detail).toBe('link 57014');
+      await env.ds.syncNewshackerState({ done: [{ id: 1, at: 1 }], pinned: [] });
+      expect(getSyncStats('newshackerPush').lastFailure?.detail).toBe('link 57014');
+    });
+
+    it('records a push newshacker refused, which was invisible before', async () => {
+      const env = setup();
+      env.fake.invokeResult.current = {
+        data: { linked: true, ok: false, stage: 'fetch', status: 401 },
+        error: null,
+      };
+      await env.ds.syncNewshackerState({ done: [{ id: 1, at: 1 }], pinned: [] });
+      expect(getSyncStats('newshackerPush').lastFailure?.detail).toBe('fetch HTTP 401');
+    });
+
+    it('records a failed item-state write with its Postgres code, and counts it pending', async () => {
+      const env = setup();
+      const realRpc = env.fake.client.rpc.bind(env.fake.client);
+      env.fake.client.rpc = ((name: string, params?: Record<string, unknown>) => {
+        if (name === 'set_item_state') {
+          return Promise.resolve({
+            data: null,
+            error: { code: '57014', message: 'canceling statement due to statement timeout' },
+          });
+        }
+        return realRpc(name, params);
+      }) as typeof env.fake.client.rpc;
+      env.ds.stateStore.set('i2', 'done', true);
+      await settle();
+      expect(getSyncStats('write').lastFailure?.detail).toBe(
+        '57014: canceling statement due to statement timeout',
+      );
+      // Transient, so it stays queued for retry — and /debug shows it waiting.
+      expect(env.ds.getPendingWriteCount()).toBe(1);
+    });
+
+    it('records a refresh outcome', async () => {
+      const env = setup();
+      await env.ds.resyncState();
+      expect(getSyncStats('refresh').lastOkAt).not.toBeNull();
+    });
   });
 
   it('getCapabilities rethrows an error instead of caching all-false', async () => {

@@ -38,7 +38,12 @@
 //
 // Soft by design: any failure returns a 200 envelope ({ linked, ok/applied }) —
 // the sync is best-effort and never blocks or surfaces an error in the reader.
-// The local Done state is authoritative regardless.
+// The local Done state is authoritative regardless. A failure also says WHERE it
+// broke, for the client's `/debug` Sync section (additive; older clients ignore
+// it): `stage` is 'link' (reading the token), 'fetch' (calling newshacker; with
+// its HTTP `status`, or the error name as `code` — AbortError = timeout) or
+// 'apply' (the item_state RPC; `code` is the Postgres error code, e.g. 57014 =
+// statement timeout).
 
 // @ts-nocheck — runs under Deno, not node/tsc.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
@@ -64,6 +69,13 @@ Deno.serve(async (req: Request) => {
     return json({ error: err instanceof Error ? err.message : String(err) }, 500);
   }
 });
+
+/** A failed outbound fetch's error name for the response's `code` —
+ * `AbortError` is the 10 s timeout, `TypeError` a network failure. A name only,
+ * never the message (which can carry the URL). */
+function errorName(err: unknown): string {
+  return err instanceof Error ? err.name : 'Error';
+}
 
 /** Keep only well-formed `{ id:int>0, at:number>=0, deleted?:true }` entries,
  * capped. Anything malformed is dropped rather than failing the batch. */
@@ -113,7 +125,7 @@ async function handle(req: Request): Promise<Response> {
     .maybeSingle();
   if (linkError) {
     console.error('newshacker-sync: link read failed:', linkError.message);
-    return json({ linked: null, ok: false });
+    return json({ linked: null, ok: false, stage: 'link', code: linkError.code ?? '' });
   }
   const token = link?.token as string | undefined;
 
@@ -151,10 +163,12 @@ async function handlePush(req: Request, token: string | undefined): Promise<Resp
       body: JSON.stringify({ done, pinned }),
       signal: controller.signal,
     });
-    return json({ linked: true, ok: res.ok, status: res.status });
+    return res.ok
+      ? json({ linked: true, ok: true, status: res.status })
+      : json({ linked: true, ok: false, stage: 'fetch', status: res.status });
   } catch (err) {
     console.error('newshacker-sync: forward failed:', err instanceof Error ? err.message : err);
-    return json({ linked: true, ok: false });
+    return json({ linked: true, ok: false, stage: 'fetch', code: errorName(err) });
   } finally {
     clearTimeout(timer);
   }
@@ -189,13 +203,15 @@ async function handlePull(
       headers: { Authorization: `Bearer ${token}` },
       signal: controller.signal,
     });
-    if (!res.ok) return json({ linked: true, applied: 0, ok: false });
+    if (!res.ok) {
+      return json({ linked: true, applied: 0, ok: false, stage: 'fetch', status: res.status });
+    }
     const body = await res.json();
     dones = extractDoneEntries(body, PULL_MAX);
     pins = extractPinnedEntries(body, PULL_MAX);
   } catch (err) {
     console.error('newshacker-sync: pull fetch failed:', err instanceof Error ? err.message : err);
-    return json({ linked: true, applied: 0, ok: false });
+    return json({ linked: true, applied: 0, ok: false, stage: 'fetch', code: errorName(err) });
   } finally {
     clearTimeout(timer);
   }
@@ -218,10 +234,10 @@ async function handlePull(
         return json({ linked: true, applied: typeof d2 === 'number' ? d2 : 0, ok: true });
       }
       console.error('newshacker-sync: apply (fallback) failed:', e2.message);
-      return json({ linked: true, applied: 0, ok: false });
+      return json({ linked: true, applied: 0, ok: false, stage: 'apply', code: e2.code ?? '' });
     }
     console.error('newshacker-sync: apply failed:', error.message);
-    return json({ linked: true, applied: 0, ok: false });
+    return json({ linked: true, applied: 0, ok: false, stage: 'apply', code: error.code ?? '' });
   }
   return json({ linked: true, applied: typeof data === 'number' ? data : 0, ok: true });
 }

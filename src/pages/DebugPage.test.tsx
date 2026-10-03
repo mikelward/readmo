@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, screen } from '@testing-library/react';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { DebugPage } from './DebugPage';
+import { _resetSyncDiagnosticsForTests, recordSync } from '../lib/syncDiagnostics';
 import { MockDataSource } from '../lib/data/MockDataSource';
 import { isSupabaseConfigured, supabaseHealthUrl } from '../lib/supabase/client';
 import {
@@ -56,6 +57,32 @@ describe('DebugPage', () => {
       screen.getByRole('heading', { name: 'Configuration' }),
     ).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Account' })).toBeInTheDocument();
+  });
+
+  it('shows the Sync section: per-channel outcomes with the failure detail', () => {
+    _resetSyncDiagnosticsForTests();
+    recordSync('refresh', true);
+    recordSync('newshackerPull', false, 'apply 57014');
+    try {
+      renderWithProviders(<DebugPage />, { route: '/debug' });
+      expect(screen.getByRole('heading', { name: 'Sync' })).toBeInTheDocument();
+      expect(screen.getByText('Writes').nextElementSibling).toHaveTextContent('not yet');
+      expect(screen.getByText('Refresh').nextElementSibling).toHaveTextContent(/^ok /);
+      expect(screen.getByText('newshacker pull').nextElementSibling).toHaveTextContent(
+        /1 failed, last .*: apply 57014/,
+      );
+      // The mock source has no outbox, so there's no Pending writes row.
+      expect(screen.queryByText('Pending writes')).not.toBeInTheDocument();
+    } finally {
+      _resetSyncDiagnosticsForTests();
+    }
+  });
+
+  it('shows the pending-write count when the source has an outbox', () => {
+    const source = new MockDataSource(`dbg-${Math.random()}`);
+    Object.assign(source, { getPendingWriteCount: () => 3 });
+    renderWithProviders(<DebugPage />, { route: '/debug', source });
+    expect(screen.getByText('Pending writes').nextElementSibling).toHaveTextContent('3');
   });
 
   it('keeps the lean runtime rows but not browser-introspection noise', () => {
