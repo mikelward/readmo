@@ -13,9 +13,9 @@ plumbing that requires (server-side fetch/parse + accounts + sync). The
 normative product spec is [`SPEC.md`](./SPEC.md). These are the load-bearing
 guardrails — read them before opening a PR.
 
-**At the start of every session, print the path of the `AGENTS.md` you loaded and its
-`last_modified` date** (front matter), so a stale or wrong copy is caught before it steers
-the work. Bump `last_modified` whenever you edit this file.
+**At the start of every session, print the full absolute path of the `AGENTS.md` you
+loaded and its `last_modified` date** (front matter), so a stale or wrong copy is caught
+before it steers the work. Bump `last_modified` whenever you edit this file.
 
 Keep this file as short as it can be and still work. Every session loads it
 whole, so each rule costs context on every turn: add one the first time
