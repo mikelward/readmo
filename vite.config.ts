@@ -6,7 +6,7 @@ import {
 } from 'vitest/config';
 import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import babel from '@rolldown/plugin-babel';
-import { VitePWA } from 'vite-plugin-pwa';
+import { VitePWA, type ManifestOptions } from 'vite-plugin-pwa';
 
 // `process.env.VITEST` is set when vitest boots; skip the PWA plugin in
 // tests because it adds startup cost per worker and exercises no behavior
@@ -171,6 +171,55 @@ export function reactCompilerBabelPlugin() {
   return babel({ presets: [reactCompilerPreset({ target: '19' })] });
 }
 
+/**
+ * The web app manifest. Exported so pwaManifest.test.ts can check the colors
+ * against the app's own tokens. The dark-mode members aren't in
+ * vite-plugin-pwa's ManifestOptions yet, hence the widened type; the plugin
+ * serializes the object as given.
+ */
+const DARK_LAUNCH_COLORS = {
+  theme_color: '#14161c',
+  background_color: '#14161c',
+};
+
+export const pwaManifest: Partial<ManifestOptions> & {
+  color_scheme_dark: typeof DARK_LAUNCH_COLORS;
+  user_preferences: { color_scheme_dark: typeof DARK_LAUNCH_COLORS };
+} = {
+  name: 'readmo',
+  short_name: 'readmo',
+  description:
+    'A mobile-friendly, installable reader for your RSS, Atom, and JSON feeds.',
+  theme_color: '#faf9f5',
+  background_color: '#faf9f5',
+  // The launch splash (Android paints it from background_color + the icon) and
+  // the standalone title bar take these instead when the OS is dark. A single
+  // manifest color can't follow the OS, and the platform bakes it in at install,
+  // so the manifest's own dark override is the only route. It is written twice:
+  // the top-level member the spec defines (w3c/manifest#1207), and the nested
+  // `user_preferences` form Chromium's parser reads today, behind its manifest
+  // dark-mode feature (not on by default as of 2026-10). A browser that knows
+  // neither ignores both and keeps the light pair. Values mirror the Ink dark
+  // `--rm-bg` in global.css and META_THEME_COLORS in src/lib/theme.ts
+  // (pwaManifest.test.ts holds them together). The palette is a per-device
+  // setting a manifest can't see, so this is Ink's, the default.
+  color_scheme_dark: DARK_LAUNCH_COLORS,
+  user_preferences: { color_scheme_dark: DARK_LAUNCH_COLORS },
+  display: 'standalone',
+  start_url: '/',
+  scope: '/',
+  icons: [
+    { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+    { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+    {
+      src: '/icon-512-maskable.png',
+      sizes: '512x512',
+      type: 'image/png',
+      purpose: 'maskable',
+    },
+  ],
+};
+
 export default defineConfig({
   // Expose VITE_* (our own) and NEXT_PUBLIC_* (what the Supabase↔Vercel
   // integration provisions) to the client bundle. NEXT_PUBLIC_ is public by
@@ -208,27 +257,7 @@ export default defineConfig({
           'favicon-32.png',
           'apple-touch-icon.png',
         ],
-        manifest: {
-          name: 'readmo',
-          short_name: 'readmo',
-          description:
-            'A mobile-friendly, installable reader for your RSS, Atom, and JSON feeds.',
-          theme_color: '#faf9f5',
-          background_color: '#faf9f5',
-          display: 'standalone',
-          start_url: '/',
-          scope: '/',
-          icons: [
-            { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
-            { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
-            {
-              src: '/icon-512-maskable.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'maskable',
-            },
-          ],
-        },
+        manifest: pwaManifest,
         devOptions: {
           // Don't generate a SW in `npm run dev` — it caches aggressively
           // and makes iteration painful. Exercised by build && preview.

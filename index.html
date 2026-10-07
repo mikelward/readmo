@@ -24,6 +24,29 @@
          preference. `content` starts at the Ink-light value so the pre-JS
          paint is correct for the majority case. -->
     <meta name="theme-color" content="#faf9f5" />
+    <!-- Pre-stylesheet canvas. global.css arrives as a separate request, and
+         until it does the page paints the UA default: white, even in dark
+         mode, which flashes on every cold launch right after the dark
+         install splash. The fallbacks are Ink's `--rm-bg`; once global.css
+         loads, the var resolves to the real token (palette included). The
+         theme boot script below sets data-theme before first paint, so an
+         explicit Light/Dark choice wins over the OS here as it does in the
+         app. pwaManifest.test.ts holds these colors to global.css. -->
+    <style>
+      html {
+        background-color: var(--rm-bg, #faf9f5);
+      }
+      html[data-theme='dark'] {
+        background-color: var(--rm-bg, #14161c);
+        color-scheme: dark;
+      }
+      @media (prefers-color-scheme: dark) {
+        html:not([data-theme='light']) {
+          background-color: var(--rm-bg, #14161c);
+          color-scheme: dark;
+        }
+      }
+    </style>
     <meta name="description" content="A mobile-friendly, installable reader for your RSS, Atom, and JSON feeds." />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
