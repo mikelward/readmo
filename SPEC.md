@@ -3600,6 +3600,10 @@ content. Closest mirror of newshacker.
 
 - Manifest (via `vite-plugin-pwa`): name "Readmo", theme `#faf9f5`, background
   `#faf9f5`, `display: standalone`, `start_url: /`.
+- **Dark launch.** When the OS is dark, the first paint uses the dark page
+  background rather than flashing light. The installed app's launch screen
+  asks for the dark background too, but browsers only honor that once they
+  support a dark manifest color; until then it stays light.
 - Icon set into `public/`: `icon-192/512`, `icon-512-maskable`,
   `apple-touch-icon` (180), `favicon.svg`, `favicon-maskable.svg`,
   `favicon-32.png`. Maskable full-bleed, glyph in the 80% safe zone.
