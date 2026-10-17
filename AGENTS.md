@@ -11,7 +11,8 @@ Vite, Supabase backend). It reuses *newshacker*'s UX as-is; the only intended
 differences are the data source (your subscriptions, not Hacker News) and the
 plumbing that requires (server-side fetch/parse + accounts + sync). The
 normative product spec is [`SPEC.md`](./SPEC.md). These are the load-bearing
-guardrails — read them before opening a PR.
+guardrails — read them before opening a PR. `CLAUDE.md` and `GEMINI.md` are
+symlinks to this file, so every agent reads the same conventions; edit `AGENTS.md`.
 
 **At the start of every session, print the full absolute path of the `AGENTS.md` you
 loaded and its `last_modified` date** (front matter), so a stale or wrong copy is caught
@@ -373,7 +374,8 @@ build/routing/deploy.
   deployed Node doesn't have.
 - **The web sandbox is the consumer that can't follow on its own.** Its image
   ships whatever Node it ships (22 today), so `.claude/hooks/session-start.sh`
-  provisions the `.nvmrc` major before `npm install` — before any native dep
+  (auto-invoked only in Claude Code; other agents run it, or match `.nvmrc`,
+  themselves) provisions the `.nvmrc` major before `npm install` — before any native dep
   builds against an ABI. It re-resolves the newest release of that major every
   run rather than trusting the container's cached copy, because container state
   survives between sessions and an existence-only check would pin the first
@@ -592,6 +594,12 @@ build/routing/deploy.
 
 - Write a clear, plain-English subject in sentence case; keep it short
   (≤ ~70 chars, prefix included) and free of internal jargon.
+- **No model identifier** — never name the coding agent's model or version
+  (`Opus 4.8`, `Sonnet`, `Gemini …`, `claude-*`, `gemini-*`) in a commit, PR,
+  comment, or pushed artifact; keep it to chat. A model the product calls
+  (readmo's Gemini model) is not covered. Generic attribution
+  (`Co-Authored-By: Claude` / `Gemini`, `Claude-Session:`, "Generated with
+  Claude Code") is fine.
 - Put the mechanism, the bug fixed, and file:line detail in the body, after a
   blank line — the body is not size-constrained. A commit with nothing to
   explain needs no body: the weekly dependency batch is the standing example,
@@ -633,7 +641,7 @@ build/routing/deploy.
 
 ## Branching
 
-- **Branch naming.** Feature branches are prefixed with the agent's own short name: `<agent>/<short-topic>` (e.g. `claude/...` for Claude Code). Human contributors pick a name that identifies them.
+- **Branch naming.** Feature branches are prefixed with the agent's own short name: `<agent>/<short-topic>` (`claude/...` for Claude Code, `gemini/...` for Gemini / Antigravity, `codex/...` for Codex). Human contributors pick a name that identifies them.
 - **Workflow.** `<agent>/<short-topic>` branch off `origin/main` → PR → rebase-merge. One topic per branch. Follow-up work after a merge goes on a new branch. Never commit to `main` / `master`. Squash merging is disabled on every repository in this fleet, so each commit's own subject is what lands — the PR title never becomes one.
 - **Give the PR title the same prefix a commit subject would carry** (see *Commit messages*), judged over the whole branch rather than any one commit, and re-judged on every push — a branch can start documentation-only and stop being so with the next commit. This is a convention for reading, not a gate: the title is what the PR list shows the repo owner, so the prefix says at a glance whether a PR changes what the app does. Only commit subjects are enforced (`lint-title no` in `.github/lanes.conf`), because squash merging is disabled and a title therefore never becomes a commit subject.
 - **No-remote sandbox exception.** Sandboxes without remote Git support (such as Codex cloud) may continue from the checked-out HEAD without fetching `origin` — but still on this task's own topic branch: unless the checked-out branch is already it, cut a local `<agent>/<short-topic>` first — and cut it from a base free of earlier work (local `main` where it carries none, otherwise ask for a synced checkout), since branching off a stale topic tip only renames that topic's commits into your PR. Committing onto `main` or onto a stale topic branch from earlier work both mix unrelated topics into one PR once remote access returns; only fetch, push and the PR are unavailable, not the branching rules — a missing remote or unsupported fetch must not block otherwise-local work. Do not make claims that depend on unseen remote state.
@@ -671,11 +679,12 @@ build/routing/deploy.
   is here, and it doesn't need repeating per branch.
 - **Watch your own PRs by subscription, plus one scheduled check.** Have a
   subscription — Claude Code makes one when you open a PR; where a client
-  doesn't, call `subscribe_pr_activity`. It delivers reviews, comments and CI
+  doesn't, call `subscribe_pr_activity` (exposed only in claude-code-remote). It delivers reviews, comments and CI
   failures. It cannot deliver CI *success*, a push, the merge, Codex's clean
   verdict (a reaction), or Codex never answering at all — so keep exactly one
-  check armed for as long as the PR is open (each event and each check costs
-  a model turn). Under drive, arm auto-merge at PR open too — but only where
+  check armed for as long as the PR is open (`send_later` in Claude Code;
+  `schedule` with `DurationSeconds` in Antigravity, canceled via `manage_task`
+  `kill`; each event and each check costs a model turn). Under drive, arm auto-merge at PR open too — but only where
   the ruleset makes the Codex verdict a required check AND requires
   conversations resolved: where CI is the only requirement it merges before
   Codex has answered, and an open review comment holds nothing back on its own.
@@ -723,8 +732,9 @@ build/routing/deploy.
     if it doesn't merge cleanly with it (`git merge-tree --write-tree`, Git
     2.38 or later, exits 1). Any exit but 0 or 1 from either is a failure
     to report, not an answer. Your own rules decide the rebase from there.
-    Skip a PR with no session URL, and don't retry a failed send; its own
-    scheduled check is the fallback.
+    Skip a PR with no session URL, or when your client only has local
+    subagent messaging, and don't retry a failed send; its own scheduled
+    check is the fallback.
   - Merged or closed, take one last reply-and-resolve pass — a review can
     land after the merge. Nothing is holding the PR now, so on a merged one
     anything real goes to a follow-up PR, named on the thread, before you
@@ -792,7 +802,7 @@ rebutted false positive, or where *Read the Codex verdict* below says the
 - **Address Codex comments automatically — don't wait to be asked.** When a Codex review lands, treat each comment like a real review note: read it, decide whether it's a real issue or a false positive, and if it's real, fix it in the same PR — the one exception being a real finding that's genuinely out of scope for this PR, which you defer instead (see *Deferring a finding* below). Fold the fix into the commit it belongs to (rebase / `--fixup`) rather than tacking on an "address review" commit, per the *one commit per logical surviving change* rule. Group several small fixes into one commit when they share a topic.
 - **Reply to (and resolve) every addressed Codex comment** via `mcp__github__add_reply_to_pull_request_comment`, then `mcp__github__resolve_review_thread`. Do this for each addressed comment, not in bulk.
 - **Order of operations on a push that addresses review comments:** (1) push the fix commit, (2) reply on each addressed thread referencing the new sha, then resolve it. Doing (2) before (1) means the sha you cite doesn't exist yet.
-- **`resolve_review_thread` works — the old MCP limitation is fixed.** `mcp__github__pull_request_read` / `get_review_comments` now returns each thread's node ID (`PRRT_*`) on the `review_threads[].id` field, alongside `is_resolved` / `is_outdated` / `is_collapsed`. Pass that `PRRT_*` value straight to `mcp__github__resolve_review_thread` as `threadId`. Do NOT pass a comment's node ID (`PRRC_*`) — that fails with `Could not resolve to PullRequestReviewThread node`; the thread ID and the comment ID are different objects. So the full round-trip is available, with no "replied-but-unresolved, please resolve in the UI" caveat in the end-of-turn summary.
+- **`resolve_review_thread` works — the old MCP limitation is fixed.** `mcp__github__pull_request_read` / `get_review_comments` now returns each thread's node ID (`PRRT_*`) on the `review_threads[].id` field, alongside `is_resolved` / `is_outdated` / `is_collapsed`. Pass that `PRRT_*` value straight to `mcp__github__resolve_review_thread` as `threadId` (or, where the GitHub MCP tools aren't mounted, to `gh api graphql` `resolveReviewThread`). Do NOT pass a comment's node ID (`PRRC_*`) — that fails with `Could not resolve to PullRequestReviewThread node`; the thread ID and the comment ID are different objects. So the full round-trip is available, with no "replied-but-unresolved, please resolve in the UI" caveat in the end-of-turn summary.
 
   > **History.** This was previously documented here as broken: the response stripped the thread node ID, leaving no way to obtain a `threadId`. Tracked upstream as github/github-mcp-server#2331 (issue) and github/github-mcp-server#2245 (fix), and verified working against a real Codex review thread on 2026-07-24. Kept as a note rather than deleted so the next agent that hits a resolve failure knows this was a real, since-fixed upstream bug and doesn't re-derive it.
 
@@ -824,6 +834,8 @@ rebutted false positive, or where *Read the Codex verdict* below says the
 - **Skip echo events silently.** `mcp__github__add_reply_to_pull_request_comment` / `add_issue_comment` post under whichever GitHub identity backs the MCP auth (typically the repo owner's), so a moment after you post a reply the same body comes back as a webhook event authored by that identity. That's the echo of your own reply, not user feedback — treat it as a duplicate and continue without a chat-side acknowledgement. The test is "did *I* just post this body?", not "who is the author?".
 ## Pull requests and reviews
 
+- **Prefer the `mcp__github__*` tools where mounted** (Claude Code requires them);
+  otherwise fall back to the `gh` CLI.
 - **"Drive to merge"** is the PR stretch of *drive* (see *Autonomy* above):
   open the PR, wait for the automatic Codex review, address every review
   comment — fix it if you agree, reply on the thread saying why if you don't
