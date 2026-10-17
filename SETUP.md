@@ -145,7 +145,7 @@ existing account and signing up a new one.
    on a sender outage or rate-limit, `signInWithOtp` may still return success
    (GoTrue queues server-side) while the email never lands, so **email sign-in
    degrades but OAuth (Google/Discord) is unaffected**. See the *External
-   services* table in `CLAUDE.md`.
+   services* table in `AGENTS-REFERENCE.md`.
 4. **Before enabling in production, turn on the Supabase Auth abuse controls that
    need no client change:** per-IP / per-email **rate limits** on the OTP endpoint
    (Authentication → Rate Limits) and **account-enumeration protection**
