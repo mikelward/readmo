@@ -1006,7 +1006,7 @@ straightaway, exactly as if they'd opened it themselves.
   does not override it. **Gated by the trusted-user allowlist** (see *Google News
   feeds … gated* above): when the `allowlist` table is non-empty, this fallback
   is offered only to listed callers; a non-listed caller skips it and just gets
-  "no feed found". (Cost/reliability: see *External services* in CLAUDE.md — free,
+  "no feed found". (Cost/reliability: see *External services* in AGENTS-REFERENCE.md — free,
   no API key, unofficial endpoint.)
 - Discovery reports *why* a URL yields no feed so the client shows a specific
   message instead of a blanket "no feed found": a `code` of `auth`
@@ -1183,7 +1183,7 @@ purpose — full rationale + setup in [`OBSERVABILITY.md`](./OBSERVABILITY.md):
 Cost/reliability: Metrics API is $0 (included, no DB load); Grafana Cloud free
 tier covers one operator and keeps paging during a Supabase outage; `db-perf` is
 negligible and off every critical path. See the External services table in
-`CLAUDE.md` and SETUP.md §12.
+`AGENTS-REFERENCE.md` and SETUP.md §12.
 
 ### Cost & reliability (rule-11 discipline, carried from newshacker)
 
@@ -1251,7 +1251,7 @@ negligible and off every critical path. See the External services table in
   (SETUP.md §9). The user-supplied email is treated as untrusted: it is forced
   to a single line before being placed in the subject/body, so it can't inject
   SMTP headers (guardrail #6). Not user-visible. Cost/reliability: negligible —
-  see the External services table in `CLAUDE.md` and SETUP.md §10.
+  see the External services table in `AGENTS-REFERENCE.md` and SETUP.md §10.
 
 ### Sync (server is the source of truth)
 

@@ -701,6 +701,10 @@ permanent by default. Each is cheap to change.
   names them) and skip arming when any moved package is pre-1.0, leaving
   that batch for review. Add the workflow-test assertion alongside, and
   keep the arming deliberately non-fatal like gedmap's.
+- [ ] **Check `AGENTS.md` < 24,000 bytes in CI** (mikelward/stopdash#932): add
+  `test "$(wc -c < AGENTS.md)" -lt 24000` to `.github/workflows/ci.yml` on the
+  docs/classify path, so `AGENTS.md` cannot silently grow past Antigravity's
+  24,000-byte per-file rule cap again.
 - Add an AGPL license gate to `ci.yml`: fail if a dependency declares an AGPL
   license, catching one added by hand in a normal PR, not just ones the
   weekly bot bumps. Likely `license-checker-rseidelsohn`. GPL/LGPL undecided,
