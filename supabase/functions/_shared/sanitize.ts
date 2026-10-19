@@ -104,7 +104,14 @@ export function sanitizeContent(
         // sensible width server-side (closest to TARGET_SRCSET_WIDTH) and drop
         // srcset/sizes — exactly one URL is ever requested. data: images are
         // inline and left untouched.
-        const chosen = pickSrcsetCandidate(attribs.srcset) ?? attribs.src;
+        // allowedSchemesByTag admits `data:` on <img> for inline images, but
+        // sanitize-html can't check the MIME type, so a `data:text/html,…`
+        // src would survive; drop it (srcset candidates are filtered the same
+        // way in pickSrcsetCandidate, so a safe src or lower-ranked candidate
+        // still wins over a bad preferred one).
+        const src = isUnsafeImageUrl(attribs.src) ? undefined : attribs.src;
+        if (src === undefined) delete next.src;
+        const chosen = pickSrcsetCandidate(attribs.srcset) ?? src;
         const abs = absolutize(chosen, baseUrl);
         if (abs) next.src = proxify(abs);
         delete next.srcset;
@@ -205,6 +212,20 @@ const TARGET_SRCSET_WIDTH = 1600;
 const TARGET_SRCSET_DENSITY = 2;
 
 /**
+ * An image URL that can never render safely: a scheme other than http(s), or
+ * a `data:` URL that isn't `data:image/…`. Relative URLs carry no scheme and
+ * pass. transformTags runs before sanitize-html's own scheme filter, so
+ * without this a disallowed srcset candidate could win selection and take the
+ * image's safe src or lower-ranked candidate down with it.
+ */
+function isUnsafeImageUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  const scheme = /^\s*([a-z][a-z0-9+.-]*):/i.exec(url)?.[1]?.toLowerCase();
+  if (!scheme || scheme === 'http' || scheme === 'https') return false;
+  return !(scheme === 'data' && /^\s*data:image\//i.test(url));
+}
+
+/**
  * Choose ONE candidate URL from a srcset — the one closest to
  * `TARGET_SRCSET_WIDTH` — so the proxy serves a single width per image instead
  * of one fetch (and one cache entry) per candidate. "Closest to the target"
@@ -217,7 +238,9 @@ const TARGET_SRCSET_DENSITY = 2;
  */
 function pickSrcsetCandidate(srcset: string | undefined): string | null {
   if (!srcset) return null;
-  const candidates = parseSrcsetCandidates(srcset);
+  const candidates = parseSrcsetCandidates(srcset).filter(
+    (c) => !isUnsafeImageUrl(c.url),
+  );
   if (candidates.length === 0) return null;
   if (candidates.length === 1) return candidates[0].url;
 
