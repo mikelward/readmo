@@ -187,6 +187,37 @@ describe('sanitizeContent', () => {
     expect(out).not.toContain('sizes=');
   });
 
+  it.each([
+    ['javascript:', 'javascript:alert(1)'],
+    ['vbscript:', 'vbscript:msgbox(1)'],
+    ['non-image data:', 'data:text/html,<script>alert(1)</script>'],
+  ])('drops a %s URL from srcset on <img> and <picture><source>', (_name, bad) => {
+    // sanitize-html filters srcset candidates by scheme before our transform
+    // collapses them; a disallowed candidate must never reach srcset or a
+    // collapsed src, whether it is the only candidate or the preferred one.
+    const inputs = [
+      `<img srcset="${bad} 1x">`,
+      `<img src="/ok.png" srcset="${bad} 2x, /ok.png 1x">`,
+      `<picture><source srcset="${bad} 1600w"><img src="/ok.png"></picture>`,
+      `<picture><source srcset="${bad} 1600w, /ok-800.jpg 800w"><img src="/ok.png"></picture>`,
+    ];
+    const scheme = bad.slice(0, bad.indexOf(':') + 1);
+    for (const html of inputs) {
+      const out = sanitizeContent(html, base);
+      const lower = out.toLowerCase();
+      expect(lower).not.toContain(scheme);
+      expect(lower).not.toContain(encodeURIComponent(scheme).toLowerCase());
+      expect(out).not.toContain('alert(1)');
+      expect(out).not.toContain('msgbox(1)');
+      // A safe src or lower-ranked candidate beside the bad one still renders.
+      if (html.includes('/ok')) expect(out).toMatch(/ok(-800)?\.(png|jpg)/);
+    }
+    // The <img> keeps a src at all when a safe candidate exists.
+    expect(
+      sanitizeContent(`<img src="/ok.png" srcset="${bad} 2x, /ok.png 1x">`, base),
+    ).toMatch(/<img[^>]* src="[^"]*ok\.png/);
+  });
+
   it('leaves inline data: images un-proxied', () => {
     const dataUri = 'data:image/png;base64,iVBORw0KGgo=';
     const out = sanitizeContent(`<img src="${dataUri}">`, base);
