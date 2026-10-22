@@ -1,7 +1,7 @@
 ---
 trigger: always_on
 alwaysApply: true
-last_modified: 2026-10-17
+last_modified: 2026-10-22
 ---
 
 # Readmo — Contributor guide
@@ -301,8 +301,10 @@ lives in `AGENTS-REFERENCE.md` § External services. Keep it current (guardrail 
   no-findings review naming the head says the same, but the reaction clears the status.
   Read review comments, top-level comments and reviews to the last page; findings block
   until fixed, rebutted or deferred. Pending `codex`: address findings; a clean review
-  with no reaction or an unanswered rebuttal → `@codex review` once, five minutes on;
-  nothing at all → poke five minutes after the push; escalate rather than poke twice.
+  with no reaction or an unanswered rebuttal → `@codex review` five minutes on; nothing
+  at all five minutes after the push, or a review stuck at running (👀) ten minutes on →
+  poke. A poke that hangs the same way gets a second an hour later; escalate only if
+  that one hangs too, never after one (maintainer, 2026-10-22).
 - **Once Codex +1s a head, make no unnecessary change without asking** (maintainer,
   2026-10-13); rebases for `dirty`/required `behind`, red-CI fixes and drive/autopilot
   steps proceed. Don't merge ahead of the verdict, and don't ask whether to merge.
