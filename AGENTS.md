@@ -1,7 +1,7 @@
 ---
 trigger: always_on
 alwaysApply: true
-last_modified: 2026-10-22
+last_modified: 2026-10-23
 ---
 
 # Readmo — Contributor guide
@@ -167,8 +167,11 @@ lives in `AGENTS-REFERENCE.md` § External services. Keep it current (guardrail 
 
 ## Commit messages
 
-- Plain-English sentence-case subject, ≤ ~70 chars incl. prefix; mechanism and file:line
-  detail in the body (none needed when there's nothing to explain, like the weekly batch).
+- **Title like a changelog line** (maintainer, 2026-10-23): after any prefix, an imperative
+  verb, then the change in the user's plain words, sentence case, ≤ ~70 chars incl.
+  prefix, e.g. `Fix …`, `Improve …`, `Add …`; an optional parenthetical says how.
+  Scenario, mechanism and file:line go in the body (none needed when there's nothing to
+  explain, like the weekly batch). PR titles match.
 - **Prefix a subject that changes nothing a user could notice**: `docs:` (prose), `todo:`
   (`TODO.md` alone), `test:` (tests only), `build:` (toolchain, CI, lint/build config,
   `scripts/`), `refactor:` (behavior-preserving). Bare means behavior changed. No
