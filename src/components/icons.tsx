@@ -274,13 +274,12 @@ export function ListTree(props: IconProps) {
 
 // ---- Sort order: stacked digits + a direction arrow -----------------------
 
-// The top toolbar's sort toggle reflects the *current* order, not both
-// directions (SPEC.md *List toolbar*). Each glyph pairs a stacked digit column
-// (left) with a direction arrow (right): `SortNewestFirst` reads 9→0 with a
+// Unused since the toolbar's sort toggle was removed; kept for reuse. Each
+// glyph shows one order, pairing a stacked digit column (left) with a
+// direction arrow (right): `SortNewestFirst` reads 9→0 with a
 // down arrow (descending), `SortOldestFirst` reads 0→9 with an up arrow
 // (ascending) — the universal numeric-sort convention, and the two are exact
-// vertical mirrors so the toggle is unmistakable. The tooltip / accessible
-// name ("Newest first" / "Oldest first") stays authoritative.
+// vertical mirrors so the two orders are unmistakable.
 // Arrows are stroked and weighted to ~2.2px so the glyph sits at the same
 // visual weight as the list / tree icons instead of reading heaviest.
 

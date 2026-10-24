@@ -299,13 +299,9 @@ interface Props {
    * a no-op. Flipping it re-keys the view (the page folds the pref into
    * `viewKey`), so the list refetches with the new layout. */
   onToggleGroupByFeed?: () => void;
-  /** The current `readmo:item-sort` value, shown by the toolbar's sort toggle.
-   * Only meaningful alongside {@link Props.onToggleSort}. */
+  /** The current `readmo:item-sort` value, which decides where an in-session
+   * pin keeps its place in the body. */
   itemSort?: ItemSort;
-  /** Feed views pass this to surface a newest/oldest-first toggle in the top
-   * toolbar. Like grouping, flipping it re-keys the view so the list refetches
-   * in the new order. */
-  onToggleSort?: () => void;
 }
 
 /** A feed view (home / folder / single feed): sticky toolbar, item rows with
@@ -318,7 +314,6 @@ export function ItemList({
   perFeedLimit,
   onToggleGroupByFeed,
   itemSort = 'newest',
-  onToggleSort,
 }: Props) {
   const ds = useDataSource();
   // Whether this account has linked a newshacker token — gates the reverse
@@ -3016,11 +3011,6 @@ export function ItemList({
   const groupControl = onToggleGroupByFeed
     ? { groupByFeed, onToggle: onToggleGroupByFeed }
     : undefined;
-  // The sort toggle rides every feed view (sort applies even to a single feed),
-  // so it's wired independently of grouping.
-  const sortControl = onToggleSort
-    ? { itemSort, onToggle: onToggleSort }
-    : undefined;
 
   // The spoiler eye toggle rides the top toolbar, but only for allowlisted
   // callers — the spoiler-free rewrite only ever shows for them (same gate the
@@ -3443,7 +3433,6 @@ export function ItemList({
       <ListToolbar
         collapse={collapseControls}
         group={groupControl}
-        sort={sortControl}
         spoiler={spoilerControl}
         onUndo={handleUndoScroll}
       />

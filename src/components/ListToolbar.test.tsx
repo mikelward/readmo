@@ -210,53 +210,6 @@ describe('ListToolbar group-by-feed toggle', () => {
   });
 });
 
-describe('ListToolbar sort-order toggle', () => {
-  beforeEach(() => {
-    window.localStorage.clear();
-    resetReadingPrefsCacheForTest();
-  });
-  afterEach(() => {
-    window.localStorage.clear();
-    resetReadingPrefsCacheForTest();
-  });
-
-  it('renders no sort toggle without the sort prop', () => {
-    renderWithProviders(<ListToolbar />);
-    expect(screen.queryByTestId('sort-order-btn')).toBeNull();
-  });
-
-  it('names the current order (newest first) as an icon-only button', () => {
-    renderWithProviders(
-      <ListToolbar sort={{ itemSort: 'newest', onToggle: vi.fn() }} />,
-    );
-    const btn = screen.getByTestId('sort-order-btn');
-    expect(btn).toHaveAccessibleName('Newest first');
-    // The glyph carries digit text (9/0) but it lives in an aria-hidden svg, so
-    // the button stays label-free to the accessibility tree.
-    const svg = btn.querySelector('svg');
-    expect(svg).not.toBeNull();
-    expect(svg!.getAttribute('aria-hidden')).toBe('true');
-  });
-
-  it('names the current order (oldest first) when flipped', () => {
-    renderWithProviders(
-      <ListToolbar sort={{ itemSort: 'oldest', onToggle: vi.fn() }} />,
-    );
-    expect(screen.getByTestId('sort-order-btn')).toHaveAccessibleName(
-      'Oldest first',
-    );
-  });
-
-  it('calls onToggle when tapped', async () => {
-    const onToggle = vi.fn();
-    renderWithProviders(
-      <ListToolbar sort={{ itemSort: 'newest', onToggle }} />,
-    );
-    await userEvent.setup().click(screen.getByTestId('sort-order-btn'));
-    expect(onToggle).toHaveBeenCalledTimes(1);
-  });
-});
-
 describe('ListToolbar spoiler toggle', () => {
   beforeEach(() => {
     window.localStorage.clear();

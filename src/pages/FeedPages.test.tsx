@@ -10,7 +10,6 @@ import { useHomeFeed, type HomeFeed } from '../hooks/useHomeFeed';
 import { FeedPage, HomePage } from './FeedPages';
 import {
   GROUP_BY_FEED_KEY,
-  ITEM_SORT_KEY,
   ARTICLES_PER_PAGE_KEY,
   ARTICLES_PER_SECTION_KEY,
   resetReadingPrefsCacheForTest,
@@ -480,37 +479,6 @@ describe('Feed views (article load sizes)', () => {
   });
 });
 
-describe('HomePage (sort-order toolbar toggle)', () => {
-  afterEach(() => {
-    window.localStorage.clear();
-    resetReadingPrefsCacheForTest();
-  });
-
-  it('toggles the readmo:item-sort preference from the top toolbar', async () => {
-    window.localStorage.clear();
-    resetReadingPrefsCacheForTest();
-    const user = userEvent.setup();
-    const source = new MockDataSource(`test-${Math.random()}`);
-    renderWithProviders(<HomePage />, { source, route: '/' });
-
-    await screen.findAllByTestId('item-row');
-    const toggle = screen.getByTestId('sort-order-btn');
-    // Default newest-first.
-    expect(toggle).toHaveAccessibleName('Newest first');
-    expect(window.localStorage.getItem(ITEM_SORT_KEY)).not.toBe('oldest');
-
-    await user.click(toggle);
-
-    // The persisted preference flips, and the re-keyed view re-reads oldest-first.
-    expect(window.localStorage.getItem(ITEM_SORT_KEY)).toBe('oldest');
-    await waitFor(() => {
-      expect(screen.getByTestId('sort-order-btn')).toHaveAccessibleName(
-        'Oldest first',
-      );
-    });
-  });
-});
-
 describe('FeedPage (parked-feed retry)', () => {
   // `feed-park` is seeded with parked: true (src/lib/data/seed.ts).
   it('clears the retry badge after a successful retry', async () => {
@@ -532,12 +500,12 @@ describe('FeedPage (parked-feed retry)', () => {
     });
   });
 
-  it('offers the sort toggle but not the group toggle on a single feed', async () => {
+  it('offers neither a sort nor a group toggle on a single feed', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     renderFeed(source, 'feed-verge');
     await screen.findAllByTestId('item-row');
-    // Sort applies to a single feed; grouping is a no-op there.
-    expect(screen.getByTestId('sort-order-btn')).toBeInTheDocument();
+    // Sort order lives in Settings only; grouping is a no-op on one feed.
+    expect(screen.queryByTestId('sort-order-btn')).toBeNull();
     expect(screen.queryByTestId('group-by-feed-btn')).toBeNull();
   });
 });
