@@ -1126,33 +1126,6 @@ describe('ItemList', () => {
     );
   });
 
-  it('omits the sort-order toggle when no onToggleSort is wired', async () => {
-    const source = new MockDataSource(`test-${Math.random()}`);
-    renderHome(source);
-    await screen.findAllByTestId('item-row');
-    expect(screen.queryByTestId('sort-order-btn')).toBeNull();
-  });
-
-  it('surfaces a sort-order toggle naming the current order and flips it on tap', async () => {
-    const source = new MockDataSource(`test-${Math.random()}`);
-    const onToggle = vi.fn();
-    renderWithProviders(
-      <ItemList
-        viewKey={`sort-${Math.random()}`}
-        fetchPage={(cursor) => source.getHomeItems({ cursor })}
-        emptyLabel="All caught up."
-        itemSort="oldest"
-        onToggleSort={onToggle}
-      />,
-      { source },
-    );
-    await screen.findAllByTestId('item-row');
-    const btn = screen.getByTestId('sort-order-btn');
-    expect(btn).toHaveAccessibleName('Oldest first');
-    await userEvent.setup().click(btn);
-    expect(onToggle).toHaveBeenCalledTimes(1);
-  });
-
   it('renders the first page of items with the sticky toolbar', async () => {
     const source = new MockDataSource(`test-${Math.random()}`);
     renderHome(source);

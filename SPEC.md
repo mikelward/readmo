@@ -1677,10 +1677,8 @@ negligible and off every critical path. See the External services table in
      - **Sort order** (`readmo:item-sort`, default **`newest`**) sets the body's
        chronological order — **newest-first** (default) or **oldest-first** —
        on Home, folders, and single feeds. Pinned ordering is unaffected (always
-       oldest-pin first within its section). Toggleable from Settings **and**
-       from the list **top toolbar** (the **Sort order** toggle, whose glyph
-       reflects the current order — see *List toolbar*), which writes the same
-       synced preference.
+       oldest-pin first within its section). Settings only — a rarely changed
+       preference that doesn't earn a toolbar toggle.
      - **Group by feed** (`readmo:group-by-feed`, default **off**) sections Home
        and folder lists by feed instead of one merged river. Sections follow the
        user's **manual feed order** (the `subscriptions.sort` field, set by
@@ -2024,7 +2022,7 @@ negligible and off every critical path. See the External services table in
 6. **List toolbar** — sticky below the header: right-aligned **Undo** +
    **Sweep unpinned** (Mark all done), and a left-aligned cluster of view
    toggles in this order: **Group by feed**, **Collapse all / Expand all**,
-   **Sort order**, **Hide spoilers**. The **Group by feed** toggle (a flat-list / tree icon
+   **Hide spoilers**. The **Group by feed** toggle (a flat-list / tree icon
    that mirrors the current layout, with a
    long-press / hover tooltip and `aria-pressed` for its on/off state) is a
    one-tap shortcut for the `readmo:group-by-feed` reading preference, so the
@@ -2033,13 +2031,8 @@ negligible and off every critical path. See the External services table in
    is omitted on single-feed views, where grouping is a no-op. The **Collapse
    all** / **Expand all** icon buttons (`unfold_less` / `unfold_more`, with
    long-press / hover tooltips — see *Feed views → Collapse / expand sections*)
-   appear only in the **group-by-feed** view. The **Sort order** toggle
-   flips the `readmo:item-sort` preference between **newest-** and
-   **oldest-first**; its glyph reflects the **current** order — a stacked digit
-   column plus a direction arrow (9→0 + down arrow = newest-first / descending,
-   0→9 + up arrow = oldest-first / ascending) — and its tooltip / accessible
-   name names that order, and it rides **every** feed view — Home,
-   folders, and single feeds — since sort applies even where grouping doesn't.
+   appear only in the **group-by-feed** view. Sort order has no toolbar
+   toggle; it's set in Settings (see *Feed views → Sort & grouping*).
    The **Hide spoilers** toggle (an eye icon — open when spoilers are shown,
    closed when hidden — with a long-press / hover tooltip and `aria-pressed`) is
    a one-tap reveal/re-hide of the spoiler-free sports headlines (see

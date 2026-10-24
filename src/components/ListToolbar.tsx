@@ -4,8 +4,6 @@ import { useBottomBarPosition } from '../hooks/useReadingPrefs';
 import { useFeedBar } from './FeedBarContext';
 import { TooltipButton } from './TooltipButton';
 import {
-  SortNewestFirst,
-  SortOldestFirst,
   ListFlat,
   ListTree,
   Sweep,
@@ -16,7 +14,6 @@ import {
   Visibility,
   VisibilityOff,
 } from './icons';
-import type { ItemSort } from '../lib/data/DataSource';
 import type { ItemId } from '../lib/types';
 import './ListToolbar.css';
 
@@ -63,16 +60,6 @@ export interface GroupAction {
   onToggle: () => void;
 }
 
-/** Top-bar toggle for the chronological sort preference. Passed to the top bar
- * on every feed view (Home, folders, and single feeds — sort applies to all,
- * unlike grouping). Flips between newest- and oldest-first. */
-export interface SortAction {
-  /** Current state of the `readmo:item-sort` preference. */
-  itemSort: ItemSort;
-  /** Flip the order (which re-keys the list view and refetches). */
-  onToggle: () => void;
-}
-
 /** Top-bar toggle for hiding sports spoilers this session. Passed only to the
  * top bar, and only for allowlisted callers (the feature is a no-op otherwise —
  * see ItemList). Flips the effective spoiler-hiding state without touching the
@@ -104,9 +91,6 @@ interface Props {
   /** Multi-feed views pass this to the top bar to render the group-by-feed
    * toggle. Omitted on single-feed views (no-op) and on the bottom bar. */
   group?: GroupAction;
-  /** Feed views pass this to the top bar to render the sort-order toggle.
-   * Omitted on the bottom bar. */
-  sort?: SortAction;
   /** Feed views pass this to the top bar (allowlisted callers only) to render
    * the session spoiler toggle. Omitted on the bottom bar and off-list. */
   spoiler?: SpoilerAction;
@@ -127,7 +111,6 @@ export function ListToolbar({
   more,
   collapse,
   group,
-  sort,
   spoiler,
   onUndo,
 }: Props = {}) {
@@ -214,26 +197,6 @@ export function ListToolbar({
               <UnfoldMore />
             </TooltipButton>
           </div>
-        ) : null}
-        {sort ? (
-          <TooltipButton
-            type="button"
-            className="list-toolbar__button"
-            data-testid="sort-order-btn"
-            onClick={sort.onToggle}
-            tooltip={sort.itemSort === 'newest' ? 'Newest first' : 'Oldest first'}
-            aria-label={
-              sort.itemSort === 'newest' ? 'Newest first' : 'Oldest first'
-            }
-          >
-            {/* Stacked digits + arrow show the current order: 9→0 + down =
-                newest-first (descending), 0→9 + up = oldest-first (ascending). */}
-            {sort.itemSort === 'newest' ? (
-              <SortNewestFirst />
-            ) : (
-              <SortOldestFirst />
-            )}
-          </TooltipButton>
         ) : null}
         {spoiler ? (
           <TooltipButton

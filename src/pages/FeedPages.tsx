@@ -38,12 +38,11 @@ function sizeKey(size: ArticleLoadCount, defaultSize: ArticleLoadCount): string 
 export function HomePage() {
   const ds = useDataSource();
   const { homeFeed } = useHomeFeed();
-  const { itemSort, setItemSort } = useItemSort();
+  const { itemSort } = useItemSort();
   const { groupByFeed, setGroupByFeed } = useGroupByFeed();
   const { articlesPerPage } = useArticlesPerPage();
   const { articlesPerSection } = useArticlesPerSection();
   const toggleGroupByFeed = () => setGroupByFeed(!groupByFeed);
-  const toggleSort = () => setItemSort(itemSort === 'newest' ? 'oldest' : 'newest');
   usePageTitle();
 
   // The drawer's ['subscriptions'] query, but forced to re-read on mount
@@ -119,7 +118,6 @@ export function HomePage() {
         perFeedLimit={groupByFeed ? articlesPerSection : undefined}
         onToggleGroupByFeed={toggleGroupByFeed}
         itemSort={itemSort}
-        onToggleSort={toggleSort}
       />
     );
   }
@@ -132,7 +130,6 @@ export function HomePage() {
       perFeedLimit={groupByFeed ? articlesPerSection : undefined}
       onToggleGroupByFeed={toggleGroupByFeed}
       itemSort={itemSort}
-      onToggleSort={toggleSort}
     />
   );
 }
@@ -141,7 +138,7 @@ export function HomePage() {
 export function FolderPage() {
   const { name = '' } = useParams();
   const ds = useDataSource();
-  const { itemSort, setItemSort } = useItemSort();
+  const { itemSort } = useItemSort();
   const { groupByFeed, setGroupByFeed } = useGroupByFeed();
   const { articlesPerPage } = useArticlesPerPage();
   const { articlesPerSection } = useArticlesPerSection();
@@ -179,9 +176,6 @@ export function FolderPage() {
         perFeedLimit={groupByFeed ? articlesPerSection : undefined}
         onToggleGroupByFeed={() => setGroupByFeed(!groupByFeed)}
         itemSort={itemSort}
-        onToggleSort={() =>
-          setItemSort(itemSort === 'newest' ? 'oldest' : 'newest')
-        }
       />
     </>
   );
@@ -191,7 +185,7 @@ export function FolderPage() {
 export function FeedPage() {
   const { feedId = '' } = useParams();
   const ds = useDataSource();
-  const { itemSort, setItemSort } = useItemSort();
+  const { itemSort } = useItemSort();
   const { articlesPerPage } = useArticlesPerPage();
   const queryClient = useQueryClient();
   const { data: feed } = useQuery({
@@ -269,9 +263,6 @@ export function FeedPage() {
         }
         emptyLabel="No items in this feed yet."
         itemSort={itemSort}
-        onToggleSort={() =>
-          setItemSort(itemSort === 'newest' ? 'oldest' : 'newest')
-        }
       />
     </>
   );
