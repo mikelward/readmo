@@ -337,3 +337,14 @@ build/routing/deploy.
 ## `resolve_review_thread` history
 
 This was previously documented here as broken: the response stripped the thread node ID, leaving no way to obtain a `threadId`. Tracked upstream as github/github-mcp-server#2331 (issue) and github/github-mcp-server#2245 (fix), and verified working against a real Codex review thread on 2026-07-24. Kept as a note rather than deleted so the next agent that hits a resolve failure knows this was a real, since-fixed upstream bug and doesn't re-derive it.
+
+
+## Waking PRs a merge leaves behind
+
+On receiving a "base now points at `<sha>`" message, fetch base and PR head by
+refspec (unshallowing) and test that head against the fetched tip, not `<sha>`
+(a later merge may have passed it): `behind` if `git merge-base --is-ancestor
+<tip> <head>` exits 1, `dirty` if `git merge-tree --write-tree` (Git 2.38+)
+exits 1; any other exit is a failure to report, not an answer. Your own rules
+then decide the rebase. The sender names no merge and no other PR because an
+older copy of these rules reads either as its own merge cue.
